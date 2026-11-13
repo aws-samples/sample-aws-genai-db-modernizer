@@ -60,15 +60,20 @@ class _Job:
     routine_sources: list[dict[str, Any]] | None = None
 
 
+def _is_collector_output(collection: dict[str, Any]) -> bool:
+    from src.contracts.collector_output import CollectorOutputContract
+    from src.shared.contract_versioning import carries_contract
+
+    return carries_contract(collection, CollectorOutputContract, artifact="assess() collection")
+
+
 def _collector_input(collection: dict[str, Any]) -> dict[str, Any]:
     """The collection to ingest: a raw collection as given; a collector output with
     every derived per-statement fact read again by the parser (never the caller's)."""
-    from src.contracts.collector_output import CollectorOutputContract
-    from src.shared.contract_versioning import carries_contract
     from src.tools.database.offline_parser import rederive_query_facts
     from src.tools.sql.query_facts import source_engine_of
 
-    if not carries_contract(collection, CollectorOutputContract, artifact="assess() collection"):
+    if not _is_collector_output(collection):
         return collection
     return rederive_query_facts(collection, source_engine_of(collection))
 
@@ -87,12 +92,21 @@ def _ingest_and_analyse(job: _Job) -> None:
         job.database_name,
         _collector_input(job.request.collection),
     )
-    if job.routine_sources is not None:
-        # #2022 (contract 1.4): the caller's CREATE statements, in the job's routine
-        # sources under the collectors' rules, never in the collector output.
+    if job.request.contract_version != "1.3":
+        # #2022 (contract 1.4): the routine sources, under the collectors' rules and never
+        # in the collector output: the caller's entries, and the CREATE statements of a
+        # raw collection (as the scripts write them from the file) for the rest. A 1.3
+        # request writes none, as before 1.4.
         from src.assessment.routine_sources import write_request_routine_sources
 
-        write_request_routine_sources(job.store, job.database_name, job.job_id, job.routine_sources)
+        collection = job.request.collection
+        write_request_routine_sources(
+            job.store,
+            job.database_name,
+            job.job_id,
+            job.routine_sources or [],
+            raw_collection=None if _is_collector_output(collection) else collection,
+        )
     engines = job.request.options.target_engines
     if engines is not None:
         # Triage reads the job's recorded scope (ADR-031 Decision 2 Amendment 14).

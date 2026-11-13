@@ -1,14 +1,22 @@
 # Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
 # SPDX-License-Identifier: MIT-0
 
-"""The routine sources a library caller passes to ``assess()`` (#2022, contract 1.4).
+"""The routine sources of an ``assess()`` run for contract 1.4 (#2022).
 
-``AssessmentRequest.routine_sources`` holds each routine's ``CREATE`` in the
-routine-sources format (``RoutineSource`` entries, ``src/contracts/routine_sources.py``;
-an unknown key is refused). The run writes them to the job's routine sources, the index
-and its chunks, with the writer the scripts and the live collectors use
-(:func:`~src.agents.collector.routine_sources.write_routine_sources`), so under the same
-rules:
+A 1.4 run writes the job's routine sources, the index and its chunks, with the writer
+the scripts and the live collectors use
+(:func:`~src.agents.collector.routine_sources.write_routine_sources`), from two places:
+
+- ``AssessmentRequest.routine_sources``: each routine's ``CREATE`` in the
+  routine-sources format (``RoutineSource`` entries, ``src/contracts/routine_sources.py``;
+  an unknown key is refused), used for its routine as given;
+- a raw collection's own bodies, for every routine no entry names, extracted as the
+  scripts extract them from the file
+  (:func:`~src.agents.collector.routine_sources.iter_collection_sources`): its status,
+  exact and opt-out rules unchanged. A collector output holds no body, so none is
+  extracted from one.
+
+Both go through the one writer, so under the same rules:
 
 - the text stays only there: never in the redacted collector output, the result, a log
   line, an error message or a model input;
@@ -19,18 +27,19 @@ rules:
   whose findings the index names by kind;
 - a collection made with ``include_routine_bodies = 0`` writes none, whatever is passed;
 - only a routine the collection lists with its body collected gets a source: one listed
-  ``not_readable``, ``opted_out`` or ``not_supported``, or not listed at all, gets none,
-  as no collector writes one for it;
-- a source is written exact only when the caller says so (``exact``, true unless given)
-  and the collection does not mark the routine's body not exact (``body_exact: false``,
-  a MySQL rebuild around a literal): routine migration carries only exact text;
+  ``not_readable``, ``opted_out`` or ``not_supported``, with no ``body_status`` (code
+  alone, #2124), or not listed at all, gets none, as no collector writes one for it;
+- a given source is written exact only when the caller says so (``exact``, true unless
+  given) and the collection does not mark the routine's body not exact
+  (``body_exact: false``, a MySQL rebuild around a literal): routine migration carries
+  only exact text. An extracted one is exact as the collectors decide;
 - only PostgreSQL, MySQL and MariaDB routines are carried, and an entry's ``origin`` must
   be one of its collection's engine.
 
 :func:`check_request_routine_sources` checks the entries before anything runs, also for
-a request that skipped validation. A request with no ``routine_sources`` writes nothing
-here. An empty list is the caller's "none": the job's earlier routine sources are
-cleared, as a script's re-run does.
+a request that skipped validation. No entry (None or ``[]``) and no body in the
+collection writes none. Every write replaces the job's earlier routine sources whole, as
+a script's re-run does. A 1.3 request writes none (``src/assessment/runner.py``).
 """
 
 from __future__ import annotations
@@ -46,6 +55,7 @@ from src.agents.collector.routine_sources import (
     SOURCE_ENGINES,
     clear_routine_sources,
     collection_engine,
+    iter_collection_sources,
     write_routine_sources,
 )
 from src.contracts.routine_sources import RoutineSource
@@ -239,13 +249,20 @@ def _names(names: list[str]) -> str:
 
 
 def write_request_routine_sources(
-    store: Any, database_name: str, job_id: str, entries: Sequence[Mapping[str, Any]]
+    store: Any,
+    database_name: str,
+    job_id: str,
+    entries: Sequence[Mapping[str, Any]],
+    raw_collection: Mapping[str, Any] | None = None,
 ) -> str | None:
-    """Write the request's routine sources for the job whose collector output the ingest
-    has written (module docstring), and return the index's key; None when none is
-    written (and the job's earlier ones are cleared). Logs a warning for what it leaves
-    out and for each source it writes as not exact, naming each routine by kind and
-    name, never its text."""
+    """Write the job's routine sources for a 1.4 request whose collector output the
+    ingest has written (module docstring): the request's ``entries``, then every
+    routine ``raw_collection`` holds a body for that no entry names, extracted as the
+    scripts extract them (:func:`~src.agents.collector.routine_sources.iter_collection_sources`
+    of the file as given). Returns the index's key; None when none is written (and the
+    job's earlier ones are cleared). Logs a warning for what it leaves out and for each
+    given source it writes as not exact, naming each routine by kind and name, never its
+    text."""
     output = store.read_json(f"{database_name}/{job_id}/collector/output.json")
     if not _includes_bodies(output):
         clear_routine_sources(store, database_name, job_id)
@@ -286,6 +303,14 @@ def write_request_routine_sources(
                 made_inexact.append(name)
                 source = source.model_copy(update={"exact": False, "inexact_reason": _NOT_EXACT})
             yield source
+        if raw_collection is None:
+            return
+        # The collection's own bodies, for every routine no entry names: the collectors'
+        # extraction, unchanged (their status, exact and opt-out rules).
+        given = {RoutineSource.model_validate(entry).key() for entry in entries}
+        for source in iter_collection_sources(raw_collection):
+            if source.key() not in given:
+                yield source
 
     key = write_routine_sources(store, database_name, job_id, output, kept())
     if made_inexact:
