@@ -757,6 +757,32 @@ PROSE_DETECTORS: tuple[ProseDetector, ...] = (
             "negated_attribution": False,
         },
     ),
+    # #2184: the design split's own terms; no corpus entry names one, so none changes.
+    ProseDetector(
+        f"{_PROSE}:replace_pipeline_terms",
+        lambda text: prose_style.replace_pipeline_terms(text) == text,
+        expect={
+            "negation": True,
+            "numeric_ranges": True,
+            "identifier_colon": True,
+            "quoted_engine_id": True,
+            "risk_and_wave_claims": True,
+            "negated_attribution": True,
+        },
+    ),
+    # #2184: the design split's own terms; no corpus entry names one, so none changes.
+    ProseDetector(
+        f"{_PROSE}:pipeline_terms_in",
+        lambda text: tuple(prose_style.pipeline_terms_in(text)),
+        expect={
+            "negation": (),
+            "numeric_ranges": (),
+            "identifier_colon": (),
+            "quoted_engine_id": (),
+            "risk_and_wave_claims": (),
+            "negated_attribution": (),
+        },
+    ),
     ProseDetector(
         f"{_PROSE}:clean_model_prose",
         lambda text: prose_style.clean_model_prose(text, "fallback").accepted,
