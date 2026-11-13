@@ -1932,24 +1932,20 @@ def _persist_cache_safety_net(store: ArtifactStore, data, assignment_version: in
 def _record_no_model_skips(
     store: ArtifactStore, database_name: str, job_id: str, assignment_version: int
 ) -> None:
-    """A run with no model that never ran schema design (no engine of the version has a
-    design or a skip record) records each engine's design as skipped for that reason
-    (#2154), as the schema design phase does without a model. Once any engine has a
-    record, schema design ran: nothing is written, so a missing design still fails."""
+    """A run with no model never designs: each engine of the version with no design and
+    no skip record gets a skip record saying the run used no model (#2154), as the
+    schema design phase does without a model. An engine that already has either is
+    left alone."""
     from src.agents.schema_design.handler import record_design_skip
     from src.contracts.phase_models import SCHEMA_DESIGN_SKIP_REASON_NO_LLM
     from src.storage.assignment_versioning import schema_design_engines
 
     if assignment_version <= 0:
         return
-    engines = schema_design_engines(store, database_name, job_id, assignment_version)
     prefix = f"{database_name}/{job_id}"
-    if any(
-        store.exists(f"{prefix}/schema-{e}/v{assignment_version}/schema_output.json")
-        for e in engines
-    ):
-        return
-    for engine in engines:
+    for engine in schema_design_engines(store, database_name, job_id, assignment_version):
+        if store.exists(f"{prefix}/schema-{engine}/v{assignment_version}/schema_output.json"):
+            continue
         record_design_skip(
             store,
             database_name,

@@ -245,8 +245,11 @@ def clear_design_skip(
 ) -> bool:
     """Remove the engine's skip record on ``assignment_version`` when a design of it
     starts (#2154): a design supersedes the record (a run without a model, or a skipped
-    failure, designed again), so no check reads the engine as skipped meanwhile. A
-    design is never removed. Returns whether a record was removed."""
+    failure, designed again), so no check reads the engine as skipped meanwhile. Only
+    the paths that write design work to disk call it -- the split's manifest and inputs,
+    and the external request -- so a design that never writes anything leaves the record
+    and the engine still reports as skipped. A design is never removed. Returns whether
+    a record was removed."""
     from src.shared.design_records import skip_reason
 
     if assignment_version <= 0:
@@ -963,10 +966,12 @@ def run_schema_design(
         require_valid_guardrail_config()
     if llm_mode == "none":
         return _skip_without_model(store, database_name, job_id, target_type, assignment_version)
-    clear_design_skip(store, database_name, job_id, target_type, assignment_version)
-
     # --- External LLM mode: write prepared input and return early ---
     if llm_mode == "external":
+        # The request on disk is design work in progress: the engine is no longer
+        # skipped (#2154). A design with a model overwrites the record when it is
+        # written, so no other mode has to clear it.
+        clear_design_skip(store, database_name, job_id, target_type, assignment_version)
         llm_input = prepare_schema_design_input(
             job_id, database_name, target_type, store, assignment_version
         )
@@ -1383,7 +1388,6 @@ def run_schema_design_auto(
         require_valid_guardrail_config()
     if llm_mode == "none":
         return _skip_without_model(store, database_name, job_id, target_type, assignment_version)
-    clear_design_skip(store, database_name, job_id, target_type, assignment_version)
     if llm_mode == "external":
         return run_schema_design(
             job_id,
@@ -1623,7 +1627,6 @@ def run_schema_design_with_injected(
     if llm_mode == "none":
         _skip_without_model(store, database_name, job_id, target_type, assignment_version)
         return
-    clear_design_skip(store, database_name, job_id, target_type, assignment_version)
     import time
 
     start_time = time.time()

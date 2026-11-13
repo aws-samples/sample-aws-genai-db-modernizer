@@ -17,8 +17,10 @@ import pytest
 
 from src.agents.referee.synthesis_data import MissingSchemaDesigns, load_synthesis_data
 from src.agents.referee.synthesis_handler import run_synthesis
+from src.agents.schema_design import handler
 from src.agents.schema_design.handler import run_schema_design
 from src.contracts.phase_models import SCHEMA_DESIGN_SKIP_REASON_NO_LLM
+from src.shared.design_records import skip_reason
 from src.shared.wave_readiness import wave_readiness
 from src.storage.local_store import LocalArtifactStore
 
@@ -174,12 +176,22 @@ def test_llm_mode_none_synthesis_records_the_skip_and_passes(store) -> None:
     assert not store.exists(_key("documentdb"))
 
 
-def test_llm_mode_none_synthesis_never_hides_a_missing_design(store) -> None:
-    """Once one engine has a design, schema design ran: a no-model synthesis does not
-    record the others as skipped, so the missing one still fails."""
+def test_llm_mode_none_synthesis_records_every_missing_engine(store) -> None:
+    """A run without a model means nobody designs; every engine of the version with no
+    record gets a skip record, even next to real designs the user wrote by hand."""
+    _design(store, "dynamodb")
+    run_synthesis(JOB, DB, store, assignment_version=1, llm_mode="none")
+    record = store.read_json(_key("opensearch"))
+    assert (record["status"], record["reason"]) == ("skipped", SCHEMA_DESIGN_SKIP_REASON_NO_LLM)
+    assert store.read_json(_key("dynamodb")) == DESIGN  # the real design is left alone
+
+
+def test_a_bedrock_synthesis_still_fails_on_a_missing_design(store) -> None:
+    """The deterministic path writes skips; the model-driven path never does, so a
+    missing design still fails loudly on it."""
     _design(store, "dynamodb")
     with pytest.raises(MissingSchemaDesigns, match="opensearch has neither"):
-        run_synthesis(JOB, DB, store, assignment_version=1, llm_mode="none")
+        run_synthesis(JOB, DB, store, assignment_version=1, llm_mode="external")
     assert not store.exists(_key("opensearch"))
 
 
@@ -192,14 +204,43 @@ def test_schema_design_without_a_model_writes_the_skip_record(store) -> None:
     )
 
 
-def test_a_design_that_starts_replaces_the_skip_record(store) -> None:
-    """A run without a model, designed later with one: starting the design removes the
-    skip record, so no check reads the engine as skipped while it is designed."""
-    from src.agents.schema_design.handler import clear_design_skip
-
+def test_a_design_that_writes_its_request_replaces_the_skip_record(store, monkeypatch) -> None:
+    """A run without a model, designed later with one: the external request on disk is
+    work in progress, so the record goes and no check reads the engine as skipped."""
+    monkeypatch.setattr(
+        handler, "prepare_schema_design_input", lambda *a, **k: {"collector_output": {}}
+    )
     run_schema_design(JOB, DB, "dynamodb", store, assignment_version=1, llm_mode="none")
-    assert clear_design_skip(store, DB, JOB, "dynamodb", 1) is True
+    assert skip_reason(store.read_json(_key("dynamodb"))) is not None
+    run_schema_design(JOB, DB, "dynamodb", store, assignment_version=1, llm_mode="external")
     assert not store.exists(_key("dynamodb"))
+
+
+def test_only_a_design_that_writes_work_clears_the_skip_record(store, monkeypatch) -> None:
+    """#2154 round 2: clearing the record at the start of a design that then writes
+    nothing left the engine with neither, which is what the e2e shards hit. Only the
+    paths that write design work to disk clear it: the external request and the split,
+    never a Bedrock or injected design (its own output replaces the record)."""
+    cleared: list[str] = []
+    monkeypatch.setattr(
+        handler,
+        "clear_design_skip",
+        lambda store, db, job, engine, version: cleared.append(engine),
+    )
+    monkeypatch.setattr(handler, "require_valid_guardrail_config", lambda: None)
+    monkeypatch.setattr(
+        handler, "prepare_schema_design_input", lambda *a, **k: {"collector_output": {}}
+    )
+    handler.run_schema_design(JOB, DB, "dynamodb", store, assignment_version=1, llm_mode="bedrock")
+    handler.run_schema_design_with_injected(
+        JOB, DB, "dynamodb", store, {"q1"}, assignment_version=1, llm_mode="bedrock"
+    )
+    assert cleared == []
+    handler.run_schema_design(JOB, DB, "dynamodb", store, assignment_version=1, llm_mode="external")
+    assert cleared == ["dynamodb"]
+
+
+def test_a_real_design_replaces_the_skip_record_when_it_is_written(store) -> None:
+    _skip(store, "dynamodb")
     _design(store, "dynamodb")
-    assert clear_design_skip(store, DB, JOB, "dynamodb", 1) is False
     assert store.read_json(_key("dynamodb")) == DESIGN

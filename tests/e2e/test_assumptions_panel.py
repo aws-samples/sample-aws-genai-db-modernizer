@@ -31,7 +31,7 @@ import pytest
 
 from tests.e2e.conftest import _run_pipeline_cached
 from tests.e2e.deliverable_figures import md_plain
-from tests.e2e.pipeline import PipelineResult
+from tests.e2e.pipeline import PipelineResult, real_designs
 
 pytestmark = [pytest.mark.e2e, pytest.mark.deterministic]
 
@@ -176,7 +176,8 @@ def test_a_peak_change_runs_no_schema_design_without_a_model_and_says_so(wordpre
     assert peak["line"] == "Peak: 2× peak-to-average ratio (set in the UI)"
     progression = json.loads((root / ".meta" / f"{run.job_id}.json").read_text())
     assert progression["phases"]["schema_design"]["status"] == "skipped"
-    assert not list((root / run.db / run.job_id).glob("schema-*/v*/schema_output.json"))
+    # Only the skip records a no-model run writes, never a design (#2154).
+    assert real_designs(root / run.db / run.job_id) == []
 
 
 def test_designs_a_model_wrote_are_never_redesigned_here(

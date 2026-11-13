@@ -107,10 +107,12 @@ def _expected(job: Path, effective: int) -> dict[tuple[str, int], set[tuple]]:
     expected: dict[tuple[str, int], set[tuple]] = {}
     for assignment in chain:
         v = assignment["version"]
+        # A skip record is no design (#2154), as the graph build reads it.
         designs = {
-            e: json.loads(p.read_text())
+            e: d
             for e in ENGINES
             if (p := job / f"schema-{e}/v{v}/schema_output.json").exists()
+            and (d := json.loads(p.read_text())).get("status") != "skipped"
         }
         objects = {e: _objects(e, d) for e, d in designs.items()}
         for qa in assignment["query_assignments"]:

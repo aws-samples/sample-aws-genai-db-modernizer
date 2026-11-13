@@ -23,7 +23,7 @@ from src.agents.referee.synthesis_handler import run_synthesis
 from src.storage.assignment_versioning import resolve_downstream_assignment_version
 from src.storage.local_store import LocalArtifactStore
 from tests.e2e.designed_run import run_designed_wordpress
-from tests.e2e.pipeline import PipelineResult
+from tests.e2e.pipeline import PipelineResult, real_designs
 
 pytestmark = pytest.mark.e2e
 
@@ -38,11 +38,7 @@ def designed(tmp_path_factory: pytest.TempPathFactory) -> PipelineResult:
 
 def _designs(job_dir: Path) -> dict[str, Path]:
     """engine -> its newest schema_output.json."""
-    out = {}
-    for engine_dir in sorted(job_dir.glob("schema-*")):
-        newest = max(engine_dir.glob("v*/schema_output.json"), key=lambda p: int(p.parent.name[1:]))
-        out[engine_dir.name.removeprefix("schema-")] = newest
-    return out
+    return {p.parent.parent.name.removeprefix("schema-"): p for p in real_designs(job_dir)}
 
 
 def _variants(design: dict) -> list[tuple[str, dict]]:
