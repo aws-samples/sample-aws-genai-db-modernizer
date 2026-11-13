@@ -213,13 +213,10 @@ def test_fulltext_and_spatial_indexes_get_no_prefix(kind, column):
     assert [n for n in result.index_notes if n.get("kind") == "key_prefix"] == []
 
 
-@pytest.mark.passes_on_main
 @pytest.mark.parametrize(
     ("index", "source"),
     [
-        # TEXT, not GEOMETRY. A source with no native type map: a SQL Server or Oracle LOB in
-        # an index is a VARCHAR(255) residual instead (#2219), as a PostgreSQL text is.
-        ({"index_type": "spatial", "is_unique": False}, "db2"),
+        ({"index_type": "spatial", "is_unique": False}, "sqlserver"),  # TEXT, not GEOMETRY
         ({"index_type": "fulltext", "is_unique": True}, "mysql"),  # no UNIQUE FULLTEXT
     ],
 )

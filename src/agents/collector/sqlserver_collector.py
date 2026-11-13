@@ -79,6 +79,7 @@ from src.shared.row_counts import read_data_size_mb, read_row_count, read_size_m
 from src.shared.server_counters import live_server_counters, server_counters_model
 from src.tools.aws.s3_storage import init_storage
 from src.tools.aws.ssm_executor import SSMExecutor
+from src.tools.database.sqlserver_max import max_type
 from src.tools.database.sqlserver_tools import SQLServerRemoteCollector, _normalize_index_type
 from src.tools.sql.view_lineage import apply_view_lineage
 
@@ -462,7 +463,9 @@ def _build_tables(schema_raw: dict) -> list[Table]:
             Column(
                 column_name=c["column_name"],
                 ordinal_position=c.get("ordinal_position"),
-                data_type=c.get("data_type", ""),
+                # (max) kept in the type (#2219): the contract has no -1 length.
+                data_type=max_type(c.get("data_type"), c.get("max_length"), absent_is_max=False)
+                or c.get("data_type", ""),
                 normalized_data_type=_SQLSERVER_TYPE_MAP.get(str(c.get("data_type", "")).lower()),
                 max_length=_normalize_max_length(c.get("max_length"), c.get("data_type", "")),
                 numeric_precision=c.get("numeric_precision"),
