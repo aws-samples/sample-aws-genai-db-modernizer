@@ -1051,6 +1051,7 @@ Aurora PostgreSQL extensions compared per version line (Extension versions for A
 | [`mysql-enum-and-set-types`](#mysql-enum-and-set-types) | mysql, mariadb | Aurora PostgreSQL | Needs a rewrite | column types `enum`, `set` |
 | [`mysql-found-rows-to-postgresql`](#mysql-found-rows-to-postgresql) | mysql, mariadb | Aurora PostgreSQL | Needs a rewrite | calls `FOUND_ROWS`, `ROW_COUNT`; words `SQL_CALC_FOUND_ROWS` |
 | [`mysql-fulltext-search`](#mysql-fulltext-search) | mysql, mariadb | Aurora PostgreSQL | Needs a rewrite | words `AGAINST`; index types `fulltext` |
+| [`mysql-index-key-length`](#mysql-index-key-length) | mysql, mariadb, postgresql, sqlserver, oracle, db2 | Aurora MySQL | Needs a rewrite | index keys whose text columns pass 3072 bytes at 4 bytes per character |
 | [`mysql-insert-ignore`](#mysql-insert-ignore) | mysql, mariadb | Aurora PostgreSQL | Needs a rewrite | syntax `INSERT IGNORE`, `INSERT LOW_PRIORITY IGNORE`, `INSERT DELAYED IGNORE`, `INSERT HIGH_PRIORITY IGNORE`, `UPDATE IGNORE`, `UPDATE LOW_PRIORITY IGNORE`, `DELETE IGNORE`, `DELETE LOW_PRIORITY IGNORE`, `DELETE QUICK IGNORE` |
 | [`mysql-json-functions`](#mysql-json-functions) | mysql, mariadb | Aurora PostgreSQL | Needs a rewrite | calls `JSON_EXTRACT`, `JSON_UNQUOTE`, `JSON_CONTAINS`, `JSON_CONTAINS_PATH`, `JSON_SET`, `JSON_INSERT`, `JSON_REPLACE`, `JSON_REMOVE`, `JSON_SEARCH`, `JSON_KEYS`, `JSON_LENGTH`, `JSON_DEPTH`, `JSON_TYPE`, `JSON_VALID`, `JSON_QUOTE`, `JSON_MERGE`, `JSON_MERGE_PATCH`, `JSON_MERGE_PRESERVE`, `JSON_ARRAY_APPEND`, `JSON_ARRAY_INSERT`, `JSON_OVERLAPS`, `JSON_PRETTY`, `JSON_STORAGE_SIZE`; syntax `- &gt;` |
 | [`mysql-last-insert-id`](#mysql-last-insert-id) | mysql, mariadb | Aurora PostgreSQL | Needs a rewrite | calls `LAST_INSERT_ID` |
@@ -1072,6 +1073,7 @@ Aurora PostgreSQL extensions compared per version line (Extension versions for A
 | [`mysql-user-variables`](#mysql-user-variables) | mysql, mariadb | Aurora PostgreSQL | Needs a rewrite | words starting with `@` |
 | [`mysql-zero-dates`](#mysql-zero-dates) | mysql, mariadb | Aurora PostgreSQL | Needs a rewrite | column defaults like `0000-00-00*` |
 | [`oracle-builtin-functions`](#oracle-builtin-functions) | oracle | Aurora MySQL, Aurora PostgreSQL | Needs a rewrite | calls `NVL`, `NVL2`, `DECODE`, `ADD_MONTHS`, `MONTHS_BETWEEN`, `SYS_GUID`, `LISTAGG`; words `SYSDATE`, `SYSTIMESTAMP` |
+| [`oracle-case-sensitive-to-mysql`](#oracle-case-sensitive-to-mysql) | oracle | Aurora MySQL | Needs a rewrite | unique and primary keys with a text column |
 | [`oracle-connect-by`](#oracle-connect-by) | oracle | Aurora MySQL, Aurora PostgreSQL | Needs a rewrite | calls `SYS_CONNECT_BY_PATH`; words `CONNECT_BY_ROOT`; syntax `CONNECT BY` |
 | [`oracle-outer-join-operator`](#oracle-outer-join-operator) | oracle | Aurora MySQL, Aurora PostgreSQL | Needs a rewrite | syntax `( + )` |
 | [`oracle-plsql-routines`](#oracle-plsql-routines) | oracle | Aurora MySQL, Aurora PostgreSQL | Needs a rewrite | every procedure, function and trigger |
@@ -1135,6 +1137,7 @@ Aurora PostgreSQL extensions compared per version line (Extension versions for A
 | [`postgresql-lateral-joins`](#postgresql-lateral-joins) | postgresql | Aurora MySQL | Behaves differently | words `LATERAL` |
 | [`postgresql-older-major-version`](#postgresql-older-major-version) | postgresql | Aurora PostgreSQL | Behaves differently | version: older than target |
 | [`sqlserver-case-insensitive-comparison`](#sqlserver-case-insensitive-comparison) | sqlserver | Aurora PostgreSQL | Behaves differently | every source of these engines |
+| [`sqlserver-collation-to-mysql`](#sqlserver-collation-to-mysql) | sqlserver | Aurora MySQL | Behaves differently | collations `*_cs_*`, `*_as`, `*_as_*`, `*_bin`, `*_bin_*`, `*_bin2`, `*_bin2_*` |
 | [`sqlserver-table-and-query-hints`](#sqlserver-table-and-query-hints) | sqlserver | Aurora MySQL, Aurora PostgreSQL | Behaves differently | calls `OPTION`; words `NOLOCK`, `READPAST`, `UPDLOCK`, `HOLDLOCK`, `ROWLOCK`, `PAGLOCK`, `TABLOCK`, `TABLOCKX`, `READUNCOMMITTED`, `NOEXPAND` |
 | [`sqlserver-types-behave-differently`](#sqlserver-types-behave-differently) | sqlserver | Aurora MySQL, Aurora PostgreSQL | Behaves differently | column types `datetimeoffset`, `money`, `smallmoney`, `bit` |
 | [`mysql-sql-calc-found-rows`](#mysql-sql-calc-found-rows) | mysql, mariadb | Aurora MySQL | Informational | calls `FOUND_ROWS`; words `SQL_CALC_FOUND_ROWS` |
@@ -1233,6 +1236,12 @@ Documentation: MySQL 8.0 Reference Manual, Information Functions; PostgreSQL doc
 Full-text search \(MATCH ... AGAINST\): needs a rewrite. MATCH ... AGAINST and FULLTEXT indexes become PostgreSQL full-text search \(a tsvector column or expression with a GIN index, queried with @@ and to\_tsquery\), whose parsing, stop words and ranking differ.
 
 Documentation: AWS Schema Conversion Tool User Guide, Using MySQL as a source; MySQL 8.0 Reference Manual, Full-Text Search Functions; PostgreSQL documentation, Full Text Search.
+
+### mysql-index-key-length
+
+Index keys over 3,072 bytes: needs a rewrite. InnoDB limits an index key to 3,072 bytes and Aurora MySQL stores text as utf8mb4 \(4 bytes per character\), so an index whose text columns add up to more than 768 characters, one varchar\(769\) or several shorter columns together, fails CREATE INDEX; the draft DDL adds no prefix to such a key and notes it, so key a prefix of the column \(col\(n\), which then no longer enforces uniqueness on the whole value\), shorten the column, or index a hash of it in a generated column.
+
+Documentation: MySQL 8.0 Reference Manual, InnoDB Limits; MySQL 8.0 Reference Manual, The utf8mb4 Character Set.
 
 ### mysql-insert-ignore
 
@@ -1359,6 +1368,12 @@ Documentation: MySQL 8.0 Reference Manual, The DATE, DATETIME, and TIMESTAMP Typ
 Oracle-only built-in functions: needs a rewrite. NVL, NVL2, DECODE, SYSDATE and the other Oracle-only functions have other names on the target \(COALESCE, CASE, CURRENT\_TIMESTAMP, ...\), so each call is converted.
 
 Documentation: Oracle to Aurora PostgreSQL Migration Playbook \(AWS DMS documentation\), Built-in functions.
+
+### oracle-case-sensitive-to-mysql
+
+Case-sensitive text keys: needs a rewrite. Oracle compares text by its binary value by default \(NLS\_COMP=BINARY\), and Aurora MySQL's default collation \(utf8mb4\_0900\_ai\_ci\) ignores case and accents, so a unique or primary key on text that holds values differing only in case or accents \(ABC and abc\) rejects rows on load, and lookups and joins on those columns return extra rows; give the columns a case-sensitive collation \(utf8mb4\_0900\_bin or utf8mb4\_0900\_as\_cs\), or confirm the data has no such duplicates.
+
+Documentation: Oracle Database Globalization Support Guide, Linguistic Sorting and Matching; MySQL 8.0 Reference Manual, Unicode Character Sets.
 
 ### oracle-connect-by
 
@@ -1737,6 +1752,12 @@ Documentation: Amazon Aurora PostgreSQL release calendar; PostgreSQL release not
 Case-insensitive text comparison: behaves differently. SQL Server compares text case-insensitively under its default collation, and Aurora PostgreSQL compares case-sensitively unless a column uses citext or a nondeterministic ICU collation, so lookups, sorts and unique keys on text can change.
 
 Documentation: SQL Server to Aurora PostgreSQL Migration Playbook \(AWS DMS documentation\), Collations.
+
+### sqlserver-collation-to-mysql
+
+Accent-sensitive and binary collations: behaves differently. These tables use an accent-sensitive or binary SQL Server collation, and Aurora MySQL's default collation \(utf8mb4\_0900\_ai\_ci\) ignores case and accents \(e equals é\), so unique keys on text can reject rows on load and lookups can return extra rows; give the columns utf8mb4\_0900\_as\_ci for a \_CI\_AS collation, utf8mb4\_0900\_as\_cs for \_CS\_AS or \_CS\_AI, and utf8mb4\_bin for \_BIN or \_BIN2, noting that the 0900 collations compare trailing spaces, which SQL Server ignores.
+
+Documentation: SQL Server to Aurora MySQL Migration Playbook \(AWS DMS documentation\), Collations; SQL Server documentation, Collation and Unicode support; MySQL 8.0 Reference Manual, Unicode Character Sets.
 
 ### sqlserver-table-and-query-hints
 

@@ -45,7 +45,7 @@ from functools import cache
 from pathlib import Path
 from typing import Literal
 
-from pydantic import BaseModel, ConfigDict, Field, model_validator
+from pydantic import BaseModel, ConfigDict, Field, PositiveInt, model_validator
 
 from src.contracts.collector_output import IndexType
 from src.shared.catalog.engines import CatalogError
@@ -209,6 +209,18 @@ class GapMatch(BaseModel):
     index_types: tuple[str, ...] = ()
     # Indexes with a predicate (Index.predicate: a partial index).
     partial_indexes: bool = False
+    # Unique indexes and primary keys (Index.is_unique, Index.is_primary,
+    # Table.primary_key) with a text key column: one whose Column.normalized_data_type is
+    # string or text (#2227).
+    text_unique_keys: bool = False
+    # Index and primary keys whose text key parts pass ``index_key_bytes_over`` bytes at
+    # ``index_key_bytes_per_character`` bytes per character (#2227): a part costs its
+    # recorded key prefix (Index.prefix_lengths) or else its Column.max_length, both in
+    # characters, on a string column. Other parts count nothing: a number or a date is
+    # a few bytes, and the Aurora MySQL draft keys a prefix of a TEXT or BLOB column
+    # itself. FULLTEXT and SPATIAL indexes have no key length limit and are skipped.
+    index_key_bytes_over: PositiveInt | None = None
+    index_key_bytes_per_character: PositiveInt | None = None
     # Tables, views, routines and triggers in a schema other than these (lower case).
     schemas_other_than: tuple[str, ...] = ()
     # MySQL-family table storage engines (Table.storage_engine).
@@ -257,7 +269,16 @@ class GapMatch(BaseModel):
             self.collations,
             self.routine_languages,
         )
-        flags = (self.routines, self.auto_increment, self.uppercase_names, self.partial_indexes)
+        flags = (
+            self.routines,
+            self.auto_increment,
+            self.uppercase_names,
+            self.partial_indexes,
+            self.text_unique_keys,
+            self.index_key_bytes_over is not None,
+        )
+        if (self.index_key_bytes_over is None) != (self.index_key_bytes_per_character is None):
+            raise ValueError("index_key_bytes_over and index_key_bytes_per_character go together")
         if not (any(lists) or any(flags) or self.version or self.always or self.extensions):
             raise ValueError("[match] needs at least one matcher")
         if (self.always or self.version) and (any(lists) or any(flags)):
