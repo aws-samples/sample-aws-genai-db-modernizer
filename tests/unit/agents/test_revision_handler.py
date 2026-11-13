@@ -718,6 +718,7 @@ class TestExecuteRevisionCoverage:
         _, meta = execute_revision("job-1", "mydb", "documentdb", self._request(), store)
         assert meta.version == 2
 
+    @pytest.mark.passes_on_main  # a legacy job keeps its behaviour
     def test_a_job_with_no_assignment_skips_the_coverage_check(self):
         schema = {"access_patterns": []}
         store = self._store(schema, [], "documentdb")

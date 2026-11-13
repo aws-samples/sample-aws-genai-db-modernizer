@@ -211,6 +211,7 @@ class TestTheGatesKeepTheirValues:
             ("elasticache", "ec-no-complex-join"),
         ]
 
+    @pytest.mark.passes_on_main  # ported off the removed check_all_exclusions (#2154)
     @pytest.mark.parametrize(
         ("sql", "excluded"),
         [
