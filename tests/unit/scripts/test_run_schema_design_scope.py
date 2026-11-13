@@ -19,6 +19,7 @@ import pytest
 
 from scripts import run_schema_design
 from src.agents.schema_design import handler
+from src.agents.schema_design.scope import SCOPE_PREFIX
 from src.storage.local_store import LocalArtifactStore
 from tests.unit.agents.schema_design.valid_designs import ddb_design, ddb_pattern, ddb_table
 
@@ -352,7 +353,8 @@ def test_dynamodb_hand_fixed_merged_output_finalizes_clean(monkeypatch, capsys, 
     assert written["validation_failures"] == []
 
 
-def test_check_schema_scope_never_raises(tmp_path, monkeypatch):
+def test_check_schema_scope_fails_closed_without_raising(tmp_path, monkeypatch):
+    """A check that breaks is one violation naming the error, never "no findings" (#2154)."""
     store = _store(tmp_path, "dynamodb")
 
     def boom(*_args, **_kwargs):
@@ -362,11 +364,13 @@ def test_check_schema_scope_never_raises(tmp_path, monkeypatch):
     report = handler.check_schema_scope(
         store, DB, JOB, "dynamodb", _design("dynamodb", "mydb.orders", "q-orders"), 1
     )
-    assert report.violations == [] and report.warnings == []
+    assert len(report.violations) == 1 and report.warnings == []
+    assert report.violations[0].startswith(f"{SCOPE_PREFIX}dynamodb: the check could not run")
+    assert "(RuntimeError)" in report.violations[0]
 
     monkeypatch.setattr(handler, "read_assignment", boom)
     report = handler.check_schema_scope(store, DB, JOB, "dynamodb", {}, 1)
-    assert report.violations == []
+    assert len(report.violations) == 1
 
 
 # ---------------------------------------------------------------------------
