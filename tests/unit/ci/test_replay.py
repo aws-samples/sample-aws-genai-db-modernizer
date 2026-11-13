@@ -785,3 +785,20 @@ def test_a_trim_never_cuts_through_a_number() -> None:
     # A cut between two non-digits is where it always was.
     plain = "x" * 3000
     assert replay._trim(plain).startswith("x" * replay.TRIM_KEEP + "\n[... ")
+
+
+def test_save_scans_the_transcript_as_the_upload_does(tmp_path: Path, monkeypatch) -> None:
+    """#2211 review, Minor 9: ``save`` gives the transcript the upload scan's mode
+    (``narrow_key_names=True``, as ``ci/llm/run.py collect-job`` does), credential
+    shapes only."""
+    calls: list[dict] = []
+    real = replay.secret_findings
+
+    def recording(text: str, **kwargs):
+        calls.append(kwargs)
+        return real(text, **kwargs)
+
+    monkeypatch.setattr(replay, "secret_findings", recording)
+    replay.save(_e2e_llm_output(tmp_path), tmp_path / "fixture")
+    assert {"key_names": False, "narrow_key_names": True} in calls
+    assert all(call.get("narrow_key_names") is True for call in calls), calls

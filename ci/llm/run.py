@@ -176,6 +176,7 @@ import subprocess  # nosec B404 -- used only to read `git rev-parse`, no untrust
 import sys
 import tarfile
 import tomllib
+from collections.abc import Iterable
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from pathlib import Path
@@ -2467,7 +2468,7 @@ JOB_MAX_FILE_BYTES = 30_000_000
 
 
 #: Next to the archive when the scan found anything: each finding's file, line and
-#: kind, never its value (#2053).
+#: kind, and its value's safe context (#2209), never the value (#2053).
 JOB_FINDINGS = "job.findings.json"
 #: collect-job's own JSON, written by the EXIT trap.
 COLLECT_LOG = "job-logs/collect-job.json"
@@ -2492,6 +2493,13 @@ class _Scanned:
     key: bool = False
     #: The key names of the key-value findings, by ``(kind, line)``.
     keys: dict[tuple[str, int], list[str]] = field(default_factory=dict)
+    #: Each finding's safe context, by ``(kind, line)`` (#2209, ``redact``).
+    context: dict[tuple[str, int], list[dict[str, Any]]] = field(default_factory=dict)
+    #: What ``keys`` and ``context`` are built from (``Redaction.pending`` and
+    #: ``raw_keys``): ``collect_job`` re-renders them with every file's values. In
+    #: memory only.
+    pending: list[Any] = field(default_factory=list, repr=False)
+    raw_keys: dict[tuple[str, int], set[str]] = field(default_factory=dict, repr=False)
 
 
 def _still_valid(before: str, after: str, suffix: str) -> bool:
@@ -2535,14 +2543,32 @@ def _scan_file(raw: bytes, suffix: str, session: bool = False) -> _Scanned:
         except UnicodeDecodeError:
             return _Scanned(None, [("not valid UTF-8", None)])
     # Model-written text: prose under a token or API key name is no finding (#2179).
-    result = redact(text, key_names=True, emails=True, session=session, narrow_key_names=True)
+    result = redact(
+        text,
+        key_names=True,
+        emails=True,
+        session=session,
+        narrow_key_names=True,
+        document=_JSON_DOCUMENTS.get(suffix, ""),
+    )
     if not result.findings:
         return _Scanned(raw, [])
     findings: list[tuple[str, int | None]] = list(result.findings)
     key = any(kind not in REDACTABLE_KINDS for kind, _ in result.findings)
-    if not result.redactable or not _still_valid(text, result.text, suffix):
-        return _Scanned(None, findings, key, result.keys)
-    return _Scanned(result.text.encode("utf-8"), findings, key, result.keys)
+    keep = result.redactable and _still_valid(text, result.text, suffix)
+    return _Scanned(
+        result.text.encode("utf-8") if keep else None,
+        findings,
+        key,
+        result.keys,
+        result.context,
+        result.pending,
+        result.raw_keys,
+    )
+
+
+#: The suffixes whose findings get a JSON path in their context (#2209).
+_JSON_DOCUMENTS = {".json": "json", ".jsonl": "jsonl"}
 
 
 def _job_files(job_dir: Path) -> tuple[dict[str, tuple[Path, _Scanned]], list[str]]:
@@ -2596,14 +2622,33 @@ def _uploads(out_dir: Path) -> tuple[dict[str, tuple[Path, _Scanned]], list[str]
 
 def _manifest_entry(name: str, kind: str, line: int | None, scan: _Scanned) -> dict[str, Any]:
     """One ``job.findings.json`` entry: file, line and kind, plus the key name(s) of a
-    key-value finding (``"key"``, or ``"keys"`` for several). Never the value."""
+    key-value finding (``"key"``, or ``"keys"`` for several) and, for each value it
+    placed, its safe ``"context"`` (#2209): the field name before it, its JSON path in
+    a JSON or JSON Lines file, and its shape (length, character classes, alphabet).
+    Never the value, nor any piece of it."""
     entry: dict[str, Any] = {"file": name, "line": line, "type": kind}
     names = scan.keys.get((kind, line), []) if line is not None else []
     if len(names) == 1:
         entry["key"] = names[0]
     elif names:
         entry["keys"] = names
+    context = scan.context.get((kind, line), []) if line is not None else []
+    if context:
+        entry["context"] = context
     return entry
+
+
+def _recheck_names(scans: Iterable[_Scanned]) -> None:
+    """Rebuild every scan's key names and context against the values flagged in every
+    file of the upload, so a value redacted in one file never shows as a name or a
+    JSON path segment in another (#2209)."""
+    from ci.llm.private_scan import render_context, value_pieces
+
+    scans = list(scans)
+    pieces = value_pieces(value for scan in scans for *_rest, value in scan.pending)
+    for scan in scans:
+        if scan.pending or scan.raw_keys:
+            scan.keys, scan.context = render_context(scan.pending, scan.raw_keys, pieces)
 
 
 def _mark_results(out_dir: Path, scan: dict) -> None:
@@ -2663,8 +2708,8 @@ def collect_job(
     upload (``BINARY_SUFFIXES``). The archive is written only when no archived file is
     withheld and no file anywhere holds a key or a cloud credential.
 
-    Any finding writes ``out_dir/job.findings.json`` (file, line and kind, never the
-    value) and sets ``pass: false`` and ``private_scan`` in ``results.json``;
+    Any finding writes ``out_dir/job.findings.json`` (file, line and kind, and each
+    value's safe context, ``_manifest_entry``; never the value) and sets ``pass: false`` and ``private_scan`` in ``results.json``;
     ``ci/llm/replay.py save`` refuses such a run as a fixture. The result has ``archive``,
     ``files``, ``bytes`` and ``too_large`` when an archive was written, ``refused`` when
     the job's archive was withheld, and, on any finding, ``findings`` (a count),
@@ -2698,6 +2743,7 @@ def collect_job(
     uploads, binary = _uploads(out_dir)
     every = [(f"{JOB_ARCHIVE}:{rel}", scan) for rel, (_, scan) in job_files.items()]
     every += [(rel, scan) for rel, (_, scan) in uploads.items()]
+    _recheck_names(scan for _, scan in every)
     findings: list[dict[str, Any]] = [
         _manifest_entry(name, kind, line, scan)
         for name, scan in every

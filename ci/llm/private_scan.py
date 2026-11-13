@@ -29,10 +29,16 @@ upload, the replay fixtures), so they pass ``narrow_key_names=True`` (#2179): an
 value after a ``token`` or ``api_key`` name with ``key:`` or in a Markdown table counts
 only when it looks like a secret (a known token format, or any piece that is not a
 word or an identifier: a digit, a symbol, a random run of letters), so design prose
-such as "Validate a token: GetItem ..." is no finding. Every other key name (passwords,
+such as "Validate a token: GetItem ..." is no finding. The bare-key rule is never
+narrowed, whatever field a value sits under (#2209). Every other key name (passwords,
 ``secret_key``, ``private_key`` ...) stays strict, and so does the collector's scan of
 routine bodies, which keeps the default. A JSON escape (``\\n``, ``\\t``, ``\\u2014``, an
 escaped backslash) right before an address does not hide it.
+
+``redact`` also records each placed finding's safe context (#2209, ``Redaction.context``):
+the field name right before the value, its JSON path (``document``) and its shape
+(``value_shape``), each label a constant; a name or JSON key that shares a piece of
+``VALUE_PIECE`` characters with a flagged value, or is not an identifier, is withheld.
 
 ``redact`` replaces each flagged value with that marker, outermost span first, so a
 JSON file stays valid JSON, and a whole private-key block (BEGIN through END) with one
@@ -58,12 +64,16 @@ scan only, as ``ci/llm/replay.py save`` gives it (``secret_findings(key_names=Fa
 
 from __future__ import annotations
 
+import bisect
 import gzip
 import json
+import json.decoder
 import re
 import sys
+from collections.abc import Callable, Iterable
 from dataclasses import dataclass, field
 from pathlib import Path
+from typing import Any
 
 from src.shared.example_values import (
     is_example_domain,
@@ -199,6 +209,308 @@ def key_material(text: str, session: bool = False) -> list[tuple[str, int]]:
     return sorted(found, key=lambda f: (f[1], f[0]))
 
 
+# The key or field name right before a value on its line: ``"name": "``, ``\\"name\\": \\"``
+# (JSON at any escape level), ``name: ``, ``name = '``, ``**name**: ``, `` `name`= ``,
+# ``| name | ``. Only this much of the line before the value is read.
+_PRECEDING_KEY_RE = re.compile(
+    r"(?<![A-Za-z0-9_.$@/\\-])(?P<key>[A-Za-z0-9_.$@-]+)(?:\\*[\"'`]|\*\*)?\s*[:=|]\s*"
+    r"(?:\\*[\"'`])?\Z"
+)
+_PRECEDING_KEY_LOOKBACK = 128
+
+
+def preceding_key(line: str, start: int) -> str | None:
+    """The key or field name right before the value at ``line[start:]``, or ``None``
+    when nothing names it (a bare line, an array item, prose), or when the name starts
+    right after a ``/`` (a URL's user name: ``//user:password@``) or a backslash (a
+    name cut at a JSON escape)."""
+    m = _PRECEDING_KEY_RE.search(line[max(0, start - _PRECEDING_KEY_LOOKBACK) : start])
+    return m.group("key") if m else None
+
+
+# A finding's safe context (#2209): what lets a reviewer judge a withheld finding
+# without its file. It is built from constants, a computed shape and names that are
+# checked first, never from the value: no value, prefix or suffix of one.
+#: The character classes ``value_shape`` names, in this order.
+_CLASS_LABELS = (
+    ("mixed case", "upper case", "lower case"),
+    "digits",
+    "symbols",
+    "spaces",
+)
+_EMPTY_LABEL = "empty"
+#: The alphabets ``value_shape`` names: hex, the base64 alphabet (``+/`` and ``=``
+#: padding), the URL-safe one (``-_``), or neither.
+_ALPHABETS = (
+    ("hex", re.compile(r"[0-9a-fA-F]+")),
+    ("base64", re.compile(r"[A-Za-z0-9+/]+={0,2}")),
+    ("base64url", re.compile(r"[A-Za-z0-9_-]+={0,2}")),
+)
+_OTHER_ALPHABET = "other"
+#: What a field name or JSON key that cannot be shown is replaced by.
+WITHHELD_NAME = "[withheld]"
+WITHHELD_SEGMENT = "[*]"
+# A name that can be shown: an identifier of at most 64 characters.
+_SAFE_NAME_RE = re.compile(r"[A-Za-z_$@][A-Za-z0-9_.$@-]{0,63}")
+#: The shortest piece of a value that must never reach the context (a shorter value
+#: is a piece by itself).
+VALUE_PIECE = 4
+#: A value shorter than this gets no shape but ``SHORT_SHAPE``: its length and
+#: character classes would narrow it down too far.
+SHORT_VALUE = 8
+SHORT_SHAPE = "short"
+#: The kinds whose value follows a user name (``user:password@host``): the name before
+#: it is half the credential, so it is never reported as the field.
+_USERINFO_KINDS = frozenset({"Basic Auth Credentials"})
+
+
+def value_shape(value: str) -> dict[str, Any]:
+    """A value's length, character classes (``"mixed case + digits"``) and alphabet
+    (``hex``, ``base64``, ``base64url`` or ``other``), each label a constant; only
+    ``{"shape": "short"}`` under ``SHORT_VALUE`` characters."""
+    if len(value) < SHORT_VALUE:
+        return {"shape": SHORT_SHAPE}
+    upper = any(c.isupper() for c in value)
+    lower = any(c.islower() for c in value)
+    case_labels = _CLASS_LABELS[0]
+    labels: list[str] = []
+    if upper and lower:
+        labels.append(case_labels[0])
+    elif upper:
+        labels.append(case_labels[1])
+    elif lower:
+        labels.append(case_labels[2])
+    if any(c.isdigit() for c in value):
+        labels.append(_CLASS_LABELS[1])
+    if any(not c.isalnum() and not c.isspace() for c in value):
+        labels.append(_CLASS_LABELS[2])
+    if any(c.isspace() for c in value):
+        labels.append(_CLASS_LABELS[3])
+    alphabet = next((name for name, rx in _ALPHABETS if rx.fullmatch(value)), _OTHER_ALPHABET)
+    return {
+        "length": int(len(value)),
+        "characters": " + ".join(labels) if labels else _EMPTY_LABEL,
+        "alphabet": alphabet,
+    }
+
+
+def decoded_forms(raw: str) -> list[str]:
+    """``raw`` and each JSON-unescaped form of it (``\\u`` escapes and every escape
+    level, as in a transcript's tool output), the last the most decoded. Only JSON
+    escapes are undone: a name holding the value percent-encoded, with YAML ``\\x``
+    escapes or in base64 is not recognised (a known limit, #2211)."""
+    forms = [raw]
+    for _level in range(4):
+        if "\\" not in forms[-1]:
+            break
+        try:
+            decoded = json.loads('"' + forms[-1] + '"')
+        except ValueError:
+            break
+        if not isinstance(decoded, str) or decoded == forms[-1]:
+            break
+        forms.append(decoded)
+    return forms
+
+
+def value_pieces(values: Iterable[str]) -> set[str]:
+    """The case-folded pieces of ``VALUE_PIECE`` characters of each value in every
+    decoded form (``decoded_forms``); a shorter value is one piece."""
+    pieces: set[str] = set()
+    for value in values:
+        for form in decoded_forms(value):
+            folded = form.lower()
+            if len(folded) < VALUE_PIECE:
+                if folded:
+                    pieces.add(folded)
+                continue
+            pieces.update(folded[i : i + VALUE_PIECE] for i in range(len(folded) - VALUE_PIECE + 1))
+    return pieces
+
+
+def _shares_a_piece(name: str, pieces: set[str]) -> bool:
+    folded = name.lower()
+    windows = {folded[i : i + VALUE_PIECE] for i in range(len(folded) - VALUE_PIECE + 1)}
+    return bool(windows & pieces) or any(
+        len(piece) < VALUE_PIECE and piece in folded for piece in pieces
+    )
+
+
+def _safe_name(name: str, pieces: set[str]) -> bool:
+    """A name (a field, a JSON key) that can be shown: an identifier of at most 64
+    characters that shares no piece (``value_pieces``) with any flagged value and is
+    no finding itself. (A name that short can't be key material: that takes two body
+    lines or a 200-character run.)"""
+    return (
+        _SAFE_NAME_RE.fullmatch(name) is not None
+        and not _shares_a_piece(name, pieces)
+        and not _line_hits(name, emails=True)
+    )
+
+
+# A JSON number or literal, at the position ``_json_scalars`` reads it.
+_JSON_NUMBER_RE = re.compile(r"-?(?:0|[1-9]\d*)(?:\.\d+)?(?:[eE][-+]?\d+)?|true|false|null")
+_JSON_WS_RE = re.compile(r"[ \t\n\r]*")
+JsonPath = tuple["str | int", ...]
+# The standard library's JSON string reader: ``(text, end)`` for the string whose
+# opening quote is right before ``start`` (untyped in the stubs).
+_scanstring: Callable[[str, int], tuple[str, int]] = vars(json.decoder)["scanstring"]
+
+
+def _json_scalars(text: str) -> list[tuple[int, int, JsonPath]] | None:
+    """Every scalar of the JSON document ``text`` (strings, numbers, literals, and
+    object keys) as ``(start, end, path)``, in order; a key's path ends in the key
+    itself. ``None`` when ``text`` is no JSON document."""
+    out: list[tuple[int, int, JsonPath]] = []
+
+    def ws(i: int) -> int:
+        m = _JSON_WS_RE.match(text, i)
+        return m.end() if m else i
+
+    def value(i: int, path: JsonPath) -> int:
+        i = ws(i)
+        c = text[i : i + 1]
+        if c == "{":
+            i = ws(i + 1)
+            if text[i : i + 1] == "}":
+                return i + 1
+            while True:
+                if text[i : i + 1] != '"':
+                    raise ValueError("key")
+                name, end = _scanstring(text, i + 1)
+                out.append((i, end, (*path, name)))
+                i = ws(end)
+                if text[i : i + 1] != ":":
+                    raise ValueError("colon")
+                i = ws(value(i + 1, (*path, name)))
+                if text[i : i + 1] == ",":
+                    i = ws(i + 1)
+                    continue
+                if text[i : i + 1] == "}":
+                    return i + 1
+                raise ValueError("object")
+        if c == "[":
+            i = ws(i + 1)
+            if text[i : i + 1] == "]":
+                return i + 1
+            index = 0
+            while True:
+                i = ws(value(i, (*path, index)))
+                index += 1
+                if text[i : i + 1] == ",":
+                    i += 1
+                    continue
+                if text[i : i + 1] == "]":
+                    return i + 1
+                raise ValueError("array")
+        if c == '"':
+            _text, end = _scanstring(text, i + 1)
+            out.append((i, end, path))
+            return end
+        m = _JSON_NUMBER_RE.match(text, i)
+        if not m:
+            raise ValueError("scalar")
+        out.append((m.start(), m.end(), path))
+        return m.end()
+
+    try:
+        end = ws(value(0, ()))
+    except (ValueError, IndexError, RecursionError):
+        return None
+    return out if end == len(text) else None
+
+
+def _render_path(path: JsonPath, pieces: set[str]) -> str:
+    """``$.a.b[0].c``: an index as itself, a key by name when it is safe to show
+    (``_safe_name``), else ``WITHHELD_SEGMENT``."""
+    parts = ["$"]
+    for segment in path:
+        if isinstance(segment, int):
+            parts.append(f"[{int(segment)}]")
+        elif _safe_name(segment, pieces) and "." not in segment:
+            parts.append("." + segment)
+        else:
+            parts.append(WITHHELD_SEGMENT)
+    return "".join(parts)
+
+
+class _JsonIndex:
+    """The JSON path at a line and column of a JSON document (``"json"``) or of each
+    line of a JSON Lines file (``"jsonl"``). Lines are split once, as the scan splits
+    them (``str.splitlines``, so a raw U+2028 is a break too); a document is parsed
+    once and a JSON Lines line when first asked."""
+
+    def __init__(self, text: str, document: str) -> None:
+        self._document = document if document in ("json", "jsonl") else ""
+        self._lines = text.splitlines(keepends=True) if self._document else []
+        self._starts: list[int] = []
+        self._parsed: dict[int, list[tuple[int, int, JsonPath]] | None] = {}
+        self._text = text
+
+    def _scalars(self, number: int) -> tuple[list[tuple[int, int, JsonPath]] | None, int]:
+        if self._document == "jsonl":
+            if number not in self._parsed:
+                line = self._lines[number - 1] if number <= len(self._lines) else ""
+                self._parsed[number] = _json_scalars(line.rstrip("\r\n"))
+            return self._parsed[number], 0
+        if 0 not in self._parsed:
+            self._parsed[0] = _json_scalars(self._text)
+            total = 0
+            for line in self._lines:
+                self._starts.append(total)
+                total += len(line)
+        offset = self._starts[number - 1] if number <= len(self._starts) else 0
+        return self._parsed[0], offset
+
+    def path(self, number: int, start: int) -> JsonPath | None:
+        if not self._document:
+            return None
+        scalars, offset = self._scalars(number)
+        if not scalars:
+            return None
+        at = offset + start
+        index = bisect.bisect_right(scalars, at, key=lambda s: s[0]) - 1
+        if index >= 0 and scalars[index][0] <= at < scalars[index][1]:
+            return scalars[index][2]
+        return None
+
+
+#: One placed finding before its names are checked: kind, line, the field name before
+#: the value, its JSON path and the value. Kept in memory only, never written.
+PendingContext = tuple[str, int, "str | None", "JsonPath | None", str]
+
+
+def _context_entry(
+    kind: str, field_name: str | None, path: JsonPath | None, value: str, pieces: set[str]
+) -> dict[str, Any]:
+    entry: dict[str, Any] = {}
+    if field_name is not None and kind not in _USERINFO_KINDS:
+        entry["field"] = field_name if _safe_name(field_name, pieces) else WITHHELD_NAME
+    if path is not None:
+        entry["json_path"] = _render_path(path, pieces)
+    entry.update(value_shape(decoded_forms(value)[-1]))
+    return entry
+
+
+def render_context(
+    pending: list[PendingContext], keys: dict[tuple[str, int], set[str]], pieces: set[str]
+) -> tuple[dict[tuple[str, int], list[str]], dict[tuple[str, int], list[dict[str, Any]]]]:
+    """The key names and the safe context of each ``(kind, line)``, every name checked
+    against ``pieces``: the pieces of every value flagged in the whole upload, so a
+    value flagged in one file never shows as a name in another (#2209)."""
+    context: dict[tuple[str, int], list[dict[str, Any]]] = {}
+    for kind, number, name, path, value in pending:
+        entry = _context_entry(kind, name, path, value, pieces)
+        listed = context.setdefault((kind, number), [])
+        if entry not in listed:
+            listed.append(entry)
+    names = {
+        where: sorted({n if _safe_name(n, pieces) else WITHHELD_NAME for n in found})
+        for where, found in keys.items()
+    }
+    return names, context
+
+
 @dataclass
 class Redaction:
     """``redact``'s result: the text with every flagged value replaced, the findings as
@@ -208,8 +520,18 @@ class Redaction:
     findings: list[tuple[str, int]] = field(default_factory=list)
     complete: bool = True
     #: The key names of the key-value findings, by ``(kind, line)``: a key name is no
-    #: secret, and a withheld run cannot be diagnosed without it.
+    #: secret, and a withheld run cannot be diagnosed without it. A name that shares a
+    #: piece of a flagged value is ``WITHHELD_NAME``.
     keys: dict[tuple[str, int], list[str]] = field(default_factory=dict)
+    #: Each placed finding's safe context, by ``(kind, line)`` (#2209): the field name
+    #: right before the value, its JSON path (with ``document``) and its shape
+    #: (``value_shape``), never the value.
+    context: dict[tuple[str, int], list[dict[str, Any]]] = field(default_factory=dict)
+    #: What ``keys`` and ``context`` were built from, checked against this text's own
+    #: values only; a caller that scans many files re-renders them with every file's
+    #: values (``render_context``). In memory only: it holds the values.
+    pending: list[PendingContext] = field(default_factory=list, repr=False)
+    raw_keys: dict[tuple[str, int], set[str]] = field(default_factory=dict, repr=False)
 
     @property
     def redactable(self) -> bool:
@@ -251,6 +573,7 @@ def redact(
     emails: bool = False,
     session: bool = False,
     narrow_key_names: bool = False,
+    document: str = "",
 ) -> Redaction:
     """Replace every value ``secret_findings`` (with ``emails``, also each email at a
     domain that is not an example one) flags in ``text`` by its ``redaction_marker``.
@@ -259,7 +582,8 @@ def redact(
     breaks, so later line numbers hold). Then, per line, the flagged spans are merged
     and replaced outermost first: only the values change, never a whole line, so JSON
     stays valid. A value that cannot be placed, or a line still flagged afterwards,
-    makes the result ``complete=False``. ``narrow_key_names`` as in ``secret_findings``."""
+    makes the result ``complete=False``. ``narrow_key_names`` as in ``secret_findings``.
+    ``document`` (``"json"`` or ``"jsonl"``) adds each finding's JSON path to its context."""
     findings: list[tuple[str, int]] = key_material(text, session=session)
     complete = True
 
@@ -270,6 +594,10 @@ def redact(
     unblocked = _KEY_BLOCK_RE.sub(_block, text)
     out: list[str] = []
     keys: dict[tuple[str, int], set[str]] = {}
+    index = _JsonIndex(unblocked, document)
+    # Each placed finding (``PendingContext``); the names are checked against every
+    # flagged value once the scan is done.
+    placed_all: list[PendingContext] = []
     for number, line, body, hits, table in _scan_lines(
         unblocked, key_names, emails, narrow_key_names
     ):
@@ -280,6 +608,18 @@ def redact(
         for kind, _span, key in _pair_matches(body, narrow_key_names) + table:
             if key_names or kind not in KEY_NAME_KINDS:
                 keys.setdefault((kind, number), set()).add(key)
+        columns = {(kind, span): key for kind, span, key in table}
+        for kind, span in hits:
+            if span is not None:
+                # A value right before "@" is a URL's or a DSN's password: the name
+                # before it is its user (``user:secret@host``), never shown.
+                name = (
+                    None
+                    if body[span[1] : span[1] + 1] == "@"
+                    else columns.get((kind, span)) or preceding_key(body, span[0])
+                )
+                value = body[span[0] : span[1]]
+                placed_all.append((kind, number, name, index.path(number, span[0]), value))
         placed = [(kind, span) for kind, span in hits if span is not None]
         if len(placed) < len(hits) or any(kind == "Private Key" for kind, _ in hits):
             complete = False
@@ -290,11 +630,15 @@ def redact(
         if any(h for h in rescan if key_names or h[0] not in KEY_NAME_KINDS):
             complete = False
         out.append(redacted + line[len(body) :])
+    names, context = render_context(placed_all, keys, value_pieces(v for *_r, v in placed_all))
     return Redaction(
         "".join(out),
         sorted(set(findings), key=lambda f: (f[1], f[0])),
         complete,
-        {where: sorted(names) for where, names in keys.items()},
+        names,
+        context,
+        placed_all,
+        keys,
     )
 
 

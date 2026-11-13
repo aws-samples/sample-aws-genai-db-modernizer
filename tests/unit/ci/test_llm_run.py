@@ -3445,8 +3445,155 @@ def test_the_manifest_names_the_key_of_a_key_value_finding_never_its_value(tmp_p
         "line": 3,
         "type": "token value",
         "key": "reset_token",
+        "context": [
+            {
+                "field": "reset_token",
+                "json_path": "$.doc.reset_token",
+                "length": 22,
+                "characters": "mixed case + digits",
+                "alphabet": "base64",
+            }
+        ],
     }
     assert real not in manifest and real not in _every_upload(out)
+
+
+# 40 base64 characters with upper, lower and digits: an AWS secret access key's shape.
+_SECRET_SHAPED = (
+    "Zk3vLmP0aB7c" + "W2rT8nE5q9Xy" + "Qm8x/2pLw9Zr" + "4uVb"
+)  # pragma: allowlist secret
+
+
+def test_each_manifest_finding_carries_its_field_path_and_shape(tmp_path: Path) -> None:
+    """#2209: a withheld finding is diagnosable from the manifest alone: the field
+    before the value, its JSON path (a JSON file, or a JSON Lines line) and its shape."""
+    job = _job_tree(tmp_path / "artifacts")
+    design = {
+        "collections": [{"document_examples": [{"_id": "<id>", "api_secret": _SECRET_SHAPED}]}]
+    }
+    (job / "schema-aurora_mysql" / "v2" / "schema_output.json").write_text(
+        json.dumps(design, indent=2)
+    )
+    out = _out_with_results(tmp_path)
+    write = {
+        "type": "tool_use",
+        "name": "Write",
+        "input": {"content": "secret_key = " + _SECRET_SHAPED},
+    }
+    (out / "transcript.jsonl").write_text(json.dumps({"message": {"content": [write]}}) + "\n")
+    (out / "notes.md").write_text("Example:\n\n    password = " + _SECRET_SHAPED + "\n")
+    run.collect_job(tmp_path / "artifacts", out, db="wordpress", job="job1")
+    manifest = (out / "job.findings.json").read_text()
+    entries = {(e["file"], e["type"]): e for e in json.loads(manifest)["findings"]}
+    shape = {"length": 40, "characters": "mixed case + digits + symbols", "alphabet": "base64"}
+    design_path = "$.collections[0].document_examples[0].api_secret"
+    for kind in ("bare secret key", "password value"):
+        entry = entries[("job.tar.gz:schema-aurora_mysql/v2/schema_output.json", kind)]
+        assert entry["line"] == 7
+        assert entry["context"] == [{"field": "api_secret", "json_path": design_path, **shape}]
+    for kind in ("bare secret key", "api key value"):
+        entry = entries[("transcript.jsonl", kind)]
+        assert entry["context"] == [
+            {"field": "secret_key", "json_path": "$.message.content[0].input.content", **shape}
+        ]
+    for kind in ("bare secret key", "password value"):
+        assert entries[("notes.md", kind)]["context"] == [{"field": "password", **shape}]
+    assert _SECRET_SHAPED not in manifest
+
+
+@pytest.mark.parametrize(
+    ("value", "characters", "alphabet"),
+    [
+        ("0123abcdef" * 4, "lower case + digits", "hex"),  # pragma: allowlist secret
+        ("ABCDEF0123", "upper case + digits", "hex"),
+        ("abcdXYZW", "mixed case", "base64"),
+        ("abc-XYZ_09", "mixed case + digits + symbols", "base64url"),
+        ("203.0.113.40", "digits + symbols", "other"),
+        ("a b c d e", "lower case + spaces", "other"),
+    ],
+)
+def test_a_value_shape_names_its_length_character_classes_and_alphabet(
+    value: str, characters: str, alphabet: str
+) -> None:
+    from ci.llm import private_scan
+
+    assert private_scan.value_shape(value) == {
+        "length": len(value),
+        "characters": characters,
+        "alphabet": alphabet,
+    }
+
+
+@pytest.mark.parametrize("value", ["", "a", "q7z", "4821", "Ab3$xY9"])
+def test_a_value_under_eight_characters_has_only_a_short_shape(value: str) -> None:
+    """#2211 review, Minor 8: a short value's length and classes would narrow it down."""
+    from ci.llm import private_scan
+
+    assert private_scan.value_shape(value) == {"shape": "short"}
+
+
+def _pieces(value: str) -> set[str]:
+    return {value[i : i + 4] for i in range(len(value) - 3)}
+
+
+def test_no_value_piece_reaches_the_manifest_or_stdout(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """#2209: the context is built from constants, computed shapes and safe names; a
+    field or JSON key that shares a piece of the value is withheld too."""
+    import argparse
+
+    values = {
+        "bare": _SECRET_SHAPED,
+        "password": "hunter2" + "Qx9vMw",  # pragma: allowlist secret
+        "ip": "8.8.4.4",
+        "email": "jdoe@" + "corpweb.net",
+        "bearer": "Wq3Zr8Tn" * 4,
+        "named-after-value": "Gh7Jk2" + "Lp4Vn9Rs",  # pragma: allowlist secret
+        "object-name": "Yb5Nc8Vx1Mz4"
+        + "Lq7Wd0Ef3Gh6"
+        + "Jk9Pt2Rs5Ua8Cb",  # pragma: allowlist secret
+    }
+    job = _job_tree(tmp_path / "artifacts")
+    doc = {
+        "examples": [
+            {"note": values["bare"], "db_password": values["password"]},
+            {"host": values["ip"], "contact": values["email"]},
+            {"Gh7Jk2password": values["named-after-value"]},
+            {"by_id": {values["object-name"]: 1}},
+        ]
+    }
+    (job / "schema-aurora_mysql" / "v2" / "schema_output.json").write_text(
+        json.dumps(doc, indent=2)
+    )
+    out = _out_with_results(tmp_path)
+    (out / "notes.md").write_text("Authorization: Bearer " + values["bearer"] + "\n")
+    run.cmd_collect_job(
+        argparse.Namespace(
+            out=str(out),
+            artifact_root=str(tmp_path / "artifacts"),
+            db="wordpress",
+            job="job1",
+            state_file=None,
+        )
+    )
+    stdout = capsys.readouterr()
+    manifest = (out / "job.findings.json").read_text()
+    seen = "\n".join([manifest, (out / "results.json").read_text(), stdout.out, stdout.err])
+    findings = json.loads(manifest)["findings"]
+    assert {f["type"] for f in findings} >= {
+        "bare secret key",
+        "password value",
+        "Public IP (ipv4)",
+        "email",
+        "bearer token",
+    }
+    for name, value in values.items():
+        leaked = sorted(p for p in _pieces(value) if p in seen)
+        assert not leaked, (name, leaked)
+    assert all("context" in f for f in findings)
+    withheld = [c for f in findings for c in f["context"] if c.get("field") == "[withheld]"]
+    assert withheld and any("[*]" in c.get("json_path", "") for f in findings for c in f["context"])
 
 
 @pytest.mark.passes_on_main  # main never flagged it; 76a4cc79 withheld it
@@ -3592,3 +3739,183 @@ def test_a_failed_transcript_check_carries_its_error(tmp_path: Path) -> None:
     inputs["transcript_summary_path"].write_text(json.dumps({"error": "no result line"}))
     row = run.build_results_row(**inputs)
     assert row["fail_reasons"] == ["check transcript is false", "transcript: no result line"]
+
+
+def _collect(tmp_path: Path, schema_text: str, uploads: dict[str, str] | None = None):
+    """``collect_job`` over one schema file (raw text) and ``uploads``; the manifest
+    text and its findings by ``(file, type)``."""
+    job = _job_tree(tmp_path / "artifacts")
+    (job / "schema-aurora_mysql" / "v2" / "schema_output.json").write_text(
+        schema_text, encoding="utf-8"
+    )
+    out = _out_with_results(tmp_path)
+    for name, text in (uploads or {}).items():
+        (out / name).write_text(text, encoding="utf-8")
+    run.collect_job(tmp_path / "artifacts", out, db="wordpress", job="job1")
+    manifest = (out / "job.findings.json").read_text(encoding="utf-8")
+    found: dict[tuple[str, str], dict] = {}
+    for entry in json.loads(manifest)["findings"]:
+        found[(entry["file"], entry["type"])] = entry
+    return manifest, found
+
+
+_SCHEMA = "job.tar.gz:schema-aurora_mysql/v2/schema_output.json"
+
+
+def test_a_value_flagged_in_one_file_never_names_a_path_in_another(tmp_path: Path) -> None:
+    """#2211 review, Critical 2: the names are checked against every value flagged in
+    the whole upload, not only the file's own."""
+    a = "Rk4Wq8Zn" + "Tb6Vm2Lx"  # pragma: allowlist secret
+    b = "Hd3Jf7Kp" + "Qs9Uw1Ye"  # pragma: allowlist secret
+    manifest, found = _collect(
+        tmp_path,
+        json.dumps({"by_name": {a: {"db_password": b}}}, indent=2),
+        {"notes.md": "password = " + a + "\n"},
+    )
+    entry = found[(_SCHEMA, "password value")]
+    assert entry["context"][0]["json_path"] == "$.by_name[*].db_password"
+    assert not [p for p in _pieces(a) | _pieces(b) if p in manifest]
+
+
+def test_a_unicode_escaped_value_is_compared_and_measured_decoded(tmp_path: Path) -> None:
+    """#2211 review, Important 3: a ``\\u``-escaped value is decoded before the piece
+    check and the shape, so its decoded form in a key is withheld and its length is
+    the value's own."""
+    value = "Zq9Xv7Wm" + "3Kt5"  # pragma: allowlist secret
+    escaped = "".join(f"\\u{ord(c):04x}" for c in value)
+    text = (
+        '{"' + value + '": {"password": "' + escaped + '"},\n'
+        ' "' + value + '_password": "' + escaped + '"}'
+    )
+    manifest, _found = _collect(tmp_path, text)
+    entries = [e for e in json.loads(manifest)["findings"] if e["type"] == "password value"]
+    contexts = [c for e in entries for c in e["context"]]
+    assert sorted(c["json_path"] for c in contexts) == ["$[*]", "$[*].password"]
+    assert all(c["length"] == 12 for c in contexts)
+    assert [e["line"] for e in entries if e.get("key") == "[withheld]"] == [2]
+    assert value not in manifest and not [p for p in _pieces(value) if p in manifest]
+
+
+@pytest.mark.parametrize(
+    "user", ["svc_billing" + "_rw", "svc%2F" + "billing_rw"], ids=["plain", "percent-encoded"]
+)
+def test_a_url_credential_never_reports_its_user_as_the_field(tmp_path: Path, user: str) -> None:
+    """#2211 review, Important 4: the user name of a URL credential is half of it, and
+    so is any piece of it (``2Fbilling_rw`` after a percent escape)."""
+    secret = "Vn8Lp3Qw" + "Xz5Mt1"  # pragma: allowlist secret
+    manifest, found = _collect(
+        tmp_path, json.dumps({"dsn": f"mysql://{user}:{secret}@db.example.com/app"})
+    )
+    assert found, "the URL credential is a finding"
+    assert "billing_rw" not in manifest and secret not in manifest
+    contexts = [c for e in found.values() for c in e.get("context", [])]
+    assert contexts, "the finding is diagnosable: it has a context"
+    assert {c.get("field") for c in contexts} == {None}
+
+
+def test_a_json_key_matching_a_value_in_another_case_is_withheld(tmp_path: Path) -> None:
+    """#2211 review, Important 5: the piece check ignores case."""
+    secret = "Zq9Xv" + "7Wm3Kt5Hn"  # pragma: allowlist secret
+    manifest, found = _collect(tmp_path, json.dumps({"zQ9xV_tables": {"password": secret}}))
+    assert found[(_SCHEMA, "password value")]["context"][0]["json_path"] == "$[*].password"
+    assert "zQ9xV" not in manifest
+
+
+@pytest.mark.parametrize(
+    "name",
+    ["a.b", "has space", "k" * 65, "AKIA" + "QWERTYUIOPASDFGH"],  # pragma: allowlist secret
+    ids=["dotted", "not-an-identifier", "over-64", "itself-a-finding"],
+)
+def test_a_json_key_that_cannot_be_shown_is_withheld(tmp_path: Path, name: str) -> None:
+    """#2211 review, Important 5: a dotted key, a non-identifier, a name over 64
+    characters and a name that is a finding itself never show as a path segment or
+    a field."""
+    secret = "Pw7Ks2Nd" + "Lq4Rx9"  # pragma: allowlist secret
+    manifest, found = _collect(tmp_path, json.dumps({name: {"password": secret}}))
+    entry = found[(_SCHEMA, "password value")]
+    assert entry["context"][0]["json_path"] == "$[*].password"
+    assert name not in manifest
+    from ci.llm import private_scan
+
+    assert private_scan._render_path((name, "password"), set()) == "$[*].password"
+    # A field name may be dotted (``aws.secret_access_key``); a path segment may not.
+    assert private_scan._safe_name(name, set()) is (name == "a.b")
+
+
+def test_identical_context_entries_are_listed_once(tmp_path: Path) -> None:
+    """#2211 review, Important 5: two values of one kind with the same field and shape
+    on one line give one context entry."""
+    _manifest, found = _collect(tmp_path, "{}", {"notes.md": "host: 8.8.8.8 host: 8.8.4.4\n"})
+    assert found[("notes.md", "Public IP (ipv4)")]["context"] == [
+        {"field": "host", "shape": "short"}
+    ]
+
+
+def test_a_short_value_gives_no_shape_and_its_name_is_withheld(tmp_path: Path) -> None:
+    """#2211 review, Minor 8: a value under ``SHORT_VALUE`` characters reports only
+    ``short``, and a name that holds it is withheld."""
+    manifest, found = _collect(
+        tmp_path,
+        json.dumps({"pw_q7z": {"password": "q7z"}}),  # pragma: allowlist secret
+        {"notes.md": "password: 4821\n"},
+    )
+    assert found[(_SCHEMA, "password value")]["context"] == [
+        {"field": "password", "json_path": "$[*].password", "shape": "short"}
+    ]
+    assert found[("notes.md", "password value")]["context"] == [
+        {"field": "password", "shape": "short"}
+    ]
+    assert "pw_q7z" not in manifest
+
+
+def test_a_raw_line_separator_in_a_json_string_keeps_later_paths(tmp_path: Path) -> None:
+    """#2211 review, Minor 7: a raw U+2028 inside a string is a line break to the scan,
+    so the path lookup counts lines the same way."""
+    text = json.dumps(
+        {"note": "a b", "items": [{"api_secret": _SECRET_SHAPED}]},
+        indent=2,
+        ensure_ascii=False,
+    )
+    _manifest, found = _collect(tmp_path, text)
+    entry = found[(_SCHEMA, "password value")]
+    assert entry["context"][0]["json_path"] == "$.items[0].api_secret"
+
+
+def test_every_line_of_a_jsonl_file_gets_its_own_path(tmp_path: Path) -> None:
+    """#2211 review, Minor 6: the JSON Lines index splits the file once and still
+    gives each line its own path."""
+    lines = [json.dumps({"n": i, "doc": {"api_secret": _SECRET_SHAPED}}) for i in range(3)]
+    _manifest, found = _collect(tmp_path, "{}", {"events.jsonl": "\n".join(lines) + "\n"})
+    entry = found[("events.jsonl", "password value")]
+    assert entry["context"][0]["json_path"] == "$.doc.api_secret"
+
+
+def test_a_dsn_without_a_scheme_never_reports_its_user_as_the_field(tmp_path: Path) -> None:
+    """#2211 review round 2, Minor 4: ``user:<secret>@host`` with no ``//`` before it."""
+    user = "svc_billing" + "_rw"
+    manifest, found = _collect(
+        tmp_path, "{}", {"notes.md": f"dsn = {user}:{_SECRET_SHAPED}@db.example.com\n"}
+    )
+    entry = found[("notes.md", "bare secret key")]
+    assert entry["context"] and all("field" not in c for c in entry["context"])
+    assert "billing_rw" not in manifest
+
+
+def test_every_escape_level_of_a_value_is_decoded_before_the_comparison(
+    tmp_path: Path,
+) -> None:
+    """#2211 review round 2, Minor 6: a value escaped twice (a JSON string inside a
+    JSON string, as in a transcript's tool output) is decoded both levels, so a name
+    that holds the decoded value is withheld."""
+    from ci.llm import private_scan
+
+    value = "Zq9Xv7Wm" + "3Kt5"  # pragma: allowlist secret
+    once = "".join(f"\\u{ord(c):04x}" for c in value)
+    twice = once.replace("\\", "\\\\")
+    assert private_scan.decoded_forms(twice) == [twice, once, value]
+    text = '{"' + value + '_password": "' + twice + '"}'
+    manifest, found = _collect(tmp_path, text)
+    entry = found[(_SCHEMA, "password value")]
+    assert entry.get("key") == "[withheld]" and entry["context"][0]["json_path"] == "$[*]"
+    assert entry["context"][0]["length"] == 12
+    assert "Xv7W" not in manifest
