@@ -220,6 +220,9 @@ class IndexType(str, Enum):
     brin = "brin"
     fulltext = "fulltext"
     spatial = "spatial"
+    # SQL Server clustered and nonclustered columnstore (sys.indexes.type 5 and 6, #2227):
+    # column-oriented storage with no key order; no Aurora engine has one.
+    columnstore = "columnstore"
     other = "other"
 
 

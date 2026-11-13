@@ -29,6 +29,7 @@ from src.contracts.schema_design_input import (
     AgentTable,
 )
 from src.tools.schema.aurora_common.ddl_generator import (
+    POSTGRES,
     DdlResult,
     carried_indexes,
     rendered_key,
@@ -293,7 +294,13 @@ def _column_line(base: AuroraDesignBase, table: AgentTable, col, ddl_col, residu
     return " ".join(parts)
 
 
-def _index_line(index, method: str | None, unique: bool, prefixes: list | None = None) -> str:
+def _index_line(
+    index,
+    method: str | None,
+    unique: bool,
+    prefixes: list | None = None,
+    include: list[str] | None = None,
+) -> str:
     cols = [
         f"{c}({prefixes[pos]})" if prefixes and prefixes[pos] is not None else c
         for pos, c in enumerate(index.columns)
@@ -301,6 +308,8 @@ def _index_line(index, method: str | None, unique: bool, prefixes: list | None =
     line = f"{index.index_name}{' UNIQUE' if unique else ''} ({', '.join(cols)})"
     if method:  # #293: the method the draft renders, so the line matches its DDL
         line += f" USING {method}"
+    if include:  # #2227: the INCLUDE columns the Aurora PostgreSQL draft renders
+        line += f" INCLUDE ({', '.join(include)})"
     return f"{line} WHERE {index.predicate}" if index.predicate else line
 
 
@@ -347,6 +356,7 @@ def build_design_view(
                     i,
                     rendered_method(i, base.dialect, ddl.columns),
                     *rendered_key(i, base.dialect, ddl.columns),
+                    include=i.included_columns if base.dialect is POSTGRES else None,
                 )
                 for i in carried_indexes(src, base.dialect)
             ],

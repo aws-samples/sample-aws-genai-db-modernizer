@@ -2,5 +2,5 @@
 # uv run python scripts/resolve_contract_versions.py --release at release (a MAJOR: in its pull request).
 contract = "collector_output.CollectorOutputContract"
 kind = "minor"
-reason = "Added optional ``Index.included_columns``: a SQL Server index's INCLUDE columns, stored but not keyed (the live collector reads sys.index_columns.is_included_column, the offline script key_ordinal 0), kept out of ``columns`` so no key length counts them. Backward compatible: defaults to None; a collection saved before listed them in ``columns``."
+reason = "Added optional ``Index.included_columns``: the columns a SQL Server index stores but does not key (``sys.index_columns.key_ordinal`` 0 on both the live and the offline path: INCLUDE columns, and the partitioning column SQL Server adds), kept out of ``columns`` so no key length counts them; and the ``IndexType`` value ``columnstore`` (SQL Server clustered and nonclustered columnstore, sys.indexes.type 5 and 6), which was read as btree. Backward compatible: included_columns defaults to None, and a collection saved before listed those columns in ``columns``; release notes: re-ingest the raw collection to split them."
 issue = 2227

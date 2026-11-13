@@ -144,7 +144,9 @@ CLASS_LABELS: dict[str, str] = {
 # so a range or an ordered read over it filters block ranges rather than reading by key.
 # A hash index and SP-GiST's text, inet and range operator classes serve an equality, so
 # they count.
-_NON_KEY_INDEX_TYPES = frozenset({"brin", "fulltext", "gin", "gist", "spatial"})
+# #2227: a SQL Server columnstore index stores columns with no key order, so its first
+# column is no key either.
+_NON_KEY_INDEX_TYPES = frozenset({"brin", "columnstore", "fulltext", "gin", "gist", "spatial"})
 # A time of day, which (like a point in time, ``query_facts.is_timestamp_type``)
 # orders rows rather than addressing an entity.
 _TIME_OF_DAY_TYPES = frozenset({"time", "timetz"})

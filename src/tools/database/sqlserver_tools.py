@@ -238,7 +238,6 @@ class SQLServerRemoteCollector:
                 i.name AS index_name,
                 c.name AS column_name,
                 ic.key_ordinal,
-                ic.is_included_column,
                 i.is_unique,
                 i.is_primary_key,
                 i.type_desc AS index_type
@@ -265,7 +264,8 @@ class SQLServerRemoteCollector:
                     "index_type": _normalize_index_type(r.get("index_type")),
                 }
             if is_included_column(r):
-                # #2227: an INCLUDE column is stored in the index, not part of its key.
+                # #2227: a key_ordinal 0 column is stored in the index, not part of its key
+                # (an INCLUDE column, or the partitioning column SQL Server adds), as offline.
                 indexes[name].setdefault("included_columns", []).append(r["column_name"])
             else:
                 indexes[name]["columns"].append(r["column_name"])
@@ -879,6 +879,10 @@ def _normalize_index_type(raw: object) -> str:
     # Hash indexes (memory-optimized in-memory OLTP) are rare in OLTP workloads
     if "HASH" in s:
         return "hash"
+    # CLUSTERED COLUMNSTORE and NONCLUSTERED COLUMNSTORE (sys.indexes.type 5 and 6, #2227)
+    # store columns, not a key: never a B-tree
+    if "COLUMNSTORE" in s:
+        return "columnstore"
     # CLUSTERED, NONCLUSTERED, UNIQUE — all B-tree internally
     if "CLUSTERED" in s or "NONCLUSTERED" in s:
         return "btree"

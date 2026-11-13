@@ -1,0 +1,141 @@
+{
+ "contract_version": "5.18",
+ "database_schema": {
+  "enum_types": null,
+  "events": null,
+  "non_dml_triggers": null,
+  "procedures": null,
+  "tables": [
+   {
+    "collation": null,
+    "columns": [
+     {
+      "cardinality": null,
+      "column_name": "FileID",
+      "data_type": "int",
+      "datetime_precision": null,
+      "default_value": null,
+      "is_auto_increment": false,
+      "max_length": 4,
+      "max_value_bytes": null,
+      "normalized_data_type": "integer",
+      "nullable": true,
+      "numeric_precision": null,
+      "numeric_scale": null,
+      "ordinal_position": null
+     },
+     {
+      "cardinality": null,
+      "column_name": "FolderID",
+      "data_type": "int",
+      "datetime_precision": null,
+      "default_value": null,
+      "is_auto_increment": false,
+      "max_length": 4,
+      "max_value_bytes": null,
+      "normalized_data_type": "integer",
+      "nullable": true,
+      "numeric_precision": null,
+      "numeric_scale": null,
+      "ordinal_position": null
+     },
+     {
+      "cardinality": null,
+      "column_name": "Content",
+      "data_type": "nvarchar",
+      "datetime_precision": null,
+      "default_value": null,
+      "is_auto_increment": false,
+      "max_length": 3750,
+      "max_value_bytes": null,
+      "normalized_data_type": "string",
+      "nullable": true,
+      "numeric_precision": null,
+      "numeric_scale": null,
+      "ordinal_position": null
+     }
+    ],
+    "data_size_mb": null,
+    "foreign_keys": null,
+    "from_ddl": false,
+    "indexes": [
+     {
+      "columns": [
+       "FolderID",
+       "Content"
+      ],
+      "has_expressions": false,
+      "index_def": null,
+      "index_expressions": null,
+      "index_name": "IX_Files_FolderID",
+      "index_type": "btree",
+      "is_primary": false,
+      "is_unique": false,
+      "predicate": null,
+      "prefix_lengths": null
+     }
+    ],
+    "primary_key": [
+     "FileID"
+    ],
+    "row_count": 10,
+    "row_count_basis": "estimate",
+    "schema_name": "dbo",
+    "size_mb": null,
+    "stats_analyzed_at": null,
+    "storage_engine": null,
+    "table_id": "synthetic.Files",
+    "table_name": "Files"
+   }
+  ],
+  "triggers": null,
+  "views": null
+ },
+ "job_id": "synthetic-pre-2227",
+ "metadata": {
+  "collection_duration_seconds": 0.0,
+  "collection_timestamp": "2026-11-13T17:55:26.057074Z",
+  "collector_version": "1.0.0",
+  "engines_in_use": [],
+  "extensions": null,
+  "query_capture": null,
+  "routine_capture": null,
+  "routine_stats_source": null,
+  "server_counters": null,
+  "source_database": {
+   "database_name": "synthetic",
+   "database_size_gb": null,
+   "deployment_type": null,
+   "engine": "sqlserver",
+   "hostname": "offline",
+   "rds_instance_metadata": null,
+   "settings": null,
+   "version": "16.0.4305.5"
+  }
+ },
+ "metrics": {
+  "performance_metrics": {
+   "active_connections_avg": null,
+   "active_connections_max": null,
+   "avg_query_time_ms": null,
+   "connection_pool_usage_percent": null,
+   "network_throughput_mbps_avg": null,
+   "p50_query_time_ms": null,
+   "p95_query_time_ms": null,
+   "p99_query_time_ms": null,
+   "queries_per_second": null,
+   "read_iops_avg": null,
+   "transactions_per_second": null,
+   "write_iops_avg": null
+  },
+  "rds_cloudwatch_metrics": null,
+  "source_host": null
+ },
+ "queries": {
+  "collection_end_time": null,
+  "collection_start_time": null,
+  "query_log_source": null,
+  "query_patterns": [],
+  "total_queries_analyzed": null
+ }
+}

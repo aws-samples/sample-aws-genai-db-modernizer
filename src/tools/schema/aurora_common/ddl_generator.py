@@ -497,13 +497,23 @@ _PG_DEFAULT_OPCLASS_TYPES = {
 # and SPATIAL on Aurora PostgreSQL, whose equivalents are the ones the mysql-fulltext-search
 # and mysql-spatial-types gap rules name. On Aurora MySQL a BRIN index is rendered as a
 # B-tree, which serves the same range scans, with a note.
+# #2227: a SQL Server columnstore index stores columns for analytic scans and has no key; a
+# B-tree over every column would serve none of its queries and fails the key limit.
+_COLUMNSTORE_ALTERNATIVE = (
+    "Serve the analytic scans it exists for from an analytics store, such as Amazon Redshift "
+    "through a zero-ETL integration, or drop it."
+)
 _DROPPED_METHODS: dict[str, dict[str, str]] = {
-    MYSQL.name: dict.fromkeys(
-        ("gin", "gist", "spgist"),
-        "Use a FULLTEXT or SPATIAL index where one fits the columns, or serve the search from "
-        "the application layer.",
-    ),
+    MYSQL.name: {
+        **dict.fromkeys(
+            ("gin", "gist", "spgist"),
+            "Use a FULLTEXT or SPATIAL index where one fits the columns, or serve the search "
+            "from the application layer.",
+        ),
+        "columnstore": _COLUMNSTORE_ALTERNATIVE,
+    },
     POSTGRES.name: {
+        "columnstore": _COLUMNSTORE_ALTERNATIVE,
         "fulltext": (
             "Use PostgreSQL full-text search: a tsvector column or expression with a GIN "
             "index, queried with @@ and to_tsquery."
@@ -749,6 +759,95 @@ def mysql_key_plan(
     return plan
 
 
+# #2227: the most a PostgreSQL B-tree index row holds on 8 KB pages; a longer row fails the
+# INSERT or UPDATE that writes it ("index row size exceeds btree maximum").
+PG_MAX_INDEX_ROW_BYTES = 2704
+_PG_UNBOUNDED_TYPES = frozenset({"TEXT", "BYTEA", "JSON", "JSONB", "XML", "CITEXT"})
+_PG_SIZED_TEXT_TYPES = frozenset({"VARCHAR", "CHAR", "CHARACTER"})
+
+
+def _pg_part_bytes(aurora_type: str) -> int | None:
+    """The most bytes one value of ``aurora_type`` adds to a PostgreSQL index row (4 per
+    character), or None when it has no bound."""
+    base, length = _key_part(aurora_type)
+    if base in _PG_UNBOUNDED_TYPES or (base in _PG_SIZED_TEXT_TYPES and length is None):
+        return None
+    if base in _PG_SIZED_TEXT_TYPES and length is not None:
+        return length * 4
+    return _MYSQL_OTHER_PART_BYTES
+
+
+def _include_notes(
+    table: AgentTable, idx: AgentIndex, dialect: Dialect, column_ddls: list[ColumnDDL]
+) -> list[dict]:
+    """What the draft says about a source index's INCLUDE columns (#2227).
+
+    Aurora MySQL has no INCLUDE: the columns it drops are named, except the primary key's,
+    which every InnoDB secondary index stores anyway. Aurora PostgreSQL keeps INCLUDE, and
+    its B-tree rows hold at most ``PG_MAX_INDEX_ROW_BYTES``: unbounded or long INCLUDE
+    columns are named.
+    """
+    if not idx.included_columns:
+        return []
+    note = {"table": table.table_name, "index": idx.index_name}
+    if dialect is MYSQL:
+        pk = {c.lower() for c in table.primary_key or []}
+        dropped = [c for c in idx.included_columns if c.lower() not in pk]
+        if not dropped:
+            return []
+        return [
+            {
+                **note,
+                "reason": (
+                    f"INCLUDE columns {', '.join(dropped)} not carried over: Aurora MySQL has "
+                    "no INCLUDE clause, so the index no longer covers the queries that read "
+                    "them and each such query looks up the row. Add them as trailing key "
+                    f"columns where the key stays within {MYSQL_MAX_KEY_BYTES} bytes (not on a "
+                    "UNIQUE index, whose uniqueness would then cover them too), or accept the "
+                    "extra lookups."
+                ),
+            }
+        ]
+    types = {c.name.lower(): c.aurora_type for c in column_ddls}
+    sizes = {c: _pg_part_bytes(types.get(c.lower(), "")) for c in idx.included_columns}
+    unbounded = [c for c, n in sizes.items() if n is None]
+    keys = [_pg_part_bytes(types.get(c.lower(), "")) for c in idx.columns]
+    total = sum(n or 0 for n in [*keys, *sizes.values()])
+    if not unbounded and total <= PG_MAX_INDEX_ROW_BYTES:
+        return []
+    named = unbounded or [c for c, n in sizes.items() if n and n > _MYSQL_OTHER_PART_BYTES]
+    return [
+        {
+            **note,
+            "reason": (
+                f"INCLUDE columns {', '.join(named)} can make an index row longer than the "
+                f"{PG_MAX_INDEX_ROW_BYTES} bytes an Aurora PostgreSQL B-tree row holds, and "
+                "an INSERT or UPDATE writing such a row fails. Confirm the longest values fit, "
+                "or leave the long columns out of INCLUDE."
+            ),
+        }
+    ]
+
+
+def _pk_copy_include_notes(table: AgentTable) -> list[dict]:
+    """Aurora PostgreSQL: a source index the draft drops as a copy of the primary key, but
+    whose INCLUDE columns the primary key does not store (#2227)."""
+    return [
+        {
+            "table": table.table_name,
+            "index": idx.index_name,
+            "reason": (
+                f"Index left out as a copy of the primary key, but it also stores INCLUDE "
+                f"columns {', '.join(idx.included_columns)}, which the primary key index does "
+                "not cover on Aurora PostgreSQL. Create it as a UNIQUE index on the key with "
+                "INCLUDE if the queries it serves read them."
+            ),
+        }
+        for idx in table.indexes or []
+        if idx.included_columns and not idx.has_expressions and is_primary_key_index(idx, table)
+    ]
+
+
 def _key_prefix_note(table: str, index: str, plan: KeyPlan, unique: bool) -> dict:
     """The index note for a prefix the source did not have (``kind`` key_prefix)."""
     parts = []
@@ -846,6 +945,8 @@ def _index_sql(
                     ),
                 }
             )
+    if dialect is POSTGRES:
+        notes.extend(_pk_copy_include_notes(table))
     for idx in carried_indexes(table, dialect):
         method = index_method(idx)
         if dialect is POSTGRES:
@@ -854,22 +955,7 @@ def _index_sql(
             using, why = _mysql_index_kind(idx, column_ddls)
         if why:
             notes.append({"table": table.table_name, "index": idx.index_name, "reason": why})
-        if dialect is MYSQL and idx.included_columns:
-            # #2227: Aurora MySQL has no INCLUDE, so the index stops covering those columns.
-            notes.append(
-                {
-                    "table": table.table_name,
-                    "index": idx.index_name,
-                    "reason": (
-                        f"INCLUDE columns {', '.join(idx.included_columns)} not carried over: "
-                        "Aurora MySQL has no INCLUDE clause, so the index no longer covers the "
-                        "queries that read them and each such query looks up the row. Add them "
-                        "as trailing key columns where the key stays within "
-                        f"{MYSQL_MAX_KEY_BYTES} bytes (not on a UNIQUE index, whose uniqueness "
-                        "would then cover them too), or accept the extra lookups."
-                    ),
-                }
-            )
+        notes.extend(_include_notes(table, idx, dialect, column_ddls))
         if dialect is MYSQL and method == "brin":
             notes.append(
                 {
