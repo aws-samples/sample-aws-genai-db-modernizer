@@ -439,14 +439,31 @@ def _diff_constraints(before: dict[str, Any], after: dict[str, Any], path: str) 
     return changes
 
 
+def _json_key(value: Any) -> str:
+    """A value's canonical JSON text: hashable for any value, and ``1`` is not ``true``."""
+    return json.dumps(value, sort_keys=True)
+
+
 def _diff_enum(before: list[Any], after: list[Any], path: str) -> list[Change]:
-    before_set, after_set = set(before), set(after)
+    before_set = {_json_key(v): v for v in before}
+    after_set = {_json_key(v): v for v in after}
     changes: list[Change] = []
-    for value in sorted(after_set - before_set, key=repr):
-        changes.append((path, "minor", f"enum value added: {value!r}"))
-    for value in sorted(before_set - after_set, key=repr):
-        changes.append((path, "major", f"enum value removed: {value!r}"))
+    for key in sorted(set(after_set) - set(before_set)):
+        changes.append((path, "minor", f"enum value added: {after_set[key]!r}"))
+    for key in sorted(set(before_set) - set(after_set)):
+        changes.append((path, "major", f"enum value removed: {before_set[key]!r}"))
     return changes
+
+
+_VALUE_KINDS = frozenset({"const", "enum"})
+
+
+def _values(members: list[dict[str, Any]]) -> list[Any]:
+    """Every value the ``const`` and ``enum`` members of a union accept: one value set."""
+    out: list[Any] = []
+    for m in members:
+        out += [m["value"]] if m.get("kind") == "const" else list(m.get("values") or [])
+    return out
 
 
 def _diff_union(
@@ -460,9 +477,24 @@ def _diff_union(
     diffed recursively at the same path.
     """
     tagged = _object_count(before_members) > 1 or _object_count(after_members) > 1
-    before_by_kind = {_member_key(m, tagged): m for m in before_members}
-    after_by_kind = {_member_key(m, tagged): m for m in after_members}
+    # #2170 review: the const and enum members (``Literal["a"] | Literal["b"] | Mode``)
+    # are one value set, diffed as an enum: a Literal that gains a value adds one, and
+    # no two of them collide on one key.
+    before_values = [m for m in before_members if m.get("kind") in _VALUE_KINDS]
+    after_values = [m for m in after_members if m.get("kind") in _VALUE_KINDS]
     changes: list[Change] = []
+    if before_values and after_values:
+        changes.extend(_diff_enum(_values(before_values), _values(after_values), path))
+    elif before_values:
+        changes.append((path, "major", "union lost its const/enum members"))
+    elif after_values:
+        changes.append((path, "minor", "union gained const/enum members"))
+    before_by_kind = {
+        _member_key(m, tagged): m for m in before_members if m.get("kind") not in _VALUE_KINDS
+    }
+    after_by_kind = {
+        _member_key(m, tagged): m for m in after_members if m.get("kind") not in _VALUE_KINDS
+    }
     for kind in sorted(set(before_by_kind) | set(after_by_kind)):
         before_member, after_member = before_by_kind.get(kind), after_by_kind.get(kind)
         if before_member is None:
@@ -525,6 +557,11 @@ def diff_schema(before: dict[str, Any], after: dict[str, Any], path: str) -> lis
     """Path-level diff between two ``_structural_node()`` outputs at ``path``."""
     if path == "contract_version" and _version_pattern_adopted(before, after):
         return [(path, "minor", f"the version pattern {VERSION_PATTERN!r} adopted (#1006)")]
+    if {before.get("kind"), after.get("kind")} == {"const", "enum"}:
+        # #2170: a const is the one-value enum it is (``Literal["a"]`` is
+        # ``Literal["a", "b"]`` less a value), so a Literal that gains a value is an enum
+        # value added (MINOR), not a change of kind.
+        return _diff_enum(_values([before]), _values([after]), path)
     if before.get("kind") != after.get("kind"):
         return [(path, "major", f"type changed ({before.get('kind')} -> {after.get('kind')})")]
     kind = before["kind"]
@@ -542,7 +579,7 @@ def diff_schema(before: dict[str, Any], after: dict[str, Any], path: str) -> lis
     if kind == "enum":
         return _diff_enum(before["values"], after["values"], path)
     if kind == "const":
-        if before["value"] != after["value"]:
+        if _json_key(before["value"]) != _json_key(after["value"]):
             return [(path, "major", f"const changed ({before['value']!r} -> {after['value']!r})")]
         return []
     if kind in ("anyOf", "oneOf"):

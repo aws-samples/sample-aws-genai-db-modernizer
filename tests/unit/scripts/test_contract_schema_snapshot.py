@@ -15,6 +15,7 @@ real contracts, so both exercise the identical comparison.
 
 from __future__ import annotations
 
+from enum import Enum
 from typing import Annotated, Union
 
 import pytest
@@ -22,6 +23,7 @@ from pydantic import BaseModel, Field
 
 from scripts.contract_schema_snapshot import (
     diff_fields,
+    diff_schema,
     evaluate_against_base,
     evaluate_snapshot,
     field_summary,
@@ -94,7 +96,7 @@ def _members() -> tuple[type[BaseModel], type[BaseModel], type[BaseModel]]:
 
 
 def _tagged(*members: type[BaseModel]) -> type[BaseModel]:
-    union = Annotated[Union[members], Field(discriminator="type")]  # noqa: UP007
+    union = Annotated[Union[members], Field(discriminator="type")]  # type: ignore[valid-type]  # noqa: UP007
 
     class Holder(BaseModel):
         calc: union | None = None  # type: ignore[valid-type]
@@ -229,6 +231,112 @@ def test_enum_value_removed_is_major() -> None:
     bump, changes = _bump_for(Before, After)
     assert bump == "major"
     assert any(path == "color" and "blue" in desc.lower() for path, _, desc in changes)
+
+
+def test_a_one_value_literal_that_gains_a_value_is_minor() -> None:
+    """#2170: ``Literal["a"]`` is a ``const`` and ``Literal["a", "b"]`` an ``enum``; the
+    second accepts everything the first did, so it is an enum value added, also when
+    optional (a union member)."""
+    from typing import Literal
+
+    class Before(BaseModel):
+        basis: Literal["full"]
+        optional_basis: Literal["full"] | None = None
+
+    class After(BaseModel):
+        basis: Literal["full", "per_path"]
+        optional_basis: Literal["full", "per_path"] | None = None
+
+    bump, changes = _bump_for(Before, After)
+    assert bump == "minor"
+    assert sorted(changes) == [
+        ("basis", "minor", "enum value added: 'per_path'"),
+        ("optional_basis", "minor", "enum value added: 'per_path'"),
+    ]
+
+
+def test_a_literal_narrowed_to_one_other_value_is_major() -> None:
+    from typing import Literal
+
+    class Before(BaseModel):
+        basis: Literal["full", "per_path"] | None = None
+
+    class After(BaseModel):
+        basis: Literal["other"] | None = None
+
+    bump, changes = _bump_for(Before, After)
+    assert bump == "major"
+    assert ("basis", "major", "enum value removed: 'full'") in changes
+
+
+class _Mode(str, Enum):
+    A = "a"
+    B = "b"
+
+
+def test_a_literal_dropped_from_a_union_with_an_enum_is_major() -> None:
+    """#2170 review: a const member and an enum member of one union are one value set,
+    so dropping the const is a value removed, never a collision that reads as no change."""
+    from typing import Literal
+
+    class Before(BaseModel):
+        mode: Literal["auto"] | _Mode | None = None
+
+    class After(BaseModel):
+        mode: _Mode | None = None
+
+    bump, changes = _bump_for(Before, After)
+    assert bump == "major"
+    assert ("mode", "major", "enum value removed: 'auto'") in changes
+
+
+def test_a_changed_literal_beside_an_enum_is_major() -> None:
+    from typing import Literal
+
+    class Before(BaseModel):
+        mode: Literal["auto"] | _Mode | None = None
+
+    class After(BaseModel):
+        mode: Literal["manual"] | _Mode | None = None
+
+    bump, changes = _bump_for(Before, After)
+    assert bump == "major"
+    assert ("mode", "major", "enum value removed: 'auto'") in changes
+    assert ("mode", "minor", "enum value added: 'manual'") in changes
+
+
+def test_one_literal_removed_from_a_union_of_single_value_literals_is_major() -> None:
+    from typing import Literal
+
+    class Before(BaseModel):
+        tag: Literal["z"] | Literal["w"] | int
+
+    class After(BaseModel):
+        tag: Literal["z"] | int
+
+    bump, changes = _bump_for(Before, After)
+    assert bump == "major"
+    assert changes == [("tag", "major", "enum value removed: 'w'")]
+    # And the other way, a single-value Literal added beside them, is MINOR.
+    bump, changes = _bump_for(After, Before)
+    assert bump == "minor" and changes == [("tag", "minor", "enum value added: 'w'")]
+
+
+def test_value_sets_compare_by_their_json_form() -> None:
+    """An unhashable const is compared, not a crash; ``1`` and ``True`` are different
+    JSON values, so a const 1 that becomes an enum of True is a change."""
+    const = {"kind": "const", "value": {"k": [1]}}
+    widened = {"kind": "enum", "values": [{"k": [1]}, "other"]}
+    assert diff_schema(const, widened, "f") == [("f", "minor", "enum value added: 'other'")]
+    assert diff_schema(widened, const, "f") == [("f", "major", "enum value removed: 'other'")]
+    one, true = {"kind": "const", "value": 1}, {"kind": "enum", "values": [True]}
+    assert sorted(diff_schema(one, true, "f")) == [
+        ("f", "major", "enum value removed: 1"),
+        ("f", "minor", "enum value added: True"),
+    ]
+    union = {"kind": "anyOf", "members": [one, {"kind": "scalar", "type": "null"}]}
+    union_true = {"kind": "anyOf", "members": [true, {"kind": "scalar", "type": "null"}]}
+    assert overall_bump(diff_schema(union, union_true, "f")) == "major"
 
 
 def test_constraint_tightened_is_major() -> None:

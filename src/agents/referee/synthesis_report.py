@@ -1099,8 +1099,13 @@ def build_tco_analysis(
     retired_bases: dict[str, dict] | None = None,
     derived_copy_syncs: Mapping[str, Mapping[str, Any]] | None = None,
     gsi_costs: Mapping[str, Mapping[str, Any]] | None = None,
+    placed: Mapping[str, str] | None = None,
 ) -> dict:
     """Aggregate cost estimates from all analysis outputs.
+
+    ``placed`` (#2170) is an adoption path's placement: each query it names is sized on
+    that engine instead of its assigned one (``assigned_cost.engine_queries``), with the
+    same estimators and prices. It writes nothing back; None or empty is the full target.
 
     ``gsi_costs`` (#805) is the storage and write cost of each DynamoDB design's GSIs
     (``gsi_cost.gsi_costs_by_engine``), which the analysis estimate does not model: its
@@ -1159,6 +1164,7 @@ def build_tco_analysis(
                 data.collector,
                 data.assignment,
                 unqueried if engine == stored_on else None,
+                placed,
             )
             if components
             else None

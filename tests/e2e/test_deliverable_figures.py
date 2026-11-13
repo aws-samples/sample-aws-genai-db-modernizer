@@ -50,6 +50,7 @@ from typing import Any
 import pytest
 
 from src.agents.referee.slice_inputs import slice_inputs
+from src.agents.referee.synthesis_handler import synthesis_path_pricer
 from src.agents.referee.table_assignments import retained_engine_for
 from src.report.formatting import price_list_text
 from src.shared.assumptions import assumption_items
@@ -277,6 +278,14 @@ def test_report_json_facts_are_the_facts_layer_output(run: PipelineResult) -> No
         # as synthesis builds them.
         slice_inputs=slice_inputs(
             _assignment_of_the_job(run, report), collector, report.get("routine_followers") or []
+        ),
+        # #2170: each adoption path re-prices the TCO for its placement, which needs
+        # synthesis's data, so the pricer is the one synthesis builds for the job.
+        path_pricer=synthesis_path_pricer(
+            LocalArtifactStore(base_dir=str(run.artifact_root)),
+            run.db,
+            run.job_id,
+            int((report.get("assignment_summary") or {}).get("version") or 0),
         ),
     )
     assert stored == recomputed, [k for k in stored if stored[k] != recomputed.get(k)]

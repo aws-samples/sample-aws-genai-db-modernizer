@@ -78,7 +78,8 @@ def test_the_adoption_paths_pass_every_contract_validator(run: PipelineResult) -
     # The capped view (#1133): every path when they fit, else the ends and three steps.
     shown = adoption["summary_path_ids"]
     assert len(shown) == min(len(ids), 5) and shown[0] == ids[0] and shown[-1] == ids[-1]
-    assert adoption["cost_basis"] == "full_target_estimates", run.db
+    # #2170: every path is priced for the queries it places on each engine.
+    assert adoption["cost_basis"] == "per_path_sizing", run.db
 
 
 def test_the_full_target_agrees_with_the_headline_and_the_waves(run: PipelineResult) -> None:
@@ -123,6 +124,52 @@ def test_the_relational_move_only_agrees_with_no_migration(run: PipelineResult) 
     assert path["queries_by_engine"] == {relational: facts["in_scope_query_count"]}
     assert path["cost_delta_vs_relational_usd"] == 0.0
     assert path["first_gate"].endswith("The cutover is your responsibility.")
+
+
+def test_the_full_target_is_priced_as_today_s_per_engine_estimates(run: PipelineResult) -> None:
+    """#2170: the full target places no query elsewhere, so each engine's sized estimate
+    is its TCO row, figure and sizing alike."""
+    report = _report(run)
+    rows = {r["database"]: r for r in report["tco_analysis"]["cost_breakdown"]}
+    full = _paths(report)["full_target"]
+    assert {c["engine"] for c in full["engine_costs"]} == set(full["engines"])
+    for cost in full["engine_costs"]:
+        row = rows[cost["engine"]]
+        assert cost["monthly_cost_usd"] == row["monthly_cost_usd"], (run.db, cost["engine"])
+        assert cost["sizing"] == row["sizing"], (run.db, cost["engine"])
+    assert full["monthly_cost_usd"] == report["tco_analysis"]["projected_monthly_cost"]
+
+
+def test_each_path_sizes_its_engines_for_the_queries_it_places_on_them(
+    run: PipelineResult,
+) -> None:
+    """#2170: the relational engine is sized for every query a path leaves on it, each
+    purpose-built engine for the queries the path's steps move to it, and the cache for
+    the reads it fronts, the same on every path that takes its step."""
+    report = _report(run)
+    adoption = report["facts"]["adoption"]
+    cache_sizing = []
+    for path in adoption["paths"]:
+        costs = {c["engine"]: c for c in path["engine_costs"]}
+        assert path["monthly_cost_usd"] == round(
+            sum(c["monthly_cost_usd"] for c in costs.values()), 2
+        )
+        for engine, count in path["queries_by_engine"].items():
+            sizing = costs[engine]["sizing"]
+            assert sizing["basis"] == "assigned_queries", (run.db, path["path_id"], engine)
+            assert sizing["sized_query_count"] == count, (run.db, path["path_id"], engine)
+        # The relational engine is sized for every in-scope query the path leaves on it.
+        relational = report["facts"]["slice_plan"]["plan_steps"][0]["engine"]
+        assert costs[relational]["sizing"]["sized_query_count"] == (
+            report["facts"]["in_scope_query_count"] - path["queries_moved"]
+        ), (run.db, path["path_id"])
+        cache_sizing += [c for e, c in costs.items() if e in CACHE_ENGINES]
+        assert path["cost_delta_vs_relational_usd"] == round(
+            path["monthly_cost_usd"] - adoption["relational_monthly_cost_usd"], 2
+        )
+    assert cache_sizing and all(c == cache_sizing[0] for c in cache_sizing), run.db
+    relational = _paths(report)["relational_only"]
+    assert relational["monthly_cost_usd"] == adoption["relational_monthly_cost_usd"]
 
 
 def test_every_path_is_a_projection_of_the_assignment(run: PipelineResult) -> None:

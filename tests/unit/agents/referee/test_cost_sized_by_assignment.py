@@ -513,3 +513,76 @@ def test_synthesis_stores_them_on_wave_ones_engine(tmp_path) -> None:
     assert rows["aurora_mysql"]["sizing"]["unqueried_table_count"] == 1
     ranked = {r["target"]: r["monthly_cost_usd"] for r in result["ranking"] if r["target"] in rows}
     assert ranked == {e: r["monthly_cost_usd"] for e, r in rows.items()}
+
+
+# #2170: an adoption path places each query on an engine without moving it (no Move,
+# no re-scoring); the TCO sizes each engine for the queries the path places on it, with
+# the same estimators and prices as the full target.
+
+
+def test_a_placement_sizes_each_engine_for_the_queries_it_places_there() -> None:
+    # The path leaves DynamoDB's two queries on Aurora MySQL.
+    placed = {"q2": "aurora_mysql", "q3": "aurora_mysql"}
+    rows = _rows(build_tco_analysis(_data(), placed=placed))
+    aurora = estimate_aurora_costs(
+        _subset({"q1", "q2", "q3", "q4"}, {"shop.orders", "shop.carts"}),
+        "us-east-1",
+        engine="mysql",
+    )
+    assert rows["aurora_mysql"]["monthly_cost_usd"] == aurora.monthly_cost_usd
+    assert rows["aurora_mysql"]["sizing"]["sized_query_count"] == 4
+    assert rows["aurora_mysql"]["sizing"]["calls_per_second"] == 140.0
+    # DynamoDB serves nothing on that path: sized to no query, at its estimator's floor.
+    assert rows["dynamodb"]["sizing"]["sized_query_count"] == 0
+    floor = estimate_dynamodb_costs(_subset(set(), set()))
+    assert rows["dynamodb"]["monthly_cost_usd"] == floor.monthly_cost_usd
+    # The cache fronts the same reads wherever their owner is.
+    assert rows["elasticache"] == _rows(build_tco_analysis(_data()))["elasticache"]
+
+
+def test_no_placement_is_the_full_target_exactly() -> None:
+    full = build_tco_analysis(_data())
+    assert build_tco_analysis(_data(), placed={}) == full
+    assert build_tco_analysis(_data(), placed=None) == full
+    # A placement on the engine a query already has changes nothing either.
+    assert build_tco_analysis(_data(), placed={"q2": "dynamodb", "q1": "aurora_mysql"}) == full
+
+
+def test_a_placement_never_moves_a_query() -> None:
+    data = _data()
+    before = [dict(qa) for qa in data.assignment["query_assignments"]]
+    build_tco_analysis(data, placed={"q2": "aurora_mysql", "q3": "aurora_mysql"})
+    assert data.assignment["query_assignments"] == before
+
+
+def test_a_tied_query_is_sized_where_it_is_placed_never_on_its_tie() -> None:
+    tied = {
+        "query_assignments": [
+            {**qa, "tied_engines": ["dynamodb", "aurora_mysql"]} if qa["query_id"] == "q3" else qa
+            for qa in ASSIGNMENT["query_assignments"]
+        ]
+    }
+    full = _rows(build_tco_analysis(_data(tied)))
+    assert full["dynamodb"]["sizing"]["sized_query_count"] == 2
+    assert full["aurora_mysql"]["sizing"]["sized_query_count"] == 2
+    left = _rows(build_tco_analysis(_data(tied), placed={"q3": "aurora_mysql"}))
+    assert left["dynamodb"]["sizing"]["sized_query_count"] == 1
+    assert left["aurora_mysql"]["sizing"]["sized_query_count"] == 3
+
+
+def test_an_engine_the_full_target_empties_is_sized_for_what_a_path_leaves_on_it() -> None:
+    # Every in-scope query is on DynamoDB in the full target: Aurora MySQL serves none.
+    emptied = {
+        "query_assignments": [
+            {**qa, "assigned_engine": "dynamodb"} if qa.get("in_scope", True) else qa
+            for qa in ASSIGNMENT["query_assignments"]
+        ]
+    }
+    full = _rows(build_tco_analysis(_data(emptied)))
+    assert full["aurora_mysql"]["sizing"]["sized_query_count"] == 0
+    back = {q: "aurora_mysql" for q in ("q1", "q2", "q3", "q4")}
+    path = _rows(build_tco_analysis(_data(emptied), placed=back))
+    assert path["aurora_mysql"]["sizing"]["sized_query_count"] == 4
+    assert path["dynamodb"]["sizing"]["sized_query_count"] == 0
+    # An out-of-scope query is placed nowhere, whatever the placement says.
+    assert _rows(build_tco_analysis(_data(emptied), placed={**back, "q5": "aurora_mysql"})) == path

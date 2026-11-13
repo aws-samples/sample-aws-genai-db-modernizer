@@ -25,14 +25,23 @@ on the relational engine a query the customer gate refuses there
 (``SliceInputs.relational_gate_failures``) is not offered; its closure, the first path that
 moves every such query, is offered instead. The one-step form of the full target states
 the plan's counts and the three "suits one step" checks, which describe the workload's
-shape only: no figure here says how or when to cut over. Every cost rests on each
-engine's full-target estimate (``cost_basis``, #2170), and ``summary_path_ids`` names the
+shape only: no figure here says how or when to cut over. ``summary_path_ids`` names the
 paths a view capped at five rows shows.
+
+Each path is priced for itself (#2170): synthesis passes a ``PathPricer``, the TCO's own
+sizing (the same estimators and prices as the full target) run with the path's placement,
+each query whose step the path does not take placed on the relational engine. A path's
+``engine_costs`` are its engines' sized estimates and its cost their sum, and its
+difference is measured from the relational move only priced the same way
+(``relational_monthly_cost_usd``); ``cost_basis`` is ``per_path_sizing``. The full target
+places nothing, so it is the headline's per-engine estimates. Without a pricer (a caller
+with no TCO to price from) every cost is each engine's full-target estimate, stated as
+``full_target_estimates``.
 """
 
 from __future__ import annotations
 
-from collections.abc import Iterable, Mapping
+from collections.abc import Callable, Iterable, Mapping
 from typing import TYPE_CHECKING, Any
 
 from src.contracts.synthesis_output import (
@@ -51,7 +60,13 @@ from src.shared.slice_plan import build_slice_plan
 if TYPE_CHECKING:
     from src.shared.move_units import SliceInputs
 
-__all__ = ["adoption_facts", "holding_risks", "slice_plan_facts"]
+__all__ = ["PathPricer", "adoption_facts", "holding_risks", "slice_plan_facts"]
+
+# #2170: by engine, its estimate for a placement (query id -> the engine a path places it
+# on instead of its assigned one): ``{"engine", "monthly_cost_usd", ...}``, an
+# ``AdoptionEngineCost``. Synthesis builds it from the TCO's own sizing; an empty
+# placement is the full target.
+PathPricer = Callable[[Mapping[str, str]], Mapping[str, Mapping[str, Any]]]
 
 
 def holding_risks(report: Mapping[str, Any]) -> list[dict[str, Any]]:
@@ -111,20 +126,26 @@ def adoption_facts(
     report: Mapping[str, Any],
     slice_plan: Mapping[str, Any] | None,
     inputs: SliceInputs | None = None,
+    price: PathPricer | None = None,
 ) -> dict[str, Any]:
     """``facts.adoption`` for ``report`` and its ``slice_plan``: the paths, those not
     offered and the one-step form (#1130, #473). ``inputs`` carries the customer gate's
     answer for the relational engine (``relational_gate_failures``); without it no query
-    is gated. A plan with no steps has no path."""
+    is gated. ``price`` prices each path for the queries it places on each engine
+    (#2170); without it every path states the full target's estimates. A plan with no
+    steps has no path."""
     plan = SlicePlanFacts.model_validate(slice_plan) if slice_plan is not None else None
-    adoption = _adoption(report, plan, inputs) if plan is not None else AdoptionFacts()
+    adoption = _adoption(report, plan, inputs, price) if plan is not None else AdoptionFacts()
     if plan is not None:
         check_adoption_against_plan(adoption, plan)
     return adoption.model_dump(mode="json")
 
 
 def _adoption(
-    report: Mapping[str, Any], plan: SlicePlanFacts, inputs: SliceInputs | None
+    report: Mapping[str, Any],
+    plan: SlicePlanFacts,
+    inputs: SliceInputs | None,
+    price: PathPricer | None = None,
 ) -> AdoptionFacts:
     steps = plan.plan_steps
     if not steps:
@@ -146,6 +167,7 @@ def _adoption(
     stops = [lead, *range(lead + 1, last)] if relational is not None else []
     if last > lead or relational is None:
         stops.append(last)
+    priced = _Priced(plan, step_of, relational.engine if relational else None, price)
     paths, not_offered = [], []
     for stop in dict.fromkeys(stops):
         path_id = _path_id(stop, lead, last, relational is not None)
@@ -163,7 +185,7 @@ def _adoption(
                 }
             )
             continue
-        paths.append(_path(report, plan, stop, path_id))
+        paths.append(_path(report, plan, stop, path_id, priced))
     if relational is None:
         not_offered.insert(
             0,
@@ -182,15 +204,67 @@ def _adoption(
             "path_count": len(paths),
             # #1133's capped table: the first and last paths and evenly spaced steps.
             "summary_path_ids": summary_path_ids(ids),
-            # #2170: every cost is the full target's per-engine estimates, stated once.
-            "cost_basis": "full_target_estimates" if paths else None,
-            "cost_basis_note": (
-                ADOPTION_COST_BASIS_NOTES["full_target_estimates"] if paths else None
+            # #2170: what every path's cost rests on, stated once.
+            "cost_basis": priced.basis if paths else None,
+            "cost_basis_note": ADOPTION_COST_BASIS_NOTES[priced.basis] if paths else None,
+            "relational_monthly_cost_usd": (
+                # #2170 review: no relational step, no relational move only to price.
+                priced.relational_cost()
+                if paths and price is not None and relational is not None
+                else None
             ),
             "not_offered": not_offered,
             "one_step": _one_step(plan) if "full_target" in ids else None,
         }
     )
+
+
+class _Priced:
+    """Each engine's cost on a path (#2170): the pricer's, for the path's placement, or,
+    with no pricer, the plan's full-target estimates."""
+
+    def __init__(
+        self,
+        plan: SlicePlanFacts,
+        step_of: Mapping[str, int],
+        relational: str | None,
+        price: PathPricer | None,
+    ) -> None:
+        self.plan, self.step_of, self.relational, self.price = plan, step_of, relational, price
+        self.basis = "per_path_sizing" if price is not None else "full_target_estimates"
+        self._cache: dict[frozenset[tuple[str, str]], Mapping[str, Mapping[str, Any]]] = {}
+
+    def engines(self, stop: int) -> Mapping[str, Mapping[str, Any]]:
+        """By engine, its estimate when the plan stops after step ``stop``: every query a
+        later step moves stays on the relational engine. Empty with no pricer."""
+        if self.price is None:
+            return {}
+        relational = self.relational
+        placed = (
+            {q: relational for q, k in self.step_of.items() if k > stop}
+            if relational is not None
+            else {}
+        )
+        key = frozenset(placed.items())
+        if key not in self._cache:
+            self._cache[key] = self.price(placed)
+        return self._cache[key]
+
+    def cost(self, engine: str, stop: int) -> float:
+        if self.price is None:
+            return self.plan.engine_monthly_cost_usd[engine]
+        return float(self.engines(stop)[engine]["monthly_cost_usd"])
+
+    def engine_costs(self, engines: list[str], stop: int) -> list[dict[str, Any]]:
+        priced = self.engines(stop)
+        return [dict(priced[e]) for e in engines] if priced else []
+
+    def relational_cost(self) -> float:
+        """The relational move only's cost: the engines of the steps that move no query,
+        with every moving query on the relational engine."""
+        steps = self.plan.plan_steps
+        baseline = dict.fromkeys(s.engine for s in steps if s.kind in NO_MOVE_STEP_KINDS)
+        return round(sum(self.cost(e, 0) for e in baseline), 2)
 
 
 def _path_id(stop: int, lead: int, last: int, relational: bool) -> str:
@@ -231,7 +305,11 @@ def _reverse_streams(plan: SlicePlanFacts, steps: list[SliceStep]) -> int:
 
 
 def _path(
-    report: Mapping[str, Any], plan: SlicePlanFacts, stop: int, path_id: str
+    report: Mapping[str, Any],
+    plan: SlicePlanFacts,
+    stop: int,
+    path_id: str,
+    priced: _Priced,
 ) -> dict[str, Any]:
     """The path that stops after step ``stop``: every figure from steps 1 to ``stop``."""
     from src.shared.report_facts import cost_baseline_known
@@ -246,11 +324,10 @@ def _path(
     for s in moving:
         by_engine[s.engine] = by_engine.get(s.engine, 0) + s.query_count
     engines = list(dict.fromkeys(s.engine for s in taken))
-    costs = plan.engine_monthly_cost_usd
-    cost = round(sum(costs[e] for e in engines), 2)
-    # The relational-only end state: the engines of the steps that move no query.
-    baseline = {s.engine for s in steps if s.kind in NO_MOVE_STEP_KINDS}
-    relational_cost = round(sum(costs[e] for e in baseline), 2)
+    cost = round(sum(priced.cost(e, stop) for e in engines), 2)
+    # The relational-only end state: the engines of the steps that move no query, priced
+    # with every moving query on the relational engine (#2170).
+    relational_cost = priced.relational_cost()
     tco = report.get("tco_analysis") or {}
     current = tco.get("current_monthly_cost") if cost_baseline_known(tco) else None
     units = {u.key: u for u in plan.move_units}
@@ -279,16 +356,16 @@ def _path(
         "queries_by_engine": by_engine,
         "tables_migrate": sum(s.owned_table_count for s in moving),
         "monthly_cost_usd": cost,
+        # #2170: each engine's estimate for the queries this path places on it.
+        "engine_costs": priced.engine_costs(engines, stop),
         "cost_delta_vs_relational_usd": round(cost - relational_cost, 2),
         "cost_delta_vs_current_usd": (
             round(cost - float(current), 2)
             if isinstance(current, (int, float)) and not isinstance(current, bool)
             else None
         ),
-        # Each engine's estimate is the TCO's, sized for the queries it serves in the
-        # full target (``sizing.basis`` ``assigned_queries``). A path that leaves more
-        # queries on the relational engine does not resize it, so its cost is no upper
-        # bound (#2170).
+        # An estimate, not a bound: with a pricer each engine is sized for the queries
+        # the path places on it; without one, for the full target's (#2170).
         "cost_is_upper_bound": False,
         "critical_high_risks": sum(plan.engine_critical_high_risks[e] for e in engines),
         "replicated_tables": replicated,

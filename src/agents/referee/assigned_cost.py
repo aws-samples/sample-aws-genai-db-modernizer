@@ -13,6 +13,10 @@ cache-aside miss reaches it, and the miss rate is unknown. Wave 1 moves the whol
 database, so the tables no in-scope query reads (``unqueried_tables``) are stored on wave
 1's Aurora engine (#1378).
 
+An adoption path (#2170) prices the same way: ``placed`` places each query a path leaves
+on the relational engine there, for this estimate only. It records no Move and never
+writes the assignment, so the full target (no placement) is the TCO's own figure.
+
 The routing score never reads this: its cost dimension is its own per-query model
 (``query_cost``, ADR-031 Decision 5), so the TCO can change without moving a query.
 """
@@ -53,17 +57,24 @@ def _in_scope(assignment: Mapping[str, Any] | None) -> list[Mapping[str, Any]]:
     return [qa for qa in rows if isinstance(qa, Mapping) and qa.get("in_scope", True)]
 
 
-def engine_queries(assignment: Mapping[str, Any] | None, engine: str) -> tuple[str, list[str]]:
+def engine_queries(
+    assignment: Mapping[str, Any] | None,
+    engine: str,
+    placed: Mapping[str, str] | None = None,
+) -> tuple[str, list[str]]:
     """The basis and the in-scope query ids an engine is sized for.
 
     An engine that owns queries is sized for them (and any reads it also fronts); an
     engine that owns none and fronts reads is the cache layer, sized for those reads.
+    ``placed`` (#2170) puts a query on another engine for this sizing only: an adoption
+    path's view of where each query runs, never a Move.
     """
     owned: list[str] = []
     fronted: list[str] = []
+    placed = placed or {}
     for qa in _in_scope(assignment):
         qid = str(qa.get("query_id") or "")
-        if qa.get("assigned_engine") == engine:
+        if placed.get(qid, qa.get("assigned_engine")) == engine:
             owned.append(qid)
         elif qa.get("cache_engine") == engine and not qa.get("cache_dropped"):
             fronted.append(qid)
@@ -161,11 +172,13 @@ def sized_cost_estimate(
     collector: Mapping[str, Any],
     assignment: Mapping[str, Any] | None,
     unqueried: list[Mapping[str, Any]] | None = None,
+    placed: Mapping[str, str] | None = None,
 ) -> tuple[CostEstimate, dict[str, Any]] | None:
     """The engine's own estimate over its assigned queries, and the basis it was sized on.
 
     ``unqueried`` (#1378) is the tables no in-scope query reads, given for the engine
     that stores them (wave 1's Aurora engine): they are priced with its own tables.
+    ``placed`` (#2170) is an adoption path's placement (``engine_queries``).
 
     None when there is no assignment to size from or no estimator for the engine; the
     caller then keeps the analysis estimate. An assignment with queries but none in scope
@@ -183,7 +196,7 @@ def sized_cost_estimate(
             pricing_assumptions=["No query of the assignment is in scope: nothing to size."],
         )
         return nothing, _sizing(NO_IN_SCOPE_QUERIES, [], [])
-    basis, qids = engine_queries(assignment, engine)
+    basis, qids = engine_queries(assignment, engine, placed)
     wanted = set(qids)
     patterns = (collector.get("queries") or {}).get("query_patterns") or []
     queries = [q for q in patterns if isinstance(q, Mapping) and q.get("query_id") in wanted]
