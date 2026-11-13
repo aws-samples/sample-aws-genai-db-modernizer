@@ -42,10 +42,9 @@ from src.report.adoption import (
     DEFINITIONS,
     ONE_STEP_DOES_NOT_SUIT,
     ONE_STEP_SUITS,
-    adoption_md,
     adoption_paths_shown,
-    wave_stages_md,
 )
+from src.report.adoption_paths_md import adoption_md, wave_stages_md
 from src.report.formatting import _SaidOnce
 from src.report.renderers import render_engineering_report_md
 from src.shared.adoption_facts import adoption_facts

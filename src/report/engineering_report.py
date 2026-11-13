@@ -39,7 +39,7 @@ from src.shared.workload_fit_labels import (
 )
 
 from . import escaping
-from .adoption import adoption_md
+from .adoption_paths_md import adoption_md
 from .architecture import (
     KEPT_IN_SYNC_NOTE,
     KEPT_IN_SYNC_SOURCES_NOTE,

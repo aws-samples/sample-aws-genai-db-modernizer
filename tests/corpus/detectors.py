@@ -976,6 +976,7 @@ NOT_PROSE_DETECTORS: dict[str, str] = {
     f"{_EXEC}:contrast_ratio": "compares two colours",
     f"{_EXEC}:card_mitigation": "without_table_names over a risk's mitigation, registered",
     f"{_EXEC}:build_story": "lays out the PDF from a report",
+    f"{_EXEC}:section_headings": "names the report's pages, not prose (#1133)",
     f"{_EXEC}:render_executive_report_pdf": "writes the PDF",
     "src/agents/referee/synthesis_prose.py:clean_schema_design_prose": (
         "clean_model_prose over each model-written field of a schema design, registered"
