@@ -132,10 +132,15 @@ _ROWS = [
      ("TEXT", False), ("LONGTEXT", False)),
     ("ms-ntext", "sqlserver", _col("ntext", "text", max_length=8),
      ("TEXT", False), ("LONGTEXT", False)),
-    ("ms-varchar-max", "sqlserver", _col("varchar", "string"),
+    ("ms-varchar-max", "sqlserver", _col("varchar", "string", max_length=-1),
      ("TEXT", False), ("LONGTEXT", False)),
-    ("ms-nvarchar-max", "sqlserver", _col("nvarchar", "string"),
+    ("ms-nvarchar-max", "sqlserver", _col("nvarchar", "string", max_length=-1),
      ("TEXT", False), ("LONGTEXT", False)),
+    # No length collected: may be (max), may be a trimmed collection; flagged (ADR-028 D1).
+    ("ms-varchar-no-length", "sqlserver", _col("varchar", "string"),
+     ("TEXT", True), ("LONGTEXT", True)),
+    ("ms-nvarchar-no-length", "sqlserver", _col("nvarchar", "string"),
+     ("TEXT", True), ("LONGTEXT", True)),
     ("ms-nvarchar-max-ddl", "sqlserver", _col("nvarchar(MAX)", "string"),
      ("TEXT", False), ("LONGTEXT", False)),
     ("ms-varchar-max-ddl", "sqlserver", _col("VARCHAR(max)", "string"),
@@ -147,8 +152,10 @@ _ROWS = [
     ("ora-blob-ddl", "oracle", _col("BLOB", "blob"), ("BYTEA", False), ("LONGBLOB", False)),
     ("ms-image", "sqlserver", _col("image", "binary", max_length=16),
      ("BYTEA", False), ("LONGBLOB", False)),
-    ("ms-varbinary-max", "sqlserver", _col("varbinary", "binary"),
+    ("ms-varbinary-max", "sqlserver", _col("varbinary", "binary", max_length=-1),
      ("BYTEA", False), ("LONGBLOB", False)),
+    ("ms-varbinary-no-length", "sqlserver", _col("varbinary", "binary"),
+     ("BYTEA", False), ("LONGBLOB", True)),
     ("ms-varbinary-max-ddl", "sqlserver", _col("varbinary(max)", "binary"),
      ("BYTEA", False), ("LONGBLOB", False)),
     # RAW(n), varbinary(n) -> BYTEA | VARBINARY(n)
@@ -160,6 +167,10 @@ _ROWS = [
      ("BYTEA", False), ("VARBINARY(16)", False)),
     ("ms-varbinary-ddl", "sqlserver", _col("varbinary(8000)", "binary", max_length=8000),
      ("BYTEA", False), ("VARBINARY(8000)", False)),
+    # Wider than SQL Server's 8000: Aurora MySQL's 65,535-byte row is shared, so off-row.
+    ("ora-raw-extended", "oracle", _col("raw", "binary", max_length=32767),
+     ("BYTEA", False), ("LONGBLOB", False)),
+    ("ora-raw-no-length", "oracle", _col("raw", "binary"), ("BYTEA", False), ("LONGBLOB", True)),
 ]  # fmt: skip
 
 
@@ -186,9 +197,21 @@ def test_aurora_mysql_type(engine, column, expected, flagged):
 
 def test_precision_over_six_says_how_many_digits_are_lost():
     col, result = _one(MY, "sqlserver", _col("datetime2", "timestamp", numeric_scale=7))
-    assert "7 fractional-second digits" in col.judgment_reason
+    assert "keeps 7 fractional-second digits" in col.judgment_reason
     assert "at most 6" in col.judgment_reason
     assert result.residuals[0]["fallback_type"] == "DATETIME(6)"
+
+
+@pytest.mark.parametrize("target", [PG, MY])
+@pytest.mark.parametrize("data_type", ["datetime2", "datetimeoffset", "time"])
+def test_uncollected_precision_is_not_stated_as_fact(data_type, target):
+    """No digits in the type and none collected: the reason says so, and names the
+    source default (7) as what the column has only if it left them unset."""
+    col, _ = _one(target, "sqlserver", _col(data_type, "timestamp"))
+    assert col.needs_judgment
+    assert "were not collected" in col.judgment_reason
+    assert "default, if the column left them unset, is 7" in col.judgment_reason
+    assert "keeps 7" not in col.judgment_reason
 
 
 @pytest.mark.parametrize(
@@ -209,6 +232,72 @@ def test_offset_and_precision_flags_are_both_given():
     col, _ = _one(MY, "sqlserver", _col("datetimeoffset", "timestamp", numeric_scale=7))
     assert "offset" in col.judgment_reason
     assert "7 fractional-second digits" in col.judgment_reason
+
+
+@pytest.mark.parametrize(
+    ("engine", "data_type", "normalized"),
+    [
+        ("oracle", "clob", "text"),
+        ("oracle", "blob", "binary"),
+        ("sqlserver", "nvarchar(MAX)", "string"),
+        ("sqlserver", "ntext", "text"),
+        ("sqlserver", "image", "binary"),
+        ("sqlserver", "nvarchar", "string"),  # no length collected
+    ],
+)
+def test_mysql_lob_in_a_key_is_a_residual_not_error_1170(engine, data_type, normalized):
+    """A LOB column in a key: Aurora MySQL cannot index LONGTEXT/LONGBLOB in full (ERROR
+    1170), so the draft gives a flagged VARCHAR(255), as for a PostgreSQL text key."""
+    key = {**_col(data_type, normalized), "column_name": "k", "nullable": False}
+    table = AgentTable.model_validate(
+        {"table_id": "db.t", "table_name": "t", "row_count": 1, "columns": [key],
+         "primary_key": ["k"]}
+    )  # fmt: skip
+    result = generate_mysql_ddl([table], source_engine=engine)
+    col = result.tables[0].columns[0]
+    assert (col.aurora_type, col.needs_judgment) == ("VARCHAR(255)", True)
+    assert "cannot be indexed directly" in col.judgment_reason
+    assert "LONG" not in result.full_ddl
+    # Aurora PostgreSQL indexes TEXT and BYTEA: nothing to flag there.
+    pg = generate_pg_ddl([table], source_engine=engine).tables[0].columns[0]
+    assert pg.aurora_type in ("TEXT", "BYTEA")
+    assert pg.needs_judgment is (data_type == "nvarchar")
+
+
+@pytest.mark.parametrize(
+    ("engine", "data_type", "normalized", "aurora_type"),
+    [
+        ("oracle", "clob", "text", "LONGTEXT"),
+        ("sqlserver", "nvarchar(MAX)", "string", "LONGTEXT"),
+        ("sqlserver", "varbinary(max)", "binary", "LONGBLOB"),
+    ],
+)
+def test_mysql_lob_with_a_default_is_a_residual(engine, data_type, normalized, aurora_type):
+    """Aurora MySQL takes only an expression DEFAULT on a LOB: flagged, not dropped silently."""
+    col, result = _one(MY, engine, _col(data_type, normalized, default_value="'n/a'"))
+    assert (col.aurora_type, col.needs_judgment) == (aurora_type, True)
+    assert "has a DEFAULT" in col.judgment_reason
+    assert [r["column"] for r in result.residuals] == ["c"]
+
+
+def test_no_length_in_a_key_keeps_both_reasons():
+    key = {**_col("nvarchar", "string"), "column_name": "k", "nullable": False}
+    table = AgentTable.model_validate(
+        {"table_id": "db.t", "table_name": "t", "row_count": 1, "columns": [key],
+         "primary_key": ["k"]}
+    )  # fmt: skip
+    col = generate_mysql_ddl([table], source_engine="sqlserver").tables[0].columns[0]
+    assert "no known length" in col.judgment_reason
+    assert "cannot be indexed directly" in col.judgment_reason
+
+
+def test_two_extended_raw_columns_fit_one_mysql_row():
+    """Two RAW(32767) columns would need 65,534 bytes in one row (ERROR 1118 with the
+    row's other columns): both go off-row as LONGBLOB."""
+    raw = [{**_col("raw", "binary", max_length=32767), "column_name": n} for n in ("a", "b")]
+    result = generate_mysql_ddl([_table(raw)], source_engine="oracle")
+    assert [c.aurora_type for c in result.tables[0].columns] == ["LONGBLOB", "LONGBLOB"]
+    assert "VARBINARY" not in result.full_ddl
 
 
 @pytest.mark.parametrize("target", [PG, MY])
@@ -314,8 +403,10 @@ _DNN = {
     ("SiteLog", "DateTime"): ("smalldatetime", "TIMESTAMP(0)", "DATETIME"),
     ("aspnet_Membership", "Comment"): ("ntext", "TEXT", "LONGTEXT"),
     ("Files", "Content"): ("image", "BYTEA", "LONGBLOB"),
-    ("ContentItems", "Content"): ("nvarchar(max)", "TEXT", "LONGTEXT"),
 }
+# Offline (max): collect-sqlserver.sql emits no length for -1, which cannot be told
+# from a length that was not collected, so the LOB is the fallback and it is flagged.
+_DNN_NO_LENGTH = ("ContentItems", "Content")
 
 
 @pytest.mark.parametrize("target", [PG, MY])
@@ -332,12 +423,30 @@ def test_dnn_sample_end_to_end(dnn_tables, target):
         (t.table_name, c.column_name)
         for t in dnn_tables
         for c in t.columns
-        if c.data_type in lob_or_time or (c.data_type == "nvarchar" and c.max_length is None)
+        if c.data_type in lob_or_time
     }
     assert len(in_scope) > 300
     forbidden = {"TIMESTAMPTZ"} if target == PG else {"TIMESTAMP", "TEXT", "BLOB"}
     assert not {k: types[k] for k in in_scope if types[k].split("(")[0] in forbidden}
-    assert not [r for r in result.residuals if (r["table"], r["column"]) in in_scope]
+    # Only a LOB with a DEFAULT is left for review on Aurora MySQL (an expression default only).
+    defaults = {
+        (t.table_name, c.column_name) for t in dnn_tables for c in t.columns if c.default_value
+    }
+    left = [r for r in result.residuals if (r["table"], r["column"]) in in_scope]
+    assert all((r["table"], r["column"]) in defaults for r in left)
+    assert all("has a DEFAULT" in r["reason"] for r in left)
+    assert bool(left) is (target == MY)
+    no_length = {
+        (t.table_name, c.column_name)
+        for t in dnn_tables
+        for c in t.columns
+        if c.data_type == "nvarchar" and c.max_length is None
+    }
+    assert _DNN_NO_LENGTH in no_length
+    flagged = {(r["table"], r["column"]): r for r in result.residuals}
+    assert types[_DNN_NO_LENGTH] == ("TEXT" if target == PG else "LONGTEXT")
+    assert all("may be (max)" in flagged[k]["reason"] for k in no_length if k in flagged)
+    assert no_length <= set(flagged)
 
 
 def _oracle_live_tables() -> list[AgentTable]:
@@ -439,4 +548,34 @@ def test_sqlserver_live_collection_end_to_end(target):
              "pic": "LONGBLOB", "bin": "VARBINARY(16)", "big": "LONGBLOB"},
     }[target]  # fmt: skip
     assert {c: types[c] for c in expected} == expected
-    assert [r["column"] for r in result.residuals] == ["at"]  # datetime2(7): 1 digit lost
+    # datetime2(7) loses a digit. The collector turns max_length -1 into no length, so
+    # the (max) columns are flagged too (BYTEA on Aurora PostgreSQL needs no length).
+    flagged = {PG: ["at", "notes"], MY: ["at", "notes", "big"]}[target]
+    assert [r["column"] for r in result.residuals] == flagged
+
+
+@pytest.mark.parametrize("target", [PG, MY])
+def test_adventureworks_trimmed_lengthless_strings_stay_flagged(target):
+    """The trimmed AdventureWorks fixture has no max_length on its strings (nvarchar(50)
+    and the like in the public sample): each is a residual, never a silent (max) LOB."""
+    path = _ROOT / "tests" / "fixtures" / "adventureworks_trimmed_collection.json"
+    raw = json.loads(path.read_text())["database_schema"]["tables"]
+    # The fixture leaves out nullable and row_count; neither bears on the column type.
+    tables = [
+        AgentTable.model_validate(
+            {**t, "row_count": 1, "columns": [{"nullable": True, **c} for c in t["columns"]]}
+        )
+        for t in raw
+    ]
+    result = _generate(target, tables, "sqlserver")
+    lengthless = {
+        (t.table_name, c.column_name)
+        for t in tables
+        for c in t.columns
+        if c.data_type in ("varchar", "nvarchar") and c.max_length is None
+    }
+    assert len(lengthless) == 8
+    flagged = {(r["table"], r["column"]) for r in result.residuals}
+    assert lengthless <= flagged
+    types = _types(result)
+    assert {types[k] for k in lengthless} == {"TEXT" if target == PG else "LONGTEXT"}

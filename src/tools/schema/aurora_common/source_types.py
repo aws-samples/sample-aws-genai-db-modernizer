@@ -422,26 +422,37 @@ def _pg_to_mysql_type(p: _Parsed, indexed: bool) -> TypeResolution | str | None:
     return None
 
 
-def _pg_to_mysql(p: _Parsed, indexed: bool, has_default: bool) -> TypeResolution | str | None:
-    result = _pg_to_mysql_type(p, indexed)
+def _mysql_lob_guard(
+    result: TypeResolution | str | None, what: str, indexed: bool, has_default: bool
+) -> TypeResolution | str | None:
+    """A residual for an Aurora MySQL LOB/JSON/GEOMETRY column in a key or index (no full
+    index key, ERROR 1170) or with a DEFAULT (an expression default only). ``what`` names
+    the source column ("PostgreSQL text"); a reason already given is kept in front."""
     aurora_type = result.aurora_type if isinstance(result, TypeResolution) else result
     if aurora_type not in _MYSQL_UNINDEXABLE:
         return result
-    what = "array" if p.arrays else p.base
+    before = result.reason + " " if isinstance(result, TypeResolution) and result.reason else ""
     if indexed:
         return _residual(
             "VARCHAR(255)",
-            f"PostgreSQL {what} column is part of a key or index, but its Aurora MySQL type "
+            f"{before}{what} column is part of a key or index, but its Aurora MySQL type "
             f"{aurora_type} cannot be indexed directly; confirm a VARCHAR(n) length, a "
             "generated column or a prefix/functional index.",
         )
     if has_default:
         return _residual(
             aurora_type,
-            f"PostgreSQL {what} column has a DEFAULT, but Aurora MySQL {aurora_type} columns "
+            f"{before}{what} column has a DEFAULT, but Aurora MySQL {aurora_type} columns "
             "take only an expression default; confirm DEFAULT (expr) or drop it.",
         )
     return result
+
+
+def _pg_to_mysql(p: _Parsed, indexed: bool, has_default: bool) -> TypeResolution | str | None:
+    what = "array" if p.arrays else p.base
+    return _mysql_lob_guard(
+        _pg_to_mysql_type(p, indexed), f"PostgreSQL {what}", indexed, has_default
+    )
 
 
 def _mysql_to_pg(p: _Parsed, indexed: bool) -> str | None:
@@ -496,9 +507,15 @@ def _mysql_to_pg(p: _Parsed, indexed: bool) -> str | None:
 # (``timestamp(6) with time zone``) with the fractional digits also in
 # ``numeric_scale`` (DATA_SCALE); SQL Server rows read the bare ``sys.types``
 # name (``datetime2``) with the digits in ``numeric_scale`` (``sys.columns.scale``)
-# and no ``max_length`` for a ``(max)`` type (-1 is read as unbounded); a DDL
-# upload keeps the type as written (``DATETIME2(7)``, ``nvarchar(MAX)``, ``RAW(16)``).
-# A LOB's ``max_length`` (Oracle 4000, SQL Server 16) is its locator, not a bound.
+# and no ``max_length`` for a ``(max)`` type; in a DDL upload, ``ddl_parser`` keeps
+# the base name in ``data_type`` and the type as written in ``column_type``, which
+# ``mysql_collector._native_type`` promotes (``DATETIME2(7)``, ``nvarchar(MAX)``,
+# ``RAW(16)``). A LOB's ``max_length`` (Oracle 4000, SQL Server 16) is its locator,
+# not a bound. A (max) type is unflagged only when the type says so (``(MAX)``) or
+# ``max_length`` is -1: the collector contract turns -1 into an absent length, which
+# a trimmed collection or a bare T-SQL ``varchar`` (length 1) also has, so an absent
+# length is a residual with the LOB as its fallback (ADR-028 Decision 1: never a
+# silent guess).
 
 _FRACTIONAL_MAX = 6  # both Aurora engines keep at most microseconds
 _MAX_LENGTH = re.compile(r"\(\s*max\s*\)\s*$")
@@ -529,19 +546,53 @@ _SQLSERVER_NATIVE = {
     "varbinary": ("varbinary", None),
 }
 _NATIVE_LABEL = {"oracle": "Oracle", "sqlserver": "SQL Server"}
-_MYSQL_VARBINARY_MAX = 65535  # bytes in a MySQL row
+# SQL Server's own varbinary(n) ceiling. Aurora MySQL shares 65,535 bytes across a
+# whole row, so a wider column (Oracle extended RAW, up to 32767) goes off-row as
+# LONGBLOB: two VARBINARY(32767) columns would fail CREATE TABLE (ERROR 1118).
+_MYSQL_INLINE_VARBINARY_MAX = 8000
+_SQLSERVER_NO_LENGTH = (
+    "SQL Server reports a (max) column with no length, so it may be (max); confirm (max) "
+    "or the column's length."
+)
 
 
-def _native_digits(explicit: tuple[int, ...], default: int, *candidates: int | None) -> int:
-    """The type's fractional-second digits: written in the type, else collected, else
-    the source's default."""
+def _native_digits(
+    explicit: tuple[int, ...], default: int, *candidates: int | None
+) -> tuple[int, bool]:
+    """The type's fractional-second digits, written in the type or else collected, and
+    True; else the source's default and False (not collected)."""
     for value in (explicit[0] if explicit else None, *candidates):
         if value is not None and 0 <= value <= 9:
-            return value
-    return default
+            return value, True
+    return default, False
 
 
 def _hetero_type(
+    data_type: str,
+    *,
+    source_family: str,
+    target: str,
+    max_length: int | None,
+    numeric_scale: int | None,
+    datetime_precision: int | None,
+    indexed: bool = False,
+    has_default: bool = False,
+) -> TypeResolution | str | None:
+    result = _hetero_base_type(
+        data_type,
+        source_family=source_family,
+        target=target,
+        max_length=max_length,
+        numeric_scale=numeric_scale,
+        datetime_precision=datetime_precision,
+    )
+    if target != "aurora_mysql" or result is None:
+        return result
+    base = data_type.strip().split("(")[0].lower()
+    return _mysql_lob_guard(result, f"{_NATIVE_LABEL[source_family]} {base}", indexed, has_default)
+
+
+def _hetero_base_type(
     data_type: str,
     *,
     source_family: str,
@@ -566,36 +617,50 @@ def _hetero_type(
         return "TEXT" if pg else "LONGTEXT"
     if kind == "blob":
         return "BYTEA" if pg else "LONGBLOB"
+    unbounded = unbounded or max_length == -1
+    length = params[0] if params else (max_length if max_length and max_length > 0 else None)
     if kind == "max_text":
         # (n)varchar(n) keeps the normalized VARCHAR(n); only (max) is a LOB.
-        if params or (max_length and not unbounded):
+        if length and not unbounded:
             return None
-        return "TEXT" if pg else "LONGTEXT"
+        lob = "TEXT" if pg else "LONGTEXT"
+        if unbounded:
+            return lob
+        return _residual(
+            lob, f"SQL Server {name} column has no known length. {_SQLSERVER_NO_LENGTH}"
+        )
     if kind == "varbinary":
-        length = None if unbounded else (params[0] if params else max_length)
         if pg:
-            return "BYTEA"
-        if not length or length <= 0:
-            if source_family == "sqlserver":  # varbinary(max)
-                return "LONGBLOB"
+            return "BYTEA"  # BYTEA holds any length: nothing is guessed
+        if unbounded:
+            return "LONGBLOB"
+        if not length:
+            label = "Oracle RAW" if source_family == "oracle" else "SQL Server varbinary"
+            more = "" if source_family == "oracle" else f" {_SQLSERVER_NO_LENGTH}"
             return _residual(
-                "LONGBLOB", "Oracle RAW column has no known length; confirm VARBINARY(n)."
+                "LONGBLOB", f"{label} column has no known length; confirm VARBINARY(n).{more}"
             )
-        return f"VARBINARY({length})" if length <= _MYSQL_VARBINARY_MAX else "LONGBLOB"
+        return f"VARBINARY({length})" if length <= _MYSQL_INLINE_VARBINARY_MAX else "LONGBLOB"
     if kind == "date0":
         return "TIMESTAMP(0)" if pg else "DATETIME"
     if kind == "datetime3":
         return "TIMESTAMP(3)" if pg else "DATETIME(3)"
     assert default is not None  # nosec B101 -- every temporal kind has a default
-    digits = _native_digits(params, default, datetime_precision, numeric_scale)
+    digits, collected = _native_digits(params, default, datetime_precision, numeric_scale)
     kept = min(digits, _FRACTIONAL_MAX)
     source = f"{_NATIVE_LABEL[source_family]} {name}"
     reasons = []
     if digits > _FRACTIONAL_MAX:
+        held = (
+            f"{source} keeps {digits} fractional-second digits"
+            if collected
+            else f"{source}'s fractional-second digits were not collected; the source "
+            f"default, if the column left them unset, is {digits}"
+        )
         reasons.append(
-            f"{source} keeps {digits} fractional-second digits and {display_engine(target)} "
-            f"keeps at most {_FRACTIONAL_MAX}: the extra digits are lost on load, and values "
-            "that differ only there collide in a key or join. Confirm 6 digits are enough."
+            f"{held}, and {display_engine(target)} keeps at most {_FRACTIONAL_MAX}: any extra "
+            "digits are lost on load, and values that differ only there collide in a key or "
+            "join. Confirm 6 digits are enough."
         )
     if kind == "time":
         aurora_type = f"TIME({kept})"
@@ -689,6 +754,8 @@ def resolve_source_type(
             max_length=max_length,
             numeric_scale=numeric_scale,
             datetime_precision=datetime_precision,
+            indexed=indexed,
+            has_default=has_default,
         )
     elif source_family == "postgresql":
         parsed = _parse_pg(data_type, max_length)

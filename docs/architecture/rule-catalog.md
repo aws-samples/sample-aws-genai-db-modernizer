@@ -1686,7 +1686,7 @@ Documentation: AWS Schema Conversion Tool User Guide, Using MySQL as a source; M
 
 ### oracle-date-type
 
-Oracle DATE columns: behaves differently. An Oracle DATE carries a time of day to the second, so it maps to timestamp\(0\) \(Aurora PostgreSQL\) or datetime \(Aurora MySQL\), not date, and date arithmetic in the code changes.
+Oracle DATE columns: behaves differently. An Oracle DATE carries a time of day to the second, so it maps to timestamp\(0\) \(Aurora PostgreSQL\) or datetime \(Aurora MySQL\), not date, and date arithmetic in the code changes; Aurora MySQL datetime starts at year 1000, so an earlier or BC date \(Oracle goes back to 4712 BC\) does not load.
 
 Documentation: Oracle to Aurora PostgreSQL Migration Playbook \(AWS DMS documentation\), Date and time data types.
 

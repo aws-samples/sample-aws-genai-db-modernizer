@@ -1,6 +1,8 @@
 # Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
 # SPDX-License-Identifier: MIT-0
 
+import pytest
+
 from src.contracts.schema_design_input import (
     AgentColumn,
     AgentForeignKey,
@@ -9,7 +11,7 @@ from src.contracts.schema_design_input import (
     ForeignKeyAction,
 )
 from src.contracts.schema_design_input import NormalizedDataType as N
-from src.tools.schema.aurora_common.ddl_generator import generate_pg_ddl
+from src.tools.schema.aurora_common.ddl_generator import generate_mysql_ddl, generate_pg_ddl
 
 
 def _users_table():
@@ -89,7 +91,15 @@ def test_foreign_key_emitted_after_tables():
     assert ddl.index("ALTER TABLE") > ddl.index('CREATE TABLE "orders"')
 
 
-def test_residual_marker_for_lengthless_string():
+# A source with its own native map must not turn an absent length into a silent guess
+# either (#2219: a SQL Server nvarchar with no length is not read as (max) unflagged).
+@pytest.mark.passes_on_main
+@pytest.mark.parametrize("generate", [generate_pg_ddl, generate_mysql_ddl])
+@pytest.mark.parametrize(
+    ("source_engine", "data_type"),
+    [("", None), ("sqlserver", "nvarchar"), ("sqlserver", "varchar"), ("oracle", "varchar2")],
+)
+def test_residual_marker_for_lengthless_string(generate, source_engine, data_type):
     tbl = AgentTable(
         table_id="t3",
         table_name="notes",
@@ -98,11 +108,15 @@ def test_residual_marker_for_lengthless_string():
         columns=[
             AgentColumn(column_name="id", normalized_data_type=N.integer, nullable=False),
             AgentColumn(
-                column_name="body", normalized_data_type=N.string, max_length=None, nullable=True
+                column_name="body",
+                data_type=data_type,
+                normalized_data_type=N.string,
+                max_length=None,
+                nullable=True,
             ),
         ],
     )
-    result = generate_pg_ddl([tbl])
+    result = generate([tbl], source_engine=source_engine)
     residuals = [r for r in result.residuals if r["column"] == "body"]
     assert len(residuals) == 1
     assert residuals[0]["table"] == "notes"

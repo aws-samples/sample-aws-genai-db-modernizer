@@ -5,7 +5,7 @@ feature = "Oracle DATE columns"
 source_engines = ["oracle"]
 targets = ["aurora_mysql", "aurora_postgresql"]
 impact = "behaves_differently"
-reason = "An Oracle DATE carries a time of day to the second, so it maps to timestamp(0) (Aurora PostgreSQL) or datetime (Aurora MySQL), not date, and date arithmetic in the code changes."
+reason = "An Oracle DATE carries a time of day to the second, so it maps to timestamp(0) (Aurora PostgreSQL) or datetime (Aurora MySQL), not date, and date arithmetic in the code changes; Aurora MySQL datetime starts at year 1000, so an earlier or BC date (Oracle goes back to 4712 BC) does not load."
 docs = "Oracle to Aurora PostgreSQL Migration Playbook (AWS DMS documentation), Date and time data types"
 
 # Looks for: Column data types.
