@@ -6,12 +6,12 @@
 from __future__ import annotations
 
 import json
-import re
 
 import pytest
 from pydantic import BaseModel
 
 from src.report.deliverables import FOLDER_FILENAMES
+from tests.branding import hits as product_name_hits
 from tests.e2e.pipeline import PipelineResult
 
 EXPECTED_ENGINES = {
@@ -67,11 +67,11 @@ def test_deliverables_folder_holds_exactly_the_documented_set(run: PipelineResul
     version = run.report["report"].split("/synthesis/v", 1)[1].split("/", 1)[0]
     assert f"Assignment version: v{version}" in index
     # Branding: the only product name in the folder is "Database Modernizer
-    # Assessment Tool" (the English verb "transforms" in report prose is fine).
+    # Assessment Tool" (the one rule, tests/branding.py: "transforms" in prose is fine).
     for p in folder.iterdir():
         if p.suffix in (".md", ".json"):
             text = p.read_text(encoding="utf-8")
-            assert not re.search(r"AWS Transform|\bATX\b", text), p.name
+            assert product_name_hits(text) == [], p.name
 
 
 @pytest.mark.deterministic

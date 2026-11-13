@@ -30,6 +30,7 @@ from playwright.sync_api import Browser, Locator, Page, expect
 from src.report.deliverables import DELIVERABLES_DIR, FOLDER_FILENAMES
 from src.report.risks import shared_mitigation_refs
 from src.shared.migration_risk_rules import backfill_report_risks
+from tests.branding import hits as product_name_hits
 from tests.e2e.pipeline import PipelineResult
 from tests.placeholders import placeholder_leaks
 
@@ -1150,8 +1151,8 @@ def test_results_page_shows_the_same_risks_as_report_json(
 def test_ui_shows_only_the_product_name(
     page: Page, ui: str, all_runs: list[PipelineResult]
 ) -> None:
-    """#957: no page names "ATX", "AWS Transform" or "transform"; the header says
-    "Database Modernizer Assessment Tool"."""
+    """#957: no page names "ATX", "AWS Transform" or the standalone word "transform"
+    (``tests/branding.py``, #2185); the header says "Database Modernizer Assessment Tool"."""
     r = all_runs[0]
     for path in (
         "/dashboard",
@@ -1172,7 +1173,8 @@ def test_ui_shows_only_the_product_name(
         else:
             _loaded(page, r)
         text = page.inner_text("body")
-        assert not re.search(r"\bATX\b|AWS\s+Transform|transform", text, re.IGNORECASE), path
+        # #2185: the one rule (tests/branding.py): "transformation" in model prose passes.
+        assert product_name_hits(text) == [], path
         assert "Database Modernizer Assessment Tool" in text, path
         assert page.title() == "Database Modernizer Assessment Tool", path
 
