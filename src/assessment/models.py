@@ -283,7 +283,19 @@ def _routine_sources_error(exc: ValidationError) -> RoutineSourcesError | None:
     errors = exc.errors(include_url=False, include_context=False, include_input=False)
     if not any(e.get("loc", ())[:1] == ("routine_sources",) for e in errors):
         return None
-    return RoutineSourcesError([{"loc": tuple(e["loc"]), "msg": e["msg"]} for e in errors])
+    from src.assessment.routine_sources import location_part
+
+    def loc(error: Any) -> tuple[Any, ...]:
+        # Under routine_sources an entry's key is the caller's text: field names only.
+        where = tuple(error["loc"])
+        if where[:1] != ("routine_sources",):
+            return where
+        return (
+            "routine_sources",
+            *(p if isinstance(p, int) else location_part(p) for p in where[1:]),
+        )
+
+    return RoutineSourcesError([{"loc": loc(e), "msg": e["msg"]} for e in errors])
 
 
 def _validating(call: Any) -> Any:

@@ -1,0 +1,212 @@
+{
+ "collection_version": "1.0",
+ "collected_at": "2026-11-13T10:00:00Z",
+ "metadata": {
+  "version": "PostgreSQL 16.4 on x86_64-pc-linux-gnu, compiled by gcc, 64-bit",
+  "database_name": "shop",
+  "database_size_gb": 0.01,
+  "routine_capture": {
+   "include_bodies": true,
+   "privileges_not_seen": []
+  }
+ },
+ "tables": [
+  {
+   "table_name": "orders",
+   "row_count": 1200,
+   "data_size_mb": 0.2,
+   "index_size_mb": 0.05,
+   "schema_name": "public"
+  },
+  {
+   "table_name": "order_audit",
+   "row_count": 2400,
+   "data_size_mb": 0.3,
+   "index_size_mb": 0.05,
+   "schema_name": "public"
+  }
+ ],
+ "columns": [
+  {
+   "table_name": "orders",
+   "column_name": "id",
+   "ordinal_position": 1,
+   "data_type": "int8",
+   "column_type": "bigint",
+   "max_length": null,
+   "is_nullable": "NO",
+   "column_default": "nextval('orders_id_seq'::regclass)",
+   "column_key": "",
+   "extra": "auto_increment"
+  },
+  {
+   "table_name": "orders",
+   "column_name": "status",
+   "ordinal_position": 2,
+   "data_type": "text",
+   "column_type": "text",
+   "max_length": null,
+   "is_nullable": "YES",
+   "column_default": null,
+   "column_key": "",
+   "extra": ""
+  },
+  {
+   "table_name": "order_audit",
+   "column_name": "id",
+   "ordinal_position": 1,
+   "data_type": "int8",
+   "column_type": "bigint",
+   "max_length": null,
+   "is_nullable": "NO",
+   "column_default": null,
+   "column_key": "",
+   "extra": ""
+  },
+  {
+   "table_name": "order_audit",
+   "column_name": "order_id",
+   "ordinal_position": 2,
+   "data_type": "int8",
+   "column_type": "bigint",
+   "max_length": null,
+   "is_nullable": "NO",
+   "column_default": null,
+   "column_key": "",
+   "extra": ""
+  }
+ ],
+ "indexes": [
+  {
+   "table_name": "orders",
+   "index_name": "orders_pkey",
+   "column_name": "id",
+   "seq_in_index": 0,
+   "non_unique": 0,
+   "index_type": "btree"
+  },
+  {
+   "table_name": "order_audit",
+   "index_name": "order_audit_pkey",
+   "column_name": "id",
+   "seq_in_index": 0,
+   "non_unique": 0,
+   "index_type": "btree"
+  }
+ ],
+ "foreign_keys": [],
+ "primary_keys": [
+  {
+   "table_name": "orders",
+   "column_name": "id",
+   "ordinal_position": 1
+  },
+  {
+   "table_name": "order_audit",
+   "column_name": "id",
+   "ordinal_position": 1
+  }
+ ],
+ "views": [],
+ "procedures": [
+  {
+   "routine_name": "set_status",
+   "schema_name": "public",
+   "specific_name": "set_status_16390",
+   "identity_arguments": "p_id integer",
+   "routine_type": "FUNCTION",
+   "return_type": "void",
+   "language": "PLPGSQL",
+   "owner": "app_owner",
+   "security_definer": true,
+   "depends_on": [
+    {
+     "kind": "table",
+     "name": "public.orders"
+    }
+   ],
+   "body_chars": 60,
+   "body_status": "collected",
+   "definition": "CREATE OR REPLACE FUNCTION public.set_status(p_id integer)\n RETURNS void\n LANGUAGE plpgsql\n SECURITY DEFINER\nAS $function$\nBEGIN\n  UPDATE orders SET status = 'shipped', contact = 'jane@example.com' WHERE id = p_id;\nEND;\n$function$\n"
+  },
+  {
+   "routine_name": "set_status",
+   "schema_name": "public",
+   "specific_name": "set_status_16391",
+   "identity_arguments": "p_id text",
+   "routine_type": "FUNCTION",
+   "return_type": "void",
+   "language": "PLPGSQL",
+   "owner": "app_owner",
+   "security_definer": false,
+   "depends_on": [],
+   "body_chars": 60,
+   "body_status": "collected",
+   "definition": "CREATE OR REPLACE FUNCTION public.set_status(p_id text)\n RETURNS void\n LANGUAGE plpgsql\n SECURITY DEFINER\nAS $function$\nBEGIN\n  UPDATE orders SET status = 'shipped', contact = 'jane@example.com' WHERE id = p_id;\nEND;\n$function$\n"
+  },
+  {
+   "routine_name": "audit_orders",
+   "schema_name": "public",
+   "specific_name": "audit_orders_16392",
+   "identity_arguments": "",
+   "routine_type": "FUNCTION",
+   "return_type": "void",
+   "language": "PLPGSQL",
+   "owner": "app_owner",
+   "security_definer": false,
+   "depends_on": [],
+   "body_chars": 60,
+   "body_status": "collected",
+   "definition": "CREATE OR REPLACE FUNCTION public.audit_orders()\n RETURNS trigger\n LANGUAGE plpgsql\nAS $function$\nBEGIN\n  RETURN NEW;\nEND;\n$function$\n"
+  }
+ ],
+ "triggers": [
+  {
+   "trigger_name": "tg_orders",
+   "schema_name": "public",
+   "table_name": "orders",
+   "timing": "AFTER",
+   "event_type": "INSERT",
+   "events": "INSERT OR UPDATE",
+   "for_each": "ROW",
+   "is_enabled": "O",
+   "function_signature": "public.audit_orders()",
+   "body_chars": 109,
+   "body_status": "collected",
+   "definition": "CREATE TRIGGER tg_orders AFTER INSERT OR UPDATE ON public.orders FOR EACH ROW EXECUTE FUNCTION audit_orders()"
+  }
+ ],
+ "queries": [
+  {
+   "digest": "101",
+   "query_text": "SELECT id, status FROM orders WHERE id = $1",
+   "schema_name": "shop",
+   "execution_count": 900,
+   "total_time_ms": 45.0,
+   "avg_time_ms": 0.05,
+   "min_time_ms": 0.01,
+   "max_time_ms": 1.2
+  },
+  {
+   "digest": "102",
+   "query_text": "UPDATE orders SET status = $1 WHERE id = $2",
+   "schema_name": "shop",
+   "execution_count": 300,
+   "total_time_ms": 30.0,
+   "avg_time_ms": 0.1,
+   "min_time_ms": 0.02,
+   "max_time_ms": 2.0
+  },
+  {
+   "digest": "103",
+   "query_text": "SELECT order_id FROM order_audit WHERE order_id = $1",
+   "schema_name": "shop",
+   "execution_count": 120,
+   "total_time_ms": 12.0,
+   "avg_time_ms": 0.1,
+   "min_time_ms": 0.02,
+   "max_time_ms": 0.9
+  }
+ ],
+ "global_stats": {}
+}

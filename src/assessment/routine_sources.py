@@ -18,8 +18,9 @@ the scripts and the live collectors use
 
 Both go through the one writer, so under the same rules:
 
-- the text stays only there: never in the redacted collector output, the result, a log
-  line, an error message or a model input;
+- the whole text is written only there, and its string literals stay only there: never
+  in the collector output (whose definitions keep their comments' plain text, #2234),
+  the result, a log line or an error message;
 - an index plus gzip chunks of at most 5,000 routines. The writer holds one chunk at a
   time; the request itself holds every entry, so "one chunk at a time" holds on the
   writer side only;
@@ -55,10 +56,11 @@ from src.agents.collector.routine_sources import (
     SOURCE_ENGINES,
     clear_routine_sources,
     collection_engine,
+    collection_includes_bodies,
     iter_collection_sources,
     write_routine_sources,
 )
-from src.contracts.routine_sources import RoutineSource
+from src.contracts.routine_sources import RoutineSession, RoutineSource
 
 logger = logging.getLogger(__name__)
 
@@ -87,28 +89,46 @@ class _RequestRoutineSource(RoutineSource):
     model_config = ConfigDict(extra="forbid")
 
 
+#: The names an error location may show: the format's own fields. Any other key is the
+#: caller's text (it can hold routine code), shown as UNKNOWN_KEY.
+_FIELD_NAMES = frozenset(RoutineSource.model_fields) | frozenset(RoutineSession.model_fields)
+UNKNOWN_KEY = "[unknown key]"
+
+
+def location_part(part: object) -> str:
+    """One part of an error location as an error may show it: an index, or a field name
+    of the routine-sources format; any other key as :data:`UNKNOWN_KEY`, never itself."""
+    if isinstance(part, int) and not isinstance(part, bool):
+        return str(part)
+    return str(part) if part in _FIELD_NAMES else UNKNOWN_KEY
+
+
 def _errors(exc: ValidationError) -> str:
-    """The entry's errors by field and message, never the input (it is routine code)."""
+    """The entry's errors by field and message, never the input (it is routine code), nor
+    an unknown key's name."""
     return "; ".join(
-        f"{'.'.join(str(part) for part in error['loc']) or 'entry'}: {error['msg']}"
+        f"{'.'.join(location_part(part) for part in error['loc']) or 'entry'}: {error['msg']}"
         for error in exc.errors(include_input=False, include_url=False, include_context=False)
     )
 
 
-def _read(entry: Any, number: int) -> RoutineSource:
+def _read(entry: Any, number: int) -> tuple[RoutineSource, bool]:
+    """The entry as a ``RoutineSource``, and whether the caller gave its ``session``."""
     try:
         checked = _RequestRoutineSource.model_validate(entry)
     except ValidationError as exc:
         message = f"routine_sources[{number}] is not a RoutineSource: {_errors(exc)}"
     else:
-        return RoutineSource.model_validate(checked.model_dump())
+        given = "session" in checked.model_fields_set
+        return RoutineSource.model_validate(checked.model_dump()), given
     raise ValueError(message)  # outside the except block: nothing chained
 
 
 def validate_routine_sources(entries: Sequence[Any]) -> list[dict[str, Any]]:
     """Each entry read as a ``RoutineSource`` (an unknown key refused) and written back
-    as JSON (its ``sha256`` filled in). Error messages name the entry and the field,
-    never its text, and chain no exception.
+    as JSON (its ``sha256`` filled in). An entry that gives no ``session`` is written
+    back without one, so the writer gives it the collection's. Error messages name the
+    entry and the field, never its text, and chain no exception.
 
     Raises:
         ValueError: an entry is not a ``RoutineSource``, or two name one routine
@@ -119,26 +139,29 @@ def validate_routine_sources(entries: Sequence[Any]) -> list[dict[str, Any]]:
     out: list[dict[str, Any]] = []
     seen: set[RoutineKey] = set()
     for number, entry in enumerate(entries):
-        source = _read(entry, number)
+        source, session_given = _read(entry, number)
         if source.key() in seen:
             raise ValueError(
                 f"routine_sources[{number}]: two routine sources for {source.kind} "
                 f"{source.schema_name or ''}.{source.specific_name}"
             )
         seen.add(source.key())
-        out.append(source.model_dump(mode="json"))
+        dumped = source.model_dump(mode="json")
+        if not session_given:
+            dumped.pop("session")
+        out.append(dumped)
     return out
 
 
-def request_collection_engine(collection: Mapping[str, Any]) -> str:
-    """The source engine a request's collection names: a collector output's
-    ``metadata.source_database.engine``, else the raw collection's own detector."""
-    metadata = collection.get("metadata")
-    source = metadata.get("source_database") if isinstance(metadata, Mapping) else None
-    engine = source.get("engine") if isinstance(source, Mapping) else None
-    if engine:
-        return str(getattr(engine, "value", engine)).strip().lower()
-    return collection_engine(collection)
+def request_engine(collection: Mapping[str, Any]) -> str:
+    """The source engine the writer will read for a request's collection, before the
+    ingest runs: :func:`~src.tools.sql.redact.collector_output_engine`, the writer's own
+    resolver, of the collector output the ingest writes. A collector output keeps its
+    engine; a raw collection gets the one detector's (``collection_engine``, which the
+    ingest writes into the output)."""
+    from src.tools.sql.redact import collector_output_engine
+
+    return collector_output_engine(collection) or collection_engine(collection)
 
 
 def check_request_routine_sources(
@@ -168,7 +191,11 @@ def check_origins(entries: Sequence[Mapping[str, Any]], collection: object) -> N
     """
     if not isinstance(collection, Mapping):
         return
-    engine = request_collection_engine(collection)
+    check_origins_for(entries, request_engine(collection))
+
+
+def check_origins_for(entries: Sequence[Mapping[str, Any]], engine: str) -> None:
+    """:func:`check_origins` for the engine already resolved."""
     allowed = _ORIGINS.get(engine)
     if allowed is None:
         return
@@ -195,6 +222,8 @@ class ListedRoutine:
 
     status: str
     body_exact: bool | None
+    #: The sql_mode the collector output records for it (None when none).
+    sql_mode: str | None = None
 
 
 def collection_routines(collector_output: Mapping[str, Any]) -> dict[RoutineKey, ListedRoutine]:
@@ -212,7 +241,9 @@ def collection_routines(collector_output: Mapping[str, Any]) -> dict[RoutineKey,
             found.setdefault(
                 (kind, _text(row.get("schema_name")), name),
                 ListedRoutine(
-                    _value(row.get("body_status")), exact if isinstance(exact, bool) else None
+                    _value(row.get("body_status")),
+                    exact if isinstance(exact, bool) else None,
+                    row.get("sql_mode") if isinstance(row.get("sql_mode"), str) else None,
                 ),
             )
 
@@ -237,10 +268,19 @@ def collection_routines(collector_output: Mapping[str, Any]) -> dict[RoutineKey,
     return found
 
 
-def _includes_bodies(collector_output: Mapping[str, Any]) -> bool:
-    metadata = collector_output.get("metadata")
-    capture = metadata.get("routine_capture") if isinstance(metadata, Mapping) else None
-    return not (isinstance(capture, Mapping) and capture.get("include_bodies") is False)
+def _collected_sessions(
+    entries: Sequence[Mapping[str, Any]], raw_collection: Mapping[str, Any] | None
+) -> dict[RoutineKey, RoutineSession]:
+    """The session the raw collection records for each routine a given entry names
+    without one, read as the collectors read it (the extracted source's)."""
+    wanted = {RoutineSource.model_validate(e).key() for e in entries if "session" not in e}
+    if not wanted or raw_collection is None:
+        return {}
+    return {
+        source.key(): source.session
+        for source in iter_collection_sources(raw_collection)
+        if source.key() in wanted
+    }
 
 
 def _names(names: list[str]) -> str:
@@ -264,7 +304,7 @@ def write_request_routine_sources(
     given source it writes as not exact, naming each routine by kind and name, never its
     text."""
     output = store.read_json(f"{database_name}/{job_id}/collector/output.json")
-    if not _includes_bodies(output):
+    if not collection_includes_bodies(output):
         clear_routine_sources(store, database_name, job_id)
         if entries:
             logger.warning(
@@ -286,7 +326,11 @@ def write_request_routine_sources(
                 len(entries),
             )
         return None
+    # The writer's own engine decides the origins too (the request was checked against
+    # the engine the ingest would write; this refuses a run where the two differ).
+    check_origins_for(entries, engine)
     listed = collection_routines(output)
+    sessions = _collected_sessions(entries, raw_collection)
     skipped: dict[str, list[str]] = {}
     made_inexact: list[str] = []
 
@@ -302,6 +346,14 @@ def write_request_routine_sources(
             if source.exact and routine is not None and routine.body_exact is False:
                 made_inexact.append(name)
                 source = source.model_copy(update={"exact": False, "inexact_reason": _NOT_EXACT})
+            if "session" not in entry:
+                # The session it was created in, as the collection records it (as for
+                # exact): a replay never runs under another sql_mode by omission.
+                session = sessions.get(source.key())
+                if session is None and routine is not None and routine.sql_mode is not None:
+                    session = RoutineSession(sql_mode=routine.sql_mode)
+                if session is not None:
+                    source = source.model_copy(update={"session": session})
             yield source
         if raw_collection is None:
             return
