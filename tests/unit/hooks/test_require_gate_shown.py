@@ -244,6 +244,29 @@ def test_the_quote_is_whitespace_insensitive(tmp_path: Path, run) -> None:
     assert run(_event(tmp_path, [*_gate_ran(), _text(reflowed, msg="msg-next")])).code == 0
 
 
+def test_a_quote_with_its_markdown_escapes_dropped_counts() -> None:
+    # print_summary.py escapes ( ) [ ] * _ in prose (md_text, #211); a quote that drops the
+    # backslashes renders the same text (batch11122319), so it shows the gate.
+    escaped = (
+        f"{HEADING}\n\n| wp\\_posts | 4 | 4 | 3.7% | kept \\(pinned\\) |\nTotal: 107 queries.\n"
+    )
+    rendered = escaped.replace("\\", "")
+    assert hook.missing_lines(escaped, [rendered]) == []
+    assert hook.missing_lines(escaped, [escaped]) == []
+    reworded = rendered.replace("kept (pinned)", "kept")
+    assert hook.missing_lines(escaped, [reworded]) == [
+        "| wp\\_posts | 4 | 4 | 3.7% | kept \\(pinned\\) |"
+    ]
+
+
+@pytest.mark.passes_on_main  # keeps the hook and the check in step
+def test_the_quote_normalisation_matches_the_transcript_check() -> None:
+    from ci.llm import run as llm_run
+
+    for text in ["a \\(b\\) \\[c\\] \\*d\\* \\_e\\_ \\\\ C:\\temp", " x\n\n  y ", "plain"]:
+        assert hook._norm(text) == llm_run._norm(text)
+
+
 def test_text_only_in_a_tool_input_does_not_count(tmp_path: Path, run) -> None:
     # Writing the block into a file or an echo is not showing it to the user.
     write = _use("u-w", f"echo '{BLOCK}'", msg="msg-next")

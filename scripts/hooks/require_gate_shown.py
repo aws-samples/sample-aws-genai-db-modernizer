@@ -159,8 +159,17 @@ def gate_url(block: str) -> str | None:
     return match.group(1) if match else None
 
 
+# A CommonMark backslash escape: a backslash before ASCII punctuation renders as the character
+# alone, so "\(" and "(" show the user the same text (print_summary.py escapes prose with
+# md_text, #211, and a model may quote the rendered form). Any other backslash is literal text.
+_MD_ESCAPE_RE = re.compile(r"\\([!-/:-@\[-`{-~])")
+
+
 def _norm(text: str) -> str:
-    return " ".join(text.split())
+    """``text`` as the user reads it, for comparing a printed block with a chat quote:
+    whitespace collapsed and Markdown backslash escapes resolved. A copy of ``_norm`` in
+    ci/llm/run.py."""
+    return " ".join(_MD_ESCAPE_RE.sub(r"\1", text).split())
 
 
 def gate_lines_to_show(block: str) -> list[str]:
@@ -178,7 +187,8 @@ def gate_lines_to_show(block: str) -> list[str]:
 
 
 def missing_lines(block: str, texts: list[str]) -> list[str]:
-    """The key lines of ``block`` that no chat text carries (whitespace-insensitive)."""
+    """The key lines of ``block`` that no chat text carries (whitespace and Markdown escapes
+    aside: see :func:`_norm`)."""
     said = _norm("\n".join(texts))
     return [line for line in gate_lines_to_show(block) if _norm(line) not in said]
 

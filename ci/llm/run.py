@@ -145,7 +145,9 @@ check-transcript's fixed failure conditions (anything else is tolerated as
   figures; in ui mode its ``Results page`` line) and the
   ``MODERNIZE_RESULT: complete`` line are not in assistant text after
   ``print_summary.py --final`` -- fail. Tool output, subagent text and the
-  ``result`` line never count: Claude Code collapses tool output.
+  ``result`` line never count: Claude Code collapses tool output. Lines
+  compare as the user reads them: whitespace and Markdown backslash escapes
+  (``\\(`` for ``(``) aside.
 
 On failure, check-transcript still prints the aggregated cost/turn/usage
 fields next to ``error``, and ``results`` copies them (plus
@@ -556,8 +558,17 @@ _GATE_SHOWN_LINE_RE = re.compile(
 )
 
 
+# A CommonMark backslash escape: a backslash before ASCII punctuation renders as the character
+# alone, so "\(" and "(" show the user the same text (print_summary.py escapes prose with
+# md_text, #211, and a model may quote the rendered form). Any other backslash is literal text.
+_MD_ESCAPE_RE = re.compile(r"\\([!-/:-@\[-`{-~])")
+
+
 def _norm(text: str) -> str:
-    return " ".join(text.split())
+    """``text`` as the user reads it, for comparing a printed block with a chat quote:
+    whitespace collapsed and Markdown backslash escapes resolved. A copy of ``_norm`` in
+    scripts/hooks/require_gate_shown.py."""
+    return " ".join(_MD_ESCAPE_RE.sub(r"\1", text).split())
 
 
 def _gate_lines_to_show(block: str) -> list[str]:
