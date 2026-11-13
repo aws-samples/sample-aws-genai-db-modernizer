@@ -73,21 +73,24 @@ def is_expression_key(column_name: Any, source_engine: str | None = None) -> boo
 
 
 def is_included_column(row: Mapping[str, Any]) -> bool:
-    """Whether a raw SQL Server index row is an INCLUDE column, not a key part (#2227).
+    """Whether a raw SQL Server index row is stored in the index but not a key part (#2227).
 
-    The live collector reads ``sys.index_columns.is_included_column``. The offline
-    script writes only ``key_ordinal``, which is 0 for an included column and counts
-    from 1 for a key part; a row with ``seq_in_index`` (the other engines) is a key part.
+    Both SQL Server paths read ``sys.index_columns.key_ordinal``: 0 for an INCLUDE column,
+    from 1 for a key part. 0 also marks the partitioning column SQL Server adds to a
+    non-unique index on a partitioned table (``is_included_column`` 0 there), which is not
+    a key part either, so the two paths split on ``key_ordinal`` alone and agree. A row
+    with ``seq_in_index`` (the other engines) is a key part; one with neither position
+    falls back to ``is_included_column``.
     """
+    if row.get("seq_in_index") is not None:
+        return False
+    if row.get("key_ordinal") is not None:
+        try:
+            return int(row["key_ordinal"]) == 0
+        except (TypeError, ValueError):
+            return False
     flag = row.get("is_included_column")
-    if flag is not None:
-        return flag in _TRUTHY or flag == "True"
-    if row.get("seq_in_index") is not None or "key_ordinal" not in row:
-        return False
-    try:
-        return int(row["key_ordinal"]) == 0
-    except (TypeError, ValueError):
-        return False
+    return flag in _TRUTHY or flag == "True"
 
 
 def settle_included_columns(index: dict[str, Any]) -> None:

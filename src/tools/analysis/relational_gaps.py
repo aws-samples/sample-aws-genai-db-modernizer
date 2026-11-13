@@ -472,8 +472,9 @@ _TEXT_TYPES = frozenset({"string", "text"})
 _SIZED_TEXT_TYPE = "string"
 # Index kinds the key length matcher skips: a FULLTEXT or SPATIAL key has no key length
 # limit (it takes no prefix), and the Aurora MySQL draft leaves GIN, GiST and SP-GiST
-# indexes out with a note (``ddl_generator._DROPPED_METHODS``), so no CREATE INDEX runs.
-_UNLIMITED_KEY_INDEXES = frozenset({"fulltext", "spatial", "gin", "gist", "spgist"})
+# indexes out with a note (``ddl_generator._DROPPED_METHODS``), so no CREATE INDEX runs; a
+# SQL Server columnstore index has no key at all, and both drafts leave it out (#2227).
+_UNLIMITED_KEY_INDEXES = frozenset({"fulltext", "spatial", "gin", "gist", "spgist", "columnstore"})
 
 
 def _keys(table: Mapping[str, Any]) -> list[tuple[Mapping[str, Any], bool]]:

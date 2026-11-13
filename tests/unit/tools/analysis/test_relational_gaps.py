@@ -2255,7 +2255,10 @@ def test_the_key_length_rule_applies_to_every_source_moving_to_aurora_mysql_only
     ("rule_id", "phrases"),
     [
         (_CASE, ("utf8mb4_0900_bin", "does not record NLS_COMP or NLS_SORT")),
-        (_COLLATION, ("_CS_AI", "case-sensitive", "does not record collations yet")),
+        (
+            _COLLATION,
+            ("_CS_AI", "case-sensitive", "does not record collations yet", "only ASCII text"),
+        ),
         (
             _KEY_LENGTH,
             (

@@ -455,6 +455,8 @@ SET @indexes = (
             WHEN i.type_desc LIKE '%SPATIAL%' THEN 'spatial'
             WHEN i.type_desc LIKE '%FULLTEXT%' OR i.type_desc LIKE '%FULL-TEXT%' THEN 'fulltext'
             WHEN i.type_desc LIKE '%HASH%' THEN 'hash'
+            -- #2227: type 5 and 6, clustered and nonclustered columnstore, are no B-tree
+            WHEN i.type_desc LIKE '%COLUMNSTORE%' THEN 'columnstore'
             WHEN i.type_desc LIKE '%CLUSTERED%' OR i.type_desc LIKE '%NONCLUSTERED%' THEN 'btree'
             ELSE 'other'
         END AS index_type
