@@ -978,3 +978,112 @@ def test_the_default_scan_is_strict_and_only_the_ci_scans_narrow(text: str) -> N
     assert private_scan.redact(text).text != text
     narrowed = private_scan.secret_findings(text, narrow_key_names=True)
     assert (narrowed == []) is (text != "-- token: " + _RANDOM_40)
+
+
+# 40 base64 characters with upper, lower and digits, not hex: what an AWS secret
+# access key looks like, and what the bare-key rule flags (#2209).
+_AWS_SECRET_SHAPED = (
+    "Zk3vLmP0aB7c" + "W2rT8nE5q9Xy" + "Qm8x/2pLw9Zr" + "4uVb"
+)  # pragma: allowlist secret
+
+
+def _bare(text: str, narrow: bool = True) -> bool:
+    return any(
+        f.startswith("bare secret key")
+        for f in private_scan.secret_findings(text, narrow_key_names=narrow)
+    )
+
+
+@pytest.mark.passes_on_main  # the guard: the bare-key rule is never narrowed (#2209)
+@pytest.mark.parametrize(
+    "text",
+    [
+        # Hash-named fields: the rule is fail-closed there too.
+        '{"content_hash": "%s"}',
+        '{"etag": "%s"}',
+        '{"commit_sha": "%s"}',
+        '{"file_sha256": "%s"}',
+        '{"checksum": "%s"}',
+        '{"contentHash": "%s"}',
+        "etag: %s",
+        '{\\"content_hash\\": \\"%s\\"}',
+        # The #2211 review's bypasses of a hash-field skip: abbreviated credential words.
+        '{"AWS_SK_SHA256": "%s"}',
+        "sk_hash: %s",
+        '{"sk_live_sha": "%s"}',
+        "pw_hash: %s",
+        '{"aws_sak_sha": "%s"}',
+        '{"s3cret_hash": "%s"}',
+        '{"p4ssword_hash": "%s"}',
+        '{"pa_ss_word_hash": "%s"}',
+        # ... and credential words in a parent key.
+        "secret_key:\n  etag: %s",
+        "aws_secret_access_key:\n  checksum: %s",
+        '{\n  "credentials": [\n    {"etag": "%s"}\n  ]\n}',
+        # Secret-like names, a bare line, unnamed fields.
+        '{"aws_secret_access_key": "%s"}',
+        '{"secret": "%s"}',
+        '{"password_sha1": "%s"}',
+        "%s",
+        '["%s"]',
+        '{"note": "see %s"}',
+    ],
+    ids=[
+        "content-hash",
+        "etag",
+        "commit-sha",
+        "file-sha256",
+        "checksum",
+        "camel-hash",
+        "yaml-etag",
+        "json-escaped-hash",
+        "aws-sk-sha256",
+        "sk-hash",
+        "sk-live-sha",
+        "pw-hash",
+        "aws-sak-sha",
+        "s3cret-hash",
+        "p4ssword-hash",
+        "pa-ss-word-hash",
+        "yaml-parent-secret-key",
+        "yaml-parent-aws-secret",
+        "json-parent-credentials",
+        "aws-secret-name",
+        "secret",
+        "password-sha1",
+        "bare-line",
+        "unnamed-array-item",
+        "prose-value",
+    ],
+)
+def test_a_bare_key_shaped_value_flags_under_every_field_in_every_scan(text: str) -> None:
+    """#2209: the bare-key rule stays fail-closed, as on main. A hash-field skip was
+    tried and bypassed by abbreviated credential words and by credential words in a
+    parent key (#2211 review, round 2), so no field name narrows it, in the CI scans
+    or the collector's."""
+    from src.shared import secret_scan
+
+    lines = text % _AWS_SECRET_SHAPED
+    assert _bare(lines, narrow=True)
+    assert _bare(lines, narrow=False)
+    assert "bare secret key" in secret_scan.secret_kinds(lines)
+
+
+@pytest.mark.parametrize(
+    ("line", "key"),
+    [
+        ('{"content_hash": "VALUE"}', "content_hash"),
+        ("  etag: VALUE", "etag"),
+        ("| s3_etag | VALUE |", "s3_etag"),
+        ("mysql://svc_rw:VALUE@db.example.com/app", None),  # pragma: allowlist secret
+        ('{"\\u005aq9_password": "VALUE"}', None),  # pragma: allowlist secret
+        ("the hash is VALUE", None),
+    ],
+    ids=["json", "yaml", "table-row", "url-user", "escaped-name", "prose"],
+)
+def test_the_field_before_a_value_is_never_a_url_user_or_a_cut_name(line: str, key) -> None:
+    """#2211 review, Important 4: ``preceding_key`` reads no name right after ``/`` (a
+    URL's user) or a backslash (a name cut at a JSON escape)."""
+    from ci.llm.private_scan import preceding_key
+
+    assert preceding_key(line, line.index("VALUE")) == key

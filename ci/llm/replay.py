@@ -433,12 +433,13 @@ def save(
             f"({JOB_FINDINGS}); review them, then pass --allow-redacted to keep it anyway"
         )
     # The transcript is prose and tool output: key-name findings (a word such as
-    # "password" in a sentence) would flag it, so it gets the credential-shape scan only.
+    # "password" in a sentence) would flag it, so it gets the credential-shape scan only,
+    # in the upload scan's mode (``narrow_key_names``, as ``collect-job`` scans it).
     found = [
         f"{name}: {hit}"
         for name, text in files.items()
         for hit in (
-            private_data(text) + secret_findings(text, key_names=False)
+            private_data(text) + secret_findings(text, key_names=False, narrow_key_names=True)
             if name == TRANSCRIPT_FILE
             else job_private_data(text)
         )
