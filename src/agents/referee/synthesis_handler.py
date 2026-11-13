@@ -1929,6 +1929,37 @@ def _persist_cache_safety_net(store: ArtifactStore, data, assignment_version: in
 # ---------------------------------------------------------------------------
 
 
+def _record_no_model_skips(
+    store: ArtifactStore, database_name: str, job_id: str, assignment_version: int
+) -> None:
+    """A run with no model that never ran schema design (no engine of the version has a
+    design or a skip record) records each engine's design as skipped for that reason
+    (#2154), as the schema design phase does without a model. Once any engine has a
+    record, schema design ran: nothing is written, so a missing design still fails."""
+    from src.agents.schema_design.handler import record_design_skip
+    from src.contracts.phase_models import SCHEMA_DESIGN_SKIP_REASON_NO_LLM
+    from src.storage.assignment_versioning import schema_design_engines
+
+    if assignment_version <= 0:
+        return
+    engines = schema_design_engines(store, database_name, job_id, assignment_version)
+    prefix = f"{database_name}/{job_id}"
+    if any(
+        store.exists(f"{prefix}/schema-{e}/v{assignment_version}/schema_output.json")
+        for e in engines
+    ):
+        return
+    for engine in engines:
+        record_design_skip(
+            store,
+            database_name,
+            job_id,
+            engine,
+            assignment_version,
+            SCHEMA_DESIGN_SKIP_REASON_NO_LLM,
+        )
+
+
 def run_synthesis(
     job_id: str,
     database_name: str,
@@ -1948,6 +1979,8 @@ def run_synthesis(
             "external" — write LLM input to store and skip the LLM call.
             "none"     — use the deterministic summary; no LLM call.
     """
+    if llm_mode == "none":
+        _record_no_model_skips(store, database_name, job_id, assignment_version)
     result = run_synthesis_deterministic(job_id, database_name, store, assignment_version)
 
     if not result["data"].engines:
@@ -2066,7 +2099,12 @@ def _engine_schema_summaries(data, hot_partitions: list[dict] | None = None):
     summaries = {}
     for engine, artifacts in data.engines.items():
         schema = artifacts.schema_design or {}
-        if engine == "opensearch":
+        skipped = getattr(artifacts, "design_skip_reason", None)
+        if isinstance(skipped, str):
+            # #2154: a skip record, with its reason for the deliverables.
+            skipped_summary: dict[str, object] = {"status": "skipped", "reason": skipped}
+            summaries[engine] = skipped_summary
+        elif engine == "opensearch":
             summaries[engine] = _build_opensearch_schema_summary(schema)
         elif engine == "elasticache" and schema.get("key_designs"):
             summaries[engine] = _build_elasticache_schema_summary(schema)

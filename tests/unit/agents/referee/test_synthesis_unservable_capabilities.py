@@ -14,13 +14,11 @@ from __future__ import annotations
 
 import pytest
 
-from src.agents.referee.synthesis_handler import (
-    _write_synthesis_report,
-    run_synthesis_deterministic,
-)
+from src.agents.referee.synthesis_handler import _write_synthesis_report
 from src.contracts.move_ledger import CandidateScore, Move, MoveEvidence, MovePass, ReasonCode
 from src.shared.capability_labels import CAPABILITY_REDESIGN_HINTS
 from src.storage.local_store import LocalArtifactStore
+from tests.design_records import run_synthesis_deterministic
 
 DB = "shop"
 JOB = "job-fallback"

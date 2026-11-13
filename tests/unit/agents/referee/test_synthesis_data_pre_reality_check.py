@@ -16,8 +16,8 @@ from __future__ import annotations
 
 import pytest
 
-from src.agents.referee.synthesis_data import load_synthesis_data
 from src.storage.local_store import LocalArtifactStore
+from tests.design_records import load_synthesis_data
 
 DB = "wordpress"
 JOB = "job-pre-rc"

@@ -61,6 +61,7 @@ from src.contracts.analysis_output import (
     redesign_requirements_in_scope,
 )
 from src.contracts.aurora_design_delta import is_design_delta
+from src.contracts.phase_models import SCHEMA_DESIGN_SKIP_REASON_NO_LLM
 from src.contracts.skipped_placeholders import SkippedSchemaOutput
 from src.shared.assumptions import design_context
 from src.shared.bedrock_guardrail import require_valid_guardrail_config
@@ -206,16 +207,81 @@ def _group_concurrency() -> int:
 # the Aurora ones, whose deterministic draft is only an input to the designer)
 # needs a model. With llm_mode="none" the phase is therefore skipped, exactly as
 # the deterministic pipeline does (it stops before schema design and synthesis
-# runs without schema outputs). Nothing is written, so a skipped engine is never
-# mistaken for a designed one (issue #281).
+# runs without schema outputs). Only the engine's skip record is written (#2154), a
+# placeholder of its own contract, so a skipped engine is never mistaken for a designed
+# one (issue #281).
 SCHEMA_DESIGN_SKIPPED_NONE_MODE = (
     "schema design skipped (llm_mode=none): every schema designer needs a model; "
     "rerun with --llm-mode bedrock or external to design target schemas"
 )
 
 
-def _skip_without_model(target_type: str) -> ScopeReport:
+def record_design_skip(
+    store: ArtifactStore,
+    database_name: str,
+    job_id: str,
+    target_type: str,
+    assignment_version: int,
+    reason: str,
+) -> str | None:
+    """Write the engine's skip record (its ``SkippedSchemaOutput``) on ``assignment_version``
+    and return its key; ``None`` for a legacy version 0, which has no versioned design."""
+    if assignment_version <= 0:
+        return None
+    key = f"{database_name}/{job_id}/schema-{target_type}/v{assignment_version}/schema_output.json"
+    placeholder = SkippedSchemaOutput(
+        target_type=target_type, reason=reason, assignment_version=assignment_version
+    )
+    write_schema_output(store, key, placeholder.model_dump(mode="json"), target_type)
+    return key
+
+
+def clear_design_skip(
+    store: ArtifactStore,
+    database_name: str,
+    job_id: str,
+    target_type: str,
+    assignment_version: int,
+) -> bool:
+    """Remove the engine's skip record on ``assignment_version`` when a design of it
+    starts (#2154): a design supersedes the record (a run without a model, or a skipped
+    failure, designed again), so no check reads the engine as skipped meanwhile. A
+    design is never removed. Returns whether a record was removed."""
+    from src.shared.design_records import skip_reason
+
+    if assignment_version <= 0:
+        return False
+    key = f"{database_name}/{job_id}/schema-{target_type}/v{assignment_version}/schema_output.json"
+    if not store.exists(key):
+        return False
+    try:
+        record = store.read_json(key)
+    except (OSError, ValueError):
+        return False
+    if skip_reason(record) is None or (isinstance(record, dict) and record.get("excluded_queries")):
+        return False
+    store.delete(key)
+    return True
+
+
+def _skip_without_model(
+    store: ArtifactStore,
+    database_name: str,
+    job_id: str,
+    target_type: str,
+    assignment_version: int,
+) -> ScopeReport:
+    """No model, no design: the engine's skip record says why (#2154), so synthesis
+    reports it as not designed instead of failing on a missing design."""
     say(f"[schema-design/{target_type}] {SCHEMA_DESIGN_SKIPPED_NONE_MODE}")
+    record_design_skip(
+        store,
+        database_name,
+        job_id,
+        target_type,
+        assignment_version,
+        SCHEMA_DESIGN_SKIP_REASON_NO_LLM,
+    )
     return EMPTY_REPORT
 
 
@@ -881,7 +947,8 @@ def run_schema_design(
     When llm_mode == "external": prepares the LLM input payload, writes it to
     the store, and returns early (no Bedrock call). Default is "bedrock" which
     preserves the original behaviour unchanged. When llm_mode == "none": no
-    model is available, so nothing is designed or written (issue #281).
+    model is available, so nothing is designed (issue #281); the engine's skip
+    record says why (#2154).
 
     The output is checked against the assignment's scope before it is written
     (issue #203); the returned :class:`ScopeReport` carries any violations,
@@ -892,7 +959,8 @@ def run_schema_design(
     if llm_mode == "bedrock":
         require_valid_guardrail_config()
     if llm_mode == "none":
-        return _skip_without_model(target_type)
+        return _skip_without_model(store, database_name, job_id, target_type, assignment_version)
+    clear_design_skip(store, database_name, job_id, target_type, assignment_version)
 
     # --- External LLM mode: write prepared input and return early ---
     if llm_mode == "external":
@@ -1078,6 +1146,7 @@ def run_schema_split(
 
     start_time = time.time()
     say(f"[schema-split/{target_type}] Starting for {database_name}")
+    clear_design_skip(store, database_name, job_id, target_type, assignment_version)
 
     # Read collector output
     collector_output = read_collector_for_models(store, database_name, job_id)
@@ -1300,7 +1369,7 @@ def run_schema_design_auto(
     mean the design was written with ``validation_passed=false``.
 
     ``llm_mode`` (issue #281): ``"bedrock"`` (default) designs as described
-    above; ``"none"`` skips the engine without a model call or any artifact;
+    above; ``"none"`` skips the engine without a model call, writing only its skip record (#2154);
     ``"external"`` hands off to :func:`run_schema_design`, which writes the
     prepared LLM input and returns (group splitting for external runs is the
     explicit ``scripts/run_schema_design.py --split`` step).
@@ -1310,7 +1379,8 @@ def run_schema_design_auto(
     if llm_mode == "bedrock":
         require_valid_guardrail_config()
     if llm_mode == "none":
-        return _skip_without_model(target_type)
+        return _skip_without_model(store, database_name, job_id, target_type, assignment_version)
+    clear_design_skip(store, database_name, job_id, target_type, assignment_version)
     if llm_mode == "external":
         return run_schema_design(
             job_id,
@@ -1548,8 +1618,9 @@ def run_schema_design_with_injected(
     if llm_mode == "bedrock":
         require_valid_guardrail_config()
     if llm_mode == "none":
-        _skip_without_model(target_type)
+        _skip_without_model(store, database_name, job_id, target_type, assignment_version)
         return
+    clear_design_skip(store, database_name, job_id, target_type, assignment_version)
     import time
 
     start_time = time.time()

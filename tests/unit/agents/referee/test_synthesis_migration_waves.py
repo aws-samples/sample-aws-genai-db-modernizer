@@ -14,11 +14,11 @@ import copy
 
 import pytest
 
-from src.agents.referee.synthesis_handler import run_synthesis_deterministic
 from src.contracts.synthesis_output import SynthesisOutputContract
 from src.shared.contract_versioning import current_version
 from src.shared.report_facts import compute_report_facts
 from src.storage.local_store import LocalArtifactStore
+from tests.design_records import run_synthesis_deterministic
 
 DB = "shop"
 JOB = "job-waves"

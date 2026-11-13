@@ -12,10 +12,9 @@ These tests run the whole pipeline on the WordPress sample with every model
 entry point patched to raise and count, and assert:
 
 * zero model calls in any phase;
-* schema design is skipped with a clear message (no designer runs, no
-  ``schema_output.json`` is written -- same shape as the deterministic e2e
-  pipeline, which stops before schema design), and the run still completes
-  through synthesis.
+* schema design is skipped with a clear message (no designer runs; each
+  engine's ``schema_output.json`` is only its skip record saying why, #2154),
+  and the run still completes through synthesis.
 """
 
 from __future__ import annotations
@@ -116,8 +115,13 @@ def test_run_assessment_all_with_llm_mode_none_makes_no_model_calls(
     assert state["phase_status"]["synthesis"] == "complete"
 
     job_dir = artifacts / "wordpress" / state["job_id"]
-    # Schema design was skipped, not half-run: no designer output, no group split.
-    assert list(job_dir.glob("schema-*/**/*.json")) == []
+    # Schema design was skipped, not half-run: no designer output, no group split; each
+    # engine has only its skip record saying why (#2154).
+    written = sorted(job_dir.glob("schema-*/**/*.json"))
+    assert written and all(p.name == "schema_output.json" for p in written)
+    for path in written:
+        record = json.loads(path.read_text())
+        assert (record["status"], record["reason"]) == ("skipped", SKIP_REASON)
     out = capsys.readouterr().out
     # Compact stdout (#282): the status line carries the same skip and reason ...
     lines = [json.loads(line) for line in out.splitlines() if line.startswith("{")]
@@ -389,7 +393,13 @@ def test_run_schema_design_with_injected_none_mode_skips_the_designer(tmp_path, 
         "job-1", "wordpress", "dynamodb", store, {"q1"}, assignment_version=1, llm_mode="none"
     )
     assert model_calls == []
-    assert list(tmp_path.rglob("*.json")) == []
+    # Only the engine's skip record, saying why (#2154).
+    [path] = list(tmp_path.rglob("*.json"))
+    assert path.relative_to(tmp_path).as_posix() == (
+        "wordpress/job-1/schema-dynamodb/v1/schema_output.json"
+    )
+    record = json.loads(path.read_text())
+    assert (record["status"], record["reason"]) == ("skipped", SKIP_REASON)
 
 
 def test_state_records_complete_schema_design_when_an_engine_has_output(

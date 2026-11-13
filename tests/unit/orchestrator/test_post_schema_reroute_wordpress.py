@@ -35,6 +35,7 @@ import pytest
 from src.agents.referee.assignment_overrides import mark_assignment_customer_approved
 from src.orchestrator.local_orchestrator import LocalOrchestrator
 from src.storage.local_store import LocalArtifactStore
+from tests.design_records import skip_undesigned_effective
 from tests.e2e.pipeline import REPO, PipelineResult, _run, run_pipeline
 from tests.shared_runs import cached_run, copy_run
 
@@ -111,6 +112,8 @@ def rerouted(tmp_path_factory) -> dict:
         LocalOrchestrator(store, llm_mode="bedrock")._run_post_schema_routing(JOB, DB)
     result = PipelineResult(db=DB, job_id=JOB, artifact_root=root)
     common = ["--job-id", JOB, "--db", DB, "--artifact-root", str(root)]
+    # The engines the stand-in designer leaves undesigned get a skip record (#2154).
+    skip_undesigned_effective(LocalArtifactStore(base_dir=str(root)), DB, JOB)
     _run("synthesis", ["scripts/run_synthesis.py", *common, "--llm-mode", "none"], result)
     _run("report", ["scripts/run_report.py", *common], result)
     synthesis = root / DB / JOB / "synthesis" / "v3"
@@ -260,6 +263,8 @@ def overridden(tmp_path_factory) -> dict:
         orch._run_post_schema_routing(JOB, DB)
     result = PipelineResult(db=DB, job_id=JOB, artifact_root=root)
     common = ["--job-id", JOB, "--db", DB, "--artifact-root", str(root)]
+    # The engines the stand-in designer leaves undesigned get a skip record (#2154).
+    skip_undesigned_effective(LocalArtifactStore(base_dir=str(root)), DB, JOB)
     _run("synthesis", ["scripts/run_synthesis.py", *common, "--llm-mode", "none"], result)
     _run("report", ["scripts/run_report.py", *common], result)
     synthesis = root / DB / JOB / "synthesis" / "v4"

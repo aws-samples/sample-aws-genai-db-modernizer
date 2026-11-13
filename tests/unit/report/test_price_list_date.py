@@ -17,10 +17,7 @@ from typing import Any
 
 import pytest
 
-from src.agents.referee.synthesis_handler import (
-    _write_synthesis_report,
-    run_synthesis_deterministic,
-)
+from src.agents.referee.synthesis_handler import _write_synthesis_report
 from src.contracts.synthesis_output import ReportFacts, SynthesisOutputContract
 from src.report.formatting import price_list_text
 from src.report.renderers import render_engineering_report_md
@@ -34,6 +31,7 @@ from src.tools.analysis import (
     opensearch_analysis_tools,
     redis_analysis_tools,
 )
+from tests.design_records import run_synthesis_deterministic
 from tests.executive_pdf import executive_text
 from tests.unit.agents.referee.test_synthesis_unservable_capabilities import DB, JOB
 from tests.unit.agents.referee.test_synthesis_unservable_capabilities import store as seeded_store

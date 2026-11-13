@@ -14,6 +14,7 @@ import json
 
 from scripts import run_synthesis
 from src.storage.local_store import LocalArtifactStore
+from tests.design_records import STAND_IN_SKIP_REASON, skip_undesigned
 
 DB = "shop"
 JOB = "job-run-synthesis-cache-notes"
@@ -89,6 +90,8 @@ def _seed(store) -> None:
         f"{DB}/{JOB}/schema-elasticache/v2/schema_output.json",
         {"access_patterns": [{"pattern_id": "p1", "source_query_ids": ["hot1"]}]},
     )
+    # The owners' designs are not what this test is about: skip records stand in (#2154).
+    skip_undesigned(store, DB, JOB, 2, STAND_IN_SKIP_REASON)
 
 
 def test_run_standard_prints_the_safety_net_note_in_the_status_line(tmp_path, capsys):

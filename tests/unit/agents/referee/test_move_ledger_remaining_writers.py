@@ -22,10 +22,7 @@ from typing import Any
 import pytest
 
 from src.agents.referee import assignment_overrides
-from src.agents.referee.assignment_overrides import (
-    QueryOverrideInput,
-    apply_assignment_overrides,
-)
+from src.agents.referee.assignment_overrides import QueryOverrideInput, apply_assignment_overrides
 from src.agents.referee.assignment_resolver import AssignmentResolver
 from src.agents.referee.assignment_review import diff_review_items
 from src.agents.referee.cache_overlay import normalize_cache_owners
@@ -39,10 +36,10 @@ from src.agents.referee.move_ledger import (
     unexplained,
 )
 from src.agents.referee.query_scoring import ScoringContext, score_query_for_engine
-from src.agents.referee.synthesis_data import load_synthesis_data
 from src.contracts.assignment_models import Assignment, QueryAssignment
 from src.contracts.move_ledger import Move, MoveActor, MovePass, ReasonCode
 from src.storage.local_store import LocalArtifactStore
+from tests.design_records import load_synthesis_data
 from tests.unit import test_assignment_overrides as overrides_tests
 from tests.unit.test_assignment_overrides import DB, JOB, _MemStore, _qa, _seed
 

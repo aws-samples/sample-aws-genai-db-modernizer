@@ -1228,9 +1228,12 @@ def _schema_design_status(store, job_id: str, db: str, llm_mode: str) -> dict:
     version = resolve_downstream_assignment_version(store, db, job_id)
     in_scope = sorted(engines_with_in_scope_queries(store, db, job_id, version))
     artifacts: dict[str, str] = {}
+    from src.shared.design_records import is_real_design_key
+
     for engine in in_scope:
         key = f"{db}/{job_id}/schema-{engine}/v{version}/schema_output.json"
-        if store.exists(key):
+        # A skip record (#2154) is no design: --llm-mode none writes one per engine.
+        if store.exists(key) and is_real_design_key(key, store.read_json):
             artifacts[engine] = _path(store, key)
             _log_artifact(f"schema-design/{engine}", artifacts[engine])
     data: dict = {"status": "complete", "assignment_version": version, "artifacts": artifacts}

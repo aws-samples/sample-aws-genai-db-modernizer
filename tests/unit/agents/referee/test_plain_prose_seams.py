@@ -214,10 +214,8 @@ def test_synthesis_reads_every_schema_design_through_the_cleaner(store) -> None:
     """The seam is wired: a saved design's model text reaches report.json cleaned,
     the rejection is in ``prose_style_rejections``, and the design on disk keeps
     the model's text."""
-    from src.agents.referee.synthesis_handler import (
-        _write_synthesis_report,
-        run_synthesis_deterministic,
-    )
+    from src.agents.referee.synthesis_handler import _write_synthesis_report
+    from tests.design_records import run_synthesis_deterministic
 
     key = f"{DB}/{JOB}/schema-dynamodb/v2/schema_output.json"
     store.write_json(
@@ -476,10 +474,8 @@ class TestJudgeHedgesAtEverySeam:
 
 @pytest.mark.passes_on_main
 def test_a_clean_design_writes_no_rejection_log(store) -> None:
-    from src.agents.referee.synthesis_handler import (
-        _write_synthesis_report,
-        run_synthesis_deterministic,
-    )
+    from src.agents.referee.synthesis_handler import _write_synthesis_report
+    from tests.design_records import run_synthesis_deterministic
 
     store.write_json(
         f"{DB}/{JOB}/schema-dynamodb/v2/schema_output.json",
@@ -559,10 +555,8 @@ def test_a_confidence_figure_in_a_trade_off_never_reaches_report_json(store) -> 
     """The e2e-llm flake (#1569): a model-written trade-off quoting the analysis's
     co-access confidence reaches neither the trade-off list, the schema design
     projection nor the risk register's details."""
-    from src.agents.referee.synthesis_handler import (
-        _write_synthesis_report,
-        run_synthesis_deterministic,
-    )
+    from src.agents.referee.synthesis_handler import _write_synthesis_report
+    from tests.design_records import run_synthesis_deterministic
 
     key = f"{DB}/{JOB}/schema-dynamodb/v2/schema_output.json"
     store.write_json(

@@ -295,8 +295,8 @@ def _seed(store, assigned_engine: str = "aurora_postgresql") -> None:
 
 
 def test_synthesis_settles_and_reconciles_before_any_builder(tmp_path) -> None:
-    from src.agents.referee.synthesis_data import load_synthesis_data
     from src.storage.local_store import LocalArtifactStore
+    from tests.design_records import load_synthesis_data
 
     store = LocalArtifactStore(base_dir=str(tmp_path))
     _seed(store)
@@ -317,8 +317,8 @@ def test_synthesis_settles_and_reconciles_before_any_builder(tmp_path) -> None:
 
 
 def test_synthesis_without_a_contradiction_keeps_every_note(tmp_path) -> None:
-    from src.agents.referee.synthesis_data import load_synthesis_data
     from src.storage.local_store import LocalArtifactStore
+    from tests.design_records import load_synthesis_data
 
     store = LocalArtifactStore(base_dir=str(tmp_path))
     _seed(store)
@@ -332,8 +332,8 @@ def test_synthesis_without_a_contradiction_keeps_every_note(tmp_path) -> None:
 
 
 def _guarded(tmp_path, assigned_engine: str):
-    from src.agents.referee.synthesis_data import load_synthesis_data
     from src.storage.local_store import LocalArtifactStore
+    from tests.design_records import load_synthesis_data
 
     store = LocalArtifactStore(base_dir=str(tmp_path))
     _seed(store, assigned_engine)

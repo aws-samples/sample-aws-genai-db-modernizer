@@ -36,6 +36,32 @@ def test_every_phase_completes(run: PipelineResult) -> None:
 
 
 @pytest.mark.deterministic
+def test_a_run_without_a_model_records_every_design_as_skipped_and_says_why(
+    run: PipelineResult,
+) -> None:
+    """#2154: the deterministic run designs nothing; each engine synthesis designs has a
+    skip record with the no-model reason, and the deliverables say why it was skipped."""
+    from src.contracts.phase_models import SCHEMA_DESIGN_SKIP_REASON_NO_LLM
+    from src.storage.assignment_versioning import (
+        resolve_effective_assignment_version,
+        schema_design_engines,
+    )
+    from src.storage.local_store import LocalArtifactStore
+
+    store = LocalArtifactStore(base_dir=str(run.artifact_root))
+    version = resolve_effective_assignment_version(store, run.db, run.job_id)
+    engines = schema_design_engines(store, run.db, run.job_id, version)
+    assert engines
+    for engine in engines:
+        record = json.loads(
+            (run.job_dir() / f"schema-{engine}" / f"v{version}" / "schema_output.json").read_text()
+        )
+        assert (record["status"], record["reason"]) == ("skipped", SCHEMA_DESIGN_SKIP_REASON_NO_LLM)
+    report = run.job_dir() / "deliverables" / "engineering-report.md"
+    assert "design was skipped because this run used no model" in report.read_text()
+
+
+@pytest.mark.deterministic
 def test_triage_selects_the_expected_engines(run: PipelineResult) -> None:
     assert set(run.steps["triage"]["selected"]) == EXPECTED_ENGINES[run.db]
 
@@ -165,11 +191,18 @@ def test_contract_artifacts_validate(run: PipelineResult) -> None:
                 f"schema-{engine}/v*/schema_output.json"
             )
 
+    from src.contracts.skipped_placeholders import SkippedSchemaOutput
+
     for schema_output in sorted(job_dir.glob("schema-*/v*/schema_output.json")):
         engine = schema_output.parent.parent.name.removeprefix("schema-")
+        data = _read(schema_output)
+        if data.get("status") == "skipped":
+            # A skip record (#2154): the engine was not designed, and it says why.
+            SkippedSchemaOutput.model_validate(data)
+            continue
         contract = schema_contracts.get(engine)
         if contract is not None:
-            contract.model_validate(_read(schema_output))
+            contract.model_validate(data)
 
     # The report step always runs (both the deterministic pipeline and
     # from_existing_job run scripts/run_report.py), so run.report is safe here.

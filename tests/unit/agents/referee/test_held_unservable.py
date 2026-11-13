@@ -18,15 +18,13 @@ from typing import Any
 import pytest
 
 from src.agents.referee.flagged_unservable import CAUSE_HELD_BY_PIN, flagged_unservable_records
-from src.agents.referee.synthesis_handler import (
-    _write_synthesis_report,
-    run_synthesis_deterministic,
-)
+from src.agents.referee.synthesis_handler import _write_synthesis_report
 from src.contracts.post_schema_router_output import RouterOutput
 from src.contracts.synthesis_output import SynthesisOutputContract
 from src.shared.capability_labels import FLAG_REDESIGN_HINTS
 from src.shared.report_facts import compute_report_facts
 from src.storage.local_store import LocalArtifactStore
+from tests.design_records import run_synthesis_deterministic
 
 
 def _assignment(**engines: str) -> dict[str, Any]:

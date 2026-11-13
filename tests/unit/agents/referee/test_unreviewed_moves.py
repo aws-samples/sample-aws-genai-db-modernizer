@@ -109,10 +109,8 @@ class TestEveryDeliverableStatesIt:
 
 
 def test_synthesis_copies_the_batches_and_counts_them(tmp_path) -> None:
-    from src.agents.referee.synthesis_handler import (
-        _write_synthesis_report,
-        run_synthesis_deterministic,
-    )
+    from src.agents.referee.synthesis_handler import _write_synthesis_report
+    from tests.design_records import run_synthesis_deterministic
     from tests.unit.agents.referee.test_synthesis_unservable_capabilities import (
         DB,
         JOB,

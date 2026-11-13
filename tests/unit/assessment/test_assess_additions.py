@@ -21,11 +21,7 @@ from src.agents.referee.aurora_choice import source_database_engine
 from src.assessment import AssessmentResult
 from src.assessment.models import LABEL_BY_PHASE, ResultLabel, StatementType
 from src.shared.catalog.patterns import engine_pattern, patterns
-from src.shared.report_facts import (
-    assignment_table_usage,
-    table_owner_line,
-    table_owner_reason,
-)
+from src.shared.report_facts import assignment_table_usage, table_owner_line, table_owner_reason
 from src.storage.assignment_versioning import resolve_effective_assignment_version
 from tests.unit.assessment.conftest import COLLECTIONS, PLACED_JOB, assessed, placed_run
 
@@ -118,7 +114,7 @@ def test_engine_reasons_are_the_executive_reports(placed: Any) -> None:
     """An owner's and the cache's reason is the executive report's "why" text for it, as
     a deterministic synthesis of the same job states it in ``facts.engines``; a
     consolidated engine's is the reality check's reason for its first consolidation."""
-    from src.agents.referee.synthesis_handler import run_synthesis
+    from tests.design_records import run_synthesis
 
     name, result, state, store = placed
     version = result.summary.assignment_version
@@ -424,17 +420,18 @@ def test_a_reality_check_run_logs_no_warning(caplog: pytest.LogCaptureFixture) -
     assert [r.getMessage() for r in caplog.records if r.levelno >= logging.WARNING] == []
 
 
-def test_synthesis_still_warns_about_a_missing_design(caplog: pytest.LogCaptureFixture) -> None:
-    """Synthesis itself, which expects schema design, keeps the warning."""
+def test_synthesis_refuses_a_missing_design(caplog: pytest.LogCaptureFixture) -> None:
+    """Synthesis itself, which expects schema design, refuses an engine with neither a
+    design nor a skip record (#2154); a caller that stops before schema design neither
+    raises nor warns."""
     import logging
 
-    from src.agents.referee.synthesis_data import load_synthesis_data
+    from src.agents.referee.synthesis_data import MissingSchemaDesigns, load_synthesis_data
 
     result, _, store = placed_run("trailgear")
     version = result.summary.assignment_version
-    with caplog.at_level(logging.WARNING):
+    with pytest.raises(MissingSchemaDesigns, match=f"assignment v{version}"):
         load_synthesis_data(store, PLACED_JOB, "trailgear", version)
-    assert any("schema_output.json" in r.getMessage() for r in caplog.records)
     caplog.clear()
     with caplog.at_level(logging.WARNING):
         load_synthesis_data(store, PLACED_JOB, "trailgear", version, schema_design_expected=False)

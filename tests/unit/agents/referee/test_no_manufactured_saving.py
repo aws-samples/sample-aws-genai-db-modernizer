@@ -18,9 +18,9 @@ import pytest
 
 from src.agents.referee.reality_check import _build_recommendations
 from src.agents.referee.reality_check_records import removal_log_lines
-from src.agents.referee.synthesis_handler import run_synthesis_deterministic
 from src.shared.engines_in_use import engines_in_use
 from src.storage.local_store import LocalArtifactStore
+from tests.design_records import run_synthesis_deterministic
 from tests.unit.agents.referee.ledger_fakes import records_from_moves
 
 DOCDB_COST = 367.39

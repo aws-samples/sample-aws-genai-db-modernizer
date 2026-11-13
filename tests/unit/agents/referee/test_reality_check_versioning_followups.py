@@ -431,10 +431,8 @@ class TestFitRecordsWithPins:
 
 class TestSynthesisReadsTheSameRecord:
     def test_the_report_shows_the_consolidation_the_assignment_carries(self, store) -> None:
-        from src.agents.referee.synthesis_handler import (
-            _write_synthesis_report,
-            run_synthesis_deterministic,
-        )
+        from src.agents.referee.synthesis_handler import _write_synthesis_report
+        from tests.design_records import run_synthesis_deterministic
 
         _run(store)
         _customer_edit(store, 3)
@@ -471,10 +469,8 @@ class TestGraphReadsTheSameRecord:
 
 
 def _synthesize(store: LocalArtifactStore, version: int) -> tuple[dict, dict]:
-    from src.agents.referee.synthesis_handler import (
-        _write_synthesis_report,
-        run_synthesis_deterministic,
-    )
+    from src.agents.referee.synthesis_handler import _write_synthesis_report
+    from tests.design_records import run_synthesis_deterministic
 
     result = run_synthesis_deterministic(JOB, DB, store, assignment_version=version)
     _write_synthesis_report(store, result, assignment_version=version)

@@ -17,13 +17,11 @@ from pathlib import Path
 
 import pytest
 
-from src.agents.referee.synthesis_handler import (
-    _write_synthesis_report,
-    run_synthesis_deterministic,
-)
+from src.agents.referee.synthesis_handler import _write_synthesis_report
 from src.contracts.synthesis_output import SynthesisOutputContract
 from src.report.engineering_report import render_engineering_report_md
 from src.storage.local_store import LocalArtifactStore
+from tests.design_records import run_synthesis_deterministic
 
 DB = "shop"
 JOB = "job-risks"

@@ -14,15 +14,11 @@ from __future__ import annotations
 import pytest
 
 from src.agents.referee.post_schema_router import route_unsupported_queries
-from src.agents.referee.synthesis_data import load_synthesis_data
 from src.agents.referee.synthesis_grounding import build_fallback_summary
-from src.agents.referee.synthesis_handler import run_synthesis_deterministic
 from src.shared.report_facts import cache_layer_facts
-from src.storage.assignment_versioning import (
-    engine_scope,
-    engines_with_in_scope_queries,
-)
+from src.storage.assignment_versioning import engine_scope, engines_with_in_scope_queries
 from src.storage.local_store import LocalArtifactStore
+from tests.design_records import load_synthesis_data, run_synthesis_deterministic
 
 DB = "shop"
 JOB = "job-cache-overlay"

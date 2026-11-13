@@ -27,12 +27,12 @@ from src.agents.referee import (
 )
 from src.agents.referee.assignment_resolver import AssignmentResolver
 from src.agents.referee.synthesis_data import EngineArtifacts, SynthesisData
-from src.agents.referee.synthesis_handler import run_synthesis_deterministic
 from src.agents.referee.synthesis_report import build_query_groups
 from src.contracts.schema_design_input import AgentQueryPattern, QueryType
 from src.storage.local_store import LocalArtifactStore
 from src.tools.analysis import aurora_common_analysis_tools as analysis_tools
 from src.tools.schema.aurora_common import design_view
+from tests.design_records import run_synthesis_deterministic
 
 TABLE = "sys.public.orders"
 TEXT = "SELECT * FROM sys.public.orders WHERE id = ?"

@@ -3735,6 +3735,12 @@ def wave_readiness_rows(
         for e, d in designs.items()
         if isinstance(d, Mapping) and d.get("status") == "completed"
     }
+    # #2154: each skipped design's stored reason, so its wave says why it is not designed.
+    skipped = {
+        str(e): str(d.get("reason") or "")
+        for e, d in designs.items()
+        if isinstance(d, Mapping) and d.get("status") == "skipped"
+    }
     # Each design's own unresolved merge conflicts (only a grouped design records them).
     unserved = {
         str(e): int(
@@ -3777,6 +3783,7 @@ def wave_readiness_rows(
         waves,
         risks=risks,
         designed_engines=designed,
+        skipped_by_engine=skipped,
         unserved_by_engine=unserved,
         open_reviews_by_engine=reviews,
         failed_reviews_by_engine=failed,
