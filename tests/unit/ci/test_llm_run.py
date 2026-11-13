@@ -2957,6 +2957,74 @@ def test_a_final_summary_missing_a_headline_figure_fails(tmp_path: Path) -> None
     _not_shown(tmp_path, records, "Projected monthly cost")
 
 
+_ESCAPED_GLANCE = (
+    "- Rate window: a fixed divisor \\(the server uptime or an assumed 24 hours\\) can bias "
+    "either way; see \\[the report\\] for `wp_posts` and \\*all\\* waves"
+)
+
+
+def _with_final_glance_line(records: list[dict], line: str) -> list[dict]:
+    """Add ``line`` to the "At a glance" list of print_summary.py --final's tool output."""
+    for rec in records:
+        for block in (rec.get("message") or {}).get("content") or []:
+            if block.get("type") == "tool_result" and block["tool_use_id"] == "tu-f":
+                text = block["content"][0]["text"]
+                block["content"][0]["text"] = text.replace(
+                    "- Migration: 2 waves\n", f"- Migration: 2 waves\n{line}\n"
+                )
+    return records
+
+
+@pytest.mark.parametrize(
+    "quoted",
+    [
+        _ESCAPED_GLANCE,
+        "- Rate window: a fixed divisor (the server uptime or an assumed 24 hours) can bias "
+        "either way; see [the report] for `wp_posts` and *all* waves",
+    ],
+    ids=["verbatim", "escapes-dropped"],
+)
+def test_a_final_summary_quoted_with_its_markdown_escapes_dropped_passes(quoted: str) -> None:
+    # batch11122319 (discourse): print_summary.py escapes ( ) [ ] * _ in prose (md_text, #211);
+    # the model quoted every line, but wrote "(the server uptime ...)" for "\(the server
+    # uptime ...\)". Both render the same text, so the user saw the line.
+    records = _with_final_glance_line(_chat_records(), _ESCAPED_GLANCE)
+    quote = _final_quote(records)
+    quote["text"] = quote["text"].replace(
+        "- Migration: 2 waves\n", f"- Migration: 2 waves\n{quoted}\n"
+    )
+    assert run.check_printed_blocks_shown(records, "chat") == (True, None)
+
+
+@pytest.mark.passes_on_main  # only the escapes are forgiven, never words
+@pytest.mark.parametrize(
+    "quoted",
+    [
+        "- Rate window: a fixed divisor (the server uptime) can bias either way; see [the "
+        "report] for `wp_posts` and *all* waves",
+        "- Rate window: a fixed divisor \\(the server uptime or an assumed 24 hours\\) can bias "
+        "either way",
+    ],
+    ids=["reworded", "cut-short"],
+)
+def test_an_escaped_final_line_reworded_or_cut_still_fails(tmp_path: Path, quoted: str) -> None:
+    # Only the escape backslashes are forgiven: a quote that changes or drops words is not one.
+    records = _with_final_glance_line(_chat_records(), _ESCAPED_GLANCE)
+    quote = _final_quote(records)
+    quote["text"] = quote["text"].replace(
+        "- Migration: 2 waves\n", f"- Migration: 2 waves\n{quoted}\n"
+    )
+    _not_shown(tmp_path, records, "missing line: '- Rate window")
+
+
+def test_markdown_escapes_are_compared_as_rendered() -> None:
+    # A backslash before ASCII punctuation is a CommonMark escape: it renders as the character
+    # alone. Any other backslash is literal text and must be quoted.
+    assert run._norm("a \\(b\\) \\[c\\] \\*d\\* \\_e\\_ \\` \\\\ \\!") == "a (b) [c] *d* _e_ ` \\ !"
+    assert run._norm("C:\\temp \\n") == "C:\\temp \\n"
+    assert run._norm(" x\n\n  y ") == "x y"
+
+
 def test_the_result_line_must_follow_the_final_summary_in_chat(tmp_path: Path) -> None:
     # The result line only in the result record (or before the final summary) does not count.
     records = _chat_records()
