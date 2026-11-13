@@ -84,3 +84,42 @@ def test_no_assignment_is_still_no_check(tmp_path: Path) -> None:
     )
     assert report.violations == []
     assert checked["validation_passed"] is True
+
+
+def test_an_assignment_at_another_contract_major_raises_not_a_violation(tmp_path: Path) -> None:
+    """#2154 review: a stored version this code cannot read is the version error the API
+    turns into a 409, never a scope violation (or, as on main, a pass)."""
+    import json
+
+    from src.shared.contract_versioning import ContractVersionError
+
+    store = LocalArtifactStore(str(tmp_path))
+    _job(store, [_q("a", "SELECT * FROM products WHERE id = ?", 1.0)], engine="documentdb")
+    path = tmp_path / "ecommerce/j1/assignment/v1/assignment.json"
+    path.write_text(
+        json.dumps({**json.loads(path.read_text()), "contract_version": "99.0"}),
+        encoding="utf-8",
+    )
+    with pytest.raises(ContractVersionError):
+        handler.check_schema_scope(
+            store, "ecommerce", "j1", "documentdb", _documentdb_design(["a"]), 1
+        )
+
+
+def test_a_check_that_breaks_logs_only_the_error_type(store, monkeypatch, caplog) -> None:
+    """#2154 review: an exception's text can carry stored content (a KeyError on a stored
+    key); the warnings name its type only."""
+    planted = "SELECT card_number FROM wp_secret_cards"
+
+    def leaky(*args, **kwargs):  # noqa: ANN002, ANN003
+        raise KeyError(planted)
+
+    monkeypatch.setattr(handler, "assess_schema_scope", leaky)
+    monkeypatch.setattr(design_coverage, "required_query_ids", leaky)
+    with caplog.at_level("DEBUG"):
+        _, report = apply_schema_scope(
+            store, "ecommerce", "j1", "documentdb", _documentdb_design(["a"]), 1
+        )
+    assert len(report.violations) == 2
+    assert "KeyError" in caplog.text
+    assert "card_number" not in caplog.text

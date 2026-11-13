@@ -60,9 +60,9 @@ from __future__ import annotations
 import hashlib
 import logging
 from collections.abc import Iterable, Mapping, MutableMapping
-from typing import Any
+from typing import Any, get_args
 
-from pydantic import ValidationError
+from pydantic import BaseModel, ValidationError
 
 from src.agents.referee.query_scoring import GATE_KIND_WRITE
 from src.contracts.move_ledger import UNSERVABLE as UNSERVABLE
@@ -552,14 +552,45 @@ def read_moves(assignment: Mapping) -> list[Move]:
         try:
             moves.append(Move.model_validate(raw))
         except ValidationError as exc:
-            fields = sorted(
-                {".".join(str(p) for p in e["loc"]) or "(record)" for e in exc.errors()}
-            )
+            fields = sorted({_field_path(e["loc"]) for e in exc.errors()})
+            version = assignment.get("version")
+            shown = version if isinstance(version, int) and not isinstance(version, bool) else "?"
             raise UnreadableMove(
-                f"assignment v{assignment.get('version', '?')}: Move {index + 1} does not "
-                f"match the Move contract ({', '.join(fields)}), so its ledger cannot be read"
+                f"assignment v{shown}: Move {index + 1} does not match the Move contract "
+                f"({', '.join(fields)}), so its ledger cannot be read"
             ) from None
     return moves
+
+
+def _model_field_names(model: type[BaseModel], seen: set[type] | None = None) -> set[str]:
+    """Every field name and alias of ``model`` and the models its fields hold."""
+    seen = seen if seen is not None else set()
+    if model in seen:
+        return set()
+    seen.add(model)
+    names: set[str] = set()
+    for name, info in model.model_fields.items():
+        names.add(name)
+        if info.alias:
+            names.add(info.alias)
+        stack = [info.annotation]
+        while stack:
+            tp = stack.pop()
+            if isinstance(tp, type) and issubclass(tp, BaseModel):
+                names |= _model_field_names(tp, seen)
+            stack.extend(get_args(tp))
+    return names
+
+
+_MOVE_FIELDS = frozenset(_model_field_names(Move))
+
+
+def _field_path(loc: tuple) -> str:
+    """A validation error's location with field names only (#2154 review): a dict key, a
+    list index or anything else that is not a Move contract field name is stored data,
+    shown as ``[*]``."""
+    parts = [p if isinstance(p, str) and p in _MOVE_FIELDS else "[*]" for p in loc]
+    return ".".join(parts) or "(record)"
 
 
 def _moves_by_query(lineage: Iterable[Mapping]) -> dict[str, list[Move]]:

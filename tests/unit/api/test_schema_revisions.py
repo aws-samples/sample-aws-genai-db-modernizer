@@ -674,3 +674,58 @@ class TestPostConfirmAll:
             c for c in store.write_json.call_args_list if "confirmed.json" in str(c)
         ]
         assert confirmed_writes == []
+
+
+class TestARevisionReadsItsAssignment:
+    """#2154 review: the revision's coverage check reads the assignment, and a stored
+    assignment it cannot read refuses the revision instead of skipping the check."""
+
+    @pytest.fixture
+    def local(self, tmp_path):
+        from src.api.main import app  # first: importing it wires the routes' services
+        from src.api.routes import schema_revisions
+        from src.storage.local_store import LocalArtifactStore
+
+        store = LocalArtifactStore(base_dir=str(tmp_path))
+        store.write_json("mydb/job-1/schema-dynamodb/v1/schema_output.json", _schema_output())
+        schema_revisions.artifact_store = store
+        schema_revisions.orchestrator = None
+        schema_revisions.sfn_service = None
+        yield TestClient(app), tmp_path
+        schema_revisions.artifact_store = None
+
+    @staticmethod
+    def _assignment(root, data) -> None:
+        import json
+
+        path = root / "mydb/job-1/assignment/v1/assignment.json"
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(json.dumps(data), encoding="utf-8")
+
+    @staticmethod
+    def _put(tc):
+        return tc.put(
+            "/api/v1/assessments/job-1/schema/dynamodb/revisions",
+            params={"database_name": "mydb"},
+            json={**_REVISION_BODY, "base_version": 1},
+        )
+
+    def test_an_assignment_at_another_contract_major_is_a_409(self, local):
+        tc, root = local
+        self._assignment(root, {"contract_version": "99.0", "version": 1, "query_assignments": []})
+        resp = self._put(tc)
+        assert resp.status_code == 409, resp.text
+        assert not (root / "mydb/job-1/schema-dynamodb/v2").exists()
+
+    def test_an_assignment_of_the_wrong_shape_is_a_422(self, local):
+        tc, root = local
+        self._assignment(root, {"version": 1, "query_assignments": "SELECT secret FROM t"})
+        resp = self._put(tc)
+        assert resp.status_code == 422
+        [error] = resp.json()["detail"]["verification"]["hard_errors"]
+        assert error["message"] == (
+            "The assignment could not be read (its query assignments are not a list of "
+            "records), so the revision's coverage cannot be checked and nothing was written."
+        )
+        assert "secret" not in resp.text
+        assert not (root / "mydb/job-1/schema-dynamodb/v2").exists()

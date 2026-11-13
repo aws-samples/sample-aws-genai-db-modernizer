@@ -478,6 +478,24 @@ def _apply_drops_to_schema(schema_output: dict, dropped_pattern_ids: set[str]) -
     return result
 
 
+def _unreadable_assignment(why: str) -> VerificationError:
+    """The refusal of a revision whose assignment cannot be read (#2154); ``why`` is an
+    error type or a fixed phrase, never stored text."""
+    from src.contracts.schema_revision_models import VerificationIssue, VerificationResult
+
+    issue = VerificationIssue(
+        category="coverage",
+        severity="error",
+        message=(
+            f"The assignment could not be read ({why}), so the revision's coverage cannot "
+            "be checked and nothing was written."
+        ),
+        affected_patterns=[],
+        affected_tables=[],
+    )
+    return VerificationError(VerificationResult(passed=False, hard_errors=[issue], warnings=[]))
+
+
 def _required_query_ids(
     store: ArtifactStore,
     database_name: str,
@@ -489,11 +507,12 @@ def _required_query_ids(
     """Queries the assignment puts on ``engine`` that the revision did not remove on purpose.
 
     Returns an empty set (no coverage check) when the job has no assignment (a
-    legacy job). An assignment that exists but cannot be read refuses the revision
-    (#2154): :class:`VerificationError` with one coverage error, never "nothing to
-    cover".
+    legacy job). An assignment that exists but cannot be read, or whose
+    ``query_assignments`` is not a list of records, refuses the revision (#2154):
+    :class:`VerificationError` with one coverage error, never "nothing to cover". A
+    stored contract version this code cannot read raises ``ContractVersionError``
+    (a 409 on the API).
     """
-    from src.contracts.schema_revision_models import VerificationIssue, VerificationResult
     from src.shared.contract_versioning import ContractVersionError
     from src.storage.assignment_versioning import (
         engine_scope,
@@ -507,22 +526,14 @@ def _required_query_ids(
     except ContractVersionError:
         raise
     except Exception as exc:  # noqa: BLE001 - fails closed (#2154): refused, not unchecked
-        logger.warning("Assignment not readable for %s: %s", job_id, exc)
-        issue = VerificationIssue(
-            category="coverage",
-            severity="error",
-            message=(
-                f"The assignment could not be read ({type(exc).__name__}), so the revision's "
-                "coverage cannot be checked and nothing was written."
-            ),
-            affected_patterns=[],
-            affected_tables=[],
-        )
-        raise VerificationError(
-            VerificationResult(passed=False, hard_errors=[issue], warnings=[])
-        ) from exc
+        logger.warning("Assignment not readable for %s: %s", job_id, type(exc).__name__)
+        raise _unreadable_assignment(type(exc).__name__) from exc
     if not assignment:
         return set()
+    rows = assignment.get("query_assignments", [])
+    if not isinstance(rows, list) or not all(isinstance(r, dict) for r in rows):
+        logger.warning("Assignment of %s has no list of query assignments", job_id)
+        raise _unreadable_assignment("its query assignments are not a list of records")
     removed = {
         "access_patterns": [
             ap
