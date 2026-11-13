@@ -1,0 +1,85 @@
+# Database Modernization: Engineering Report
+
+Source database: `app`. This is the build companion to the executive report (`executive-report.pdf`): the source-to-target mapping, the per-engine target schemas, and the query groups.
+
+## Executive summary
+
+No executive summary was generated for this run.
+
+*Engine and query assignments are produced deterministically. No language model decides which engine a table or query goes to. The executive summary is written over already-computed results and cannot change a recommendation.*
+
+## Target engines
+
+| Engine | Role | Workload | Scope | Why |
+|---|---|---|---|---|
+| Aurora MySQL | Evaluated | - | no queries assigned | - |
+| DynamoDB | Migration target | - | 4 source tables | - |
+| DocumentDB | Evaluated | - | no queries assigned | - |
+| ElastiCache | Cache layer | 2 designed cached reads · 0% of calls | cache-aside | - |
+| Total | | 0% | 4 tables migrate | |
+
+Queries moved: 8 of 13 queries move to a new engine (a migration target or a search read model); the rest stay on the engine that runs them today.
+
+The migration moves the 4 tables assigned to DynamoDB.
+
+*Workload fit: how closely this engine's capabilities match the access patterns of the queries routed to it. It is not a probability that the migration will succeed.*
+
+*Cache fit: how closely the cache layer's capabilities match the reads it fronts. The cache layer owns no queries, so this is not a workload fit and is not compared with the owning engines' figures.*
+
+## Cost
+
+Full-modernization estimate: all waves done, every kept engine running.
+
+- Projected monthly (target): $200.00
+
+| Engine | Role | Est. monthly | Sized for |
+|---|---|---|---|
+| Aurora MySQL | Evaluated | $100.00 | - |
+| DynamoDB | Migration target | $20.00 | - |
+| DocumentDB | Evaluated | $30.00 | - |
+| ElastiCache | Cache layer | $50.00 | - |
+| Total | | $200.00 | |
+
+Estimates from public on-demand list prices for the stated Region. Check them with your own pricing in the AWS Pricing Calculator \(https://calculator.aws/\).
+
+## Migration roadmap (3 waves)
+
+*This is one suggested adoption path. To modernize in one step instead, adopt the target architecture in the Target engines table above directly.*
+
+*The cutover is your responsibility.*
+
+### Wave 1: Aurora MySQL
+
+- Engines: Aurora MySQL
+- all 13 queries at cutover; 3 \(0%\) remain on Aurora MySQL at the end
+- 0 source tables and views: `app.cart_items`, `app.carts`, `app.events`, `app.orders`, `app.products`, `app.profiles`, `app.sessions`, `app.unused`
+- Moves from: the source MySQL database
+- Why: -
+- Gate before the next wave: -
+
+### Wave 2: ElastiCache
+
+- Engines: ElastiCache
+- 0 queries \(0% of queries\)
+- Fronts: Aurora MySQL
+- Why: -
+- Gate before the next wave: -
+
+### Wave 3: DynamoDB, DocumentDB
+
+- Engines: DynamoDB, DocumentDB
+- 0 queries \(0% of queries\)
+- 0 source tables: `app.cart_items`, `app.carts`, `app.events`, `app.orders`, `app.products`, `app.profiles`, `app.sessions`
+- Why: -
+- Gate before the next wave: -
+
+## Risk posture
+
+- Overall risk: not assessed
+- No risks were identified in this analysis.
+
+*No open risks is not the same as no migration risk: this analysis reads schema and query patterns only and does not model traffic bursts, peak load or compliance requirements.*
+
+---
+
+Assignments are deterministic. The complete machine-readable assessment is the Assessment Data (JSON) artifact.

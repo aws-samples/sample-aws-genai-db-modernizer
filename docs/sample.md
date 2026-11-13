@@ -14,6 +14,9 @@ The run's synthesis report is committed under [`docs/examples/wordpress/sample-r
 !!! note "Routines since #1954"
     The `wordpress` sample now has a small synthetic routine set next to its collection, `docs/examples/wordpress/wordpress-routines.json`: a function, a trigger and an event carried as they are, a procedure rewritten so its `DEFINER` names the target user, and a procedure that can't be carried, which becomes the to-do "migrate it yourself before wave 1". The deterministic run of the sample adds the set to the collection and its reports have a Routines section. The recorded run predates the set, so the deliverables on this page have no Routines section until the sample is refreshed for the next release. <!-- claim: tests/e2e/test_sample_routines.py::test_each_synthetic_routine_gets_its_outcome, tests/e2e/test_sample_routines.py::test_the_engineering_report_states_each_outcome -->
 
+!!! note "Adoption paths"
+    The engineering report now opens the plan with "Adoption paths": the end states the plan can stop at, each with its engines, steps, queries and its own estimated cost, and a "One step" block for the full target taken in one step. Each wave of the roadmap also lists its steps and stages. They come from the step-by-step plan behind the waves, which the recorded run predates, so the deliverables on this page show neither until the sample is refreshed for the next release. <!-- claim: tests/unit/report/test_adoption_paths_old_report.py::test_a_report_with_no_adoption_path_renders_byte_for_byte_as_before, tests/unit/report/test_adoption_paths_rendering.py::test_the_report_puts_the_adoption_paths_before_the_roadmap_and_points_at_them -->
+
 ## The deliverables
 
 These are the files a run writes to its deliverables folder, under the same names:
