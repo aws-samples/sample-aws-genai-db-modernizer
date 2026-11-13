@@ -157,7 +157,7 @@
   "description": "One assessment: a database's raw collection and the options to run it with.",
   "properties": {
     "contract_version": {
-      "description": "The contract version the caller builds on: 1.3 or 1.4; the result is written for it. With none, the newest version a release recorded (src/assessment/released_contract.json): a version newer than that is not in a release yet and is read only when pinned. A 1.3 request cannot set a field 1.4 added (routine_sources). The retired 1.0, 1.1 and 1.2 are refused with RetiredContractVersionError; any other value is refused as invalid",
+      "description": "The contract version the caller builds on: 1.3 or 1.4; the result is written for it. With none, the newest version a release recorded (src/assessment/released_contract.json, written after the release's tag, so the release that first ships a version still defaults to the one before): a newer version is read only when pinned. A 1.3 request cannot set a field 1.4 added (routine_sources). The retired 1.0, 1.1 and 1.2 are refused with RetiredContractVersionError; any other value is refused as invalid",
       "enum": [
         "1.3",
         "1.4"

@@ -7,9 +7,9 @@
 unchanged. The version a request naming none gets is derived, never kept by hand: the
 newest version a release recorded (``src/assessment/released_contract.json``, written
 with ``tests/contract/assess_released_since_1_3.json`` by the release step's
-``--write-released <tag>``). Today that is v0.4.0-beta.3's 1.3, so 1.4 is not in a
-release yet and is read only when pinned; once the next release records it, it is the
-default with no code change.
+``--write-released <tag>``, run after the tag is pushed). Today that is v0.4.0-beta.3's
+1.3, so 1.4 is read only when pinned, also in the release that first ships it; once the
+record step after that release's tag records it, it is the default with no code change.
 
 - the default is the recorded version; before the record 1.4 is read only when pinned,
   and after a simulated record it is the default;
@@ -51,7 +51,7 @@ from src.assessment import (
 from src.assessment.models import (
     SUPPORTED_CONTRACT_VERSIONS,
     default_contract_version,
-    unreleased_contract_versions,
+    pinned_only_contract_versions,
 )
 from tests.unit.assessment.conftest import sample_collection
 
@@ -123,10 +123,10 @@ def recorded_1_4(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Iterator[di
 
 
 def test_before_the_record_1_4_is_read_only_when_pinned() -> None:
-    assert unreleased_contract_versions() == ("1.4",)
+    assert pinned_only_contract_versions() == ("1.4",)
     assert AssessmentRequest.model_validate(_request(None)).contract_version == "1.3"
     assert AssessmentRequest.model_validate(_request("1.4")).contract_version == "1.4"
-    with pytest.raises(ValueError, match=r"1\.4 \(not in a release yet\)"):
+    with pytest.raises(ValueError, match=r"1\.4 \(read only when pinned\)"):
         models.check_contract_version("1.5")
     # The public shape is 1.4's: against the released 1.3 it is the MINOR rise.
     assert {e["version"] for e in build_public_snapshot().values()} == {"1.4"}
@@ -135,12 +135,12 @@ def test_before_the_record_1_4_is_read_only_when_pinned() -> None:
 def test_once_a_release_records_1_4_it_is_the_default(recorded_1_4: dict[str, Any]) -> None:
     assert released_version_of(recorded_1_4) == "1.4"
     assert default_contract_version() == "1.4"
-    assert unreleased_contract_versions() == ()
+    assert pinned_only_contract_versions() == ()
     assert AssessmentRequest.model_validate(_request(None)).contract_version == "1.4"
     assert assess(_request(None)).contract_version == "1.4"
     with pytest.raises(ValueError) as caught:
         models.check_contract_version("1.5")
-    assert "not in a release yet" not in str(caught.value)
+    assert "read only when pinned" not in str(caught.value)
     # A 1.3 caller is still served as before, and may not set a 1.4 field.
     assert AssessmentRequest.model_validate(_request("1.3")).contract_version == "1.3"
     with pytest.raises(RoutineSourcesError, match=r"field of contract 1\.4: pin"):
@@ -199,7 +199,7 @@ def test_a_1_3_request_naming_routine_sources_is_refused() -> None:
     # From the field's own validator: the input-free RoutineSourcesError.
     with pytest.raises(
         RoutineSourcesError,
-        match=r"routine_sources is a field of contract 1\.4 \(not in a release yet\)",
+        match=r"routine_sources is a field of contract 1\.4: pin",
     ):
         AssessmentRequest.model_validate(request)
     with pytest.raises(RoutineSourcesError, match="field of contract 1.4"):

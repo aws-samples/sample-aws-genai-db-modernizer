@@ -840,7 +840,7 @@ def build_public_snapshot(
 
 def surface_version(model: type[BaseModel]) -> str:
     """The version a public model's shape is: the newest ``contract_version`` it reads
-    (one not in a release yet included, #2022), not the default a request with none gets. A
+    (one read only when pinned included, #2022), not the default a request with none gets. A
     model whose ``contract_version`` is no ``Literal`` of versions gives its default."""
     field = model.model_fields["contract_version"]
     values = [v for v in get_args(field.annotation) if isinstance(v, str)]

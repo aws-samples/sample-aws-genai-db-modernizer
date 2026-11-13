@@ -32,6 +32,7 @@ from src.assessment.models import (
     AssessmentResult,
     check_contract_version,
     check_request_fields,
+    writes_routine_sources,
 )
 from src.assessment.result_builder import build_result, load_run_state
 from src.shared import model_usage
@@ -92,7 +93,7 @@ def _ingest_and_analyse(job: _Job) -> None:
         job.database_name,
         _collector_input(job.request.collection),
     )
-    if job.request.contract_version != "1.3":
+    if writes_routine_sources(job.request.contract_version):
         # #2022 (contract 1.4): the routine sources, under the collectors' rules and never
         # in the collector output: the caller's entries, and the CREATE statements of a
         # raw collection (as the scripts write them from the file) for the rest. A 1.3

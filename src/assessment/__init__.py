@@ -39,9 +39,10 @@ Contract versions 1.0, 1.1 and 1.2 were beta development versions, removed in
 v0.4.0-beta.3: a request (or a result read back) naming one raises a
 ``RetiredContractVersionError`` (a ``ValueError``). Pin ``contract_version="1.3"``, or
 send none, for the newest version a release recorded. A version newer than that (1.4
-until the next release records it) is read only when pinned. 1.4 adds ``routine_sources``
-(#2022), refused in a 1.3 request; an invalid one raises ``RoutineSourcesError`` (a
-``ValueError`` that quotes no input).
+until a release step records it, after the tag of the release that first ships it) is
+read only when pinned. 1.4 adds ``routine_sources`` (#2022), refused in a 1.3 request,
+and a 1.4 run writes the job's routine sources; an invalid entry raises
+``RoutineSourcesError`` (a ``ValueError`` that quotes no input).
 
 Not stable: ``artifacts`` (only with ``include_artifacts=True``) carries the pipeline's
 internal contracts verbatim, each with its own internal version, and has no

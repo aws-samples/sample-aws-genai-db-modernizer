@@ -3,15 +3,16 @@
 
 """``assess()`` takes routine sources and writes the job's routine sources (#2022).
 
-A library caller passes each routine's ``CREATE`` in the routine-sources format
-(``RoutineSource`` entries, ``AssessmentRequest.routine_sources``, contract 1.4, read
-only when pinned until a release records it), and the
-run writes the same ``collector/routine_sources.json`` and chunks the scripts and the
-live collectors write, under their rules: the exact text stays only in the chunks; a
+A 1.4 run (read only when pinned until a release step records it) extracts a raw
+collection's routine bodies as the scripts do, and a library caller may pass each
+routine's ``CREATE`` in the routine-sources format (``RoutineSource`` entries,
+``AssessmentRequest.routine_sources``), which replaces its routine's. The run writes the
+same ``collector/routine_sources.json`` and chunks the scripts and the live collectors
+write, under their rules: the exact text stays only in the chunks; a
 collection made with ``include_routine_bodies = 0`` writes none; only a routine the
 collection lists with its body collected gets one (a ``not_readable``, ``opted_out`` or
 ``not_supported`` routine, or one the collection does not list, gets none); each body
-goes through the repository's credential scan. A caller that passes none sees no change.
+goes through the repository's credential scan. A 1.3 request writes none, as before 1.4.
 """
 
 from __future__ import annotations
@@ -596,10 +597,39 @@ def test_a_request_for_1_3_with_routine_sources_is_refused_with_no_input(
 
 
 def test_another_request_error_quotes_no_input() -> None:
+    """Another field's error quotes no input in its message, and its errors() and json()
+    hold only that field's own value: never the routine text or the collection's."""
     payload = {**_request(_given(pg_collection())), "database_name": f"bad name {EDGE}"}
     with pytest.raises(ValidationError) as caught:
         AssessmentRequest.model_validate(payload)
     assert EDGE not in str(caught.value) and GIVEN not in str(caught.value)
+    assert [e["loc"] for e in caught.value.errors()] == [("database_name",)]
+    for text in (json.dumps(caught.value.errors(), default=str), caught.value.json()):
+        assert GIVEN not in text and SEED not in text
+
+
+def test_a_type_adapter_or_a_holding_model_keeps_pydantics_own_errors() -> None:
+    """Outside the four covered calls (a TypeAdapter, a model holding the request), an
+    invalid entry raises pydantic's ValidationError: its str() quotes no input, its
+    errors() and json() carry the entries' text as input, and include_input=False drops
+    it, as assess.md says."""
+    from pydantic import BaseModel, TypeAdapter
+
+    class Holder(BaseModel):
+        request: AssessmentRequest
+
+    payload = _request([{**_given(pg_collection())[0], "sha256": "0" * 64}])
+    for build in (
+        lambda: TypeAdapter(AssessmentRequest).validate_python(payload),
+        lambda: Holder.model_validate({"request": payload}),
+    ):
+        with pytest.raises(ValidationError) as caught:
+            build()
+        error = caught.value
+        assert GIVEN not in str(error)
+        assert GIVEN in json.dumps(error.errors(), default=str) and GIVEN in error.json()
+        assert GIVEN not in json.dumps(error.errors(include_input=False), default=str)
+        assert GIVEN not in error.json(include_input=False)
 
 
 def test_an_unvalidated_request_is_checked_before_anything_is_written(tmp_path: Path) -> None:
