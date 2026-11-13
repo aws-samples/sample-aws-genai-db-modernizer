@@ -418,6 +418,15 @@ def _read_state() -> dict:  # type: ignore[type-arg]
         return json.load(f)  # type: ignore[no-any-return]
 
 
+def _session_field() -> dict:
+    """``{"session_id": ...}`` for the Claude Code session running this job, when known
+    (#2215): the dispatch hooks record only that session's subagents for the job."""
+    from scripts.hooks.dispatch_ledger import current_session
+
+    session = current_session()
+    return {"session_id": session} if session else {}
+
+
 def _write_state(state: dict) -> None:
     with open(STATE_FILE, "w", encoding="utf-8") as f:
         json.dump(state, f, indent=2)
@@ -1733,6 +1742,7 @@ def _run(args) -> None:  # type: ignore[no-untyped-def]
             "llm_mode": args.llm_mode,
             "experience_mode": args.mode or "both",
             "phase_status": {"collect": "complete"},
+            **_session_field(),
         }
         _write_state(state)
     elif args.job_id:
@@ -1744,8 +1754,13 @@ def _run(args) -> None:  # type: ignore[no-untyped-def]
         _attach_log(args.artifact_root, db_name, job_id)
         _set_job_context(store, db_name, job_id)
         state = _read_state()
-        if state and args.mode:
-            state["experience_mode"] = args.mode
+        session = _session_field()
+        if state and (
+            args.mode or (session and session != {"session_id": state.get("session_id")})
+        ):
+            if args.mode:
+                state["experience_mode"] = args.mode
+            state.update(session)  # a resume in another session runs the job now (#2215)
             _write_state(state)
         if not state:
             state = {

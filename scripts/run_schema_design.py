@@ -14,6 +14,8 @@ Usage:
     uv run python scripts/run_schema_design.py --job-id <id> --db <name> --engine dynamodb --status
     uv run python scripts/run_schema_design.py --job-id <id> --db <name> --engine dynamodb --status --wait 60
     uv run python scripts/run_schema_design.py --job-id <id> --db <name> --wait-for-report 110
+    uv run python scripts/run_schema_design.py --job-id <id> --db <name> --mark-dispatched <agentId> ...
+    uv run python scripts/run_schema_design.py --job-id <id> --db <name> --mark-reported <id> --wait-for-report 110
     uv run python scripts/run_schema_design.py --job-id <id> --db <name> --engine dynamodb \
         --check-costs artifacts/<name>/<id>/schema-dynamodb/v<N>/schema_draft_group_<G>.json
     uv run python scripts/run_schema_design.py --job-id <id> --db <name> --engine dynamodb \
@@ -475,6 +477,8 @@ def run_status(
 # headless session's subagents 10 minutes after its last turn, so the turn must not end;
 # this keeps it going for a bounded time and returns as soon as a design or review lands.
 # Each mark appears once and never goes away, so an edit of a draft never wakes it again.
+# It also reads the dispatch ledger (#2215): with no outstanding dispatch it returns at once
+# (nothing_pending) instead of blocking its whole bound after the last report.
 def _report_marks(job_dir: Path) -> set[str]:
     """What the job's design and review subagents have finished so far: every DynamoDB
     group draft and finalized design output, and every design trace with a recorded
@@ -497,17 +501,80 @@ def _report_marks(job_dir: Path) -> set[str]:
     return marks
 
 
+def _ledger():
+    from scripts.hooks import dispatch_ledger
+
+    return dispatch_ledger
+
+
+def _session() -> str | None:
+    """The Claude Code session this command runs in (#2215): its environment's, else the
+    session the job cursor names. None when neither is known."""
+    ledger = _ledger()
+    session: str | None = ledger.current_session()
+    if session:
+        return session
+    project = Path(os.environ.get("CLAUDE_PROJECT_DIR") or os.getcwd())
+    try:
+        state = json.loads((project / ".modernizer-state.json").read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return None
+    value = state.get("session_id") if isinstance(state, dict) else None
+    return str(value) if ledger.valid_session(value) else None
+
+
+def run_mark(job_dir: Path, dispatched: list[str], reported: list[str]) -> dict:
+    """Record dispatches and reports in the job's dispatch ledger (#2215); return what is
+    outstanding for this session after them."""
+    ledger = _ledger()
+    session = _session()
+    if dispatched:
+        ledger.mark_dispatched(job_dir, dispatched, session=session, by="orchestrator")
+    if reported:
+        ledger.mark_reported(job_dir, reported, session=session, by="orchestrator")
+    out: dict = ledger.outstanding(ledger.read(job_dir) or {}, session or "")
+    return out
+
+
 def run_wait_for_report(
-    job_dir: Path, wait: float, *, sleep=None, clock=None, marks=_report_marks
+    job_dir: Path, wait: float, *, sleep=None, clock=None, marks=_report_marks, session=None
 ) -> None:
     """Wait up to ``wait`` seconds (capped at ``_MAX_WAIT_SECONDS``) for a design or review
     to land, then print one line: ``"status": "landed"`` with the new ``landed`` marks as
-    soon as one appears, or ``"status": "no_change"`` when the wait ran out. Read-only."""
+    soon as one appears, or ``"status": "no_change"`` when the wait ran out. Read-only.
+
+    The dispatch ledger says what is still out (#2215, ``scripts/hooks/dispatch_ledger.py``):
+    with no outstanding dispatch of this session it prints ``"status": "nothing_pending"``
+    at once, and its ``next`` names the Done signal check of the step the run is in;
+    otherwise every line lists the ``outstanding`` ids. With no readable ledger, or no
+    known session, it keeps the bounded wait. Another session's entries never count, and
+    the wait never calls an entry hung: only the Stop hook does, from the running tasks."""
     import time
 
     sleep = sleep or time.sleep
     clock = clock or time.monotonic
+    session = session or _session()
     start = clock()
+    db, job_id = job_dir.parent.name, job_dir.name
+    ledger = _ledger()
+    entries = ledger.read(job_dir) if session else None
+    out = ledger.outstanding(entries, session) if entries is not None else None
+    if out is not None and not out:
+        _output(
+            {
+                "status": "nothing_pending",
+                "waited_s": 0.0,
+                "outstanding": [],
+                "next": (
+                    "every subagent the ledger lists has reported: run the Done signal check "
+                    "of the step you are in, not this wait (6b/6c: `uv run python "
+                    f"scripts/run_pe_review.py --job-id {job_id} --db {db}`; 6d after a merge "
+                    "fix: --merge; Phase 7 and 7b after synthesis: run_wave_redesign.py). Any "
+                    "subagent you dispatch next: record it with --mark-dispatched first"
+                ),
+            }
+        )
+        return
     deadline = start + min(wait, _MAX_WAIT_SECONDS)
     before = marks(job_dir)
     new: set[str] = set()
@@ -520,10 +587,18 @@ def run_wait_for_report(
     }
     if new:
         line["landed"] = sorted(new)[:10]
-    line["next"] = (
-        "read the reports that came in; while a subagent you dispatched has not reported, "
-        "run this again; after the last report, run the current step's own check"
-    )
+    if out is None:
+        line["next"] = (
+            "read the reports that came in; while a subagent you dispatched has not reported, "
+            "run this again; after the last report, run the current step's own check"
+        )
+    else:
+        line["outstanding"] = sorted(out)[:20]
+        line["next"] = (
+            "record each report that came in with --mark-reported <its task id> and run its "
+            f"own check; while the ledger lists a subagent that has not reported ({len(out)} "
+            "now), run this again"
+        )
     _output(line)
 
 
@@ -1100,8 +1175,32 @@ def main() -> None:
             "Headless /modernize --auto only (#2175): instead of ending the turn while a "
             "subagent is still running, wait until a design or review lands (a group draft, a "
             "finalized output or a recorded review appears), for at most SECONDS (capped at "
-            f"{_MAX_WAIT_SECONDS}), then print one line. A synthesis or merge-fix subagent adds "
-            "no mark, so a wait for one runs its whole bound. Read-only; takes no --engine"
+            f"{_MAX_WAIT_SECONDS}), then print one line. With a dispatch ledger (#2215, "
+            "--mark-dispatched / --mark-reported) that lists no outstanding subagent, it prints "
+            "nothing_pending at once; with no ledger it always waits. A synthesis or merge-fix "
+            "subagent adds no mark, so a wait for one runs its whole bound. Takes no --engine"
+        ),
+    )
+    parser.add_argument(
+        "--mark-dispatched",
+        nargs="+",
+        default=None,
+        metavar="ID",
+        help=(
+            "Headless /modernize --auto (#2215): record these subagents (the agentId each Agent "
+            "call returned) as dispatched in the job's dispatch ledger, then print what is "
+            "outstanding (or, with --wait-for-report, wait). Takes no --engine"
+        ),
+    )
+    parser.add_argument(
+        "--mark-reported",
+        nargs="+",
+        default=None,
+        metavar="ID",
+        help=(
+            "Headless /modernize --auto (#2215): record these subagents (the report's task id) "
+            "as reported in the job's dispatch ledger, then print what is outstanding (or, with "
+            "--wait-for-report, wait). Takes no --engine"
         ),
     )
     parser.add_argument(
@@ -1158,16 +1257,27 @@ def main() -> None:
     except ValueError as exc:
         _error(str(exc))
 
-    if args.wait_for_report is not None:
-        if args.wait_for_report <= 0:
+    marking = args.mark_dispatched is not None or args.mark_reported is not None
+    if args.wait_for_report is not None or marking:
+        flag = "--wait-for-report" if args.wait_for_report is not None else "--mark-*"
+        if args.wait_for_report is not None and args.wait_for_report <= 0:
             _error("--wait-for-report takes a number of seconds, more than 0")
         if any(
             (args.status, args.wait, args.finalize, args.split, args.merge, args.check_costs_all)
         ) or (args.check_costs is not None or args.engine is not None):
-            _error("--wait-for-report goes on its own (with --job-id and --db, no --engine)")
+            _error(f"{flag} goes on its own (with --job-id and --db, no --engine)")
+        ids = (args.mark_dispatched or []) + (args.mark_reported or [])
+        bad = [i for i in ids if not _ledger().valid_id(i)]
+        if bad:
+            _error(f"not a subagent id: {bad[0][:80]!r}")
         job_dir = Path(args.artifact_root) / args.db / args.job_id
         if not job_dir.is_dir():
             _error(f"no artifacts for {args.db}/{args.job_id} under {args.artifact_root}")
+        if marking:
+            out = run_mark(job_dir, args.mark_dispatched or [], args.mark_reported or [])
+            if args.wait_for_report is None:
+                _output({"status": "recorded", "outstanding": sorted(out)[:20]})
+                return
         run_wait_for_report(job_dir, args.wait_for_report)
         return
     if args.engine is None:

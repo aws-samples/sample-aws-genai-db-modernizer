@@ -136,6 +136,16 @@
             "timeout": 10
           }
         ]
+      },
+      {
+        "matcher": "Agent|Task|SendMessage",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "uv run --no-project python -I \"$CLAUDE_PROJECT_DIR/scripts/hooks/record_dispatch.py\"",
+            "timeout": 10
+          }
+        ]
       }
     ],
     "Stop": [
@@ -145,6 +155,17 @@
             "type": "command",
             "command": "uv run --no-project python -I \"$CLAUDE_PROJECT_DIR/scripts/hooks/require_modernize_result.py\"",
             "timeout": 15
+          }
+        ]
+      }
+    ],
+    "SubagentStop": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "uv run --no-project python -I \"$CLAUDE_PROJECT_DIR/scripts/hooks/record_report.py\"",
+            "timeout": 10
           }
         ]
       }

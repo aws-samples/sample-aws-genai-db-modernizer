@@ -21,7 +21,8 @@ transcript check applies). Tool results, tool inputs, thinking and subagent reco
 A text block in the same message as the call, before it, counts: the transcript records each
 content block as its own line, in order, so the text is on disk before the call is. A Phase 6
 call is a real invocation of ``uv run python scripts/run_schema_design.py --job-id <id> ...``
-(not ``--help``, not text inside another command, a quoted body or a heredoc) or a dispatch
+(not ``--help``, not the ``--mark-*`` ledger marks or ``--wait-for-report`` (#2215), not
+text inside another command, a quoted body or a heredoc) or a dispatch
 whose prompt starts ``Run /design-schema-...`` or ``Follow /design-schema-...`` with
 ``job_id=<id>``. Only a ``/modernize`` run is held:
 
@@ -98,6 +99,9 @@ _COMMAND_NAME = re.compile(r"<command-name>\s*/?([\w:-]+)\s*</command-name>")
 _COMMAND_ARGS = re.compile(r"<command-args>(.*?)</command-args>", re.DOTALL)
 _AUTO = re.compile(r"(?:^|\s)(?:--auto|-y)(?:\s|$)")
 _AGENT_TOOLS = ("Agent", "Task")
+# run_schema_design.py modes that are not schema design: the dispatch ledger's marks and the
+# report wait run in any phase, a reality-check subagent's mark before the gate included.
+_NOT_PHASE6_FLAGS = ("--mark-dispatched", "--mark-reported", "--wait-for-report")
 # The transcript may lag the call by a moment: re-read for up to this long before refusing.
 _WAIT_ENV = "MODERNIZER_GATE_HOOK_WAIT_S"
 
@@ -144,6 +148,8 @@ def phase6_job(event: dict[str, Any]) -> str | None:
             return None
         if any(arg in ("--help", "-h") for arg in call[1]):
             return None
+        if any(arg.split("=", 1)[0] in _NOT_PHASE6_FLAGS for arg in call[1]):
+            return None  # the dispatch ledger and the report wait run in any phase (#2215)
         return _flag(call[1], "--job-id", _ID)
     if tool in _AGENT_TOOLS:
         prompt = data.get("prompt")

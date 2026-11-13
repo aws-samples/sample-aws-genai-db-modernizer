@@ -348,9 +348,13 @@ _PRINTED_RESULTS_RE = re.compile(r"^- Results page[^:\n]*: (\S+)\s*$", re.MULTIL
 _PRINTED_SUMMARY_RE = re.compile(r"^- Summary page[^:\n]*: (\S+)\s*$", re.MULTILINE)
 
 
+_LEDGER_OR_WAIT_RE = re.compile(r"(?:^|\s)--(?:mark-dispatched|mark-reported|wait-for-report)\b")
+
+
 def _phase6_starts(rtype: str, block: dict[str, Any]) -> bool:
-    """True for the tool_use that starts schema design: the DynamoDB split
-    script or a ``/design-schema-*`` subagent dispatch."""
+    """True for the tool_use that starts schema design: a ``run_schema_design.py`` call
+    (not its ``--mark-*`` ledger marks or ``--wait-for-report``) or a ``/design-schema-*``
+    subagent dispatch."""
     if rtype != "assistant" or block.get("type") != "tool_use":
         return False
     input_ = block.get("input")
@@ -358,7 +362,9 @@ def _phase6_starts(rtype: str, block: dict[str, Any]) -> bool:
         return False
     command = input_.get("command")
     if isinstance(command, str) and "scripts/run_schema_design.py" in command:
-        return True
+        # The dispatch ledger and the report wait (#2215, #2175) run in any phase, the
+        # reality-check subagent's mark before the gate included: they start nothing.
+        return not _LEDGER_OR_WAIT_RE.search(command)
     prompt = input_.get("prompt")
     return isinstance(prompt, str) and "/design-schema-" in prompt
 

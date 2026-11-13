@@ -1478,6 +1478,38 @@ def test_phase_6_done_signals_wait_under_auto_after_dispatch_and_between_reports
     assert f"under `--auto`, run {_WAIT_FOR_REPORT} on its own instead" in wave
 
 
+def test_the_waiting_rule_keeps_a_dispatch_ledger_with_one_rule() -> None:
+    """#2215: after the last report the orchestrator ran the wait again and each call
+    blocked the whole 110 s. Artifacts cannot say a subagent is idle, so the orchestrator
+    records each dispatch and report, and only an empty ledger ends the wait at once."""
+    waiting = _modernize_text().split("## Waiting Rule", 1)[1].split("## Subagent Dispatch", 1)[0]
+    waiting = " ".join(waiting.split())
+    assert (
+        "`uv run python scripts/run_schema_design.py --job-id {job_id} --db {database_name} "
+        "--mark-dispatched <agentId> ...`" in waiting
+    )
+    assert (
+        "`uv run python scripts/run_schema_design.py --job-id {job_id} --db {database_name} "
+        "--mark-reported <task id> ...`" in waiting
+    )
+    assert (
+        "One rule decides: while the ledger lists a subagent that has not reported, the wait "
+        "blocks as above" in waiting
+    )
+    assert (
+        "When the ledger lists none, it prints `nothing_pending` at once: run the **Done "
+        "signal** check of the step you are in" in waiting
+    )
+    assert "A synthesis you dispatched stays outstanding until its report is recorded" in waiting
+    assert "Both marks are required: hooks record the same events from the source" in waiting
+    assert "only this session's entries count" in waiting
+    assert "the wait never calls an entry hung (only the Stop hook does" in waiting
+    # One rule: nothing tells the orchestrator to stop waiting while a subagent runs.
+    assert "never this wait again" not in waiting
+    wave = " ".join((COMMANDS_DIR / "wave-edit.md").read_text().split())
+    assert "(`--mark-dispatched`, `--mark-reported`, #2215)" in wave
+
+
 def test_the_command_text_and_the_stop_hook_name_the_same_wait_and_limit() -> None:
     hook = _hook_module()
     text = " ".join(_modernize_text().split())
