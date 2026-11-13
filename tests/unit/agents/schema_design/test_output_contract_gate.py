@@ -658,6 +658,8 @@ def _revision_store(schema: dict):
         raise FileNotFoundError(path)
 
     store.read_json.side_effect = read_json
+    # No assignment (a legacy job): it is absent, not unreadable (#2154).
+    store.exists.side_effect = lambda path: "/assignment/" not in path
     return store
 
 

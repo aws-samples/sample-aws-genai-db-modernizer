@@ -527,6 +527,8 @@ class TestExecuteRevision:
             raise FileNotFoundError(f"Not found: {path}")
 
         store.read_json.side_effect = _read_json_side_effect
+        # No assignment (a legacy job): it is absent, not unreadable (#2154).
+        store.exists.side_effect = lambda path: "/assignment/" not in path
         return store
 
     def test_produces_new_version_on_success(self):
@@ -716,9 +718,33 @@ class TestExecuteRevisionCoverage:
         _, meta = execute_revision("job-1", "mydb", "documentdb", self._request(), store)
         assert meta.version == 2
 
-    def test_an_unreadable_assignment_skips_the_coverage_check(self):
+    def test_a_job_with_no_assignment_skips_the_coverage_check(self):
         schema = {"access_patterns": []}
         store = self._store(schema, [], "documentdb")
         store.list_prefix.return_value = []
         _, meta = execute_revision("job-1", "mydb", "documentdb", self._request(), store)
         assert meta.version == 2
+
+    def test_an_assignment_that_cannot_be_read_refuses_the_revision(self):
+        """#2154: an assignment that exists but breaks on read is a refusal with its
+        reason, never "nothing to cover"; nothing is written."""
+        schema = {"access_patterns": [{"pattern_id": "DOC-AP-1", "source_query_ids": ["q1"]}]}
+        store = self._store(schema, ["q1", "q2"], "documentdb")
+        read = store.read_json.side_effect
+
+        def _broken(path: str) -> dict:
+            if "assignment" in path:
+                raise ValueError("Expecting value: line 1 column 1")
+            result: dict = read(path)
+            return result
+
+        store.read_json.side_effect = _broken
+        with pytest.raises(VerificationError) as exc:
+            execute_revision("job-1", "mydb", "documentdb", self._request(), store)
+        [issue] = exc.value.result.hard_errors
+        assert (issue.category, issue.severity) == ("coverage", "error")
+        assert issue.message == (
+            "The assignment could not be read (ValueError), so the revision's coverage "
+            "cannot be checked and nothing was written."
+        )
+        store.write_json.assert_not_called()

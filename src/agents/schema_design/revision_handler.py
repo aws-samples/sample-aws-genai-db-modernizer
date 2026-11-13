@@ -488,9 +488,13 @@ def _required_query_ids(
 ) -> set[str]:
     """Queries the assignment puts on ``engine`` that the revision did not remove on purpose.
 
-    Returns an empty set (no coverage check) when the assignment cannot be read,
-    so a missing artifact never rejects a revision.
+    Returns an empty set (no coverage check) when the job has no assignment (a
+    legacy job). An assignment that exists but cannot be read refuses the revision
+    (#2154): :class:`VerificationError` with one coverage error, never "nothing to
+    cover".
     """
+    from src.contracts.schema_revision_models import VerificationIssue, VerificationResult
+    from src.shared.contract_versioning import ContractVersionError
     from src.storage.assignment_versioning import (
         engine_scope,
         read_assignment,
@@ -500,9 +504,23 @@ def _required_query_ids(
     try:
         version = resolve_downstream_assignment_version(store, database_name, job_id)
         assignment = read_assignment(store, database_name, job_id, version)
-    except Exception:
-        logger.debug("Assignment not readable for %s -- skipping coverage check", job_id)
-        return set()
+    except ContractVersionError:
+        raise
+    except Exception as exc:  # noqa: BLE001 - fails closed (#2154): refused, not unchecked
+        logger.warning("Assignment not readable for %s: %s", job_id, exc)
+        issue = VerificationIssue(
+            category="coverage",
+            severity="error",
+            message=(
+                f"The assignment could not be read ({type(exc).__name__}), so the revision's "
+                "coverage cannot be checked and nothing was written."
+            ),
+            affected_patterns=[],
+            affected_tables=[],
+        )
+        raise VerificationError(
+            VerificationResult(passed=False, hard_errors=[issue], warnings=[])
+        ) from exc
     if not assignment:
         return set()
     removed = {
