@@ -163,9 +163,16 @@ def test_a_1_4_run_extracts_the_collections_bodies_as_the_scripts_do(
 ) -> None:
     """A 1.4 request with no routine_sources and a collection holding routine bodies (the
     audit's pg_collection: 4 bodies) writes the routine sources the scripts write from
-    the same file, byte for byte: the same writer, exact rule, scan and chunks. The text
-    stays only in the chunks: not in the result, a log record or any other file."""
+    the same file, byte for byte: the same writer, exact rule, scan and chunks. A string
+    literal of a body (SEED) stays only in the chunks: not in the result, a log record or
+    any other file. Comment text is kept by the collector output's redaction (#2234), so
+    the claim, and this test, are about literals."""
     caplog.set_level(logging.DEBUG)
+    # SEED sits inside a string literal of each body it is in: what the claim covers.
+    assert all(
+        f"'{SEED}'" in s.create_statement or SEED not in s.create_statement
+        for s in iter_collection_sources(collection())
+    )
     result, store = _run(tmp_path, collection(), None, include_artifacts=True)
 
     index = _index(store)
@@ -398,6 +405,88 @@ def test_a_body_that_looks_like_a_credential_is_flagged_by_the_scan(tmp_path: Pa
     assert given[0]["specific_name"] in flagged and flagged[given[0]["specific_name"]]
 
 
+def _ingested(tmp_path: Path, raw: dict[str, Any]) -> dict[str, Any]:
+    """``raw`` as the ingest writes it: a collector output, as a caller may upload one."""
+    from src.atx_orchestrator.core import ingest_offline_collection
+
+    store = LocalArtifactStore(base_dir=str(tmp_path / "ingest"))
+    uploaded: dict[str, Any] = json.loads(
+        json.dumps(ingest_offline_collection(store, "up000001", "shop", raw))
+    )
+    return uploaded
+
+
+@pytest.mark.parametrize("flag", [0, "0", "false", "no", False])
+def test_an_uploaded_collector_output_with_the_opt_out_writes_none_at_any_spelling(
+    flag: Any, tmp_path: Path
+) -> None:
+    """The opt-out is read with the collectors' own collection_includes_bodies, so a
+    collector output whose routine_capture.include_bodies is 0, "0", "false", "no" or
+    False writes none of the given entries, as the collectors' reader yields none."""
+    from src.agents.collector.routine_sources import collection_includes_bodies
+
+    uploaded = _ingested(tmp_path, pg_collection())
+    uploaded["metadata"]["routine_capture"]["include_bodies"] = flag
+    assert collection_includes_bodies(uploaded) is False
+    _, store = _run(tmp_path, uploaded, _given(pg_collection()))
+    assert _index(store) is None
+    assert _files_holding(tmp_path / "artifacts", GIVEN) == []
+
+
+def _without_session(entries: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    for entry in entries:
+        entry.pop("session", None)
+    return entries
+
+
+@pytest.mark.parametrize("uploaded", [False, True])
+def test_a_given_entry_without_a_session_takes_the_collections(
+    uploaded: bool, tmp_path: Path
+) -> None:
+    """mysql_collection records sql_mode STRICT_TRANS_TABLES (and its character sets) for
+    every routine. A given entry that omits session is written with the collection's
+    session, as the extracted source has it, so a replay never runs with strict mode off.
+    From an uploaded collector output, which keeps only sql_mode, it takes that."""
+    extracted = {s.key(): s.session for s in iter_collection_sources(mysql_collection())}
+    collection = _ingested(tmp_path, mysql_collection()) if uploaded else mysql_collection()
+    given = _without_session(_given(mysql_collection()))
+    _, store = _run(tmp_path, collection, given)
+
+    written = list(read_routine_sources(store, "shop", "rs000001"))
+    assert len(written) == len(given)
+    for source in written:
+        assert source.session.sql_mode == "STRICT_TRANS_TABLES", source.key()
+        if not uploaded:
+            assert source.session == extracted[source.key()], source.key()
+
+
+def test_a_given_entry_with_its_own_session_keeps_it(tmp_path: Path) -> None:
+    given = _given(mysql_collection())
+    for entry in given:
+        entry["session"] = {"sql_mode": "ANSI_QUOTES"}
+    _, store = _run(tmp_path, mysql_collection(), given)
+    written = list(read_routine_sources(store, "shop", "rs000001"))
+    assert written and all(s.session.sql_mode == "ANSI_QUOTES" for s in written)
+    assert all(s.session.character_set_client is None for s in written)
+
+
+def test_a_sample_shaped_collection_with_routine_bodies_is_extracted(tmp_path: Path) -> None:
+    """A small raw collection in the bundled samples' shape (every section the collection
+    script writes) whose routine rows carry body_status, as today's script writes them:
+    a 1.4 run extracts its 3 functions and its trigger as the scripts do. No bundled
+    sample exercises this: their routine rows predate body_status."""
+    fixture = Path(__file__).resolve().parents[2] / "fixtures" / "routine_collections"
+    raw = json.loads((fixture / "pg_shop_routines_collection.json").read_text(encoding="utf-8"))
+    _, store = _run(tmp_path, raw, None)
+    written = list(read_routine_sources(store, "shop", "rs000001"))
+    assert written == list(iter_collection_sources(raw))
+    assert {s.kind for s in written} == {"function", "trigger"} and len(written) == 4
+    assert _files_holding(tmp_path / "artifacts", SEED) and all(
+        p.startswith("shop/rs000001/collector/routine_sources/part-")
+        for p in _files_holding(tmp_path / "artifacts", SEED)
+    )
+
+
 # --------------------------------------------------------------------------- chunks
 
 
@@ -456,9 +545,10 @@ def test_an_entry_not_in_the_routine_sources_format_is_refused() -> None:
 
 
 def test_an_unknown_key_is_refused() -> None:
-    """A misspelt key (``exacts`` for ``exact``) is never dropped silently."""
+    """A misspelt key (``exacts`` for ``exact``) is never dropped silently; the error
+    names it as an unknown key, never by its own text."""
     entry = {**_given(pg_collection())[0], "exacts": False}
-    with pytest.raises(RoutineSourcesError, match=r"routine_sources\[0\].*exacts"):
+    with pytest.raises(RoutineSourcesError, match=r"routine_sources\[0\].*\[unknown key\]"):
         AssessmentRequest.model_validate(_request([entry]))
 
 
@@ -630,6 +720,19 @@ def test_a_type_adapter_or_a_holding_model_keeps_pydantics_own_errors() -> None:
         assert GIVEN in json.dumps(error.errors(), default=str) and GIVEN in error.json()
         assert GIVEN not in json.dumps(error.errors(include_input=False), default=str)
         assert GIVEN not in error.json(include_input=False)
+
+
+def test_an_unknown_key_is_named_by_no_part_of_itself() -> None:
+    """An unknown key's name is the caller's text too (it can hold routine code): the
+    error says [unknown key] and never quotes it, in str(), errors() and json()."""
+    entry = {**_given(pg_collection())[0], f"CREATE {EDGE} {GIVEN}": 1}
+    with pytest.raises(RoutineSourcesError) as caught:
+        AssessmentRequest.model_validate(_request([entry]))
+    error = caught.value
+    shown = [str(error), repr(error), json.dumps(error.errors(), default=str), error.json()]
+    assert "[unknown key]" in str(error)
+    for text in [*shown, "".join(traceback.format_exception(error))]:
+        assert EDGE not in text and GIVEN not in text
 
 
 def test_an_unvalidated_request_is_checked_before_anything_is_written(tmp_path: Path) -> None:
