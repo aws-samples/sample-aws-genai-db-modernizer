@@ -67,7 +67,8 @@ regenerates the DDL and validates the full contract.
    comparisons, `IS [NOT] NULL`, `IN (...)`, `AND`/`OR`/`NOT`, numbers and
    `'strings'`). A `modify_indexes` entry replaces the whole draft definition,
    so repeat the `method`, `include` or `where` the index keeps: an entry with
-   no `method` is a B-tree. Every `aurora_type` is a plain SQL type such as `BIGINT`
+   no `method` is a B-tree, and one with no `include` has none (the design view
+   lists each index's `INCLUDE (...)` to repeat). Every `aurora_type` is a plain SQL type such as `BIGINT`
    or `VARCHAR(255)`, never a constraint or default.
 
    **Storage configuration.** Do not choose Standard or I/O-Optimized from write

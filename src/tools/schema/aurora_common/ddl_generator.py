@@ -799,9 +799,11 @@ def _include_notes(
             {
                 **note,
                 "reason": (
-                    f"INCLUDE columns {', '.join(dropped)} not carried over: Aurora MySQL has "
-                    "no INCLUDE clause, so the index no longer covers the queries that read "
-                    "them and each such query looks up the row. Add them as trailing key "
+                    f"Non-key columns {', '.join(dropped)} not carried over: the source index "
+                    "stores them without keying them (INCLUDE, or the partitioning column SQL "
+                    "Server adds) and Aurora MySQL has no INCLUDE clause, so the index no longer "
+                    "covers the queries that read them and each such query looks up the row. "
+                    "Add them as trailing key "
                     f"columns where the key stays within {MYSQL_MAX_KEY_BYTES} bytes (not on a "
                     "UNIQUE index, whose uniqueness would then cover them too), or accept the "
                     "extra lookups."

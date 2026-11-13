@@ -336,17 +336,10 @@ def _structured_index(
             raise SqlFragmentError(f"table '{table.table_name}' has no column '{name}'")
         resolved.append(column)
     index_columns = resolved[: len(spec.columns)]
-    include = resolved[len(spec.columns) :]
-    if modify and not spec.include and base.dialect is not MYSQL:
-        # #2227: an edit that names no INCLUDE keeps the source index's, as the draft had it
-        draft_index = _draft_index(table, spec.index_name)
-        kept = [
-            column
-            for name in (draft_index.included_columns or [] if draft_index else [])
-            if (column := resolve_column(columns, name)) is not None and column not in index_columns
-        ]
-        if kept and spec.method in (None, "btree", "gist", "spgist"):
-            include = kept
+    # An entry replaces the whole definition (the skill says so, and the design view shows
+    # each index's INCLUDE to repeat, #2227): ``include`` [] has none. A column the entry
+    # also keys is not repeated in INCLUDE.
+    include = [c for c in resolved[len(spec.columns) :] if c not in index_columns]
     if spec.method:  # Aurora PostgreSQL only: refused above on Aurora MySQL
         why = pg_method_conflict(
             spec.method,
