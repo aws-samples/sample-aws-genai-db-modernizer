@@ -2043,6 +2043,26 @@ def test_sqlserver_collations_that_aurora_mysql_default_folds(
         assert gap["tables"] == ["db.t"]
 
 
+@pytest.mark.parametrize(
+    ("table", "hit"),
+    [
+        (_key_table(_text_column("code", 20, "nvarchar"), unique=["code"]), True),
+        (_key_table(_text_column("code", 20, "nvarchar"), primary_key=["code"]), True),
+        (_key_table(_NUMBER, _text_column("code", 20, "nvarchar"), unique=["id"]), False),
+        (_key_table(_NUMBER, _text_column("code", 20, "nvarchar"), plain=["code"]), False),
+    ],
+)
+def test_sqlserver_text_unique_keys_stand_in_for_the_collation_not_yet_collected(
+    table: dict[str, Any], hit: bool
+) -> None:
+    """Until the SQL Server collection records collations (#2228), a unique or primary
+    key on text is evidence too: the install default (_CI_AS) is accent-sensitive."""
+    gap = _found("sqlserver", table, _COLLATION)
+    assert (gap is not None) == hit
+    if gap is not None:
+        assert gap["objects"] == [{"kind": "column", "id": "db.t.code", "note": None}]
+
+
 @pytest.mark.parametrize("engine", ["mysql", "mariadb", "postgresql"])
 def test_mysql_and_postgresql_sources_never_raise_the_oracle_or_sqlserver_rules(
     engine: str,
@@ -2124,37 +2144,103 @@ def test_the_key_length_rule_names_the_columns_of_the_long_key_only() -> None:
     assert gap is not None and [o["id"] for o in gap["objects"]] == ["db.t.a", "db.t.b"]
 
 
+_LENGTHS = [(768,), (769,), (400, 400), (400, 368), (1000,), (100,) * 8]
+_SOURCE_TYPES = [
+    ("oracle", "VARCHAR2"),
+    ("sqlserver", "nvarchar"),
+    ("db2", "VARCHAR"),
+    ("postgresql", "character varying"),
+    ("mysql", "varchar"),
+    ("mariadb", "varchar"),
+]
+# MySQL-family keys with recorded prefixes (#1623): a prefix the draft keeps, or shortens.
+_PREFIXED = [
+    ((1000,), (700,)),
+    ((1000,), (800,)),
+    ((1000, 400), (700, None)),
+    ((500, 500), (500, 500)),
+    ((500, 500), (300, 300)),
+]
+
+
 @pytest.mark.parametrize(
-    ("engine", "data_type"), [("oracle", "VARCHAR2"), ("sqlserver", "nvarchar")]
-)
-@pytest.mark.parametrize(
-    "lengths",
-    [(768,), (769,), (400, 400), (400, 368), (1000,), (100, 100, 100, 100, 100, 100, 100, 100)],
+    ("engine", "data_type", "lengths", "prefixes"),
+    [(e, t, n, None) for e, t in _SOURCE_TYPES for n in _LENGTHS]
+    + [(e, "varchar", n, p) for e in ("mysql", "mariadb") for n, p in _PREFIXED],
 )
 def test_the_key_length_rule_agrees_with_the_mysql_draft(
-    lengths: tuple[int, ...], engine: str, data_type: str
+    engine: str, data_type: str, lengths: tuple[int, ...], prefixes: tuple[int | None, ...] | None
 ) -> None:
-    """The rule fires exactly when the Aurora MySQL draft cannot create the index as the
-    source has it: the draft adds no prefix to a VARCHAR key part and notes the key over
-    3,072 bytes instead, so the rule asks for a rewrite rather than informing."""
+    """The rule fires exactly when the Aurora MySQL draft flags the key, as its reason
+    says, for every source: it writes the key unchanged with a note (Oracle, SQL Server,
+    Db2, and MySQL or PostgreSQL keys that pass the limit only together), cuts an indexed
+    PostgreSQL varchar to VARCHAR(768) as a residual to confirm, or shortens a recorded
+    MySQL key prefix with a note."""
     from src.contracts.schema_design_input import AgentTable
     from src.tools.schema.aurora_common.ddl_generator import generate_mysql_ddl
 
     names = [f"c{i}" for i in range(len(lengths))]
-    table = _key_table(
-        *(_text_column(name, n, data_type) for name, n in zip(names, lengths, strict=True)),
-        plain=names,
-    )
+    columns = [
+        _text_column(name, n, f"{data_type}({n})") for name, n in zip(names, lengths, strict=True)
+    ]
+    index = {"index_name": "ix", "columns": names, "is_unique": True}
+    if prefixes is not None:
+        index["prefix_lengths"] = list(prefixes)
+    table = _key_table(*columns, indexes=[index])
     agent = AgentTable.model_validate(
-        {
-            **table,
-            "row_count": None,
-            "columns": [{**c, "nullable": True} for c in table["columns"]],
-        }
+        {**table, "row_count": None, "columns": [{**c, "nullable": True} for c in columns]}
     )
-    notes = generate_mysql_ddl([agent], source_engine=engine).index_notes
-    draft_flags = any(n["index"] == "ix" and n.get("kind") == "key_prefix" for n in notes)
-    assert (_found(engine, table, _KEY_LENGTH) is not None) == draft_flags
+    ddl = generate_mysql_ddl([agent], source_engine=engine)
+    noted = any(n["index"] == "ix" and n.get("kind") == "key_prefix" for n in ddl.index_notes)
+    cut = any(
+        r.get("column") in names and "index key length" in str(r.get("reason"))
+        for r in ddl.residuals
+    )
+    assert (_found(engine, table, _KEY_LENGTH) is not None) == (noted or cut)
+
+
+def test_the_key_length_rule_skips_the_index_kinds_the_mysql_draft_never_keys() -> None:
+    """The draft drops GIN, GiST and SP-GiST on Aurora MySQL: the rule skips them too."""
+    from src.tools.analysis.relational_gaps import _UNLIMITED_KEY_INDEXES
+    from src.tools.schema.aurora_common.ddl_generator import _DROPPED_METHODS, MYSQL
+
+    assert set(_DROPPED_METHODS[MYSQL.name]) <= _UNLIMITED_KEY_INDEXES
+
+
+@pytest.mark.parametrize("kind", ["gin", "gist", "spgist", "spatial", "fulltext"])
+def test_the_key_length_rule_skips_index_kinds_with_no_key_limit_on_aurora_mysql(
+    kind: str,
+) -> None:
+    index: dict[str, Any] = {"index_name": "ix", "columns": ["name"], "is_unique": False}
+    table = _key_table(_text_column("name", 1000, "character varying(1000)"), indexes=[index])
+    assert _found("postgresql", table, _KEY_LENGTH) is not None
+    index["index_type"] = kind
+    assert _found("postgresql", table, _KEY_LENGTH) is None
+    index["index_type"] = "btree"
+    assert _found("postgresql", table, _KEY_LENGTH) is not None
+
+
+def test_a_text_part_with_a_recorded_length_counts_nothing() -> None:
+    """Oracle records a CLOB's DATA_LENGTH (4000) as its max_length: it is a LOB the draft
+    keys a prefix of, not a 4,000-character key part."""
+    clob = {**_CLOB, "max_length": 4000}
+    assert _found("oracle", _key_table(clob, plain=["body"]), _KEY_LENGTH) is None
+    assert (
+        _found("oracle", _key_table(clob, _text_column("a", 700), plain=["a", "body"]), _KEY_LENGTH)
+        is None
+    )
+
+
+def test_an_included_column_is_not_a_key_part() -> None:
+    """#2227: SQL Server INCLUDE columns sit in Index.included_columns, never the key."""
+    index = {
+        "index_name": "ix",
+        "columns": ["id"],
+        "included_columns": ["body"],
+        "is_unique": False,
+    }
+    table = _key_table(_NUMBER, _text_column("body", 3750, "nvarchar"), indexes=[index])
+    assert _found("sqlserver", table, _KEY_LENGTH) is None
 
 
 def test_the_key_length_rule_applies_to_every_source_moving_to_aurora_mysql_only() -> None:
@@ -2163,3 +2249,27 @@ def test_the_key_length_rule_applies_to_every_source_moving_to_aurora_mysql_only
     table = _key_table(_text_column("name", 769), plain=["name"])
     result = detect_relational_gaps(_collector("oracle", tables=[table]), "aurora_postgresql")
     assert _KEY_LENGTH not in _ids(result)
+
+
+@pytest.mark.parametrize(
+    ("rule_id", "phrases"),
+    [
+        (_CASE, ("utf8mb4_0900_bin", "does not record NLS_COMP or NLS_SORT")),
+        (_COLLATION, ("_CS_AI", "case-sensitive", "does not record collations yet")),
+        (
+            _KEY_LENGTH,
+            (
+                "under strict SQL mode (otherwise MySQL shortens a non-unique key and warns)",
+                "VARCHAR(768)",
+                "shortening a recorded MySQL key prefix",
+            ),
+        ),
+    ],
+)
+def test_the_new_rules_say_what_the_draft_and_the_collection_do(
+    rule_id: str, phrases: tuple[str, ...]
+) -> None:
+    """Review of #2227: each reason states its fallback and what the draft does."""
+    text = f"{_rule(rule_id).feature} {_rule(rule_id).reason}"
+    for phrase in phrases:
+        assert phrase in text, phrase

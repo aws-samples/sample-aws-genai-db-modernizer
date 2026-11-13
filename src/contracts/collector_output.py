@@ -784,6 +784,15 @@ class Index(BaseModel):
         ),
     )
 
+    included_columns: list[str] | None = Field(
+        None,
+        description=(
+            "Non-key columns the index stores (SQL Server INCLUDE, "
+            "sys.index_columns.is_included_column, #2227); never part of ``columns`` or the "
+            "key. None when there are none or the collection did not record them: a "
+            "collection saved before #2227 listed them in ``columns``"
+        ),
+    )
     has_expressions: bool = Field(
         False,
         description="Index has expression keys, so ``columns`` is not the whole key list",

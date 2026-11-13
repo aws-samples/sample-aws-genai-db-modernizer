@@ -170,6 +170,13 @@ class AgentIndex(BaseModel):
             "absent in older inputs, read as whole-column keys"
         ),
     )
+    included_columns: list[str] | None = Field(
+        None,
+        description=(
+            "Non-key columns the source index stores (SQL Server INCLUDE, #2227), never key "
+            "parts: Aurora PostgreSQL renders them as INCLUDE, Aurora MySQL has no such clause"
+        ),
+    )
 
 
 class AgentForeignKey(BaseModel):
@@ -696,6 +703,7 @@ def project_schema_design_tables(collector_output: CollectorOutputContract) -> l
                         index_expressions=idx.index_expressions,
                         index_def=idx.index_def,
                         prefix_lengths=idx.prefix_lengths,
+                        included_columns=idx.included_columns,
                     )
                     for idx in (t.indexes or [])
                 ]

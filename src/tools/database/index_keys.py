@@ -72,6 +72,41 @@ def is_expression_key(column_name: Any, source_engine: str | None = None) -> boo
     return engine == "oracle" and _ORACLE_EXPRESSION_COLUMN.fullmatch(name) is not None
 
 
+def is_included_column(row: Mapping[str, Any]) -> bool:
+    """Whether a raw SQL Server index row is an INCLUDE column, not a key part (#2227).
+
+    The live collector reads ``sys.index_columns.is_included_column``. The offline
+    script writes only ``key_ordinal``, which is 0 for an included column and counts
+    from 1 for a key part; a row with ``seq_in_index`` (the other engines) is a key part.
+    """
+    flag = row.get("is_included_column")
+    if flag is not None:
+        return flag in _TRUTHY or flag == "True"
+    if row.get("seq_in_index") is not None or "key_ordinal" not in row:
+        return False
+    try:
+        return int(row["key_ordinal"]) == 0
+    except (TypeError, ValueError):
+        return False
+
+
+def settle_included_columns(index: dict[str, Any]) -> None:
+    """Finish ``included_columns`` once every row of ``index`` is added (#2227).
+
+    An index whose every row reads as included has no key column to name: a columnstore
+    index lists its columns with ``key_ordinal`` 0. Its columns stay the key list, as
+    before. ``included_columns`` is dropped when there is none.
+    """
+    included = index.pop("included_columns", None) or []
+    if included and not index["columns"] and not index.get("has_expressions"):
+        index["columns"] = included
+        if "prefix_lengths" in index:
+            index["prefix_lengths"] = [None] * len(included)
+        return
+    if included:
+        index["included_columns"] = included
+
+
 def add_index_key(
     index: dict[str, Any], row: Mapping[str, Any], source_engine: str | None = None
 ) -> None:
@@ -83,6 +118,10 @@ def add_index_key(
     ``prefix_lengths`` gets each column key's prefix length (MySQL ``sub_part``) too.
     """
     column = row.get("column_name")
+    if is_included_column(row) and not is_expression_key(column, source_engine):
+        # #2227: a SQL Server INCLUDE column is stored in the index, not part of its key.
+        index.setdefault("included_columns", []).append(column)
+        return
     if not is_expression_key(column, source_engine):
         index["columns"].append(column)
         if "prefix_lengths" in index:  # MySQL SUB_PART (#1623), aligned with ``columns``

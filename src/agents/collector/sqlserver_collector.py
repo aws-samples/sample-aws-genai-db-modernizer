@@ -480,6 +480,7 @@ def _build_tables(schema_raw: dict) -> list[Table]:
                 columns=i["columns"],
                 is_unique=i["is_unique"],
                 is_primary=i.get("is_primary", False),
+                included_columns=i.get("included_columns") or None,
                 # Defensive normalization: even if the cached dict has a raw
                 # SQL Server index type, coerce it to a valid IndexType enum value.
                 index_type=IndexType(_normalize_index_type(i.get("index_type") or "btree")),

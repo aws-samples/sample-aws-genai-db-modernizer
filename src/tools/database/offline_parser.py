@@ -32,7 +32,11 @@ from src.shared.rate_window import (
 from src.shared.sample_rows import without_sample_rows
 from src.shared.server_counters import offline_server_counters
 from src.shared.sql_spans import span_dialect, span_settings_of, with_span_settings
-from src.tools.database.index_keys import add_index_key, expression_key_fields
+from src.tools.database.index_keys import (
+    add_index_key,
+    expression_key_fields,
+    settle_included_columns,
+)
 from src.tools.database.offline_collection_check import (
     read_collection_text,
     validate_offline_collection,
@@ -253,8 +257,8 @@ def _parse_offline_collection(
     # ``key_ordinal``), not the row order: MySQL's JSON_ARRAYAGG drops the subquery's
     # ORDER BY (#1927). The sort is stable and moves a row whole, so ``columns`` and
     # ``prefix_lengths`` stay aligned. Rows without a position keep their order, so old
-    # collections load as before; SQL Server writes 0 for an included column, which
-    # follows the key columns.
+    # collections load as before. SQL Server writes 0 for an included column, which goes
+    # to ``included_columns``, never the key (#2227).
     for i in sorted(data.get("indexes") or [], key=_index_key_position):
         tbl = i["table_name"]
         idx_name = i["index_name"]
@@ -276,6 +280,7 @@ def _parse_offline_collection(
         add_index_key(indexes_by_table[tbl][idx_name], i, source_engine)
     for by_name in indexes_by_table.values():
         for index in by_name.values():
+            settle_included_columns(index)
             if not any(n is not None for n in index["prefix_lengths"]):
                 index["prefix_lengths"] = None
 

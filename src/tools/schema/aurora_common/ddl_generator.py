@@ -934,6 +934,9 @@ def _index_sql(
                 idx.columns,
                 unique=unique,
                 method=using,
+                # #2227: a SQL Server INCLUDE column stays a stored column on Aurora
+                # PostgreSQL; Aurora MySQL has no INCLUDE and keys only the key columns.
+                include=idx.included_columns if dialect is POSTGRES else None,
                 where_sql=where_sql,
                 prefix_lengths=prefixes,
             )

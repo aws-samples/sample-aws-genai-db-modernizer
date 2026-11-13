@@ -1137,7 +1137,7 @@ Aurora PostgreSQL extensions compared per version line (Extension versions for A
 | [`postgresql-lateral-joins`](#postgresql-lateral-joins) | postgresql | Aurora MySQL | Behaves differently | words `LATERAL` |
 | [`postgresql-older-major-version`](#postgresql-older-major-version) | postgresql | Aurora PostgreSQL | Behaves differently | version: older than target |
 | [`sqlserver-case-insensitive-comparison`](#sqlserver-case-insensitive-comparison) | sqlserver | Aurora PostgreSQL | Behaves differently | every source of these engines |
-| [`sqlserver-collation-to-mysql`](#sqlserver-collation-to-mysql) | sqlserver | Aurora MySQL | Behaves differently | collations `*_cs_*`, `*_as`, `*_as_*`, `*_bin`, `*_bin_*`, `*_bin2`, `*_bin2_*` |
+| [`sqlserver-collation-to-mysql`](#sqlserver-collation-to-mysql) | sqlserver | Aurora MySQL | Behaves differently | collations `*_cs_*`, `*_as`, `*_as_*`, `*_bin`, `*_bin_*`, `*_bin2`, `*_bin2_*`; unique and primary keys with a text column |
 | [`sqlserver-table-and-query-hints`](#sqlserver-table-and-query-hints) | sqlserver | Aurora MySQL, Aurora PostgreSQL | Behaves differently | calls `OPTION`; words `NOLOCK`, `READPAST`, `UPDLOCK`, `HOLDLOCK`, `ROWLOCK`, `PAGLOCK`, `TABLOCK`, `TABLOCKX`, `READUNCOMMITTED`, `NOEXPAND` |
 | [`sqlserver-types-behave-differently`](#sqlserver-types-behave-differently) | sqlserver | Aurora MySQL, Aurora PostgreSQL | Behaves differently | column types `datetimeoffset`, `money`, `smallmoney`, `bit` |
 | [`mysql-sql-calc-found-rows`](#mysql-sql-calc-found-rows) | mysql, mariadb | Aurora MySQL | Informational | calls `FOUND_ROWS`; words `SQL_CALC_FOUND_ROWS` |
@@ -1239,7 +1239,7 @@ Documentation: AWS Schema Conversion Tool User Guide, Using MySQL as a source; M
 
 ### mysql-index-key-length
 
-Index keys over 3,072 bytes: needs a rewrite. InnoDB limits an index key to 3,072 bytes and Aurora MySQL stores text as utf8mb4 \(4 bytes per character\), so an index whose text columns add up to more than 768 characters, one varchar\(769\) or several shorter columns together, fails CREATE INDEX; the draft DDL adds no prefix to such a key and notes it, so key a prefix of the column \(col\(n\), which then no longer enforces uniqueness on the whole value\), shorten the column, or index a hash of it in a generated column.
+Index keys over 3,072 bytes: needs a rewrite. InnoDB limits an index key to 3,072 bytes and Aurora MySQL stores text as utf8mb4 \(4 bytes per character\), so an index whose text key columns add up to more than 768 characters, one varchar\(769\) or several shorter columns together, fails CREATE INDEX under strict SQL mode \(otherwise MySQL shortens a non-unique key and warns\); the draft DDL flags each such key, writing it unchanged with a note, cutting an indexed PostgreSQL varchar to VARCHAR\(768\) for you to confirm, or shortening a recorded MySQL key prefix and carrying a unique key as non-unique, so check each one and key a prefix of the column \(col\(n\)\), shorten the column, or index a hash of it in a generated column.
 
 Documentation: MySQL 8.0 Reference Manual, InnoDB Limits; MySQL 8.0 Reference Manual, The utf8mb4 Character Set.
 
@@ -1371,7 +1371,7 @@ Documentation: Oracle to Aurora PostgreSQL Migration Playbook \(AWS DMS document
 
 ### oracle-case-sensitive-to-mysql
 
-Case-sensitive text keys: needs a rewrite. Oracle compares text by its binary value by default \(NLS\_COMP=BINARY\), and Aurora MySQL's default collation \(utf8mb4\_0900\_ai\_ci\) ignores case and accents, so a unique or primary key on text that holds values differing only in case or accents \(ABC and abc\) rejects rows on load, and lookups and joins on those columns return extra rows; give the columns a case-sensitive collation \(utf8mb4\_0900\_bin or utf8mb4\_0900\_as\_cs\), or confirm the data has no such duplicates.
+Case-sensitive text keys: needs a rewrite. Oracle compares text by its binary value by default \(NLS\_COMP=BINARY\), and Aurora MySQL's default collation \(utf8mb4\_0900\_ai\_ci\) ignores case and accents, so a unique or primary key on text that holds values differing only in case or accents \(ABC and abc\) rejects rows on load, and lookups and joins on those columns return extra rows; give the columns a case-sensitive collation \(utf8mb4\_0900\_bin or utf8mb4\_0900\_as\_cs\), or confirm the data has no such duplicates; the collection does not record NLS\_COMP or NLS\_SORT, so a source set to a case-insensitive sort \(NLS\_COMP=LINGUISTIC with a \_CI sort\) can dismiss this.
 
 Documentation: Oracle Database Globalization Support Guide, Linguistic Sorting and Matching; MySQL 8.0 Reference Manual, Unicode Character Sets.
 
@@ -1755,7 +1755,7 @@ Documentation: SQL Server to Aurora PostgreSQL Migration Playbook \(AWS DMS docu
 
 ### sqlserver-collation-to-mysql
 
-Accent-sensitive and binary collations: behaves differently. These tables use an accent-sensitive or binary SQL Server collation, and Aurora MySQL's default collation \(utf8mb4\_0900\_ai\_ci\) ignores case and accents \(e equals é\), so unique keys on text can reject rows on load and lookups can return extra rows; give the columns utf8mb4\_0900\_as\_ci for a \_CI\_AS collation, utf8mb4\_0900\_as\_cs for \_CS\_AS or \_CS\_AI, and utf8mb4\_bin for \_BIN or \_BIN2, noting that the 0900 collations compare trailing spaces, which SQL Server ignores.
+Case-sensitive, accent-sensitive and binary collations: behaves differently. SQL Server's usual collations \(\_CI\_AS, the install default\) are accent-sensitive, and its \_CS and \_BIN collations are case-sensitive too, while Aurora MySQL's default collation \(utf8mb4\_0900\_ai\_ci\) ignores case and accents \(e equals é\), so unique keys on text can reject rows on load and lookups can return extra rows; give the columns utf8mb4\_0900\_as\_ci for a \_CI\_AS collation, utf8mb4\_0900\_as\_cs for \_CS\_AS or \_CS\_AI, and utf8mb4\_bin for \_BIN or \_BIN2, noting that the 0900 collations compare trailing spaces, which SQL Server ignores; the collection does not record collations yet, so tables with a unique or primary key on text are listed too, and a database on a \_CI\_AI collation can dismiss them.
 
 Documentation: SQL Server to Aurora MySQL Migration Playbook \(AWS DMS documentation\), Collations; SQL Server documentation, Collation and Unicode support; MySQL 8.0 Reference Manual, Unicode Character Sets.
 
