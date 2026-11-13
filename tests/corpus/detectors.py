@@ -559,6 +559,9 @@ NOT_OTHER_SQL_HEURISTICS: dict[str, str] = {
     "src/report/executive_report.py:_date": "reads the report's date",
     "src/assessment/cut.py:_view_tables": "reads a collected view definition's tables",
     "src/assessment/cut.py:_bracket_name": "a helper of foreign_syntax, registered",
+    "src/tools/sql/query_type.py:_opens_a_parenthesized_select": (
+        "a helper of statement_query_type, registered"
+    ),
 }
 _REDACT = "src/tools/sql/redact.py"
 for _fn in (

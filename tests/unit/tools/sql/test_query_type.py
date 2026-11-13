@@ -116,6 +116,7 @@ def test_a_bulk_load_is_an_insert(sql: str, engine: str, expected: str) -> None:
     assert statement_query_type(sql, engine) == expected
 
 
+@pytest.mark.passes_on_main
 @pytest.mark.parametrize("engine", _ENGINES)
 @pytest.mark.parametrize(
     "sql",
@@ -130,7 +131,6 @@ def test_a_bulk_load_is_an_insert(sql: str, engine: str, expected: str) -> None:
         "BEGIN NULL; END;",
         "EXEC sp_helpdb",
         "SELECTED_ROWS",
-        "(SELECT 1) UNION (SELECT 2)",
     ],
 )
 def test_what_does_not_open_with_a_verb_is_other(engine: str, sql: str) -> None:
@@ -149,12 +149,17 @@ def test_an_oracle_hint_right_after_the_verb() -> None:
 _SAMPLES = ("wordpress", "discourse", "trailgear")
 
 
-def _sample_queries(sample: str) -> tuple[str, list[str]]:
+def _sample_collection(sample: str) -> tuple[str, list[dict]]:
     with zipfile.ZipFile(_REPO / "docs" / "examples" / sample / f"{sample}.zip") as z:
         name = next(n for n in z.namelist() if n.endswith("-collection.json"))
         data = json.loads(extract_json_object(z.read(name).decode("utf-8")))
     engine, _ = detect_source_engine(data.get("metadata"))
-    return engine, [str(q.get("query_text") or "") for q in data["queries"]]
+    return engine, list(data["queries"])
+
+
+def _sample_queries(sample: str) -> tuple[str, list[str]]:
+    engine, queries = _sample_collection(sample)
+    return engine, [str(q.get("query_text") or "") for q in queries]
 
 
 @pytest.mark.parametrize("sample", _SAMPLES)
@@ -252,3 +257,151 @@ def test_a_postgresql_data_modifying_cte_ending_in_select_stays_other() -> None:
 def test_a_select_led_statement_with_a_cte_inside_stays_a_select() -> None:
     sql = "SELECT * FROM (WITH w AS (SELECT 1 AS a) SELECT a FROM w) q"
     assert statement_query_type(sql, "postgresql") == "SELECT"
+
+
+# A statement that opens with a parenthesis is a parenthesized query expression, or a
+# set operation over them, when the facade reads it as a query (#2159).
+_PAREN_READS = (
+    "(SELECT 1 FROM post_actions WHERE post_action_type_id = 2 LIMIT 1) UNION "
+    "(SELECT 1 FROM reviewable_scores WHERE reviewable_score_type = 3 LIMIT 1)",
+    "(SELECT 1) UNION (SELECT 2)",
+    "(SELECT a FROM t WHERE id = 1) UNION ALL (SELECT a FROM u WHERE id = 2)",
+    "((SELECT a FROM t)) UNION ((SELECT a FROM u))",
+    "(((SELECT a FROM t) UNION (SELECT a FROM u)) UNION (SELECT a FROM v))",
+    "(SELECT a FROM t) UNION (SELECT a FROM u) ORDER BY a LIMIT 10",
+    "(SELECT a FROM t ORDER BY a LIMIT 5) UNION ALL (SELECT a FROM u) LIMIT 7",
+    "(SELECT a FROM t WHERE id = 1)",
+    "( \n  SELECT a FROM t\n)\nUNION\n(\n  SELECT a FROM u\n)",
+    "(SELECT a FROM t) INTERSECT (SELECT a FROM u)",
+    "(SELECT a FROM t) EXCEPT (SELECT a FROM u)",
+    "-- tag\n(SELECT a FROM t) UNION (SELECT a FROM u)",
+    "/* tag */ (SELECT a FROM t) UNION (SELECT a FROM u)",
+    "( /* inner */ SELECT a FROM t) UNION (SELECT a FROM u)",
+    "(-- inner\nSELECT a FROM t) UNION (SELECT a FROM u)",
+    "(select a from t) union (select a from u)",
+)
+
+
+@pytest.mark.parametrize("engine", ["postgresql", "mysql", "mariadb"])
+@pytest.mark.parametrize("sql", _PAREN_READS)
+def test_a_parenthesized_query_expression_is_a_select(engine: str, sql: str) -> None:
+    assert statement_query_type(sql, engine) == "SELECT"
+    # The same as the unparenthesized statement, and as the facade reads it.
+    assert access_facts(sql, engine).kind == "select"
+
+
+@pytest.mark.parametrize(
+    ("engine", "sql"),
+    [
+        (
+            "postgresql",
+            "(SELECT $1 FROM post_actions WHERE post_action_type_id = $2 LIMIT $3) UNION "
+            "(SELECT $4 FROM reviewable_scores WHERE reviewable_score_type =",
+        ),
+        ("mysql", "(SELECT ? FROM post_actions WHERE id = ? LIMIT ?) UNION (SELECT ? FROM r WHERE"),
+    ],
+)
+def test_a_cut_short_parenthesized_union_is_still_a_select(engine: str, sql: str) -> None:
+    """A digest the collector cut short is still a read, as its unparenthesized form is."""
+    assert statement_query_type(sql, engine) == "SELECT"
+
+
+@pytest.mark.parametrize("engine", ["sqlserver", "oracle", "db2"])
+def test_a_parenthesized_union_is_a_select_in_other_dialects(engine: str) -> None:
+    sql = "(SELECT a FROM t WHERE id = 1) UNION ALL (SELECT a FROM u WHERE id = 2)"
+    assert statement_query_type(sql, engine) == "SELECT"
+    assert statement_query_type("-- tag\n" + sql, engine) == "SELECT"
+
+
+def test_a_comment_inside_the_parenthesis_follows_the_dialect() -> None:
+    sql = "( # tag\nSELECT a FROM t) UNION (SELECT a FROM u)"
+    assert statement_query_type(sql, "mysql") == "SELECT"
+    # ``#`` is no comment in PostgreSQL, so the parenthesis opens no SELECT there.
+    assert statement_query_type(sql, "postgresql") == "OTHER"
+
+
+@pytest.mark.passes_on_main
+@pytest.mark.parametrize("engine", _ENGINES)
+@pytest.mark.parametrize(
+    "sql",
+    [
+        "(",
+        "()",
+        "(((",
+        "(1, 2)",
+        "((1))",
+        "(SELECTED_ROWS)",
+        "(SET NAMES utf8)",
+        "(VALUES (1), (2))",
+        "(foo bar) UNION (baz)",
+        "( -- only a comment",
+        # An expression around a subquery is no statement, as the facade reads it.
+        "(SELECT 1) = 1",
+        "(SELECT a FROM t) AS x",
+        "(SELECT a FROM t) IS NULL",
+        # Only a query expression is ever wrapped: a wrapped DML verb stays OTHER, so
+        # is_write_query re-reads its text and still finds the write.
+        "(DELETE FROM t WHERE id = 1)",
+        "(UPDATE t SET a = 1)",
+    ],
+)
+def test_a_parenthesis_that_opens_no_select_stays_other(engine: str, sql: str) -> None:
+    assert statement_query_type(sql, engine) == "OTHER"
+
+
+@pytest.mark.passes_on_main
+@pytest.mark.parametrize("engine", ["postgresql", "mysql", "sqlserver"])
+@pytest.mark.parametrize(
+    "sql",
+    [
+        "WITH a AS (SELECT 1 AS x) (SELECT x FROM a) UNION (SELECT 2)",
+        "(WITH a AS (SELECT 1 AS x) SELECT x FROM a) UNION (SELECT 2)",
+    ],
+)
+def test_a_with_led_read_in_parentheses_stays_other(engine: str, sql: str) -> None:
+    """A ``WITH`` read stays ``OTHER`` (#1287) whether or not it is wrapped."""
+    assert statement_query_type(sql, engine) == "OTHER"
+
+
+@pytest.mark.passes_on_main
+def test_a_wrapped_data_modifying_cte_stays_other() -> None:
+    sql = "(WITH w AS (INSERT INTO t VALUES (1) RETURNING id) SELECT * FROM w)"
+    assert statement_query_type(sql, "postgresql") == "OTHER"
+
+
+@pytest.mark.passes_on_main
+@pytest.mark.parametrize(
+    ("engine", "sql", "expected"),
+    [
+        ("postgresql", "INSERT INTO t (SELECT a FROM u)", "INSERT"),
+        ("mysql", "INSERT INTO t (a) (SELECT a FROM u UNION SELECT a FROM v)", "INSERT"),
+        (
+            "postgresql",
+            "DELETE FROM t WHERE id IN ((SELECT id FROM u) UNION (SELECT id FROM v))",
+            "DELETE",
+        ),
+        ("mysql", "UPDATE t SET a = (SELECT MAX(a) FROM u) WHERE id = 1", "UPDATE"),
+        ("mysql", "REPLACE INTO t (SELECT * FROM u)", "REPLACE"),
+        ("postgresql", "SELECT * FROM ((SELECT a FROM t) UNION (SELECT a FROM u)) q", "SELECT"),
+    ],
+)
+def test_a_parenthesized_subquery_inside_a_statement_keeps_its_verb(
+    engine: str, sql: str, expected: str
+) -> None:
+    assert statement_query_type(sql, engine) == expected
+
+
+def test_the_discourse_parenthesized_unions_are_selects() -> None:
+    """The three discourse statements that open with a parenthesis (#2159), the
+    existence-probe union ``4582415969089977699`` among them, are reads."""
+    engine, queries = _sample_collection("discourse")
+    typed = {
+        str(q.get("digest")): statement_query_type(str(q.get("query_text") or ""), engine)
+        for q in queries
+        if str(q.get("query_text") or "").lstrip().startswith("(")
+    }
+    assert typed == {
+        "7727645011310952261": "SELECT",
+        "-8610820431710591320": "SELECT",
+        "4582415969089977699": "SELECT",
+    }

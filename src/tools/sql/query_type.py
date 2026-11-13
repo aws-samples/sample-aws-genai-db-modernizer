@@ -20,7 +20,14 @@ a statement that opens with one is not stripped past it). ``REPLACE`` is a state
 only in the MySQL family (an engine the facade has no dialect for keeps it). A bulk load (``COPY ... FROM``,
 ``LOAD DATA``) writes rows into its table, so it is an ``INSERT`` (#777).
 
-A statement that opens with a verb is typed by that verb. A ``WITH ...`` statement is
+A statement that opens with a verb is typed by that verb. A statement that opens with
+parentheses around a ``SELECT`` -- a parenthesized query expression, or a set operation
+over them (``(SELECT ...) UNION (SELECT ...)``, nested or followed by ``ORDER BY`` /
+``LIMIT``) -- is a ``SELECT``, the same as the unparenthesized statement (#2159), when
+the facade reads it as a query in the source dialect (``(SELECT 1) = 1`` is a bare
+expression, not one). Comments between the parentheses follow the same dialect rule.
+Only a query expression is ever wrapped, so a wrapped ``WITH`` or DML verb stays
+``OTHER``. A ``WITH ...`` statement is
 typed by the facade's statement kind (:class:`src.tools.sql.facade.AccessFacts`, read
 in the source dialect) when that kind is a write -- ``WITH ... INSERT/UPDATE/DELETE/
 MERGE`` (#1287). Otherwise it stays ``OTHER``: the facade calls a PostgreSQL
@@ -42,7 +49,34 @@ __all__ = ["statement_query_type"]
 
 _VERB_RE = re.compile(r"(SELECT|INSERT|UPDATE|DELETE|MERGE|REPLACE)\b", re.IGNORECASE)
 _WITH_RE = re.compile(r"WITH\b", re.IGNORECASE)
+_SELECT_RE = re.compile(r"SELECT\b", re.IGNORECASE)
 _WRITE_KINDS = frozenset({"insert", "update", "delete", "merge"})
+
+
+def _strip_comments(text: str, engine: str, dialect: str) -> str:
+    mysql_family = dialect == "mysql"
+    return strip_leading_comments(
+        text,
+        hash_comments=mysql_family,
+        strip_following_space=True,
+        nested=block_comments_nest(engine),
+        mysql_executable=mysql_family,
+        mysql_dashes=mysql_family,
+    ).lstrip()
+
+
+def _opens_a_parenthesized_select(text: str, engine: str, dialect: str) -> bool:
+    """Whether ``text`` opens with parentheses whose innermost one opens a ``SELECT``,
+    and the facade reads the whole text as a query (#2159): an expression such as
+    ``(SELECT 1) = 1`` is no statement. Text the facade cannot parse (a digest cut
+    short) is read as a ``select``, as the unparenthesized statement is."""
+    inner = text
+    while inner.startswith("("):
+        inner = _strip_comments(inner[1:], engine, dialect)
+    if inner is text or not _SELECT_RE.match(inner):
+        return False
+    facts = access_facts(text, engine)
+    return facts.kind == "select" and facts.fallback_reason != "not_a_statement"
 
 
 def statement_query_type(sql: str, source_engine: str) -> str:
@@ -52,15 +86,7 @@ def statement_query_type(sql: str, source_engine: str) -> str:
     # The facade's dialect for the engine: "mysql" for MySQL and MariaDB, "" for an
     # engine it has no dialect for.
     dialect = sqlglot_dialect(engine)
-    mysql_family = dialect == "mysql"
-    text = strip_leading_comments(
-        sql or "",
-        hash_comments=mysql_family,
-        strip_following_space=True,
-        nested=block_comments_nest(engine),
-        mysql_executable=mysql_family,
-        mysql_dashes=mysql_family,
-    ).lstrip()
+    text = _strip_comments(sql or "", engine, dialect)
     match = _VERB_RE.match(text)
     if match:
         verb = match.group(1).upper()
@@ -76,4 +102,6 @@ def statement_query_type(sql: str, source_engine: str) -> str:
         if kind in _WRITE_KINDS:
             return kind.upper()
         return "OTHER"
+    if _opens_a_parenthesized_select(text, engine, dialect):
+        return "SELECT"
     return "INSERT" if is_bulk_load(sql or "", engine) else "OTHER"
