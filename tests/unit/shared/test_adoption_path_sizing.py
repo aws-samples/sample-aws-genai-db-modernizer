@@ -35,6 +35,7 @@ from src.contracts.synthesis_output import (
 )
 from src.shared.adoption_facts import adoption_facts
 from src.shared.slice_plan import build_slice_plan
+from tests.design_records import skip_undesigned
 from tests.unit.agents.referee import slice_plan_jobs as job
 
 MOVED_LATER = ["q03", "q04", "q05", "q06", "q07", "q08", "q10", "q11", "q12", "q13"]
@@ -313,6 +314,7 @@ def test_synthesis_prices_each_path_with_the_headline_s_own_sizing(
     analysis = store.read_json(key)
     analysis["cost_estimate"] = estimate_dynamodb_costs(collector).model_dump(mode="json")
     store.write_json(key, analysis)
+    skip_undesigned(store, DB, JOB, 1)  # the schema design phase without a model (#2154)
     result = handler.run_synthesis_deterministic(JOB, DB, store, assignment_version=1)
     price = result["path_pricer"]
     assert handed and all(p is price for p in handed)
