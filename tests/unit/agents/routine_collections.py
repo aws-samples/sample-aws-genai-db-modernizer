@@ -7,6 +7,8 @@ went."""
 
 from __future__ import annotations
 
+import json
+from pathlib import Path
 from typing import Any
 
 SEED = "jane@example.com"
@@ -216,3 +218,20 @@ def pg_collection_with_non_dml_triggers(*, include_bodies: bool = True) -> dict[
         pg_event_trigger_row("log_ddl", "log_ddl", "ddl_command_end", [], status, enabled="D"),
     ]  # fmt: skip
     return raw
+
+
+#: A small raw PostgreSQL collection in the bundled samples' shape (every section the
+#: collection script writes) whose routine rows carry ``body_status``, as today's script
+#: writes them (#2022). The bundled samples' routine rows predate ``body_status``.
+SAMPLE_SHAPED_PG_COLLECTION = (
+    Path(__file__).resolve().parents[2]
+    / "fixtures"
+    / "routine_collections"
+    / "pg_shop_routines_collection.json"
+)
+
+
+def sample_shaped_pg_collection() -> dict[str, Any]:
+    """A fresh copy of :data:`SAMPLE_SHAPED_PG_COLLECTION`."""
+    loaded: dict[str, Any] = json.loads(SAMPLE_SHAPED_PG_COLLECTION.read_text(encoding="utf-8"))
+    return loaded
