@@ -30,7 +30,7 @@ from src.tools.schema.aurora_common.constraint_translator import (
     not_null_clause,
     translate_default,
 )
-from src.tools.schema.aurora_common.source_family import classify_source_family
+from src.tools.schema.aurora_common.source_family import classify_type_family
 from src.tools.schema.aurora_common.source_types import resolve_source_type
 from src.tools.schema.aurora_common.sql_safety import SqlFragmentError, render_source_predicate
 from src.tools.schema.aurora_common.type_map import (
@@ -144,7 +144,8 @@ def _resolve(
     col: AgentColumn, dialect: Dialect, source_family: str, indexed: bool
 ) -> TypeResolution:
     has_default = col.default_value is not None and not col.is_auto_increment
-    """The source ``data_type`` first (PostgreSQL/MySQL sources, #274), else the normalized type."""
+    """The source ``data_type`` first (PostgreSQL/MySQL sources, #274; Oracle/SQL Server
+    date/time and LOB types, #2219), else the normalized type."""
     resolution = resolve_source_type(
         col.data_type,
         source_family=source_family,
@@ -1044,7 +1045,7 @@ def _generate(
     column_notes: list[dict] = []
     table_ddls: list[TableDDL] = []
     overrides = type_overrides or {}
-    family = classify_source_family(source_engine)
+    family = classify_type_family(source_engine)
 
     for table in tables:
         keyed = _key_columns(table, dialect)

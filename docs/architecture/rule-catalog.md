@@ -1686,7 +1686,7 @@ Documentation: AWS Schema Conversion Tool User Guide, Using MySQL as a source; M
 
 ### oracle-date-type
 
-Oracle DATE columns: behaves differently. An Oracle DATE carries a time of day, so it maps to timestamp \(Aurora PostgreSQL\) or datetime \(Aurora MySQL\), not date, and date arithmetic in the code changes.
+Oracle DATE columns: behaves differently. An Oracle DATE carries a time of day to the second, so it maps to timestamp\(0\) \(Aurora PostgreSQL\) or datetime \(Aurora MySQL\), not date, and date arithmetic in the code changes.
 
 Documentation: Oracle to Aurora PostgreSQL Migration Playbook \(AWS DMS documentation\), Date and time data types.
 
@@ -1746,7 +1746,7 @@ Documentation: SQL Server to Aurora PostgreSQL Migration Playbook \(AWS DMS docu
 
 ### sqlserver-types-behave-differently
 
-Data types that change behaviour: behaves differently. These types map to the nearest target type: datetimeoffset keeps the instant but not the original offset, money becomes numeric\(19,4\), and bit becomes boolean \(Aurora PostgreSQL\) or BIT\(1\) \(Aurora MySQL\), so check the code that compares or formats them.
+Data types that change behaviour: behaves differently. These types map to the nearest target type: datetimeoffset keeps the instant but not the original offset \(timestamptz on Aurora PostgreSQL, a UTC datetime on Aurora MySQL\), money becomes numeric\(19,4\), and bit becomes boolean \(Aurora PostgreSQL\) or BOOLEAN, a tinyint\(1\) that also takes other small integers \(Aurora MySQL\), so check the code that compares or formats them.
 
 Documentation: SQL Server to Aurora PostgreSQL Migration Playbook \(AWS DMS documentation\), Data types.
 

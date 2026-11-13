@@ -30,6 +30,26 @@ def classify_source_family(source_engine: str) -> SourceFamily:
     return "other"
 
 
+TypeFamily = Literal["postgresql", "mysql", "oracle", "sqlserver", "other"]
+_ORACLE_ALIASES = {"oracle"}
+_SQLSERVER_ALIASES = {"sqlserver", "sql_server", "sql server", "mssql"}
+
+
+def classify_type_family(source_engine: str) -> TypeFamily:
+    """``classify_source_family``, with Oracle and SQL Server named: the sources whose
+    native ``data_type`` the draft DDL maps (#274, #2219). The migration strategy and
+    the draft's ``source_family`` stay on the three-way classification."""
+    family = classify_source_family(source_engine)
+    if family != "other":
+        return family
+    engine = (source_engine or "").strip().lower()
+    if engine in _ORACLE_ALIASES:
+        return "oracle"
+    if engine in _SQLSERVER_ALIASES:
+        return "sqlserver"
+    return "other"
+
+
 def migration_strategy(source_engine: str, target: AuroraTarget) -> MigrationStrategy:
     """carry_over when source shares the target's family, else translate.
 

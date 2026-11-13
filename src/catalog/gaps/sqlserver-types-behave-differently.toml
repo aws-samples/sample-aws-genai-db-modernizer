@@ -5,7 +5,7 @@ feature = "Data types that change behaviour"
 source_engines = ["sqlserver"]
 targets = ["aurora_mysql", "aurora_postgresql"]
 impact = "behaves_differently"
-reason = "These types map to the nearest target type: datetimeoffset keeps the instant but not the original offset, money becomes numeric(19,4), and bit becomes boolean (Aurora PostgreSQL) or BIT(1) (Aurora MySQL), so check the code that compares or formats them."
+reason = "These types map to the nearest target type: datetimeoffset keeps the instant but not the original offset (timestamptz on Aurora PostgreSQL, a UTC datetime on Aurora MySQL), money becomes numeric(19,4), and bit becomes boolean (Aurora PostgreSQL) or BOOLEAN, a tinyint(1) that also takes other small integers (Aurora MySQL), so check the code that compares or formats them."
 docs = "SQL Server to Aurora PostgreSQL Migration Playbook (AWS DMS documentation), Data types"
 
 # Looks for: Column data types.

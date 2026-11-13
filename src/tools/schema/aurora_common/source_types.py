@@ -54,6 +54,20 @@ MySQL -> Aurora PostgreSQL
     timestamp(p) -> TIMESTAMPTZ(p); time(p) -> TIME(p); year -> SMALLINT;
     json -> JSONB; enum(...) -> VARCHAR(longest label); set(...) -> TEXT.
     Spatial types are residuals (PostGIS is a design decision).
+
+Oracle and SQL Server -> Aurora PostgreSQL | Aurora MySQL (#2219)
+    Only these types; the rest keep the normalized mapping.
+    Oracle DATE, SQL Server smalldatetime -> TIMESTAMP(0) | DATETIME;
+    SQL Server datetime -> TIMESTAMP(3) | DATETIME(3);
+    Oracle TIMESTAMP(p), SQL Server datetime2(p) -> TIMESTAMP(min(p,6)) |
+    DATETIME(min(p,6)); Oracle TIMESTAMP WITH TIME ZONE, SQL Server
+    datetimeoffset(p) -> TIMESTAMPTZ | DATETIME(min(p,6)), a residual on Aurora
+    MySQL (the offset is not kept); Oracle TIMESTAMP WITH LOCAL TIME ZONE ->
+    TIMESTAMPTZ | DATETIME(min(p,6)) with a "store UTC" note; SQL Server time(p) ->
+    TIME(min(p,6)); CLOB/NCLOB/LONG, text/ntext, (n)varchar(max) -> TEXT | LONGTEXT;
+    BLOB/LONG RAW, image, varbinary(max) -> BYTEA | LONGBLOB; RAW(n), varbinary(n)
+    -> BYTEA | VARBINARY(n). More than 6 fractional-second digits is a residual on
+    both targets (the extra digits are lost).
 """
 
 from __future__ import annotations
@@ -62,6 +76,7 @@ import re
 from dataclasses import dataclass, replace
 
 from src.contracts.aurora_design_delta import is_enum_type, validate_aurora_type
+from src.shared.engine_names import display_engine
 from src.tools.schema.aurora_common.type_map import TypeResolution, normalize_precision_scale
 
 _LITERAL = re.compile(r"'((?:[^'\\\n\r]|'')*)'")
@@ -473,6 +488,144 @@ def _mysql_to_pg(p: _Parsed, indexed: bool) -> str | None:
     return None
 
 
+# --- Oracle and SQL Server (#2219) -------------------------------------------
+#
+# Only the date/time and large-object types; every other Oracle or SQL Server
+# type returns None and keeps the normalized mapping. The collectors report the
+# type three ways: live and offline Oracle rows read ``LOWER(DATA_TYPE)``
+# (``timestamp(6) with time zone``) with the fractional digits also in
+# ``numeric_scale`` (DATA_SCALE); SQL Server rows read the bare ``sys.types``
+# name (``datetime2``) with the digits in ``numeric_scale`` (``sys.columns.scale``)
+# and no ``max_length`` for a ``(max)`` type (-1 is read as unbounded); a DDL
+# upload keeps the type as written (``DATETIME2(7)``, ``nvarchar(MAX)``, ``RAW(16)``).
+# A LOB's ``max_length`` (Oracle 4000, SQL Server 16) is its locator, not a bound.
+
+_FRACTIONAL_MAX = 6  # both Aurora engines keep at most microseconds
+_MAX_LENGTH = re.compile(r"\(\s*max\s*\)\s*$")
+# base -> (kind, default fractional digits); kind decides each target's type.
+_ORACLE_NATIVE = {
+    "date": ("date0", 0),
+    "timestamp": ("timestamp", 6),
+    "timestamp with time zone": ("offset", 6),
+    "timestamp with local time zone": ("instant", 6),
+    "clob": ("text", None),
+    "nclob": ("text", None),
+    "long": ("text", None),
+    "blob": ("blob", None),
+    "long raw": ("blob", None),
+    "raw": ("varbinary", None),
+}
+_SQLSERVER_NATIVE = {
+    "datetime": ("datetime3", 3),
+    "smalldatetime": ("date0", 0),
+    "datetime2": ("timestamp", 7),
+    "datetimeoffset": ("offset", 7),
+    "time": ("time", 7),
+    "text": ("text", None),
+    "ntext": ("text", None),
+    "image": ("blob", None),
+    "varchar": ("max_text", None),
+    "nvarchar": ("max_text", None),
+    "varbinary": ("varbinary", None),
+}
+_NATIVE_LABEL = {"oracle": "Oracle", "sqlserver": "SQL Server"}
+_MYSQL_VARBINARY_MAX = 65535  # bytes in a MySQL row
+
+
+def _native_digits(explicit: tuple[int, ...], default: int, *candidates: int | None) -> int:
+    """The type's fractional-second digits: written in the type, else collected, else
+    the source's default."""
+    for value in (explicit[0] if explicit else None, *candidates):
+        if value is not None and 0 <= value <= 9:
+            return value
+    return default
+
+
+def _hetero_type(
+    data_type: str,
+    *,
+    source_family: str,
+    target: str,
+    max_length: int | None,
+    numeric_scale: int | None,
+    datetime_precision: int | None,
+) -> TypeResolution | str | None:
+    text = " ".join(data_type.strip().lower().split())
+    unbounded = bool(_MAX_LENGTH.search(text))
+    split = _split(_MAX_LENGTH.sub("", text) if unbounded else text)
+    if split is None or split[2]:
+        return None
+    words, params, _ = split
+    name = " ".join(words)
+    table = _ORACLE_NATIVE if source_family == "oracle" else _SQLSERVER_NATIVE
+    if name not in table:
+        return None
+    kind, default = table[name]
+    pg = target == "aurora_postgresql"
+    if kind == "text":
+        return "TEXT" if pg else "LONGTEXT"
+    if kind == "blob":
+        return "BYTEA" if pg else "LONGBLOB"
+    if kind == "max_text":
+        # (n)varchar(n) keeps the normalized VARCHAR(n); only (max) is a LOB.
+        if params or (max_length and not unbounded):
+            return None
+        return "TEXT" if pg else "LONGTEXT"
+    if kind == "varbinary":
+        length = None if unbounded else (params[0] if params else max_length)
+        if pg:
+            return "BYTEA"
+        if not length or length <= 0:
+            if source_family == "sqlserver":  # varbinary(max)
+                return "LONGBLOB"
+            return _residual(
+                "LONGBLOB", "Oracle RAW column has no known length; confirm VARBINARY(n)."
+            )
+        return f"VARBINARY({length})" if length <= _MYSQL_VARBINARY_MAX else "LONGBLOB"
+    if kind == "date0":
+        return "TIMESTAMP(0)" if pg else "DATETIME"
+    if kind == "datetime3":
+        return "TIMESTAMP(3)" if pg else "DATETIME(3)"
+    assert default is not None  # nosec B101 -- every temporal kind has a default
+    digits = _native_digits(params, default, datetime_precision, numeric_scale)
+    kept = min(digits, _FRACTIONAL_MAX)
+    source = f"{_NATIVE_LABEL[source_family]} {name}"
+    reasons = []
+    if digits > _FRACTIONAL_MAX:
+        reasons.append(
+            f"{source} keeps {digits} fractional-second digits and {display_engine(target)} "
+            f"keeps at most {_FRACTIONAL_MAX}: the extra digits are lost on load, and values "
+            "that differ only there collide in a key or join. Confirm 6 digits are enough."
+        )
+    if kind == "time":
+        aurora_type = f"TIME({kept})"
+    elif kind in ("offset", "instant") and pg:
+        aurora_type = "TIMESTAMPTZ"
+    elif pg:
+        aurora_type = f"TIMESTAMP({kept})"
+    else:
+        aurora_type = f"DATETIME({kept})"
+    if kind == "offset" and not pg:
+        reasons.append(
+            f"{source} stores a time-zone offset and Aurora MySQL DATETIME stores none: "
+            "convert the values to UTC on load, and keep the offset in its own column if "
+            "the application reads it."
+        )
+    if reasons:
+        return _residual(aurora_type, " ".join(reasons))
+    if kind == "instant" and not pg:
+        return TypeResolution(
+            aurora_type,
+            needs_judgment=False,
+            note=(
+                "Aurora MySQL DATETIME has no time zone; the application must write and read "
+                "these values in UTC (Oracle TIMESTAMP WITH LOCAL TIME ZONE converted them "
+                "on the way in)."
+            ),
+        )
+    return aurora_type
+
+
 # --- Entry point ------------------------------------------------------------
 
 
@@ -520,11 +673,24 @@ def resolve_source_type(
     is PostgreSQL's default and is left bare, as an unconstrained ``numeric`` is;
     Aurora MySQL already renders 6 for a bare type, and an interval stays a residual there.
     A value above 6 counts as unknown.
+
+    ``oracle`` and ``sqlserver`` sources map only their date/time and large-object
+    types (#2219, see the section above); a precision above 6 digits, and an offset
+    Aurora MySQL cannot keep, are residuals with the reason.
     """
-    if not data_type or source_family not in ("postgresql", "mysql"):
+    if not data_type or source_family not in ("postgresql", "mysql", "oracle", "sqlserver"):
         return None
     result: TypeResolution | str | None
-    if source_family == "postgresql":
+    if source_family in ("oracle", "sqlserver"):
+        result = _hetero_type(
+            data_type,
+            source_family=source_family,
+            target=target,
+            max_length=max_length,
+            numeric_scale=numeric_scale,
+            datetime_precision=datetime_precision,
+        )
+    elif source_family == "postgresql":
         parsed = _parse_pg(data_type, max_length)
         if parsed is None:
             return None
