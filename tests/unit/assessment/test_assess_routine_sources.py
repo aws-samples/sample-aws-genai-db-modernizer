@@ -120,21 +120,189 @@ def test_the_given_sources_are_written_and_their_text_stays_only_in_the_chunks(
 
 
 @pytest.mark.passes_on_main
-def test_a_request_with_no_routine_sources_writes_none(tmp_path: Path) -> None:
-    """A caller that passes none sees no change: the run writes no routine sources (as
-    before 1.4, when assess() wrote none)."""
-    _, store = _run(tmp_path, pg_collection(), None)
+@pytest.mark.parametrize("pinned", ["1.3", None])
+def test_a_request_for_1_3_writes_no_routine_sources_even_from_a_collection_with_bodies(
+    pinned: str | None, tmp_path: Path
+) -> None:
+    """A 1.3 caller (pinned, or unpinned while 1.3 is the default) sees no change: the
+    run writes no routine sources, whatever the collection holds (as before 1.4, when
+    assess() wrote none)."""
+    store = LocalArtifactStore(base_dir=str(tmp_path / "artifacts"))
+    request: dict[str, Any] = {
+        "database_name": "shop",
+        "collection": pg_collection(),
+        "options": {"run_through": "analysis"},
+    }
+    if pinned is not None:
+        request["contract_version"] = pinned
+    result = assess(request, store=store, job_id="rs000001")
+    assert result.contract_version == "1.3"
     assert not list((tmp_path / "artifacts").rglob("routine_sources*"))
     assert _index(store) is None
+    assert _files_holding(tmp_path / "artifacts", SEED) == []
 
 
-def test_an_empty_list_clears_the_jobs_earlier_routine_sources(tmp_path: Path) -> None:
-    """An empty list is a caller's "none": the job's earlier routine sources are cleared,
-    as a script's re-run does, so no earlier literal is kept."""
-    _run(tmp_path, pg_collection(), _given(pg_collection()))
-    _, store = _run(tmp_path, pg_collection(), [])
+def _scripts_write(tmp_path: Path, raw: dict[str, Any], collector_output: Any) -> Path:
+    """What the scripts' path writes for ``raw`` (``scripts/run_assessment.py --file``:
+    ``write_routine_sources`` over ``iter_collection_sources`` of the file as read)."""
+    from src.agents.collector.routine_sources import write_routine_sources
+
+    store = LocalArtifactStore(base_dir=str(tmp_path / "scripts"))
+    write_routine_sources(store, "shop", "rs000001", collector_output, iter_collection_sources(raw))
+    return tmp_path / "scripts" / "shop" / "rs000001" / "collector"
+
+
+def _chunks(collector: Path) -> list[bytes]:
+    return [p.read_bytes() for p in sorted((collector / "routine_sources").glob("part-*"))]
+
+
+@pytest.mark.parametrize("collection", [pg_collection, mysql_collection])
+def test_a_1_4_run_extracts_the_collections_bodies_as_the_scripts_do(
+    collection: Any, tmp_path: Path, caplog: pytest.LogCaptureFixture
+) -> None:
+    """A 1.4 request with no routine_sources and a collection holding routine bodies (the
+    audit's pg_collection: 4 bodies) writes the routine sources the scripts write from
+    the same file, byte for byte: the same writer, exact rule, scan and chunks. The text
+    stays only in the chunks: not in the result, a log record or any other file."""
+    caplog.set_level(logging.DEBUG)
+    result, store = _run(tmp_path, collection(), None, include_artifacts=True)
+
+    index = _index(store)
+    expected = list(iter_collection_sources(collection()))
+    assert index is not None and index.total == len(expected) > 0
+    if collection is pg_collection:
+        assert index.total == 4
+    written = list(read_routine_sources(store, "shop", "rs000001"))
+    assert written == expected  # exact as the collectors decide (mysql: 3 not exact)
+    output = store.read_json("shop/rs000001/collector/output.json")
+    collector = tmp_path / "artifacts" / "shop" / "rs000001" / "collector"
+    assert _chunks(collector) == _chunks(_scripts_write(tmp_path, collection(), output))
+    leaks = _files_holding(tmp_path / "artifacts", SEED)
+    assert leaks and all(
+        p.startswith("shop/rs000001/collector/routine_sources/part-") for p in leaks
+    )
+    assert SEED not in result.model_dump_json()
+    assert SEED not in caplog.text
+    assert all(SEED not in (record.exc_text or "") for record in caplog.records)
+
+
+def test_a_1_4_run_with_the_opt_out_extracts_none_even_from_a_file_holding_bodies(
+    tmp_path: Path,
+) -> None:
+    """A file that says include_routine_bodies = 0 yields no source, whatever it holds,
+    as the collectors' iter_collection_sources does."""
+    raw = pg_collection()
+    raw["metadata"]["routine_capture"]["include_bodies"] = False
+    assert any(row.get("definition") for row in raw["procedures"])
+    _, store = _run(tmp_path, raw, None)
     assert _index(store) is None
+    assert _files_holding(tmp_path / "artifacts", SEED) == []
+
+
+def test_given_entries_win_for_their_routine_and_the_rest_are_extracted(
+    tmp_path: Path,
+) -> None:
+    """Both present: an entry the caller gives is used as given for its routine (under
+    the writer's rules), and every other routine the collection holds a body for is
+    extracted, so each routine has one source."""
+    given = _given(pg_collection())[:1]
+    _, store = _run(tmp_path, pg_collection(), given)
+
+    written = {s.key(): s for s in read_routine_sources(store, "shop", "rs000001")}
+    extracted = {s.key(): s for s in iter_collection_sources(pg_collection())}
+    assert set(written) == set(extracted) and len(written) == 4
+    mine = (given[0]["kind"], given[0]["schema_name"], given[0]["specific_name"])
+    assert GIVEN in written[mine].create_statement
+    for key, source in written.items():
+        if key != mine:
+            assert source == extracted[key]
+            assert GIVEN not in source.create_statement
+
+
+def test_an_empty_list_is_no_entry_and_a_rerun_keeps_no_earlier_given_text(
+    tmp_path: Path,
+) -> None:
+    """[] gives no entry: the run writes what the collection holds, and the job's
+    earlier routine sources are replaced whole, so no earlier given literal is kept."""
+    _run(tmp_path, pg_collection(), _given(pg_collection()))
+    assert _files_holding(tmp_path / "artifacts", GIVEN)
+    _, store = _run(tmp_path, pg_collection(), [])
+    assert list(read_routine_sources(store, "shop", "rs000001")) == list(
+        iter_collection_sources(pg_collection())
+    )
     assert _files_holding(tmp_path / "artifacts", GIVEN) == []
+
+
+def test_neither_present_writes_none_and_the_1_4_result_has_every_field(
+    tmp_path: Path,
+) -> None:
+    """No entry and no routine body in the collection: no routine sources are written
+    (and a job's earlier ones are cleared), and the 1.4 result has every field a 1.3
+    result has: 1.4 adds no result field, so nothing is missing."""
+    raw = pg_collection()
+    for name in ("procedures", "triggers"):
+        raw.pop(name)
+    _run(tmp_path, pg_collection(), None)  # an earlier run of the job with bodies
+    result, store = _run(tmp_path, raw, None)
+    assert result.contract_version == "1.4"
+    assert _index(store) is None
+    assert _files_holding(tmp_path / "artifacts", SEED) == []
+
+    old = LocalArtifactStore(base_dir=str(tmp_path / "v13"))
+    request = {
+        "contract_version": "1.3",
+        "database_name": "shop",
+        "collection": raw,
+        "options": {"run_through": "analysis"},
+    }
+    as_1_3 = assess(request, store=old, job_id="rs000001")
+    shown, shown_1_3 = json.loads(result.model_dump_json()), json.loads(as_1_3.model_dump_json())
+    assert set(shown) == set(shown_1_3) == set(type(result).model_fields)
+    for key in set(shown) - {"contract_version", "library_version"}:
+        assert shown[key] == shown_1_3[key], key
+
+
+def test_an_extracted_body_that_looks_like_a_credential_is_flagged_by_the_scan(
+    tmp_path: Path, caplog: pytest.LogCaptureFixture
+) -> None:
+    """The collectors' scan (strict, as the scripts run it) reads every extracted body;
+    the index names the routine and the kinds, and no log line holds the value."""
+    caplog.set_level(logging.WARNING)
+    raw = pg_collection()
+    secret = "password = 'not-a-real-one-8812'"  # pragma: allowlist secret
+    raw["procedures"][2]["definition"] = raw["procedures"][2]["definition"].replace(
+        "RETURN NEW;", f"RETURN NEW; -- {secret}"
+    )
+    _, store = _run(tmp_path, raw, None)
+    index = _index(store)
+    assert index is not None and index.secret_scan is not None
+    flagged = {f.specific_name: f.credential_kinds for f in index.secret_scan.flagged}
+    assert flagged.get("audit_orders_16392")
+    assert "not-a-real-one-8812" not in caplog.text and SEED not in caplog.text
+
+
+def test_a_row_with_code_but_no_body_status_gets_no_source(
+    tmp_path: Path, caplog: pytest.LogCaptureFixture
+) -> None:
+    """#2124: routine migration reads a row with code and no body_status (a DDL upload,
+    an assess() collection), but no collector writes a source for one:
+    iter_routine_sources carries only a row whose body_status is collected. assess()
+    follows the collectors: such a row is neither extracted nor written from a given
+    entry, which is skipped as having no body status."""
+    caplog.set_level(logging.WARNING)
+    raw = pg_collection()
+    raw["procedures"][2].pop("body_status")
+    assert raw["procedures"][2]["definition"]
+    extracted = {s.specific_name for s in iter_collection_sources(raw)}
+    assert "audit_orders_16392" not in extracted  # the collectors' rule
+    given = [e for e in _given(pg_collection()) if e["specific_name"] == "audit_orders_16392"]
+    _, store = _run(tmp_path, raw, given)
+
+    written = {s.specific_name for s in read_routine_sources(store, "shop", "rs000001")}
+    assert written == extracted
+    assert _files_holding(tmp_path / "artifacts", GIVEN) == []
+    messages = " ".join(r.getMessage() for r in caplog.records)
+    assert "no body status: function public.audit_orders_16392" in messages
 
 
 def test_the_opt_out_writes_none(tmp_path: Path, caplog: pytest.LogCaptureFixture) -> None:
@@ -396,7 +564,7 @@ def test_no_error_carries_the_routine_text(number: int, tmp_path: Path) -> None:
             "".join(traceback.format_exception(error)),
         ]
         for text in shown:
-            assert EDGE not in text and GIVEN not in text
+            assert EDGE not in text and GIVEN not in text and SEED not in text
         assert all(set(e) == {"loc", "msg"} for e in error.errors())
         assert error.errors()[0]["loc"][0] == "routine_sources"
         assert json.loads(error.json()) == [
