@@ -278,6 +278,49 @@ def _blank(text: str, spans: list[tuple[int, int]]) -> str:
     return "".join(out)
 
 
+# --- the design split's own terms (#2141, #2184) ----------------------------
+
+# How the pipeline splits a design into parallel parts, never customer wording. The
+# one list: ``customer_text_guard`` flags each in a deliverable, and the schema-design
+# prose pass (``synthesis_prose``) fixes or rejects them in model text.
+PIPELINE_TERMS: tuple[str, ...] = (
+    "routing places together",
+    "design part",
+    "the merge reconciled",
+)
+
+# The customer-wording rule every schema-design skill carries word for word
+# (``tests/unit/agents/referee/test_pipeline_terms_in_model_prose.py``), so a model is
+# told what its seam rewrites and rejects.
+PIPELINE_TERMS_RULE = (
+    "How the work is split is not part of the design: never write "
+    + ", ".join(f'"{t}"' for t in PIPELINE_TERMS[:-1])
+    + f' or "{PIPELINE_TERMS[-1]}". Name the table that holds the rows ("the `users` '
+    'table"), or write "another part of the design".'
+)
+
+# "design part(s)" -> "part(s) of the design": the same words in customer order, so
+# "which another design part owns" and "the users design part" keep their meaning.
+_DESIGN_PART_RE = re.compile(r"\b([Dd])esign part(s?)\b")
+
+
+def replace_pipeline_terms(text: str) -> str:
+    """Rewrite "design part(s)" in model text as "part(s) of the design"."""
+    if not text or "esign part" not in text:
+        return text
+
+    def sub(m: re.Match[str]) -> str:
+        head = "Part" if m.group(1) == "D" else "part"
+        return f"{head}{m.group(2)} of the design"
+
+    return _DESIGN_PART_RE.sub(sub, text)
+
+
+def pipeline_terms_in(text: str) -> list[str]:
+    """The pipeline terms ``text`` contains, as ``customer_text_guard`` matches them."""
+    return [t for t in PIPELINE_TERMS if t in (text or "")]
+
+
 # --- internal confidence figures (#1569) ------------------------------------
 
 # "NN% confidence" is an internal analysis score, never customer wording; the

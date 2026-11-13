@@ -134,7 +134,7 @@ Document at least one trade-off for each design decision, each one an object of 
 }
 ```
 
-`topic` files the trade-off under the one subject it is about, so the report lists repeated ones together: `item_size` (item, document or value size limits, large columns inline or offloaded), `id_generation` (ids the database generated that the application now generates), `indexing` (secondary indexes added, dropped or not created, their projections and write cost), `key_design` (keys, item collections, embedding, denormalization, table or index layout), `query_translation` (a source query served another way: joins, counts, IN lists, ordering or filters done by the application or by several requests), `consistency` (eventual consistency, staleness, TTLs, cache invalidation, transactions), `uniqueness` (unique constraints, conditional writes, sentinel items), `data_types` (type mappings and value formats), `capacity` (hot partitions or keys, throughput limits, shards, memory), `cost` (billed units and their price), `operational` (engine versions, monitoring, sync pipelines, index builds, replica routing) or `other`. Trade-offs on the same subject in different design parts take the same topic.
+`topic` files the trade-off under the one subject it is about, so the report lists repeated ones together: `item_size` (item, document or value size limits, large columns inline or offloaded), `id_generation` (ids the database generated that the application now generates), `indexing` (secondary indexes added, dropped or not created, their projections and write cost), `key_design` (keys, item collections, embedding, denormalization, table or index layout), `query_translation` (a source query served another way: joins, counts, IN lists, ordering or filters done by the application or by several requests), `consistency` (eventual consistency, staleness, TTLs, cache invalidation, transactions), `uniqueness` (unique constraints, conditional writes, sentinel items), `data_types` (type mappings and value formats), `capacity` (hot partitions or keys, throughput limits, shards, memory), `cost` (billed units and their price), `operational` (engine versions, monitoring, sync pipelines, index builds, replica routing) or `other`. Trade-offs on the same subject take the same topic everywhere in the design.
 
 Every trade-off must trace back to specific tables and queries. Common trade-offs:
 
@@ -172,6 +172,8 @@ Never quote the analysis's own scores in these fields: no `co_access_confidence`
 Cite a query by its label, the first 8 characters of its `query_id` in backticks ("query `8c66eaee`"), never by a bare id or id prefix ("query 8c66eaee"); the full id goes in the item's `query_ids`. The output gate writes that label for any bare id of a known query it finds, so a bare id never reaches the report.
 
 Cutover: the cutover is the customer's. The only sentence about it is "The cutover is your responsibility." Never say when or how to cut over, switch or decommission (no "before cutover", "after cutover", "once replication has caught up", "when lag reaches zero"), and never use "caught up", "proven" or "ready" as readiness wording. Never write "in sync": a copy that CDC keeps current from its owner is "kept current by CDC".
+
+How the work is split is not part of the design: never write "routing places together", "design part" or "the merge reconciled". Name the table that holds the rows ("the `users` table"), or write "another part of the design".
 
 ## Redesign round
 
