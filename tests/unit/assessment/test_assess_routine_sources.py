@@ -349,7 +349,17 @@ def _bad_requests() -> list[dict[str, Any]]:
         text,  # not a list
         [{**good, "create_statement": text, "origin": "show_create"}],  # another engine's
     ]
-    return [_request(e) for e in entries]
+    valid = [{**good, "create_statement": text}]
+    unpinned = _request(valid)
+    del unpinned["contract_version"]
+    return [
+        *(_request(e) for e in entries),
+        # Valid entries on a request for 1.3, pinned or (while 1.3 is the default) not:
+        # the version refusal comes from the field's validator, so it quotes no input
+        # either (a model-level error carried the whole request in errors() and json()).
+        _request(valid, contract_version="1.3"),
+        unpinned,
+    ]
 
 
 def _chain(exc: BaseException) -> list[BaseException]:
@@ -361,7 +371,7 @@ def _chain(exc: BaseException) -> list[BaseException]:
     return out
 
 
-@pytest.mark.parametrize("number", range(7))
+@pytest.mark.parametrize("number", range(9))
 def test_no_error_carries_the_routine_text(number: int, tmp_path: Path) -> None:
     payload = _bad_requests()[number]
     paths = (
@@ -382,13 +392,39 @@ def test_no_error_carries_the_routine_text(number: int, tmp_path: Path) -> None:
             str(error),
             repr(error),
             json.dumps(error.errors(), default=str),
+            error.json(),
             "".join(traceback.format_exception(error)),
         ]
         for text in shown:
             assert EDGE not in text and GIVEN not in text
         assert all(set(e) == {"loc", "msg"} for e in error.errors())
         assert error.errors()[0]["loc"][0] == "routine_sources"
+        assert json.loads(error.json()) == [
+            {"loc": list(e["loc"]), "msg": e["msg"]} for e in error.errors()
+        ]
     assert not any(tmp_path.iterdir())
+
+
+@pytest.mark.parametrize("pinned", ["1.3", None])
+def test_a_request_for_1_3_with_routine_sources_is_refused_with_no_input(
+    pinned: str | None,
+) -> None:
+    """A caller who forgets the 1.4 pin gets the input-free RoutineSourcesError, from the
+    field's own validator: str(), errors() and json() hold no routine text and no other
+    input (the collection's own SEED included)."""
+    payload = _request(_given(pg_collection()))
+    if pinned is None:
+        del payload["contract_version"]
+    else:
+        payload["contract_version"] = pinned
+    with pytest.raises(RoutineSourcesError) as caught:
+        AssessmentRequest.model_validate(payload)
+    error = caught.value
+    assert [e["loc"] for e in error.errors()] == [("routine_sources",)]
+    assert 'pin contract_version "1.4"' in error.errors()[0]["msg"]
+    for text in (str(error), json.dumps(error.errors(), default=str), error.json()):
+        assert GIVEN not in text and SEED not in text and "CREATE" not in text
+        assert "shop" not in text  # no other input either
 
 
 def test_another_request_error_quotes_no_input() -> None:

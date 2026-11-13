@@ -30,7 +30,6 @@ from typing import Any
 
 import pytest
 from jsonschema import Draft202012Validator
-from pydantic import ValidationError
 
 from scripts import render_contract_schemas as rcs
 from scripts.contract_schema_snapshot import (
@@ -41,7 +40,14 @@ from scripts.contract_schema_snapshot import (
     released_version_of,
     write_released_version,
 )
-from src.assessment import CONTRACT_VERSION, AssessmentRequest, AssessmentResult, assess, models
+from src.assessment import (
+    CONTRACT_VERSION,
+    AssessmentRequest,
+    AssessmentResult,
+    RoutineSourcesError,
+    assess,
+    models,
+)
 from src.assessment.models import (
     SUPPORTED_CONTRACT_VERSIONS,
     default_contract_version,
@@ -137,7 +143,7 @@ def test_once_a_release_records_1_4_it_is_the_default(recorded_1_4: dict[str, An
     assert "not in a release yet" not in str(caught.value)
     # A 1.3 caller is still served as before, and may not set a 1.4 field.
     assert AssessmentRequest.model_validate(_request("1.3")).contract_version == "1.3"
-    with pytest.raises(ValidationError, match=r"field of contract 1\.4: pin"):
+    with pytest.raises(RoutineSourcesError, match=r"field of contract 1\.4: pin"):
         AssessmentRequest.model_validate({**_request("1.3"), "routine_sources": []})
 
 
@@ -190,12 +196,13 @@ def test_the_shipped_1_3_schemas_are_the_tags_bytes(name: str) -> None:
 
 def test_a_1_3_request_naming_routine_sources_is_refused() -> None:
     request = {**_request("1.3"), "routine_sources": []}
+    # From the field's own validator: the input-free RoutineSourcesError.
     with pytest.raises(
-        ValidationError,
+        RoutineSourcesError,
         match=r"routine_sources is a field of contract 1\.4 \(not in a release yet\)",
     ):
         AssessmentRequest.model_validate(request)
-    with pytest.raises(ValidationError, match="field of contract 1.4"):
+    with pytest.raises(RoutineSourcesError, match="field of contract 1.4"):
         AssessmentRequest.model_validate({**_request(None), "routine_sources": []})
     AssessmentRequest.model_validate({**_request("1.4"), "routine_sources": []})
 
