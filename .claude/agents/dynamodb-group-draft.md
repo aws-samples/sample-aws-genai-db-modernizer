@@ -90,7 +90,7 @@ Read all files. Do not output anything yet.
 - Parent/child direction, referenced table, `on_delete` cascade behavior
 - Cardinality: divide child `row_count` by parent `row_count` (the `design_metrics.tables[].row_count` figures) to get average children per parent
 
-**Access Patterns** — from every entry of `queries.query_patterns`. Routing gave each of them to DynamoDB, so each is designed whatever its `query_type`: a statement typed `OTHER` (a parenthesized `(SELECT ...) UNION (SELECT ...)`, a `WITH ...` read) is designed by what it reads or writes, for example a union of reads as one read per branch.
+**Access Patterns** — from every entry of `queries.query_patterns`. Routing gave each of them to DynamoDB, so each is designed whatever its `query_type`: a statement typed `OTHER` (a `WITH ...` read, for example) is designed by what it reads or writes.
 
 `queries.query_pattern_groups`, when present, lists the queries that are one query pattern: they read or write the same rows the same way (the same tables, filters, sort order, row limit and operation, where an insert, an update, a delete and an upsert are different operations, and for a count or total the same grouping) and differ only in literal values, IN-list lengths or returned columns. Design each pattern once: one access pattern whose `query_ids` lists every member, whose load is the sum of the members' `design_rps` (the group's `frequency_per_hour` and `calls_per_second` are their totals) and whose projection covers the group's `returned_columns`, the union of the columns they return. A query in no group is a pattern of its own. Every in-scope query still appears in exactly one access pattern's `query_ids`, so coverage holds.
 

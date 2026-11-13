@@ -14,6 +14,8 @@ from __future__ import annotations
 
 from pathlib import Path
 
+import pytest
+
 from src.agents.schema_design.design_coverage import (
     check_design_coverage,
     coverage_violations,
@@ -124,10 +126,12 @@ def test_a_merged_design_that_drops_a_one_statement_pattern_fails_coverage(
     assert not [f for f in rewritten["validation_failures"] if f.startswith(COVERAGE_PREFIX)]
 
 
+@pytest.mark.passes_on_main
 def test_a_parenthesized_union_is_designed_not_skipped(tmp_path: Path) -> None:
-    """A parenthesized UNION is typed OTHER by the collector today; routed to DynamoDB, it
-    is still in a part's input and a design must name it (the skill no longer says to
-    skip OTHER). Leaving it out fails coverage; naming it passes."""
+    """A statement typed OTHER (as a parenthesized UNION was before #2159, and as a
+    collection saved then still says), routed to DynamoDB, is still in a part's input and
+    a design must name it (the skill no longer says to skip OTHER). Leaving it out fails
+    coverage; naming it passes."""
     union = _q("union", UNION, 0.2, query_type="OTHER")
     queries = [*(q for p in range(24) for q in _members(p, 3)), union]
     store, _, inputs = _split_job(tmp_path, queries)
