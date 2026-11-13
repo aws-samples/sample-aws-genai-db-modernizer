@@ -280,6 +280,45 @@ def test_mysql_lob_with_a_default_is_a_residual(engine, data_type, normalized, a
     assert [r["column"] for r in result.residuals] == ["c"]
 
 
+@pytest.mark.parametrize(
+    ("engine", "data_type", "normalized", "aurora_type"),
+    [
+        ("sqlserver", "nvarchar(max)", "string", "LONGTEXT"),  # an INCLUDE column
+        ("oracle", "clob", "text", "LONGTEXT"),
+        ("sqlserver", "varbinary(max)", "binary", "LONGBLOB"),
+    ],
+)
+def test_mysql_lob_in_a_secondary_index_keeps_its_type_and_a_prefix(
+    engine, data_type, normalized, aurora_type
+):
+    """A secondary index on a LOB renders with a key prefix and a note (#1623), and the
+    column keeps its type: SQL Server lists INCLUDE columns with the keys, and narrowing an
+    nvarchar(max) to VARCHAR(255) would cut the data."""
+    table = AgentTable.model_validate(
+        {"table_id": "db.t", "table_name": "t", "row_count": 1,
+         "columns": [{**_col("int", "integer"), "column_name": "id", "nullable": False},
+                     {**_col(data_type, normalized), "column_name": "body"}],
+         "primary_key": ["id"],
+         "indexes": [{"index_name": "ix", "columns": ["id", "body"], "is_unique": False}]}
+    )  # fmt: skip
+    result = generate_mysql_ddl([table], source_engine=engine)
+    body = result.tables[0].columns[1]
+    assert (body.aurora_type, body.needs_judgment) == (aurora_type, False)
+    assert result.residuals == []
+    assert [n["kind"] for n in result.index_notes if n["index"] == "ix"] == ["key_prefix"]
+
+
+def test_mysql_lob_in_a_foreign_key_is_a_residual():
+    table = AgentTable.model_validate(
+        {"table_id": "db.t", "table_name": "t", "row_count": 1,
+         "columns": [{**_col("clob", "text"), "column_name": "ref"}],
+         "foreign_keys": [{"constraint_name": "fk", "columns": ["ref"],
+                           "referenced_table": "u", "referenced_columns": ["ref"]}]}
+    )  # fmt: skip
+    col = generate_mysql_ddl([table], source_engine="oracle").tables[0].columns[0]
+    assert (col.aurora_type, col.needs_judgment) == ("VARCHAR(255)", True)
+
+
 def test_no_length_in_a_key_keeps_both_reasons():
     key = {**_col("nvarchar", "string"), "column_name": "k", "nullable": False}
     table = AgentTable.model_validate(
@@ -403,10 +442,10 @@ _DNN = {
     ("SiteLog", "DateTime"): ("smalldatetime", "TIMESTAMP(0)", "DATETIME"),
     ("aspnet_Membership", "Comment"): ("ntext", "TEXT", "LONGTEXT"),
     ("Files", "Content"): ("image", "BYTEA", "LONGBLOB"),
+    # collect-sqlserver.sql leaves the -1 length out; the offline parser keeps it as the
+    # type (src/tools/database/sqlserver_max.py), so this is an unflagged (max) LOB.
+    ("ContentItems", "Content"): ("nvarchar(max)", "TEXT", "LONGTEXT"),
 }
-# Offline (max): collect-sqlserver.sql emits no length for -1, which cannot be told
-# from a length that was not collected, so the LOB is the fallback and it is flagged.
-_DNN_NO_LENGTH = ("ContentItems", "Content")
 
 
 @pytest.mark.parametrize("target", [PG, MY])
@@ -418,7 +457,10 @@ def test_dnn_sample_end_to_end(dnn_tables, target):
     # Every date/time and large-object column, not only the ones named above: none is
     # left on the old types or for review (the sample has no datetime2, datetimeoffset or
     # time column, so no precision above 6 digits).
-    lob_or_time = {"datetime", "smalldatetime", "ntext", "image"}
+    lob_or_time = {"datetime", "smalldatetime", "ntext", "image", "nvarchar(max)"}
+    assert dnn_tables[0].columns  # the sample loaded
+    by_key = {(t.table_name, c.column_name): c.data_type for t in dnn_tables for c in t.columns}
+    assert by_key[("ContentItems", "Content")] == "nvarchar(max)"
     in_scope = {
         (t.table_name, c.column_name)
         for t in dnn_tables
@@ -436,17 +478,9 @@ def test_dnn_sample_end_to_end(dnn_tables, target):
     assert all((r["table"], r["column"]) in defaults for r in left)
     assert all("has a DEFAULT" in r["reason"] for r in left)
     assert bool(left) is (target == MY)
-    no_length = {
-        (t.table_name, c.column_name)
-        for t in dnn_tables
-        for c in t.columns
-        if c.data_type == "nvarchar" and c.max_length is None
-    }
-    assert _DNN_NO_LENGTH in no_length
-    flagged = {(r["table"], r["column"]): r for r in result.residuals}
-    assert types[_DNN_NO_LENGTH] == ("TEXT" if target == PG else "LONGTEXT")
-    assert all("may be (max)" in flagged[k]["reason"] for k in no_length if k in flagged)
-    assert no_length <= set(flagged)
+    # Every nvarchar(max) is one (88 in the sample), and no string is left without a length.
+    assert sum(1 for v in by_key.values() if v == "nvarchar(max)") == 88
+    assert not [r for r in result.residuals if "no known length" in r["reason"]]
 
 
 def _oracle_live_tables() -> list[AgentTable]:
@@ -548,10 +582,78 @@ def test_sqlserver_live_collection_end_to_end(target):
              "pic": "LONGBLOB", "bin": "VARBINARY(16)", "big": "LONGBLOB"},
     }[target]  # fmt: skip
     assert {c: types[c] for c in expected} == expected
-    # datetime2(7) loses a digit. The collector turns max_length -1 into no length, so
-    # the (max) columns are flagged too (BYTEA on Aurora PostgreSQL needs no length).
-    flagged = {PG: ["at", "notes"], MY: ["at", "notes", "big"]}[target]
-    assert [r["column"] for r in result.residuals] == flagged
+    # datetime2(7) loses a digit; the -1 (max) columns keep (max) in their type, unflagged.
+    assert [r["column"] for r in result.residuals] == ["at"]
+    by_name = {c.column_name: c.data_type for t in _agent(_build_tables(raw)) for c in t.columns}
+    assert (by_name["notes"], by_name["big"], by_name["bin"]) == (
+        "nvarchar(max)",
+        "varbinary(max)",
+        "varbinary",
+    )
+
+
+def _offline_sqlserver(columns: list[dict], engine: str = "sqlserver") -> list[AgentTable]:
+    """A collect-sqlserver.sql export (FOR JSON PATH leaves a NULL out) through the offline
+    parser and the shared builder, as the pipeline reads it."""
+    from src.agents.collector.mysql_collector import _build_tables
+    from src.tools.database.offline_parser import parse_offline_collection
+
+    raw = {
+        "collection_version": "1",
+        "collected_at": "2026-11-13T00:00:00Z",
+        "metadata": {"engine": engine, "version": "Microsoft SQL Server 2022", "database": "app"},
+        "tables": [{"table_name": "notes", "schema_name": "dbo", "row_count": 1}],
+        "columns": [
+            {"table_name": "notes", "schema_name": "dbo", "ordinal_position": i + 1,
+             "is_nullable": "YES", "is_identity": "NO", **c}
+            for i, c in enumerate(columns)
+        ],  # fmt: skip
+    }
+    return _agent(_build_tables(parse_offline_collection(raw)["tables"], "app"))
+
+
+def test_offline_sqlserver_collection_keeps_max_in_the_type():
+    tables = _offline_sqlserver(
+        [
+            {"column_name": "body", "data_type": "nvarchar", "udt_name": "nvarchar"},
+            {"column_name": "raw", "data_type": "varbinary", "udt_name": "varbinary"},
+            {"column_name": "name", "data_type": "nvarchar", "max_length": 50},
+            {"column_name": "n", "data_type": "int", "max_length": 4},
+        ]
+    )
+    cols = {c.column_name: c for c in tables[0].columns}
+    assert {n: c.data_type for n, c in cols.items()} == {
+        "body": "nvarchar(max)",
+        "raw": "varbinary(max)",
+        "name": "nvarchar",
+        "n": "int",
+    }
+    # The normalizer still reads the bare name.
+    assert cols["body"].normalized_data_type is not None
+    assert cols["body"].normalized_data_type.value == "string"
+    for target, body, raw in ((PG, "TEXT", "BYTEA"), (MY, "LONGTEXT", "LONGBLOB")):
+        result = _generate(target, tables, "sqlserver")
+        types = {c: t for (_, c), t in _types(result).items()}
+        assert (types["body"], types["raw"], types["name"]) == (body, raw, "VARCHAR(50)")
+        assert result.residuals == []
+
+
+@pytest.mark.passes_on_main
+def test_offline_collection_of_another_engine_is_left_alone():
+    """Only a SQL Server export reads a missing length as (max)."""
+    tables = _offline_sqlserver([{"column_name": "body", "data_type": "varchar"}], "mysql")
+    assert tables[0].columns[0].data_type == "varchar"
+
+
+@pytest.mark.parametrize("target", [PG, MY])
+def test_saved_collection_without_the_suffix_still_loads_flagged(target):
+    """A collection saved before the collectors kept (max) in the type: its (max) column
+    has no length, so it loads and takes the flagged path, with the LOB as the fallback."""
+    old = {**_col("nvarchar", "string"), "column_name": "body"}
+    col, result = _one(target, "sqlserver", old)
+    assert col.needs_judgment and "may be (max)" in col.judgment_reason
+    assert col.aurora_type == ("TEXT" if target == PG else "LONGTEXT")
+    assert [r["column"] for r in result.residuals] == ["body"]
 
 
 @pytest.mark.parametrize("target", [PG, MY])

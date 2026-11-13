@@ -1020,6 +1020,22 @@ def _key_columns(table: AgentTable, dialect: Dialect) -> set[str]:
     return cols
 
 
+# #2219: an Oracle or SQL Server LOB in a secondary index keeps its type and takes the
+# key prefix the index renders with (#1623); SQL Server also lists an index's INCLUDE
+# columns (``nvarchar(max)`` ones among them) with its keys, and narrowing those to a
+# VARCHAR would cut the data. Only a primary or foreign key, which takes no prefix here,
+# makes the column a residual.
+_NATIVE_KEY_FAMILIES = frozenset({"oracle", "sqlserver"})
+
+
+def _constraint_columns(table: AgentTable) -> set[str]:
+    """Columns in the primary key or a foreign key."""
+    cols = {c.lower() for c in table.primary_key or []}
+    for fk in table.foreign_keys or []:
+        cols.update(c.lower() for c in fk.columns)
+    return cols
+
+
 def _identity_ok(table: AgentTable, col: AgentColumn, dialect: Dialect, has_auto: bool) -> bool:
     """Whether a sequence default may make ``col`` an identity column (#156).
 
@@ -1048,7 +1064,11 @@ def _generate(
     family = classify_type_family(source_engine)
 
     for table in tables:
-        keyed = _key_columns(table, dialect)
+        keyed = (
+            _constraint_columns(table)
+            if family in _NATIVE_KEY_FAMILIES
+            else _key_columns(table, dialect)
+        )
         has_auto = any(c.is_auto_increment for c in table.columns)
         columns = [
             _column_ddl(

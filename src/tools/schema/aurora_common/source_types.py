@@ -511,11 +511,13 @@ def _mysql_to_pg(p: _Parsed, indexed: bool) -> str | None:
 # the base name in ``data_type`` and the type as written in ``column_type``, which
 # ``mysql_collector._native_type`` promotes (``DATETIME2(7)``, ``nvarchar(MAX)``,
 # ``RAW(16)``). A LOB's ``max_length`` (Oracle 4000, SQL Server 16) is its locator,
-# not a bound. A (max) type is unflagged only when the type says so (``(MAX)``) or
-# ``max_length`` is -1: the collector contract turns -1 into an absent length, which
-# a trimmed collection or a bare T-SQL ``varchar`` (length 1) also has, so an absent
-# length is a residual with the LOB as its fallback (ADR-028 Decision 1: never a
-# silent guess).
+# not a bound. A (max) type is unflagged only when the type says so (``(max)``) or
+# ``max_length`` is -1. The contract has no -1 length, so the live and offline
+# collectors write the type as ``nvarchar(max)`` (``src/tools/database/sqlserver_max.py``)
+# and a DDL upload already does. An absent length with no suffix (a trimmed collection,
+# a bare T-SQL ``varchar``, which is length 1, or a collection saved before the
+# collectors kept the suffix) is a residual with the LOB as its fallback (ADR-028
+# Decision 1: never a silent guess).
 
 _FRACTIONAL_MAX = 6  # both Aurora engines keep at most microseconds
 _MAX_LENGTH = re.compile(r"\(\s*max\s*\)\s*$")

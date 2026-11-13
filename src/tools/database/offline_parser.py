@@ -40,6 +40,7 @@ from src.tools.database.offline_collection_check import (
     without_sentinels,
 )
 from src.tools.database.routine_links import routine_id
+from src.tools.database.sqlserver_max import sqlserver_max_column
 from src.tools.sql.query_type import statement_query_type
 from src.tools.sql.redact import (
     raw_collection_settings,
@@ -242,12 +243,15 @@ def _parse_offline_collection(
     if isinstance(metadata, str):
         metadata = json.loads(metadata)  # an object: the input check read it (#131)
 
+    source_engine = detect_source_engine(metadata if isinstance(metadata, dict) else None)[0]
+
     # Group columns, indexes, FKs, PKs by table_name
     columns_by_table: dict[str, list] = {}
     for c in data.get("columns") or []:
+        if source_engine == "sqlserver":
+            c = sqlserver_max_column(c)
         columns_by_table.setdefault(c["table_name"], []).append(c)
 
-    source_engine = detect_source_engine(metadata if isinstance(metadata, dict) else None)[0]
     indexes_by_table: dict[str, dict[str, dict]] = {}
     # An index's column order is the key's position (``seq_in_index``; SQL Server's
     # ``key_ordinal``), not the row order: MySQL's JSON_ARRAYAGG drops the subquery's
