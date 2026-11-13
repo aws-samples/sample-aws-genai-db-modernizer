@@ -1,0 +1,6 @@
+# A pending contract version bump (ADR-008 Decision 8). The number is assigned by
+# uv run python scripts/resolve_contract_versions.py --release at release (a MAJOR: in its pull request).
+contract = "synthesis_output.SynthesisOutputContract"
+kind = "minor"
+reason = "Added optional ``EngineFacts.kept_in_sync_counted_under``: the earlier wave engine under which a kept-current table both wave engines read is counted once, so the Scope rows add up to the wave's figures (#2162)."
+issue = 2162

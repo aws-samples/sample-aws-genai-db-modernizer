@@ -30106,25 +30106,6 @@
                             ]
                           }
                         },
-                        "kept_in_sync_counted_under": {
-                          "required": false,
-                          "schema": {
-                            "kind": "anyOf",
-                            "members": [
-                              {
-                                "additional": {
-                                  "kind": "scalar",
-                                  "type": "integer"
-                                },
-                                "kind": "object"
-                              },
-                              {
-                                "kind": "scalar",
-                                "type": "null"
-                              }
-                            ]
-                          }
-                        },
                         "kept_in_sync_tables": {
                           "required": false,
                           "schema": {
