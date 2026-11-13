@@ -239,3 +239,26 @@ def test_aurora_postgresql_keeps_included_columns_as_include_and_aurora_mysql_dr
     assert pg == ['CREATE INDEX "IX_Files" ON "Files" ("FolderID") INCLUDE ("Content");']
     mysql = generate_mysql_ddl(tables, source_engine="sqlserver").tables[0].index_sql
     assert mysql == ["CREATE INDEX `IX_Files` ON `Files` (`FolderID`);"]
+
+
+def test_aurora_mysql_notes_the_include_columns_it_drops_and_aurora_postgresql_does_not() -> None:
+    """DNN's IX_UserProfile_PropertyDefinitionID shape: an int key that INCLUDEs text. On
+    Aurora MySQL the index no longer covers the queries that read those columns: say so."""
+    from src.tools.schema.aurora_common.ddl_generator import generate_pg_ddl
+
+    rows = [_row("FolderID", 1), _row("Content", 0), _row("FileName", 0)]
+    tables = project_schema_design_tables(
+        CollectorOutputContract.model_validate(_collector_output(_offline(rows)))
+    )
+    mysql = generate_mysql_ddl(tables, source_engine="sqlserver").index_notes
+    [note] = [n for n in mysql if n["index"] == "IX_Files"]
+    assert note["table"] == "Files"
+    for text in ("Content, FileName", "INCLUDE", "trailing key columns", "extra lookups"):
+        assert text in note["reason"], text
+    pg = generate_pg_ddl(tables, source_engine="sqlserver").index_notes
+    assert [n for n in pg if n["index"] == "IX_Files"] == []
+    # an index with no INCLUDE columns gets no such note
+    plain = project_schema_design_tables(
+        CollectorOutputContract.model_validate(_collector_output(_offline([_row("FolderID", 1)])))
+    )
+    assert generate_mysql_ddl(plain, source_engine="sqlserver").index_notes == []
