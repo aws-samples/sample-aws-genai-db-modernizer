@@ -11,9 +11,9 @@ Scanned: every string literal in ``src/`` and ``scripts/`` Python (docstrings an
 are not output), the skills and the commands and agents a model reads, the rule catalog,
 and the UI's locale and source files. The only "in sync" left is a quoted mention in the
 prompts' rule ("never write \\"in sync\\""), allowed in the skills and agents only (never in a
-Python string or the UI), and four exact (file, string) pins: RDS's own apply status
-``in-sync`` and the two preflight messages that quote it, and the pre-#2167 replica risk
-wording the facts layer recognises.
+Python string or the UI), and five exact (file, string) pins: RDS's own apply status
+``in-sync`` and the two preflight messages that quote it, the pre-#2167 replica risk
+wording the facts layer recognises, and the model-text cutover rule's label (#2197).
 """
 
 from __future__ import annotations
@@ -37,6 +37,9 @@ RULE_FILES = ("src/skills/", ".claude/agents/")
 # the facts layer recognises so that report is stated in today's words.
 PINNED = {
     ("src/shared/report_facts.py", "a copy kept in sync from "),
+    # The model-text cutover rule's label for the phrase it rejects (#2197): a key of its
+    # pattern table and a rejection-log label, never customer text.
+    ("src/shared/cutover_wording.py", "in sync"),
     ("src/tools/data_movement/dms_preflight.py", "in-sync"),
     (
         "src/tools/data_movement/dms_preflight.py",
