@@ -588,6 +588,10 @@ DESIGNER_INPUT_ROOTS = (
 )
 REVIEWED_DETERMINISTIC_IMPORTS: dict[str, str] = {
     "src/storage/artifact_store.py": "file storage only",
+    "src/shared/contract_versioning.py": (
+        "the schema-design handler's scope check imports its error class only to re-raise a "
+        "stored artifact's contract version refusal (#2154); nothing reaches a model input"
+    ),
     "src/shared/progress.py": "progress lines to stdout or a logger; nothing reaches a model",
     "src/agents/referee/cache_overlay.py": (
         "the designer-input builder imports one constant and one small helper; the rest of the "
