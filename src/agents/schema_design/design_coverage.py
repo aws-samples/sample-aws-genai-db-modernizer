@@ -153,6 +153,9 @@ def check_design_coverage(
         raise
     except Exception as exc:  # noqa: BLE001 - fails closed (#2154): a violation, not a pass
         logger.warning(
-            "Coverage check failed for %s (assignment v%s): %s", engine, assignment_version, exc
+            "Coverage check failed for %s (assignment v%s): %s",
+            engine,
+            assignment_version,
+            type(exc).__name__,
         )
         return [check_failed_message(COVERAGE_PREFIX, engine, exc)]

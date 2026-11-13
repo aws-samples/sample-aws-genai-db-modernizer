@@ -749,3 +749,21 @@ class TestExecuteRevisionCoverage:
             "cannot be checked and nothing was written."
         )
         store.write_json.assert_not_called()
+
+    def test_an_unreadable_assignment_logs_only_the_error_type(self, caplog):
+        """#2154 review: the warning names the error type, never its text."""
+        schema = {"access_patterns": [{"pattern_id": "DOC-AP-1", "source_query_ids": ["q1"]}]}
+        store = self._store(schema, ["q1"], "documentdb")
+        read = store.read_json.side_effect
+
+        def _broken(path: str) -> dict:
+            if "assignment" in path:
+                raise KeyError("SELECT card_number FROM wp_secret_cards")
+            result: dict = read(path)
+            return result
+
+        store.read_json.side_effect = _broken
+        with caplog.at_level("DEBUG"), pytest.raises(VerificationError):
+            execute_revision("job-1", "mydb", "documentdb", self._request(), store)
+        assert "KeyError" in caplog.text
+        assert "card_number" not in caplog.text

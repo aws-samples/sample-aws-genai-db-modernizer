@@ -64,10 +64,10 @@ def test_the_trace_readers_raise_on_it_too() -> None:
 
 def test_the_message_names_fields_never_stored_values() -> None:
     """The stored record is customer-derived data: the message carries field paths only."""
-    secret = {**_move(1, "q1", "dynamodb"), "seq": "SELECT secret FROM t"}
+    planted = {**_move(1, "q1", "dynamodb"), "seq": "SELECT planted FROM t"}
     with pytest.raises(UnreadableMove) as raised:
-        read_moves(_version([secret]))
-    assert "secret" not in str(raised.value)
+        read_moves(_version([planted]))
+    assert "planted" not in str(raised.value)
     assert "(seq)" in str(raised.value)
 
 
@@ -78,3 +78,24 @@ def test_a_valid_ledger_and_a_version_before_the_ledger_still_read() -> None:
     assert version["query_assignments"][0]["confidence"] == 80
     legacy = {k: v for k, v in version.items() if k != "moves"}
     assert version_moves(legacy) == []
+
+
+def test_a_stored_dict_key_never_reaches_the_message_the_logs_or_stderr(
+    caplog: pytest.LogCaptureFixture, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """#2154 review: pydantic's error location holds dict keys, and a key is stored data
+    (a query text as a ``group_scores`` key). Only contract field names are shown; any
+    other segment, and a version that is not a number, reads ``[*]`` / ``?``."""
+    planted = "SELECT card_number FROM wp_secret_cards"
+    move = _move(1, "q1", "dynamodb", evidence={"group_scores": {planted: "high"}})
+    version = {**_version([move]), "version": planted}
+    with caplog.at_level("DEBUG"), pytest.raises(UnreadableMove) as raised:
+        read_moves(version)
+    message = str(raised.value)
+    assert message == (
+        "assignment v?: Move 1 does not match the Move contract "
+        "(evidence.group_scores.[*]), so its ledger cannot be read"
+    )
+    captured = capsys.readouterr()
+    for text in (message, caplog.text, captured.out, captured.err):
+        assert "card_number" not in text and "wp_secret_cards" not in text

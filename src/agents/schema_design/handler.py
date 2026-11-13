@@ -891,7 +891,10 @@ def check_schema_scope(
         raise
     except Exception as exc:  # noqa: BLE001 - fails closed (#2154): a violation, not a pass
         logger.warning(
-            "Scope check failed for %s (assignment v%s): %s", target_type, assignment_version, exc
+            "Scope check failed for %s (assignment v%s): %s",
+            target_type,
+            assignment_version,
+            type(exc).__name__,
         )
         return ScopeReport([check_failed_message(SCOPE_PREFIX, target_type, exc)], [])
     for warning in report.warnings:

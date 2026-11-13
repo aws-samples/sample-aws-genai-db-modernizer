@@ -47,6 +47,19 @@ def _error(message: str, code: int = 1) -> None:
     sys.exit(code)
 
 
+def _failed(exc: Exception) -> None:
+    """Print the phase's ``failed`` status line for a refusal and exit 1, recording it
+    against the job as :func:`_error` does."""
+    _output({"status": "failed", "phase": _PHASE, "error": type(exc).__name__, "message": str(exc)})
+    if _JOB:
+        from scripts._job_status import write_failure_marker
+
+        write_failure_marker(
+            _JOB["store"], _JOB["db"], _JOB["job_id"], _PHASE, type(exc).__name__, str(exc)
+        )
+    sys.exit(1)
+
+
 def _resolve_version(store, job_id: str, db: str, requested: int | None) -> int:
     """Return the explicit ``--assignment-version`` or the effective one (ADR-028)."""
     if requested is not None:
@@ -250,10 +263,18 @@ def main() -> None:
         except ValueError as exc:
             _error(str(exc))
 
-    if args.finalize:
-        run_finalize(store, args.job_id, args.db, version)
-    else:
-        run_standard(store, args.job_id, args.db, version, args.llm_mode)
+    from src.agents.referee.move_ledger import UnreadableMove
+    from src.agents.referee.synthesis_data import MissingSchemaDesigns
+
+    try:
+        if args.finalize:
+            run_finalize(store, args.job_id, args.db, version)
+        else:
+            run_standard(store, args.job_id, args.db, version, args.llm_mode)
+    except (UnreadableMove, MissingSchemaDesigns) as exc:
+        # A refusal by design (#2154): one status line, no traceback. Both messages name
+        # only ids, versions, positions and field names.
+        _failed(exc)
 
 
 def _job_ctx():
