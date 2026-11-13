@@ -299,26 +299,54 @@ PIPELINE_TERMS_RULE = (
     'table"), or write "another part of the design".'
 )
 
-# "design part(s)" -> "part(s) of the design": the same words in customer order, so
-# "which another design part owns" and "the users design part" keep their meaning.
-_DESIGN_PART_RE = re.compile(r"\b([Dd])esign part(s?)\b")
+
+# Each term matched as whole words, in any case, with a space or a hyphen between
+# its words ("design part", "Design Parts", "design-part"), never inside a longer
+# word ("design partition key"). The one matcher: the guard and the prose pass use it.
+def _term_re(term: str) -> re.Pattern[str]:
+    words = r"[\s-]+".join(re.escape(w) for w in term.split())
+    return re.compile(rf"\b{words}s?\b", re.IGNORECASE)
 
 
-def replace_pipeline_terms(text: str) -> str:
-    """Rewrite "design part(s)" in model text as "part(s) of the design"."""
-    if not text or "esign part" not in text:
-        return text
+_TERM_RES: tuple[tuple[str, re.Pattern[str]], ...] = tuple((t, _term_re(t)) for t in PIPELINE_TERMS)
 
-    def sub(m: re.Match[str]) -> str:
-        head = "Part" if m.group(1) == "D" else "part"
-        return f"{head}{m.group(2)} of the design"
+# "design part(s)" -> "part(s) of the design" where that reads naturally ("which
+# another design part owns", "other design parts read"). A possessive ("each design
+# part's keys") or a label after it ("design part B", "design part 3") is left as it
+# is, so the field falls back to its deterministic sentence instead of reading
+# "each part of the design's keys".
+_DESIGN_PART_RE = re.compile(
+    r"(?i:\b(design)[\s-]+(part)(s?)\b)(?!['\u2019]|\s+(?:[A-Z]\b|\d|#\d))"
+)
 
-    return _DESIGN_PART_RE.sub(sub, text)
+
+def pipeline_term_spans(text: str) -> list[tuple[str, int, int]]:
+    """Each pipeline term in ``text`` with its start and end, in order."""
+    if not text:
+        return []
+    spans = [(t, m.start(), m.end()) for t, rx in _TERM_RES for m in rx.finditer(text)]
+    return sorted(spans, key=lambda s: s[1])
 
 
 def pipeline_terms_in(text: str) -> list[str]:
-    """The pipeline terms ``text`` contains, as ``customer_text_guard`` matches them."""
-    return [t for t in PIPELINE_TERMS if t in (text or "")]
+    """The pipeline terms ``text`` contains, each once, in ``PIPELINE_TERMS`` order."""
+    found = {t for t, _, _ in pipeline_term_spans(text)}
+    return [t for t in PIPELINE_TERMS if t in found]
+
+
+def replace_pipeline_terms(text: str) -> str:
+    """Rewrite "design part(s)" in model text as "part(s) of the design" where that
+    reads naturally; a possessive or labelled use is left for the caller to reject."""
+    if not text:
+        return text
+
+    def sub(m: re.Match[str]) -> str:
+        before = m.string[: m.start()].rstrip()
+        starts = not before or before[-1] in ".!?:\n"
+        head = "Part" if m.group(1)[0].isupper() and starts else "part"
+        return f"{head}{m.group(3).lower()} of the design"
+
+    return _DESIGN_PART_RE.sub(sub, text)
 
 
 # --- internal confidence figures (#1569) ------------------------------------

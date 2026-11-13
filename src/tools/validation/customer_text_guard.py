@@ -95,7 +95,7 @@ from src.agents.referee.engine_exclusions import EXCLUSION_RULES
 from src.agents.referee.query_scoring import GATE_KINDS
 from src.agents.referee.tie_break import TIE_KINDS
 from src.shared.engine_names import ENGINE_DISPLAY_NAMES, ENGINE_ID_RE, is_iam_name
-from src.shared.prose_style import CONFIDENCE_FIGURE_RE, PIPELINE_TERMS
+from src.shared.prose_style import CONFIDENCE_FIGURE_RE, PIPELINE_TERMS, pipeline_term_spans
 
 # Fields distinctive enough that no other field in src/contracts/ shares their
 # bare name -- excluded at any depth. See the module docstring for why a
@@ -596,11 +596,20 @@ def scan_text(text: str, path: str = "", *, strict_reason_codes: bool = True) ->
             Finding("snake_case_reason_code", path, m.group(0), _excerpt(text, m.start(), m.end()))
         )
     for phrase in LOG_ONLY_PHRASES:
+        if phrase in PIPELINE_TERMS:
+            continue  # matched as whole words below (#2184)
         i = text.find(phrase)
         if i != -1:
             findings.append(
                 Finding("log_only_phrase", path, phrase, _excerpt(text, i, i + len(phrase)))
             )
+    # The design split's terms: whole words, any case, space or hyphen, the matcher the
+    # model-text pass uses, so "design partition key" is neither flagged nor rejected.
+    seen: set[str] = set()
+    for term, start, end in pipeline_term_spans(text):
+        if term not in seen:
+            seen.add(term)
+            findings.append(Finding("log_only_phrase", path, term, _excerpt(text, start, end)))
     for m in _CONFIDENCE_WORDING_RE.finditer(text):
         findings.append(
             Finding("confidence_wording", path, m.group(0), _excerpt(text, m.start(), m.end()))

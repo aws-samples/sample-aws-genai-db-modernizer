@@ -129,3 +129,60 @@ def test_the_group_draft_agent_carries_the_rule() -> None:
     text = agent.read_text()
     assert PIPELINE_TERMS_RULE in text
     assert pipeline_terms_in(text.replace(PIPELINE_TERMS_RULE, "")) == []
+
+
+# --- review of #2187: one word-bounded matcher, variants, natural wording ----
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        "The design partition key spreads writes across shards.",
+        "Each design partitions its tables by tenant.",
+    ],
+)
+def test_a_longer_word_is_neither_rewritten_nor_flagged(text: str) -> None:
+    assert replace_pipeline_terms(text) == text
+    assert pipeline_terms_in(text) == []
+    assert scan_text(text) == []
+    schema = {"trade_offs": [{"description": "Keys.", "impact": text}]}
+    cleaned, rejections = clean_schema_design_prose("dynamodb", schema)
+    assert cleaned["trade_offs"][0]["impact"] == text and rejections == []
+
+
+@pytest.mark.parametrize(
+    "text, expected",
+    [
+        ("Design Parts share one table.", "Parts of the design share one table."),
+        (
+            "Rows another design-part owns are read by id.",
+            "Rows another part of the design owns are read by id.",
+        ),
+        ("Other Design-Parts read users by id.", "Other parts of the design read users by id."),
+    ],
+)
+def test_case_and_hyphen_variants_are_rewritten(text: str, expected: str) -> None:
+    assert pipeline_terms_in(text) == ["design part"]
+    assert replace_pipeline_terms(text) == expected
+    assert pipeline_terms_in(expected) == [] and scan_text(expected) == []
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        "Each design part's keys follow the source id.",
+        "The design parts' tables merge into one.",
+        "Design part B reads users by id.",
+        "Design part 3 keys posts by topic.",
+        "Every design-part's GSI is projected keys only.",
+    ],
+)
+def test_possessive_and_label_uses_fall_back_instead_of_reading_oddly(text: str) -> None:
+    assert replace_pipeline_terms(text) == text  # no "part of the design's keys"
+    assert pipeline_terms_in(text) == ["design part"]
+    assert scan_text(text) != []  # the guard still catches it
+    schema = {"trade_offs": [{"description": "Users keyed by id.", "impact": text}]}
+    cleaned, rejections = clean_schema_design_prose("dynamodb", schema)
+    out = cleaned["trade_offs"][0]["impact"]
+    assert out != text and pipeline_terms_in(out) == [] and scan_text(out) == []
+    assert len(rejections) == 1 and '"design part"' in rejections[0]
