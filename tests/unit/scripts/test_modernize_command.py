@@ -722,13 +722,14 @@ def test_skill_sections_the_commands_point_at_exist() -> None:
 
 # Issue #1059: headless /modernize runs the schema-design PE review and the
 # post-schema reroute the way Bedrock mode does (ADR-031 Decision 11 Amendment 2).
+@pytest.mark.passes_on_main  # #2200 only renamed the 6c heading; the order is unchanged
 def test_modernize_reviews_merges_then_reroutes_in_that_order() -> None:
     phase_6 = _phase_6(_modernize_text())
     review = phase_6.index("uv run python scripts/run_pe_review.py --job-id")
     merge = phase_6.index("--engine dynamodb --merge")
     reroute = phase_6.index("uv run python scripts/run_post_schema_routing.py --job-id")
     # The DynamoDB merge consolidates each group's review, so the review comes first.
-    assert phase_6.index("**6c. PE review**") < phase_6.index("**6d. Merge DynamoDB**")
+    assert phase_6.index("**6c. PE review") < phase_6.index("**6d. Merge DynamoDB**")
     assert review < merge < reroute
     assert "Follow /review-schema for job_id={job_id}" in phase_6
     assert "then run exactly: {FINALIZE}" in phase_6
@@ -1298,13 +1299,13 @@ def test_phase_6_waits_on_the_status_lines_never_on_a_tally() -> None:
     assert "is never your own tally of reports: the status lines say it" in phase_6
     design = phase_6.split("**Done signal.**", 1)[1].split("**6c.", 1)[0]
     assert (
-        "The report of the last subagent you dispatched in 6b: run the DynamoDB command of 6d"
-        in design
+        "The report of the last DynamoDB part you dispatched (the last of 6b's parts, or the "
+        "last part of a redo): run the DynamoDB command of 6d" in design
     )
     assert "names a group whose part has not reported yet: that part is still running" in design
     assert "End the turn with no text" in design
     assert "`merge_pending` (every group draft is written" in design
-    assert "Go on at once, in the same turn" in design
+    assert "Start the DynamoDB reviews (6c) at once, in the same turn" in design
     assert "name only groups whose part has already reported" in design
     # #1594's short --status line: only the groups to redo, plus group_count and the
     # manifest path; drafts_missing holds group indexes, so the part number is spelled out.
@@ -1312,7 +1313,7 @@ def test_phase_6_waits_on_the_status_lines_never_on_a_tally() -> None:
     assert "`group_count`" in design and "`manifest` path" in design
     assert "never end a turn after the last report without those status lines" in design
     review = phase_6.split("**6c.", 1)[1].split("**6d.", 1)[0]
-    assert "After the last report, run the same `scripts/run_pe_review.py` command again" in review
+    assert "After the last report, run this `scripts/run_pe_review.py` command" in review
     assert '`"status": "complete"` means every review is in: go on at once' in review
     waiting = text.split("## Waiting Rule", 1)[1].split("## Subagent Dispatch Rules", 1)[0]
     assert "a subagent is still running when you dispatched it and it has not reported" in waiting
@@ -1381,8 +1382,10 @@ def test_the_orchestrator_checks_the_status_once_and_never_polls(name: str) -> N
     assert "never between reports" in text
     if name == "modernize.md":
         phase_6 = " ".join(_phase_6(_modernize_text()).split())
-        assert "check the status once, after the last of them has reported, never while" in phase_6
-        assert "Run no `--status` command, and no other check, between reports" in phase_6
+        # #2200: each design is checked once, after its own report; DynamoDB once, after
+        # its last part's, never between the parts' reports.
+        assert "checked once, after the last of its parts has reported, never while" in phase_6
+        assert "Run no DynamoDB `--status` command, and no other check, between parts'" in phase_6
         assert "with `--wait 60` added" in phase_6
         waiting = text.split("## Waiting Rule", 1)[1].split("## Subagent Dispatch Rules", 1)[0]
         assert "check nothing until it reports" in waiting
@@ -1612,3 +1615,141 @@ def test_a_redesign_round_is_run_or_closed_never_left_pending() -> None:
     assert completion.index(stop) < completion.index("scripts/print_summary.py")
     assert '`"status": "no_open_round"`' in completion
     assert '`"status": "awaiting_synthesis"`' in completion
+
+
+# ---------------------------------------------------------------------------
+# #2200: each design's review starts as soon as that design is complete
+# ---------------------------------------------------------------------------
+
+_ENGINE_REVIEW = (
+    "uv run python scripts/run_pe_review.py --job-id {job_id} --db {database_name} "
+    "--engine <engine>"
+)
+
+
+def _design_done_signal() -> str:
+    phase_6 = " ".join(_phase_6(_modernize_text()).split())
+    return phase_6.split("**Done signal.**", 1)[1].split("**6c.", 1)[0]
+
+
+def _review_step() -> str:
+    phase_6 = " ".join(_phase_6(_modernize_text()).split())
+    return phase_6.split("**6c.", 1)[1].split("**6d.", 1)[0]
+
+
+def test_each_review_starts_when_its_own_design_is_complete() -> None:
+    """On discourse the DynamoDB reviews waited 250-350 s behind the slowest design: 6c
+    no longer waits for every design, it runs once per design as that design completes."""
+    phase_6 = " ".join(_phase_6(_modernize_text()).split())
+    assert "**6c. PE review** once every schema subagent from 6b has reported" not in phase_6
+    assert "**6c. PE review, one design at a time**" in phase_6
+    review = _review_step()
+    assert _ENGINE_REVIEW in review
+    assert "while the other designs still run" in review
+    # How the orchestrator knows a design is complete: the status line, not the report.
+    assert (
+        "a non-DynamoDB engine's once its `--status` (6b) prints `complete`, DynamoDB's once "
+        "its status line after the last part's report prints `merge_pending`"
+    ) in review
+    assert "never the subagent's report alone" in review
+    # The script holds a design still being written, too.
+    assert '`"status": "design_pending"`' in review
+    assert "you dispatch no review" in review
+    # Same reviews as before: one per design, one per part for DynamoDB, in one message.
+    assert "all in a SINGLE message" in review
+    assert "one review per design is the whole budget" in review
+
+
+def test_a_design_report_runs_its_own_status_and_starts_its_review() -> None:
+    design = _design_done_signal()
+    assert (
+        "The report of a non-DynamoDB engine's design subagent: run that engine's `--status` "
+        "below, once" in design
+    )
+    assert "start its review now (6c), in the same turn" in design
+    # DynamoDB: still one check, after the last part's report, never between parts.
+    assert (
+        "The report of the last DynamoDB part you dispatched (the last of 6b's parts, or the "
+        "last part of a redo): run the DynamoDB command of 6d with `--wait 60` added" in design
+    )
+    assert "Run no DynamoDB `--status` command, and no other check, between parts' reports" in (
+        design
+    )
+    assert (
+        "`merge_pending` (every group draft is written): every DynamoDB part is in. Start the "
+        "DynamoDB reviews (6c) at once, in the same turn" in design
+    )
+    # A design that is not complete gets no review: its failure is handled first.
+    assert "Error Handling" in design
+
+
+def test_a_review_never_waits_for_the_other_designs_and_the_last_report_checks_all() -> None:
+    review = _review_step()
+    assert (
+        "Check once, after the last subagent you dispatched in 6b or 6c has reported, never "
+        "between reports" in review
+    )
+    assert "without `--engine`" in review
+    # A review it lists that never started (no Agent call) is not running: start it.
+    assert "A review you never dispatched (no Agent call for it) is not running" in review
+    waiting = " ".join(
+        _modernize_text().split("## Waiting Rule", 1)[1].split("\n## ", 1)[0].split()
+    )
+    assert "Never end a turn waiting unless a dispatched subagent is still running" in waiting
+    assert "a design's own `--status` and the start of its review" in waiting
+    rules = _modernize_text().split("## Subagent Dispatch Rules", 1)[1].split("## Error")[0]
+    assert "the reviews in 6c, one message per design as it completes" in " ".join(rules.split())
+
+
+def test_a_phase_failure_waits_for_the_running_subagents() -> None:
+    """Review of #2208: a design now fails while other designs and reviews still run, so
+    the run must not end (or ask) with subagents still writing artifacts."""
+    text = " ".join(_modernize_text().split())
+    errors = text.split("## Error Handling", 1)[1]
+    rule = errors.split("**While other subagents still run.**", 1)[1].split(" - ", 1)[0]
+    assert "Never end the run, and never ask the user, while a subagent you dispatched" in rule
+    assert "Under `--auto` the one retry below is dispatched at once" in rule
+    assert "dispatch no new design or review" in rule
+    assert "once nothing you dispatched is running, ask, or end with the" in rule
+    # It comes before the bullets that ask or end the run.
+    assert errors.index("**While other subagents still run.**") < errors.index(
+        "Retry this phase, skip it, or abort?"
+    )
+    assert "which says what to do while other subagents still run" in _design_done_signal()
+
+
+def test_a_redone_dynamodb_part_is_checked_like_a_6b_part() -> None:
+    design = _design_done_signal()
+    assert "a part redone after `drafts_pending` in 6d" in design
+    assert "A redone part is checked exactly like a 6b part." in design
+    assert "after a redo only the redone parts are reviewed" in design
+
+
+def test_design_pending_names_its_next_step_in_the_command() -> None:
+    review = _review_step()
+    pending = review.split('`"status": "design_pending"`', 1)[1].split(
+        '`"status": "awaiting_llm"`'
+    )[0]
+    assert "has not reported: it is still running" in pending
+    assert "You never dispatched it: it is not running; dispatch it now" in pending
+    assert "Its subagent has reported: run its `--status` once" in pending
+    assert "any other line is that engine's phase failure" in pending
+    assert "after this line the turn never ends with nothing running" in pending
+    # The reviews just dispatched are running: the turn ends after them, no exception.
+    assert "if another subagent is still running:" not in review
+    assert "never prints `complete` while a design of the run is not complete" in review
+
+
+def test_an_interactive_skip_of_a_design_writes_its_skipped_placeholder() -> None:
+    """Review round 2 of #2208: a skipped design stayed in the run's list, so every final
+    review check printed design_pending for it and asked retry/skip/abort again."""
+    errors = _modernize_text().split("## Error Handling", 1)[1]
+    (skip,) = [ln for ln in errors.splitlines() if ln.startswith("- If skip:")]
+    assert (
+        "uv run python scripts/run_schema_design.py --job-id {job_id} --db {database_name} "
+        "--engine <engine> --skip" in skip
+    )
+    assert "no review and no `--merge`" in skip
+    # --auto never skips, so it never runs --skip.
+    auto = [ln for ln in errors.splitlines() if "--auto" in ln]
+    assert auto and not any("--skip" in ln for ln in auto)

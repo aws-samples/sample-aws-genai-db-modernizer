@@ -649,6 +649,36 @@ def _engine_status(store, job_id: str, db: str, engine: str, assignment_version:
     return {"status": status, **fields, **extra, "next": next_step}
 
 
+def run_skip(store, job_id: str, db: str, engine: str, assignment_version: int) -> None:
+    """Write the engine's skipped placeholder on ``assignment_version`` (#2200).
+
+    The interactive "skip" of a failed design: the run goes on without it, so the
+    review checks (``run_pe_review.py``) treat it as done and ask no review for it,
+    as for an engine with nothing to design. A complete design is never skipped.
+    """
+    from src.agents.schema_design.output_contract import write_schema_output
+    from src.contracts.skipped_placeholders import SkippedSchemaOutput
+
+    line = _status_line(store, job_id, db, engine, assignment_version)
+    if line["status"] in ("complete", "merged"):
+        _error(f"the {engine} design on v{assignment_version} is complete; nothing to skip")
+    key = f"{db}/{job_id}/schema-{engine}/v{assignment_version}/schema_output.json"
+    placeholder = SkippedSchemaOutput(
+        target_type=engine,
+        reason="Skipped at the user's request after its design failed",
+        assignment_version=assignment_version,
+    )
+    write_schema_output(store, key, placeholder.model_dump(mode="json"), engine)
+    _output(
+        {
+            "status": "skipped",
+            "engine": engine,
+            "assignment_version": assignment_version,
+            "output_path": _local_path(store, key),
+        }
+    )
+
+
 def _read_record(store, key: str) -> dict | None:
     try:
         data = store.read_json(key)
@@ -1041,6 +1071,15 @@ def main() -> None:
         ),
     )
     parser.add_argument(
+        "--skip",
+        action="store_true",
+        help=(
+            "Record the engine's design as skipped (the user chose skip after it failed): "
+            "write its skipped placeholder, so the review checks go on past it. Refused "
+            "when the design is complete"
+        ),
+    )
+    parser.add_argument(
         "--wait",
         type=float,
         default=0,
@@ -1167,7 +1206,7 @@ def main() -> None:
         args.job_id,
         args.db,
         args.assignment_version,
-        reroute=not (args.status or args.merge or args.finalize),
+        reroute=not (args.status or args.merge or args.finalize or args.skip),
     )
 
     if not args.status:
@@ -1191,6 +1230,8 @@ def main() -> None:
         run_merge(store, args.job_id, args.db, args.engine, version)
     elif args.status:
         run_status(store, args.job_id, args.db, args.engine, version, wait=args.wait)
+    elif args.skip:
+        run_skip(store, args.job_id, args.db, args.engine, version)
     elif args.llm_mode == "external":
         run_external(store, args.job_id, args.db, args.engine, version)
     else:

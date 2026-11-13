@@ -141,7 +141,8 @@ class Headless:
             queries = group_input["collector_output"]["queries"]["query_patterns"]
             _write(Path(group["draft"]), _draft_from(queries))
         if review:
-            self.review_all()
+            # 6c: DynamoDB's review starts once its parts are in, whatever else is out.
+            self.review_all("dynamodb")
         self.merge()
 
     def merge(self) -> None:
@@ -157,19 +158,22 @@ class Headless:
         assert done["status"] == "complete", done
 
     def redesign(self, engines: list[str]) -> None:
-        """6e: design every listed engine again, then review what has no review."""
+        """6e: design every listed engine again, each reviewed once its design is in (6c)."""
         for engine in engines:
             if engine == "dynamodb":
                 self.design_dynamodb()
             elif engine.startswith("aurora_"):
                 self.design_aurora_mysql(engine)
+                self.review_all(engine)
             else:
                 raise AssertionError(f"no stand-in designer for {engine}")
-        self.review_all()
 
-    def review_all(self) -> dict:
-        """``run_pe_review.py``, the recording as every answer, one finalize each."""
-        prepared = self.run("pe-review", "run_pe_review.py")
+    def review_all(self, engine: str | None = None) -> dict:
+        """``run_pe_review.py`` (``--engine`` when given), the recording as every answer,
+        one finalize each."""
+        prepared = self.run(
+            "pe-review", "run_pe_review.py", *([] if engine is None else ["--engine", engine])
+        )
         for review in prepared["reviews"]:
             answer = self.review if review["engine"] == "dynamodb" else AURORA_REVIEW
             _write(Path(review["response"]), answer)
@@ -233,8 +237,12 @@ def headless(tmp_path_factory) -> dict:
     run.design_aurora_mysql()
     unreviewed = run.route()  # designed, not reviewed: still no pass
     has_pass_1_unreviewed = store.exists(f"{prefix}/post-schema-router/pass-1/router_output.json")
-    run.review_all()
-    second_reviews = [line for step, line in run.lines if step == "pe-review"][-1]
+    # 6c, one design at a time (#2200): each engine's review once its design is in.
+    second_reviews: dict[str, list] = {"reviews": [], "skipped": []}
+    for engine in ("dynamodb", "aurora_mysql"):
+        line = run.review_all(engine)
+        second_reviews["reviews"] += line["reviews"]
+        second_reviews["skipped"] += line["skipped"]
     run.merge()  # the reviews landed after the merge: merge again to consolidate them
     second = run.route()
     again = run.route()

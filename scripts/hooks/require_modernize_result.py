@@ -53,13 +53,17 @@ The hook blocks only when all of these hold:
 
 With no ``background_tasks`` field it blocks only when the job's latest DynamoDB split, with no
 merge run on it, has a readable draft for every group and either no group review request written
-after the drafts (every part's design is done, 6c has not started) or a recorded review for every
-group (every part's review is done, 6c is over, #2121): nothing else can be running.
+after the drafts (every part's design is done, its reviews have not started) or a recorded review
+for every group (every part's review is done, #2121), and every other engine in the state's
+``selected_engines`` has a recorded review on that version (or a skipped design): nothing else
+can be running. Each review starts as soon as its own design is done (#2200), so the DynamoDB
+parts can all be reviewed while another engine's design or review still runs; that is a wait.
+An engine the version no longer designs has no folder there and makes it allow (fail open).
 
-The reason names the next step: when every DynamoDB part of the latest split has a readable
-draft and neither the group reviews nor the merge have started, the ``--status`` command and
-then steps 6c and 6d; when every part's review is recorded and the merge has not run, the
-``run_pe_review.py`` command and then step 6d.
+The reason names the next step, only when every other engine's review is recorded: when every
+DynamoDB part of the latest split has a readable draft and neither the group reviews nor the
+merge have started, the ``--status`` command and then steps 6c and 6d; when every part's review
+is recorded and the merge has not run, the ``run_pe_review.py`` command and then step 6d.
 
 Stdlib only, no repo imports. It writes one file, the first-seen times above, and reads
 nothing else of its own. Any error, a missing state file or an unreadable
@@ -201,6 +205,35 @@ def _job(project: Path) -> tuple[str, str] | None:
     if isinstance(job, str) and isinstance(db, str) and _ID.fullmatch(job) and _DB.fullmatch(db):
         return job, db
     return None
+
+
+def _latest_dynamodb_version(job_dir: Path) -> int | None:
+    base = job_dir / "schema-dynamodb"
+    versions = [int(p.name[1:]) for p in base.glob("v*") if p.name[1:].isdigit() and p.is_dir()]
+    return max(versions) if versions else None
+
+
+def other_engines_reviewed(project: Path, job_dir: Path) -> bool:
+    """Whether every engine but DynamoDB in the state's ``selected_engines`` has a recorded
+    review (``design_trace.json`` holds ``pe_review``) or a skipped design on the latest
+    DynamoDB version (#2200). False when one has neither: its design or review may still be
+    running."""
+    version = _latest_dynamodb_version(job_dir)
+    state = _read_json(project / ".modernizer-state.json")
+    engines = state.get("selected_engines") if isinstance(state, dict) else None
+    if version is None or not isinstance(engines, list):
+        return True
+    for engine in engines:
+        if not isinstance(engine, str) or engine == "dynamodb" or not _ID.fullmatch(engine):
+            continue
+        vdir = job_dir / f"schema-{engine}" / f"v{version}"
+        output = _read_json(vdir / "schema_output.json")
+        if isinstance(output, dict) and output.get("status") == "skipped":
+            continue
+        trace = _read_json(vdir / "design_trace.json")
+        if not (isinstance(trace, dict) and isinstance(trace.get("pe_review"), dict)):
+            return False
+    return True
 
 
 def dynamodb_parts_done(job_dir: Path) -> tuple[int, int] | None:
@@ -395,6 +428,8 @@ def decide(event: dict[str, Any], project: Path, now: float | None = None) -> st
         return _waiting_reason(job[0], job[1], agents)
     parts = dynamodb_parts_done(job_dir)
     reviewed = None if parts else dynamodb_reviews_done(job_dir)
+    if (parts or reviewed) and not other_engines_reviewed(project, job_dir):
+        parts = reviewed = None  # another engine's design or review may still run (#2200)
     if not isinstance(tasks, list) and parts is None and reviewed is None:
         return None  # no background_tasks field: block only on the artifact tests
     return _reason(job[0], job[1], parts, reviewed)
