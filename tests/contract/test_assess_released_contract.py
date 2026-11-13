@@ -95,7 +95,7 @@ def test_every_version_the_historical_snapshot_records_is_now_refused(key: str) 
     for version in named:
         with pytest.raises(
             RetiredContractVersionError,
-            match=r"this code reads contracts 1\.3 and 1\.4 \(not in a release yet\)",
+            match=r"this code reads contracts 1\.3 and 1\.4 \(read only when pinned\)",
         ):
             AssessmentRequest.model_validate(
                 {"contract_version": version, "database_name": "shop", "collection": {"a": 1}}

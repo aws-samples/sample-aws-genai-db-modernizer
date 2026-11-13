@@ -31,9 +31,13 @@ REVIEWED: dict[str, tuple[int, str]] = {
         "synthesis report that carries topic and note_kind; released numbers only",
     ),
     "src/assessment/models.py": (
-        6,
-        "the public assess() CONTRACT_VERSION and its retired versions (versioned on its "
-        "own, outside the pending-bump mechanism)",
+        11,
+        "the public assess() contract, versioned on its own outside the pending-bump "
+        "mechanism (hand-versioned, #2192): CONTRACT_VERSION, the ContractVersion and "
+        "SUPPORTED_CONTRACT_VERSIONS values 1.3 and 1.4, the retired 1.0, 1.1 and 1.2, and "
+        "two gates, both on the released 1.3 (ADR-008 Decision 8 as #2183 amended it): "
+        "_refuse_fields_of_1_4 (a 1.3 request may not set routine_sources) and "
+        "writes_routine_sources (a 1.3 run writes none, #2022)",
     ),
     "src/agents/analysis/elasticache_analysis_agent.py": (1, "a default trace version"),
     "src/agents/load_test/elasticache/provisioner.py": (1, "an ElastiCache engine version"),

@@ -753,7 +753,7 @@ def test_a_cut_assessed_for_a_retired_version_is_refused(version: str) -> None:
     )
     with pytest.raises(
         RetiredContractVersionError,
-        match=r"this code reads contracts 1\.3 and 1\.4 \(not in a release yet\)",
+        match=r"this code reads contracts 1\.3 and 1\.4 \(read only when pinned\)",
     ):
         _assess_cut(cut, "analysis", version)
     text = _assess_cut(cut, "analysis", "1.3").model_dump_json()

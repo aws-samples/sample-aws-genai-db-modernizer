@@ -9,7 +9,7 @@ ships 1.3 (v0.4.0-beta.3) supports 1.3 only. A request naming one is refused, be
 anything runs, with ``RetiredContractVersionError`` (a ``ValueError``), whose message
 names the versions this code reads, and says why; so is a result document naming one when it
 is read back. A request with no version gets 1.3 (1.4 is read only when pinned until
-a release records it), and an unknown version keeps the refusal any invalid field gets
+a release step records it), and an unknown version keeps the refusal any invalid field gets
 (``pydantic.ValidationError``). The published schemas describe 1.3 and 1.4
 only.
 """
@@ -79,7 +79,7 @@ def _schema(name: str) -> dict[str, Any]:
 def _check_message(exc: RetiredContractVersionError, version: str) -> None:
     text = str(exc)
     assert f"contract_version {version!r} is no longer supported" in text
-    assert "this code reads contracts 1.3 and 1.4 (not in a release yet)" in text
+    assert "this code reads contracts 1.3 and 1.4 (read only when pinned)" in text
     assert 'Pin contract_version "1.3", or send none' in text
     assert "1.0, 1.1 and 1.2 were beta development versions, removed in v0.4.0-beta.3" in text
     assert "docs/contracts/assess.md, 'Removed: 1.0, 1.1 and 1.2'" in text
@@ -207,7 +207,7 @@ def test_assess_refuses_an_unvalidated_request_before_anything_runs(
 def test_assess_refuses_an_unvalidated_unknown_version() -> None:
     for request in _unvalidated("2.0"):
         with pytest.raises(
-            ValueError, match=r"this code reads contracts 1\.3 and 1\.4 \(not in a release yet\)"
+            ValueError, match=r"this code reads contracts 1\.3 and 1\.4 \(read only when pinned\)"
         ) as raised:
             assess(request)
         assert not isinstance(raised.value, RetiredContractVersionError)

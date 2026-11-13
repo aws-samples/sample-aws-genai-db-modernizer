@@ -347,7 +347,7 @@ def test_a_recorded_tag_is_seen_only_where_the_tag_was_fetched(
 
 def test_the_surface_version_is_the_newest_one_the_model_reads() -> None:
     """The public snapshot's version is the newest ``contract_version`` a model reads,
-    not its default: so a version not in a release yet counts as its MINOR rise."""
+    not its default: so a version read only when pinned counts as its MINOR rise."""
 
     class WithDraft(BaseModel):
         contract_version: Literal["1.0", "1.1"] = "1.0"

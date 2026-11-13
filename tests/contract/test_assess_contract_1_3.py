@@ -10,7 +10,7 @@
 - an unknown count (-1, NULL or none), an empty parent and an unresolved referenced
   table give ``null``, never an average computed from 0;
 - a request for 1.3, or one that names no version, gets 1.3 (1.4 only when pinned
-  until a release records it; the retired ones are refused: test_assess_retired_versions.py).
+  until a release step records it; the retired ones are refused: test_assess_retired_versions.py).
 
 The fields are statistics, never a verdict: no field says how a data model should
 hold the two tables.
@@ -313,7 +313,7 @@ def _has_every_1_3_field(document: dict[str, Any]) -> bool:
 @pytest.mark.parametrize("version", ["1.3", None])
 def test_a_1_3_request_or_one_with_no_version_gets_every_1_3_field(version: str | None) -> None:
     """A 1.3 request, or one with no version, gets a 1.3 result (1.4 is read only when
-    pinned until a release records it: test_assess_contract_1_4.py)."""
+    pinned until a release step records it: test_assess_contract_1_4.py)."""
     document = json.loads(_sample_json("trailgear", "analysis", version))
     assert document["contract_version"] == (version or default_contract_version())
     assert _has_every_1_3_field(document)

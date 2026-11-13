@@ -58,9 +58,11 @@ SUPPORTED_CONTRACT_VERSIONS: tuple[str, ...] = ("1.3", "1.4")
 #: The newest contract version a release recorded: written by the release step with the
 #: released snapshot (``scripts/contract_schema_snapshot.py --write-released <tag>``,
 #: which writes ``tests/contract/assess_released_since_1_3.json`` and this file), never
-#: by hand. A version newer than it is not in a release yet: it is read only when a
-#: request pins it. Once the next release records it, it is the default, with no code
-#: change (CONTRIBUTING.md, "The public assess() contract").
+#: by hand. A version newer than it is read only when a request pins it. The step runs
+#: after the tag is pushed (CONTRIBUTING.md, Releases, step 6), so the release that first
+#: ships a version still defaults to the one before; the record then moves the default
+#: on main, with no code change, and the following release ships that default
+#: (CONTRIBUTING.md, "The public assess() contract").
 RELEASED_VERSION_PATH = Path(__file__).with_name("released_contract.json")
 
 
@@ -85,24 +87,22 @@ def default_contract_version() -> ContractVersion:
     return cast(ContractVersion, chosen)
 
 
-def unreleased_contract_versions() -> tuple[str, ...]:
-    """The supported versions newer than the released one: not in a release yet, read
-    only when pinned."""
+def pinned_only_contract_versions() -> tuple[str, ...]:
+    """The supported versions newer than the recorded one: read only when pinned. The
+    release that first ships a version serves it so too; the record written after its
+    tag makes it the default from then on."""
     released = _version_tuple(released_contract_version())
     return tuple(v for v in SUPPORTED_CONTRACT_VERSIONS if _version_tuple(v) > released)
 
 
 def _versions_note() -> str:
-    """How the supported versions read in a message, each unreleased one marked."""
-    unreleased = set(unreleased_contract_versions())
+    """How the supported versions read in a message, each pinned-only one marked."""
+    pinned_only = set(pinned_only_contract_versions())
     named = [
-        f"{v} (not in a release yet)" if v in unreleased else v for v in SUPPORTED_CONTRACT_VERSIONS
+        f"{v} (read only when pinned)" if v in pinned_only else v
+        for v in SUPPORTED_CONTRACT_VERSIONS
     ]
     return " and ".join(named)
-
-
-def _not_released_note(version: str) -> str:
-    return " (not in a release yet)" if version in unreleased_contract_versions() else ""
 
 
 #: The request fields 1.4 added: a request pinned to 1.3 that sets one is refused.
@@ -119,10 +119,10 @@ RETIRED_IN = "v0.4.0-beta.3"
 class RetiredContractVersionError(ValueError):
     """A request or a result names a retired contract version (1.0, 1.1 or 1.2).
 
-    This code reads contracts 1.3 and 1.4 (1.4 is not in a release yet until the next
-    release records it): the earlier versions were beta development versions, removed in
+    This code reads contracts 1.3 and 1.4 (1.4 only when pinned, until a release step
+    records it): the earlier versions were beta development versions, removed in
     v0.4.0-beta.3. Pin ``contract_version`` "1.3" or "1.4" (or send none, for the newest
-    released version);
+    recorded version);
     docs/contracts/assess.md's "Removed: 1.0, 1.1 and 1.2" says how to migrate. An
     unknown version is refused as any invalid field is (``pydantic.ValidationError``)."""
 
@@ -381,9 +381,15 @@ def _refuse_fields_of_1_4(version: Any, named: list[str]) -> None:
     The message names the fields and the versions, never a value."""
     if version == "1.3" and named:
         raise ValueError(
-            f"{', '.join(named)} is a field of contract 1.4{_not_released_note('1.4')}: pin "
+            f"{', '.join(named)} is a field of contract 1.4: pin "
             'contract_version "1.4" to pass it, or leave it out for 1.3'
         )
+
+
+def writes_routine_sources(version: str) -> bool:
+    """Whether a run for ``version`` writes the job's routine sources (#2022): from 1.4
+    on. A 1.3 run writes none, as before 1.4, so its results stay as they were."""
+    return version != "1.3"
 
 
 def check_request_fields(request: AssessmentRequest) -> None:
@@ -533,8 +539,9 @@ class AssessmentRequest(_VersionChecked):
         description=(
             "The contract version the caller builds on: 1.3 or 1.4; the result is written "
             "for it. With none, the newest version a release recorded "
-            "(src/assessment/released_contract.json): a version newer than that is not in "
-            "a release yet and is read only when pinned. A 1.3 request cannot set a field "
+            "(src/assessment/released_contract.json, written after the release's tag, so "
+            "the release that first ships a version still defaults to the one before): a "
+            "newer version is read only when pinned. A 1.3 request cannot set a field "
             "1.4 added (routine_sources). The retired 1.0, 1.1 and 1.2 are refused with "
             "RetiredContractVersionError; any other value is refused as invalid"
         ),
