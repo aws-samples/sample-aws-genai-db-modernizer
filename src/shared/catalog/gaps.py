@@ -218,7 +218,9 @@ class GapMatch(BaseModel):
     # recorded key prefix (Index.prefix_lengths) or else its Column.max_length, both in
     # characters, on a string column. Other parts count nothing: a number or a date is
     # a few bytes, and the Aurora MySQL draft keys a prefix of a TEXT or BLOB column
-    # itself. FULLTEXT and SPATIAL indexes have no key length limit and are skipped.
+    # itself. FULLTEXT and SPATIAL indexes have no key length limit, and the draft leaves
+    # GIN, GiST and SP-GiST out on Aurora MySQL: all five are skipped. A SQL Server INCLUDE
+    # column (Index.included_columns) is not a key part.
     index_key_bytes_over: PositiveInt | None = None
     index_key_bytes_per_character: PositiveInt | None = None
     # Tables, views, routines and triggers in a schema other than these (lower case).

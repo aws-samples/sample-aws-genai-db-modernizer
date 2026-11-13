@@ -5,7 +5,7 @@ feature = "Case-sensitive text keys"
 source_engines = ["oracle"]
 targets = ["aurora_mysql"]
 impact = "needs_rewrite"
-reason = "Oracle compares text by its binary value by default (NLS_COMP=BINARY), and Aurora MySQL's default collation (utf8mb4_0900_ai_ci) ignores case and accents, so a unique or primary key on text that holds values differing only in case or accents (ABC and abc) rejects rows on load, and lookups and joins on those columns return extra rows; give the columns a case-sensitive collation (utf8mb4_0900_bin or utf8mb4_0900_as_cs), or confirm the data has no such duplicates."
+reason = "Oracle compares text by its binary value by default (NLS_COMP=BINARY), and Aurora MySQL's default collation (utf8mb4_0900_ai_ci) ignores case and accents, so a unique or primary key on text that holds values differing only in case or accents (ABC and abc) rejects rows on load, and lookups and joins on those columns return extra rows; give the columns a case-sensitive collation (utf8mb4_0900_bin or utf8mb4_0900_as_cs), or confirm the data has no such duplicates; the collection does not record NLS_COMP or NLS_SORT, so a source set to a case-insensitive sort (NLS_COMP=LINGUISTIC with a _CI sort) can dismiss this."
 docs = "Oracle Database Globalization Support Guide, Linguistic Sorting and Matching; MySQL 8.0 Reference Manual, Unicode Character Sets"
 
 # Looks for: Unique indexes and primary keys with a text column. The collection records

@@ -72,7 +72,9 @@ def test_sql_server_key_ordinal_is_the_position_and_included_columns_follow():
     [table] = parse_offline_collection(data)["tables"]
 
     [index] = table["indexes"]
-    assert index["columns"] == ["tenant_id", "region", "account_id", "note2", "note"]
+    # #2227: the included columns are stored, not keyed: they leave the key list
+    assert index["columns"] == ["tenant_id", "region", "account_id"]
+    assert index["included_columns"] == ["note2", "note"]
 
 
 def test_a_postgresql_position_counting_from_zero_keeps_the_first_column_first():

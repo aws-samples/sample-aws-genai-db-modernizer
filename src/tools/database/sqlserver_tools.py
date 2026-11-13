@@ -30,6 +30,7 @@ from src.shared.rate_window import (
 )
 from src.tools.aws.ssm_executor import SSMExecutor
 from src.tools.database import live_sql
+from src.tools.database.index_keys import is_included_column, settle_included_columns
 from src.tools.database.live_sql import LiveQueryReader
 from src.tools.database.routine_links import routine_id
 from src.tools.sql.query_type import statement_query_type
@@ -237,6 +238,7 @@ class SQLServerRemoteCollector:
                 i.name AS index_name,
                 c.name AS column_name,
                 ic.key_ordinal,
+                ic.is_included_column,
                 i.is_unique,
                 i.is_primary_key,
                 i.type_desc AS index_type
@@ -262,7 +264,13 @@ class SQLServerRemoteCollector:
                     "is_primary": r.get("is_primary_key") in (True, 1, "1", "True", "true"),
                     "index_type": _normalize_index_type(r.get("index_type")),
                 }
-            indexes[name]["columns"].append(r["column_name"])
+            if is_included_column(r):
+                # #2227: an INCLUDE column is stored in the index, not part of its key.
+                indexes[name].setdefault("included_columns", []).append(r["column_name"])
+            else:
+                indexes[name]["columns"].append(r["column_name"])
+        for index in indexes.values():
+            settle_included_columns(index)
         return list(indexes.values())
 
     def collect_foreign_keys(self, table_name: str) -> list[dict]:

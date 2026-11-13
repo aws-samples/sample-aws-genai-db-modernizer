@@ -933,6 +933,7 @@ def _build_tables(
                 index_expressions=i.get("index_expressions") or None,
                 index_def=i.get("index_def") or None,
                 prefix_lengths=i.get("prefix_lengths") or None,
+                included_columns=i.get("included_columns") or None,
             )
             for i in t.get("indexes", [])
         ] or None
