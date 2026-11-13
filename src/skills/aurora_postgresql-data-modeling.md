@@ -126,7 +126,7 @@ Cite a query by its label, the first 8 characters of its `query_id` in backticks
 
 Cutover: the cutover is the customer's. The only sentence about it is "The cutover is your responsibility." Never say when or how to cut over, switch or decommission (no "before cutover", "after cutover", "once replication has caught up", "when lag reaches zero"), and never use "caught up", "proven" or "ready" as readiness wording. Never write "in sync": a copy that CDC keeps current from its owner is "kept current by CDC". Synthesis swaps a field that says when to cut over, or that uses readiness wording, for a short deterministic sentence.
 
-How the work is split is not part of the design: never write "routing places together", "design part" or "the merge reconciled". Name the table that holds the rows ("the `users` table"), or write "another part of the design".
+How the work is split is not part of the design: never write "routing places together", "design part" or "the merge reconciled". Name the table that holds the rows ("the `users` table"), or write "another part of the design". The tool is never "the pipeline", "this pipeline" or "our pipeline" either: say what the deliverable provides ("no trigger DDL is generated"), not what the pipeline emits.
 
 ## Redesign round
 
