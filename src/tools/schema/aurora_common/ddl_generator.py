@@ -855,6 +855,22 @@ def _index_sql(
             using, why = _mysql_index_kind(idx, column_ddls)
         if why:
             notes.append({"table": table.table_name, "index": idx.index_name, "reason": why})
+        if dialect is MYSQL and idx.included_columns:
+            # #2227: Aurora MySQL has no INCLUDE, so the index stops covering those columns.
+            notes.append(
+                {
+                    "table": table.table_name,
+                    "index": idx.index_name,
+                    "reason": (
+                        f"INCLUDE columns {', '.join(idx.included_columns)} not carried over: "
+                        "Aurora MySQL has no INCLUDE clause, so the index no longer covers the "
+                        "queries that read them and each such query looks up the row. Add them "
+                        "as trailing key columns where the key stays within "
+                        f"{MYSQL_MAX_KEY_BYTES} bytes (not on a UNIQUE index, whose uniqueness "
+                        "would then cover them too), or accept the extra lookups."
+                    ),
+                }
+            )
         if dialect is MYSQL and method == "brin":
             notes.append(
                 {
