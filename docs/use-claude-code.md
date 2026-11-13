@@ -60,7 +60,7 @@ The one-step option means adopting the whole target architecture in one cutover 
 ### Run it differently
 
 - **One phase at a time.** Each phase is its own command (see [The individual commands](#the-individual-commands)), so you can re-run one step after a change, for example `/synthesize` to re-render the deliverables.
-- **Deterministic, no model.** `uv run python scripts/run_assessment.py --file docs/examples/wordpress/wordpress.zip --all -y --llm-mode none` runs every phase with no model call. Schema design is skipped (every designer needs a model), so the reports have no target schemas, and the executive summary is built from the run's figures without a model. Leave out `--all -y` to stop after Reality Check.
+- **Deterministic, no model.** `uv run python scripts/run_assessment.py --file docs/examples/wordpress/wordpress.zip --all -y --llm-mode none` runs every phase with no model call. Schema design is skipped (every designer needs a model), so the reports have no target schemas, each wave's readiness says its design was skipped because the run used no model, and the executive summary is built from the run's figures without a model. <!-- claim: tests/e2e/test_pipeline.py::test_a_run_without_a_model_records_every_design_as_skipped_and_says_why --> Leave out `--all -y` to stop after Reality Check.
 - **Chat or UI.** `--mode chat`, `--mode ui` or `--mode both` (the default) changes where you see the results, not the plan (see [How `/modernize` works](#how-modernize-works)).
 - **From Python, Amazon Bedrock or the local UI.** The `assess()` library entry point takes the engine scope as `options.target_engines`; it, the Amazon Bedrock mode and the local UI on its own are described in [Other ways to run it](other-ways-to-run-it.md).
 
