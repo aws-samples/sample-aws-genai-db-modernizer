@@ -33,6 +33,7 @@ import pytest
 from scripts import render_dms_step
 from src.report.renderers import render_engineering_report_md
 from src.shared.cutover_message import CUTOVER_DISCLAIMER, CUTOVER_MESSAGE, cutover_message_text
+from src.shared.cutover_wording import MODEL_TEXT_BANNED, WAVE_ONE_COUNT, cutover_claims
 from src.tools.data_movement.dms_gate import REPLICATING_MESSAGE
 from src.tools.data_movement.routine_scripts import DEPLOY_FILE, INSTRUCTIONS_FILE
 from src.tools.data_movement.triggers_scripts import TRIGGERS_FILE, TRIGGERS_INSTRUCTIONS
@@ -42,22 +43,15 @@ from tests.unit.report.test_cutover_responsibility import REPORTS
 
 REPO = Path(__file__).resolve().parents[3]
 
-# Words step 1 never uses, and phrases that tell the customer when or how to cut over.
+# Words step 1 never uses, and phrases that tell the customer when or how to cut over: the
+# model-text rule (``cutover_wording.MODEL_TEXT_BANNED``, the one the schema-design prose
+# pass applies, #2197), and the words the modernizer's own text never uses either. "ready"
+# counts at every use here, unless READY_FORMS or a pinned line allows it.
 BANNED = {
-    "caught up": r"\b(?:caught|catch(?:es|ing)?)[ _-]?up\b",
-    "in sync": r"\bin\s+sync\b",  # RDS's own apply status `in-sync` is a status value, not a claim
-    "proven": r"\bproven\b",
-    "ready": r"\bready\b",  # every use, unless READY_FORMS or a pinned line allows it
+    **MODEL_TEXT_BANNED,
     "stop writes": r"\b(?:stop|stops|stopped|stopping|pause|freeze|freezing|froze)\s+"
     r"(?:(?:the|your|all|its|their)\s+)?(?:application'?s?'?\s+)?writ(?:es|ing)\b",
     "freeze writes": r"\bwrite[ -]freeze\b",
-    "safe to cut over": r"\bsafe\s+to\s+cut\s*over\b",
-    "applied the last change": r"\bapplied\s+the\s+last\s+change\b",
-    "lag is zero": r"\blag\s+(?:is|reaches|hits|drops\s+to|gets\s+to)\s+zero\b",
-    "cutover timing": r"\b(?:at|after|before|until|once|during|prior\s+to|ahead\s+of)\s+"
-    r"(?:the\s+|your\s+|their\s+)?cut\s*over\b(?!-)"
-    r"|\b(?:after|before|once|until|when|as\s+soon\s+as)\s+(?:you|they|the\s+customer)\s+"
-    r"cut\s*over\b",
     # #2113: the triggers-enable scripts are not cutover scripts, and #1948's names for them
     # stay only as pinned legacy aliases (LEGACY_ALIASES).
     "cutover script": r"\bcutover[\s_-]+scripts?\b",
@@ -65,29 +59,6 @@ BANNED = {
 }
 #: The labels for #1948's names, checked in every tracked file (``test_no_tracked_file_...``).
 OLD_NAMES = ("cutover script", "old trigger script name")
-# Timing words model design text writes next to "in sync" about the plan's own waves or
-# CDC, not the cutover (``_model_text_flags``): a later wave or its gate ("dual-read by OpenSearch queries until wave 4", "via
-# CDC until then", "before this gate", "Before the Wave 3 gate", "before wave 3 starts",
-# "remain on Aurora MySQL once later waves have moved their share", "once the cache wave has
-# absorbed the read pressure") and replication's own
-# delay ("sees a write only after CDC applies it").
-CDC_TIMING = re.compile(
-    "|".join(
-        (
-            r"\b(?:until|before|after)\s+wave\s+\d+(?:\s+starts)?\b",
-            r"\bbefore\s+(?:this|the\s+Wave\s+\d+)\s+gate\b",
-            r"\bonce\s+(?:every\s+)?later\s+waves?\b",
-            r"\bonce\s+the\s+[\w-]+\s+wave\b",
-            r"\bvia\s+CDC\s+until\s+then\b",
-            r"\bonly\s+after\s+CDC\s+applies\s+it\b",
-        )
-    ),
-    re.I,
-)
-TIMING_WORD = re.compile(r"\b(?:until|once|when|before|after|wait|switch|cut\s*over)\b", re.I)
-# In the deliverables, wave 1's headline counts the whole workload it moves in one cutover ("all 107 queries at
-# cutover"): what the wave moves, not when to cut over.
-WAVE_ONE_COUNT = re.compile(r"\b(?:query|queries) at cutover$", re.I)
 # "ready" is allowed anywhere only in these exact forms, never as a readiness claim; every
 # other use is pinned to its line in ALLOWED below.
 READY_FORMS = (
@@ -229,56 +200,6 @@ ASSESSMENT_SOURCES = (
 )
 
 
-# Model-written design rationale and review text (a designer's note, a PE review, a
-# trade-off) speaks of data, not of the move: "(user_id, name) is not proven unique" is a
-# uniqueness statement. There only the cutover timing and readiness patterns apply:
-# "proven" and "ready" only as a claim about the move, the target or the switch, and
-# "in sync" only next to a timing word (#2107, the discourse e2e-llm run of #2111).
-MODEL_TEXT_LABELS = (
-    "caught up",
-    "lag is zero",
-    "cutover timing",
-    "safe to cut over",
-    "applied the last change",
-    "in sync",
-    "proven",
-    "ready",
-)
-READINESS_CLAIM = re.compile(
-    "|".join(
-        (
-            # "proven to work", "ready to switch", "ready for your applications"
-            r"\b(?:proven|ready)\s+(?:to|for)\s+(?:(?:the|your|a|its|their)\s+)?(?:\w+\s+)?"
-            r"(?:work|works|cut\s*over|cutover|switch|go\s+live|production|migrat\w*|"
-            r"decommission\w*|retire\w*|traffic|applications?|users|use)\b",
-            # "the move is proven.", "Aurora is ready", "is now ready"
-            r"\b(?:is|are|was|were|has\s+been|have\s+been|now)\s+(?:now\s+)?(?:fully\s+)?"
-            r"(?:proven|ready)\s*(?:[.,;:!?)]|$)",
-            r"\b(?:proven|ready)\s+(?:in\s+production|end[- ]to[- ]end)\b",
-        )
-    ),
-    re.I,
-)
-
-
-def _model_text_flags(label: str, line: str, start: int, end: int) -> bool:
-    """Whether a match in model-written design text is a cutover or readiness claim."""
-    if label in ("proven", "ready"):
-        return any(m.start() <= start and end <= m.end() for m in READINESS_CLAIM.finditer(line))
-    if label == "in sync":
-        return bool(TIMING_WORD.search(CDC_TIMING.sub("", _sentence(line, end))))
-    if label == "cutover timing":
-        return not WAVE_ONE_COUNT.search(line[:end])
-    return True
-
-
-def _sentence(line: str, end: int) -> str:
-    starts = [m.end() for m in re.finditer(r"[.!?]\s+", line[:end])]
-    first = starts[-1] if starts else 0
-    stop = re.search(r"[.!?](?:\s|$)", line[end:])
-    return line[first : end + stop.start() + 1 if stop else len(line)]
-
-
 def _allowed(
     name: str, label: str, line: str, start: int, end: int, deliverable: bool = False
 ) -> bool:
@@ -306,21 +227,24 @@ def _findings(
 ) -> list[str]:
     """Each banned match in ``text``. ``deliverable``: the assessment's text, where wave
     1's "all N queries at cutover" count is allowed (#2107); "in sync" never is (#2167). ``model_text``: model-written design rationale and
-    review text, where only the cutover timing and readiness claims count
-    (``MODEL_TEXT_LABELS``, ``READINESS_CLAIM``)."""
+    review text, where only the cutover timing and readiness claims count: the shared
+    rule, ``cutover_wording.cutover_claims``, that the schema-design prose pass applies."""
+    if model_text:
+        return [
+            f"{name}:{text.count(chr(10), 0, c.start) + 1}: {c.label}: {c.text!r}"
+            for c in cutover_claims(text)
+            if c.label not in skip
+        ]
     found = []
     for label, pattern in BANNED.items():
-        if label in skip or (model_text and label not in MODEL_TEXT_LABELS):
+        if label in skip:
             continue
         for m in re.finditer(pattern, text, re.IGNORECASE):
             first = text.rfind("\n", 0, m.start()) + 1
             last = text.find("\n", m.end())
             line = text[first : None if last < 0 else last]
             start, end = m.start() - first, m.end() - first
-            if model_text:
-                if not _model_text_flags(label, line, start, end):
-                    continue
-            elif _allowed(name, label, line, start, end, deliverable):
+            if _allowed(name, label, line, start, end, deliverable):
                 continue
             number = text.count("\n", 0, m.start()) + 1
             found.append(f"{name}:{number}: {label}: {m.group(0)!r}")
@@ -663,44 +587,45 @@ def test_the_summary_prompts_carry_the_rule() -> None:
     assert SKILL_RULE in skill_sections(CONSOLIDATION_REVIEW_SKILL)[REALITY_CHECK_SUMMARY_SECTION]
 
 
+# Model design text that gives cutover advice or claims readiness, and data statements it
+# keeps: the shared prose pass is checked against the same lists
+# (``tests/unit/agents/referee/test_cutover_advice_in_model_prose.py``).
+MODEL_TEXT_ADVICE = [
+    # The review's sentences, and readiness claims a model could write.
+    "Keep writes paused until the copies are in sync.",
+    "Keep the source running until DynamoDB is in sync.",
+    "Switch once Aurora is in sync via CDC.",
+    "Cut over when Aurora MySQL is in sync from the source.",
+    "Once replication to Aurora MySQL has caught up, decommission the source.",
+    "Retire the source when replication lag reaches zero.",
+    "Load-test the queries before cutover.",
+    "The design is proven to work, so the move can go ahead.",
+    "The table is ready to switch.",
+    "Aurora is ready for your applications.",
+    "The move is proven.",
+    "DynamoDB is now ready.",
+]
+MODEL_TEXT_FINE = [
+    # The discourse e2e-llm run of #2111: a designer's uniqueness statement.
+    "The sort key is the id because the collector shows unique (name, user_id) indexes only "
+    "for single names and the non-unique (user_id, name) index, so (user_id, name) is not "
+    "proven unique and keying on it could overwrite a row.",
+    "The access pattern is not proven by the collected queries alone.",
+    "The GSI is ready-made for this lookup.",
+    "A DynamoDB Streams consumer keeps the summary item in sync with the order items.",
+    "This is a production-ready key design.",
+    "1 of the 3 tables stays dual-read until wave 4.",
+]
+
+
 @pytest.mark.passes_on_main
-@pytest.mark.parametrize(
-    "advice",
-    [
-        # The review's sentences, and readiness claims a model could write.
-        "Keep writes paused until the copies are in sync.",
-        "Keep the source running until DynamoDB is in sync.",
-        "Switch once Aurora is in sync via CDC.",
-        "Cut over when Aurora MySQL is in sync from the source.",
-        "Once replication to Aurora MySQL has caught up, decommission the source.",
-        "Retire the source when replication lag reaches zero.",
-        "Load-test the queries before cutover.",
-        "The design is proven to work, so the move can go ahead.",
-        "The table is ready to switch.",
-        "Aurora is ready for your applications.",
-        "The move is proven.",
-        "DynamoDB is now ready.",
-    ],
-)
+@pytest.mark.parametrize("advice", MODEL_TEXT_ADVICE)
 def test_model_design_text_is_checked_for_cutover_and_readiness_claims(advice: str) -> None:
     assert _findings("design note", advice, model_text=True) != []
 
 
 @pytest.mark.passes_on_main
-@pytest.mark.parametrize(
-    "fine",
-    [
-        # The discourse e2e-llm run of #2111: a designer's uniqueness statement.
-        "The sort key is the id because the collector shows unique (name, user_id) indexes only "
-        "for single names and the non-unique (user_id, name) index, so (user_id, name) is not "
-        "proven unique and keying on it could overwrite a row.",
-        "The access pattern is not proven by the collected queries alone.",
-        "The GSI is ready-made for this lookup.",
-        "A DynamoDB Streams consumer keeps the summary item in sync with the order items.",
-        "This is a production-ready key design.",
-        "1 of the 3 tables stays dual-read until wave 4.",
-    ],
-)
+@pytest.mark.parametrize("fine", MODEL_TEXT_FINE)
 def test_model_design_text_keeps_its_data_statements(fine: str) -> None:
     assert _findings("design note", fine, model_text=True) == []
 

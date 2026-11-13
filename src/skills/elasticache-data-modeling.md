@@ -171,7 +171,7 @@ Never quote the analysis's own scores in these fields: no `co_access_confidence`
 
 Cite a query by its label, the first 8 characters of its `query_id` in backticks ("query `8c66eaee`"), never by a bare id or id prefix ("query 8c66eaee"); the full id goes in the item's `query_ids`. The output gate writes that label for any bare id of a known query it finds, so a bare id never reaches the report.
 
-Cutover: the cutover is the customer's. The only sentence about it is "The cutover is your responsibility." Never say when or how to cut over, switch or decommission (no "before cutover", "after cutover", "once replication has caught up", "when lag reaches zero"), and never use "caught up", "proven" or "ready" as readiness wording. Never write "in sync": a copy that CDC keeps current from its owner is "kept current by CDC".
+Cutover: the cutover is the customer's. The only sentence about it is "The cutover is your responsibility." Never say when or how to cut over, switch or decommission (no "before cutover", "after cutover", "once replication has caught up", "when lag reaches zero"), and never use "caught up", "proven" or "ready" as readiness wording. Never write "in sync": a copy that CDC keeps current from its owner is "kept current by CDC". Synthesis swaps a field that says when to cut over, or that uses readiness wording, for a short deterministic sentence.
 
 How the work is split is not part of the design: never write "routing places together", "design part" or "the merge reconciled". Name the table that holds the rows ("the `users` table"), or write "another part of the design".
 

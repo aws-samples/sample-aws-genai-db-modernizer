@@ -26,6 +26,9 @@ text is checked, whatever mode wrote the design and however old it is:
 - the design split's own term "design part(s)" reads "part(s) of the design"
   (``prose_style.replace_pipeline_terms``); a field with any other pipeline term
   (``prose_style.PIPELINE_TERMS``, #2184) goes back to deterministic text;
+- a field that gives cutover advice or claims readiness ("before cutover", "ready to
+  switch", ``cutover_wording.cutover_claims``, the deliverables guard's own model-text
+  rule, #2197) goes back to deterministic text;
 - a field with any other item of the plain-prose style list goes back to
   deterministic text: a trade-off or an access pattern gets a short sentence
   built from its own structured fields, an optimization's recommendation names
@@ -50,6 +53,7 @@ from functools import partial
 from typing import Any
 
 from src.agents.referee.aurora_choice import AURORA_ENGINES
+from src.shared.cutover_wording import cutover_claims
 from src.shared.engine_names import display_engine, display_engine_ids
 from src.shared.prose_style import (
     find_style_hits,
@@ -153,13 +157,17 @@ def clean_schema_design_prose(
         if has_confidence_figure(cleaned):
             found.add('"N% confidence"')
         internal = sorted(f'"{t}"' for t in pipeline_terms_in(cleaned))
+        # #2197: the cutover is the customer's; model text never says when to cut over.
+        cutover = sorted({f'"{c.label}"' for c in cutover_claims(cleaned)})
         terms = sorted(found)
-        if not terms and not internal:
+        if not terms and not internal and not cutover:
             return cleaned
         if terms:
             rejections.append(f"{engine} {path}: plain-prose style list ({', '.join(terms)})")
         if internal:
             rejections.append(f"{engine} {path}: pipeline terms ({', '.join(internal)})")
+        if cutover:
+            rejections.append(f"{engine} {path}: cutover advice ({', '.join(cutover)})")
         return fallback()
 
     def each_field(key: str, fields: tuple[str, ...], fallback: Callable[..., str]) -> None:
