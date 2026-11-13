@@ -36,6 +36,7 @@ from tests.unit.agents.routine_collections import (
     mysql_collection,
     pg_collection,
     pg_collection_with_non_dml_triggers,
+    sample_shaped_pg_collection,
 )
 
 #: A literal only the given sources hold (the collection holds SEED), so a test can tell
@@ -475,8 +476,7 @@ def test_a_sample_shaped_collection_with_routine_bodies_is_extracted(tmp_path: P
     script writes) whose routine rows carry body_status, as today's script writes them:
     a 1.4 run extracts its 3 functions and its trigger as the scripts do. No bundled
     sample exercises this: their routine rows predate body_status."""
-    fixture = Path(__file__).resolve().parents[2] / "fixtures" / "routine_collections"
-    raw = json.loads((fixture / "pg_shop_routines_collection.json").read_text(encoding="utf-8"))
+    raw = sample_shaped_pg_collection()
     _, store = _run(tmp_path, raw, None)
     written = list(read_routine_sources(store, "shop", "rs000001"))
     assert written == list(iter_collection_sources(raw))
