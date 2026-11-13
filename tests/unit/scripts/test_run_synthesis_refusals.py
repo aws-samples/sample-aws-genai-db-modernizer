@@ -32,7 +32,10 @@ def _job(tmp_path: Path) -> LocalArtifactStore:
     return store
 
 
-def _run(tmp_path: Path) -> subprocess.CompletedProcess[str]:
+def _run(tmp_path: Path, llm_mode: str = "external") -> subprocess.CompletedProcess[str]:
+    """The script on the job in ``tmp_path``. ``external`` by default: a run with no
+    model records the skip of an engine with no design (#2154), so a missing design is
+    only missing on a path that designs with a model."""
     return subprocess.run(  # nosec B603 -- fixed argv, the repo's own script
         [
             sys.executable,
@@ -44,7 +47,7 @@ def _run(tmp_path: Path) -> subprocess.CompletedProcess[str]:
             "--artifact-root",
             str(tmp_path),
             "--llm-mode",
-            "none",
+            llm_mode,
             "--assignment-version",
             "1",
         ],

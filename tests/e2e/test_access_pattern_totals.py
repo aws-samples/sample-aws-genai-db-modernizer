@@ -18,7 +18,7 @@ import pytest
 
 from src.shared.cache_engines import CACHE_ENGINES
 from tests.e2e.designed_run import run_designed_wordpress
-from tests.e2e.pipeline import PipelineResult
+from tests.e2e.pipeline import PipelineResult, real_designs
 
 pytestmark = pytest.mark.e2e
 
@@ -31,9 +31,8 @@ def designed(tmp_path_factory: pytest.TempPathFactory) -> PipelineResult:
 def _design_patterns(job_dir: Path) -> dict[str, list[dict]]:
     """engine -> the access patterns of its newest schema design."""
     out: dict[str, list[dict]] = {}
-    for engine_dir in sorted(job_dir.glob("schema-*")):
-        newest = max(engine_dir.glob("v*/schema_output.json"), key=lambda p: int(p.parent.name[1:]))
-        out[engine_dir.name.removeprefix("schema-")] = (
+    for newest in real_designs(job_dir):
+        out[newest.parent.parent.name.removeprefix("schema-")] = (
             json.loads(newest.read_text()).get("access_patterns") or []
         )
     return out

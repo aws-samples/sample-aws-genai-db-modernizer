@@ -31,7 +31,7 @@ from src.report.deliverables import DELIVERABLES_DIR, FOLDER_FILENAMES
 from src.report.risks import shared_mitigation_refs
 from src.shared.migration_risk_rules import backfill_report_risks
 from tests.branding import hits as product_name_hits
-from tests.e2e.pipeline import PipelineResult
+from tests.e2e.pipeline import PipelineResult, real_designs
 from tests.placeholders import placeholder_leaks
 
 # The results page is a primary deliverable next to the executive report (#987); its
@@ -346,7 +346,8 @@ def test_a_querys_trace_opens_from_the_routing_table(
     """
     r = next((x for x in all_runs if x.db == "wordpress"), all_runs[0])
     if not r.external:
-        assert not list(r.job_dir().glob("schema-*")), "the deterministic run has no schema design"
+        # The deterministic run designs nothing: only skip records (#2154).
+        assert real_designs(r.job_dir()) == [], "the deterministic run has no schema design"
         assert _moved_query_trace(r) is not None, "the wordpress sample moves queries"
     trace = _moved_query_trace(r)
 
@@ -1319,7 +1320,7 @@ def test_results_page_has_no_moderate_or_worse_accessibility_violations(
 def _designed_runs(all_runs: list[PipelineResult]) -> list[PipelineResult]:
     """The jobs with at least one schema design: ``ui-desi`` in the deterministic
     suite (``tests/e2e/designed_run.py``), the headless run's own job on e2e-llm."""
-    return [r for r in all_runs if list(r.job_dir().glob("schema-*/v*/schema_output.json"))]
+    return [r for r in all_runs if real_designs(r.job_dir())]
 
 
 def test_the_designed_job_renders_the_schema_design_panels(
@@ -1338,7 +1339,9 @@ def test_the_designed_job_renders_the_schema_design_panels(
         page, ev = loaded_results(r)
         text = page.inner_text("body")
         headings = ["Access pattern explorer", "Trade-offs and design decisions"]
-        aurora = bool(list(r.job_dir().glob("schema-aurora_*/v*/schema_output.json")))
+        aurora = any(
+            p.parent.parent.name.startswith("schema-aurora_") for p in real_designs(r.job_dir())
+        )
         if aurora:
             headings.append("Table design")
         for heading in headings:

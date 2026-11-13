@@ -77,7 +77,7 @@ from tests.e2e.deliverable_figures import (
     pdf_page_texts,
     report_invariant_violations,
 )
-from tests.e2e.pipeline import PipelineResult
+from tests.e2e.pipeline import PipelineResult, real_designs
 
 pytestmark = pytest.mark.deterministic
 
@@ -302,7 +302,7 @@ def _assignment_of_the_job(run: PipelineResult, report: dict[str, Any]) -> dict[
 def _schema_designs_of_the_job(run: PipelineResult) -> dict[str, Any]:
     """Each engine's latest schema design in the job (none without a model)."""
     designs: dict[str, Any] = {}
-    for path in sorted(run.job_dir().glob("schema-*/v*/schema_output.json")):
+    for path in real_designs(run.job_dir()):
         designs[path.parent.parent.name.removeprefix("schema-")] = json.loads(path.read_text())
     return designs
 

@@ -182,3 +182,20 @@ def from_existing_job(db: str, job_id: str, artifact_root: Path) -> PipelineResu
     common = ["--job-id", job_id, "--db", db, "--artifact-root", str(artifact_root)]
     _run("report", ["scripts/run_report.py", *common], result)
     return result
+
+
+def real_designs(job_dir: Path) -> list[Path]:
+    """The job's ``schema_output.json`` files that hold a design, newest version per
+    engine, skipping the skip records a run without a model writes (#2154)."""
+    import json as _json
+
+    out: list[Path] = []
+    for engine_dir in sorted(job_dir.glob("schema-*")):
+        files = sorted(
+            engine_dir.glob("v*/schema_output.json"), key=lambda p: int(p.parent.name[1:])
+        )
+        for path in reversed(files):
+            if _json.loads(path.read_text()).get("status") != "skipped":
+                out.append(path)
+                break
+    return out

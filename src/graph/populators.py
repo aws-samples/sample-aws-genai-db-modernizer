@@ -1666,22 +1666,17 @@ def rebuild_graph(
         )
         if access_patterns:
             populate_from_access_patterns(access_patterns, graph_store)
-        # 4f. Each query's design target objects per lineage version (#306).
-        populate_targets(
-            lineage,
-            assignment_version,
-            {
-                (engine, int(a["version"])): design
-                for a in lineage
-                for engine in engines
-                if (
-                    design := _read_safe(
-                        f"{prefix}/schema-{engine}/v{int(a['version'])}/schema_output.json"
-                    )
+        # 4f. Each query's design target objects per lineage version (#306). A skip
+        # record (#2154) is no design: targets fall back to NOT_DESIGNED, as with no file.
+        designs: dict[tuple[str, int], dict] = {}
+        for a in lineage:
+            for engine in engines:
+                design = _read_safe(
+                    f"{prefix}/schema-{engine}/v{int(a['version'])}/schema_output.json"
                 )
-            },
-            graph_store,
-        )
+                if design and design.get("status") != "skipped":
+                    designs[(engine, int(a["version"]))] = design
+        populate_targets(lineage, assignment_version, designs, graph_store)
 
     # 5. Reality check
     # The run the effective assignment descends from (#193). The lineage is read
@@ -1713,7 +1708,8 @@ def rebuild_graph(
     design_version = resolve_downstream_assignment_version(artifact_store, db_name, job_id)
     for engine in engines:
         schema = _read_safe(f"{prefix}/schema-{engine}/v{design_version}/schema_output.json")
-        if schema:
+        # A skip record is no design to populate; it is read elsewhere (#2154).
+        if schema and schema.get("status") != "skipped":
             populate_from_schema_design(schema, engine, design_version, graph_store)
 
     # 7. Post-schema router
