@@ -79,6 +79,14 @@ class Scratch:
         self.git("add", "-A")
         if subprocess.run(["git", "diff", "--cached", "--quiet"], cwd=self.repo).returncode:
             self.git("commit", "-q", "-m", "overlay")
+        # A branch that commits a pending bump would carry it into this scratch main, and
+        # the tests would resolve it with their own (#2203). Start from main as a release
+        # leaves it instead: no pending file, versions and snapshots resolved (a no-op on
+        # main, which never holds a pending file at release time).
+        if list((self.repo / "src/contracts/pending").glob("*.toml")):
+            proc = self.py("scripts/resolve_contract_versions.py", "--release", "--issue", "1")
+            assert proc.returncode == 0, proc.stderr + proc.stdout
+        assert not list((self.repo / "src/contracts/pending").glob("*.toml"))
 
     def git(self, *args: str, cwd: Path | None = None) -> str:
         proc = subprocess.run(
