@@ -338,11 +338,11 @@ def test_aurora_mysql_never_names_a_primary_key_column_as_lost_coverage(
     stays covered on Aurora MySQL."""
     rows = [_row("FileName", 1)] + [_row(c, 0) for c in include]
     mysql, _ = _drafts(rows, primary_key=("FolderID",))
-    notes = [n for n in _notes(mysql) if n.startswith("INCLUDE columns")]
+    notes = [n for n in _notes(mysql) if n.startswith("Non-key columns")]
     if named is None:
         assert notes == []
     else:
-        assert [n.split(" not carried over")[0] for n in notes] == [f"INCLUDE columns {named}"]
+        assert [n.split(" not carried over")[0] for n in notes] == [f"Non-key columns {named}"]
 
 
 @pytest.mark.parametrize("index_type", ["NONCLUSTERED COLUMNSTORE", "CLUSTERED COLUMNSTORE"])
@@ -489,24 +489,31 @@ def test_the_design_view_shows_the_include_the_aurora_postgresql_draft_renders()
 @pytest.mark.parametrize(
     ("change", "rendered"),
     [
-        # an edit that names no INCLUDE keeps the source index's
+        # an entry replaces the whole definition, as the skill says: no include, none kept
+        ({"columns": ["name", "id"]}, 'CREATE INDEX "IX_Files_Name" ON "Files" ("name", "id");'),
+        # include [] removes the source's INCLUDE (the long-INCLUDE note asks for that)
         (
-            {"columns": ["name", "id"]},
-            'CREATE INDEX "IX_Files_Name" ON "Files" ("name", "id") INCLUDE ("size");',
+            {"columns": ["name"], "include": []},
+            'CREATE INDEX "IX_Files_Name" ON "Files" ("name");',
         ),
-        # an INCLUDE column the edit moves into the key is not repeated
+        # repeating it, as the design view shows it, keeps it
         (
-            {"columns": ["name", "size"]},
-            'CREATE INDEX "IX_Files_Name" ON "Files" ("name", "size");',
+            {"columns": ["name"], "include": ["size"]},
+            'CREATE INDEX "IX_Files_Name" ON "Files" ("name") INCLUDE ("size");',
         ),
-        # an edit that names its own INCLUDE has it
+        # an explicit include wins
         (
             {"columns": ["name"], "include": ["id"]},
             'CREATE INDEX "IX_Files_Name" ON "Files" ("name") INCLUDE ("id");',
         ),
+        # a column the model moved into the key is not repeated in INCLUDE
+        (
+            {"columns": ["name", "size"], "include": ["size", "id"]},
+            'CREATE INDEX "IX_Files_Name" ON "Files" ("name", "size") INCLUDE ("id");',
+        ),
     ],
 )
-def test_a_modified_index_keeps_its_include_on_aurora_postgresql(
+def test_a_modified_index_has_the_include_its_entry_names_on_aurora_postgresql(
     change: dict[str, Any], rendered: str
 ) -> None:
     from src.tools.schema.aurora_common.delta_merge import merge_design_delta
