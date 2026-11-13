@@ -62,6 +62,8 @@ import logging
 from collections.abc import Iterable, Mapping, MutableMapping
 from typing import Any
 
+from pydantic import ValidationError
+
 from src.agents.referee.query_scoring import GATE_KIND_WRITE
 from src.contracts.move_ledger import UNSERVABLE as UNSERVABLE
 from src.contracts.move_ledger import (
@@ -96,6 +98,7 @@ __all__ = [
     "pin_after",
     "pins_from_moves",
     "query_score",
+    "read_moves",
     "replay",
     "state_of",
     "unexplained",
@@ -525,17 +528,48 @@ def follow_moves(assignment: MutableMapping, lineage: Iterable[Mapping]) -> None
     pins_from_moves(assignment, versions)
 
 
+class UnreadableMove(ValueError):
+    """A saved version's Move that does not match the Move contract (#2154).
+
+    Raised instead of skipping it: a skipped Move silently changes the confidence,
+    pin and trace read back from the ledger. The message names the version, the
+    Move's position and the failing field paths, never the stored values.
+    """
+
+
+def read_moves(assignment: Mapping) -> list[Move]:
+    """One version's Moves (``assignment["moves"]``) as the contract, in stored order.
+
+    A record that does not match the contract raises :class:`UnreadableMove`
+    (#2154); it is never dropped. No ``moves`` (a version saved before the ledger)
+    is no Moves.
+    """
+    moves: list[Move] = []
+    for index, raw in enumerate(assignment.get("moves") or []):
+        if isinstance(raw, Move):
+            moves.append(raw)
+            continue
+        try:
+            moves.append(Move.model_validate(raw))
+        except ValidationError as exc:
+            fields = sorted(
+                {".".join(str(p) for p in e["loc"]) or "(record)" for e in exc.errors()}
+            )
+            raise UnreadableMove(
+                f"assignment v{assignment.get('version', '?')}: Move {index + 1} does not "
+                f"match the Move contract ({', '.join(fields)}), so its ledger cannot be read"
+            ) from None
+    return moves
+
+
 def _moves_by_query(lineage: Iterable[Mapping]) -> dict[str, list[Move]]:
-    """Every query's Moves across ``lineage`` (oldest version first), in seq order."""
+    """Every query's Moves across ``lineage`` (oldest version first), in seq order.
+
+    A Move that does not match the contract raises :class:`UnreadableMove` (#2154).
+    """
     by_query: dict[str, list[Move]] = {}
     for version in lineage:
-        moves = []
-        for raw in version.get("moves") or []:
-            try:
-                moves.append(raw if isinstance(raw, Move) else Move.model_validate(raw))
-            except ValueError:
-                continue
-        for move in sorted(moves, key=lambda m: m.seq):
+        for move in sorted(read_moves(version), key=lambda m: m.seq):
             by_query.setdefault(move.query_id, []).append(move)
     return by_query
 
