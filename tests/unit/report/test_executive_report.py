@@ -92,13 +92,18 @@ def test_every_page_is_a_landscape_slide(e2e09: dict[str, Any]) -> None:
 
 @pytest.mark.parametrize("name", FIXTURE_NAMES)
 def test_every_section_once_in_order(name: str) -> None:
-    """Older saved reports (no facts block, no waves) render every section too."""
-    assert outline(_render(_fixture(name))) == list(executive_report.SECTION_HEADINGS)
+    """Older saved reports (no facts block, no waves) render every section they state
+    something for: an optional page is left out, never left blank (#1133)."""
+    report = _fixture(name)
+    headings = executive_report.section_headings(report)
+    assert headings == [h for h in executive_report.SECTION_HEADINGS if h in headings]
+    assert outline(_render(report)) == headings
 
 
 def test_an_empty_report_renders_every_section() -> None:
-    data = _render({"database_name": "x"})
-    assert outline(data) == list(executive_report.SECTION_HEADINGS)
+    report = {"database_name": "x"}
+    data = _render(report)
+    assert outline(data) == executive_report.section_headings(report)
     assert outside_the_page(data) == []
 
 

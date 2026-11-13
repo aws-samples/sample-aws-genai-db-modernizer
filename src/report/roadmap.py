@@ -14,7 +14,8 @@ from src.shared.report_facts import wave_facts
 from src.shared.wave_readiness import READINESS_RULE_NOTE
 
 from . import escaping
-from .adoption import ADOPTION_POINTER, adoption_paths_shown, wave_stages_md
+from .adoption import adoption_paths_shown
+from .adoption_paths_md import ADOPTION_POINTER, wave_stages_md
 from .engine_roles import _RELATIONAL_ENGINES
 from .facts import report_facts
 from .facts import wave_facts_by_number as _facts_by_wave

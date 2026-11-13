@@ -15,10 +15,13 @@ filters a figure the facts layer owns.
 Pages, in order: the cover, the recommendation (target architecture with each
 engine's role and workload share), the numbers (projected monthly cost, engines
 kept and removed, queries moved), why (each engine's deciding reason, one line
-each, and the reality check's decisions), the migration waves (counts and the
-reason per wave), the risks, the decisions needed (pending engine choices) and
-the next steps, which close with a pointer to the engineering report and the
-folder index. There is no traceability appendix and no table list: a table name
+each, and the reality check's decisions), the migration waves (counts, stages
+and the reason per wave), the ways to adopt (#1133: the plan's stopping points,
+the full target in one step, and the stopping points not offered), the risks,
+the decisions needed (pending engine choices) and the next steps, which close
+with a pointer to the engineering report and the folder index. A page an older
+report states nothing for is left out, not left blank (``section_headings``).
+There is no traceability appendix and no table list: a table name
 never appears (``without_table_names``); the engineering report carries every
 table, query and trace.
 
@@ -74,6 +77,30 @@ from src.shared.target_databases import engine_scope_statement
 from src.shared.wave_readiness import READINESS_RULE_NOTE
 from src.shared.workload_fit_labels import CACHE_FIT_DEFINITION, WORKLOAD_FIT_DEFINITION
 
+from .adoption import (
+    DIFFERENCE_HEADER,
+    NO_FIGURE,
+    ONE_STEP_CHECK_HEADER,
+    RISKS_HEADER,
+    adoption_paths_shown,
+    cap_text,
+    cost_difference,
+    cost_note,
+    cost_text,
+    intro_text,
+    not_offered_texts,
+    one_step_block,
+    one_step_check_rows,
+    one_step_lines,
+    one_step_verdict,
+    path_label,
+    per_path_priced,
+    queries_moved_header,
+    relational_cost_stated,
+    stage_kinds_text,
+    summary_paths,
+    wave_phase,
+)
 from .architecture import _architecture_engines
 from .cache_layer import cache_change_notes, cache_layer_text, cache_role_notes
 from .derived_copy_sync import derived_copy_sync_pdf
@@ -170,10 +197,22 @@ L_GAP_REASONS = (
     "What to do about each gap, and where it was found: the engineering report's "
     "Migration roadmap (wave 1) and Risk register."
 )
+# #1133: the page's title, as the issue names it. Its content is the engineering report's
+# "Adoption paths" in the same words (``src.report.adoption``).
+H_ADOPTION = "Ways to adopt"
 H_RISKS = "Risks"
 H_DECISIONS = "Decisions needed"
 H_NEXT = "Next steps"
-SECTION_HEADINGS = (H_RECOMMENDATION, H_NUMBERS, H_WHY, H_WAVES, H_RISKS, H_DECISIONS, H_NEXT)
+SECTION_HEADINGS = (
+    H_RECOMMENDATION,
+    H_NUMBERS,
+    H_WHY,
+    H_WAVES,
+    H_ADOPTION,
+    H_RISKS,
+    H_DECISIONS,
+    H_NEXT,
+)
 CONTINUED = " (continued)"
 
 # Labels (new wording is limited to headings and labels like these).
@@ -208,6 +247,14 @@ L_ROUTINES_POINTER = "The engineering report lists each routine."
 L_TIED_BETWEEN = "Tied between"
 L_PLACED_ON = "Placed on"
 L_NOT_REVIEWED = "Not reviewed"
+# #1133: the Ways to adopt page's own column and panel labels (its layout); every other
+# word on it is ``src.report.adoption``'s, shared with the engineering report.
+L_STEPS = "Steps"
+L_GATES = "Gates"
+L_ENGINES = "Engines"
+L_ONE_STEP = "One step"
+L_NOT_OFFERED = "Not offered"
+L_STAGES = "Stages"
 
 # ---------------------------------------------------------------------------
 # design: the retired deck's own values (13.33 x 7.5 in, Amazon Ember, dark theme)
@@ -1248,6 +1295,11 @@ def _waves(report: dict[str, Any], st: dict[str, ParagraphStyle], names: Any) ->
                     )
                 )
                 content.append(_para(L_GAP_REASONS, st["small"]))
+        # #1133: the wave's stages, as its engine phase rolls the plan's steps up
+        # (``facts.slice_plan.wave_phases``): how many, and what kind each is.
+        stages = _wave_stages_text(report_facts(report), n)
+        if stages:
+            content.append(_labelled(L_STAGES, stages, st["small"]))
         if wf is not None:
             content.append(
                 _labelled(
@@ -1261,6 +1313,107 @@ def _waves(report: dict[str, Any], st: dict[str, ParagraphStyle], names: Any) ->
                 content.append(_labelled("Readiness", wf["readiness_line_short"], st["small"]))
         flow += [_Panel(content, accent), _gap(10)]
     return flow[:-1] if waves else flow
+
+
+def _wave_stages_text(facts: dict[str, Any], wave: int) -> str:
+    """A wave's stages, as its engine phase rolls the plan's steps up (#1133): how many,
+    and what each kind moves, in the words the engineering report's stage table uses."""
+    phase = wave_phase(facts, wave)
+    count = phase.get("stage_count")
+    if not isinstance(count, int) or not count:
+        return ""
+    kinds = stage_kinds_text(phase)
+    text = f"{fmt_num(count, 0)} {plural_noun(count, 'stage')}"
+    return f"{text} ({kinds})" if kinds else text
+
+
+def _ways_to_adopt(report: dict[str, Any], st: dict[str, ParagraphStyle], names: Any) -> list:
+    """The Ways to adopt page (#1133): the capped path table, the full target in one step,
+    and one line per path not offered.
+
+    Every figure is ``facts.adoption``'s, and every label and sentence is
+    ``src.report.adoption``'s, the ones the engineering report's "Adoption paths" prints,
+    so the two reports say the same thing in the same words. This page adds only its
+    layout: the steps, gates and engines as table columns. A report that offers no path
+    has no page at all (``section_headings``).
+
+    Nothing here passes through ``without_table_names`` because nothing here is collected
+    text: a path's replicated tables, its gate text and a not-offered entry's query ids
+    stay in the engineering report. No figure equal to a path's ``tables_migrate`` is
+    printed (``src.report.adoption``, #2237)."""
+    facts = report_facts(report)
+    if not adoption_paths_shown(facts):
+        return []
+    adoption = facts.get("adoption") or {}
+    default_path_id = str(adoption.get("default_path_id") or "")
+    per_path = per_path_priced(facts)
+    relational_stated = relational_cost_stated(facts)
+    flow: list[Flowable] = [_Section(H_ADOPTION), _para(intro_text(facts), st["sub"])]
+    cap = cap_text(facts, "The rows below")
+    if cap:
+        flow += [_gap(6), _para(cap, st["small"])]
+    header = ["Path", L_STEPS, L_GATES, queries_moved_header(facts), "Monthly cost"]
+    widths = [3.0, 0.8, 0.8, 1.8, 1.5]
+    if relational_stated:
+        header.append(DIFFERENCE_HEADER)
+        widths.append(2.0)
+    header += [RISKS_HEADER, L_ENGINES]
+    widths += [1.6, 3.6]
+    shown = summary_paths(facts)
+    rows = []
+    for p in shown:
+        row = [
+            path_label(str(p.get("path_id") or ""), default_path_id),
+            fmt_num(p.get("step_count"), 0),
+            fmt_num(p.get("gate_count"), 0),
+            fmt_num(p.get("queries_moved"), 0),
+            cost_text(p, per_path),
+        ]
+        if relational_stated:
+            row.append(cost_difference(p) or NO_FIGURE)
+        row += [
+            fmt_num(p.get("critical_high_risks"), 0),
+            ", ".join(display_engine(str(e)) for e in p.get("engines") or []),
+        ]
+        rows.append(row)
+    flow += [
+        _gap(12),
+        _table(
+            st,
+            header,
+            rows,
+            widths,
+            # One rule per row, in the colour of the engine the path ends on.
+            row_accents=[_engine_color(str((p.get("engines") or [""])[-1])) for p in shown],
+        ),
+    ]
+    note = cost_note(facts)
+    if note:
+        flow += [_gap(8), _para(note, st["small"])]
+    one = one_step_block(facts)
+    if one:
+        content: list[Flowable] = [_para(L_ONE_STEP.upper(), st["kicker"])]
+        content += [_para(line, st["body"]) for line in one_step_lines(one)]
+        verdict = one_step_verdict(one)
+        if verdict:
+            content.append(_para(verdict, st["body"]))
+        flow += [_gap(12), _Panel(content, YELLOW)]
+        rows = one_step_check_rows(one)
+        if rows:
+            flow += [_gap(6), _table(st, ONE_STEP_CHECK_HEADER, rows, (5, 1.2, 1.2, 1.2))]
+    not_offered = not_offered_texts(facts)
+    if not_offered:
+        flow += [
+            _gap(10),
+            _Panel(
+                [
+                    _para(L_NOT_OFFERED.upper(), st["kicker"]),
+                    *(_para(line, st["small"]) for line in not_offered),
+                ],
+                MUTED,
+            ),
+        ]
+    return flow
 
 
 def _risks(report: dict[str, Any], st: dict[str, ParagraphStyle], names: Any) -> list:
@@ -1733,17 +1886,41 @@ def _cover(c: Canvas, doc: _Doc) -> None:
     c.restoreState()
 
 
-SECTION_BUILDERS = (_recommendation, _numbers, _why, _waves, _risks, _decisions, _next_steps)
+SECTION_BUILDERS = (
+    _recommendation,
+    _numbers,
+    _why,
+    _waves,
+    _ways_to_adopt,
+    _risks,
+    _decisions,
+    _next_steps,
+)
+# The sections a report may leave out, by heading: a builder that returns nothing gets no
+# page, so the document never carries a blank one (#1133: no adoption path, no page).
+OPTIONAL_SECTIONS = (H_ADOPTION,)
+
+
+def section_headings(report: dict[str, Any]) -> list[str]:
+    """The page titles this report renders, in order: ``SECTION_HEADINGS`` without the
+    optional sections it states nothing for (#1133)."""
+    shown = {H_ADOPTION: adoption_paths_shown(report_facts(report))}
+    return [h for h in SECTION_HEADINGS if shown.get(h, True)]
 
 
 def build_story(report: dict[str, Any], identifiers: Iterable[str] = ()) -> list[Flowable]:
-    """Every page's flowables, in section order (the cover is drawn by its template)."""
+    """Every page's flowables, in section order (the cover is drawn by its template).
+
+    A builder with nothing to state adds no page break either, so an optional section
+    (``OPTIONAL_SECTIONS``) is left out of the document rather than left blank."""
     register_fonts()
     st = _styles()
     names = _names_pattern(table_names(report) | set(identifiers))
     story: list[Flowable] = [Spacer(1, 1), NextPageTemplate("content")]
     for build in SECTION_BUILDERS:
-        story += [PageBreak(), *build(report, st, names)]
+        page = build(report, st, names)
+        if page:
+            story += [PageBreak(), *page]
     return story
 
 
@@ -1817,6 +1994,7 @@ __all__ = [
     "COPYRIGHT",
     "FILENAME",
     "FOOTER",
+    "H_ADOPTION",
     "H_DECISIONS",
     "H_NEXT",
     "H_NUMBERS",
@@ -1827,6 +2005,7 @@ __all__ = [
     "PRODUCT_NAME",
     "REPORT_NAME",
     "SECTION_HEADINGS",
+    "section_headings",
     "printable",
     "render_executive_report_pdf",
     "collected_identifiers",

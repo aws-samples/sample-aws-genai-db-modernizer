@@ -23,11 +23,20 @@ import pytest
 from pypdf import PdfReader
 from pypdf.generic import ArrayObject, IndirectObject
 
+from src.contracts.synthesis_output import SUMMARY_PATH_LIMIT
+from src.report import adoption as words
 from src.report import executive_report
+from src.report.adoption_paths_md import adoption_md
 from src.report.cache_layer import cache_layer_text
 from src.report.deliverables import FOLDER_FILENAMES
 from src.report.executive_report import collected_identifiers, table_names, without_table_names
-from src.report.formatting import _cost_baseline_text, _fmt_usd, cost_baseline_known, fmt_num
+from src.report.formatting import (
+    _cost_baseline_text,
+    _fmt_usd,
+    _SaidOnce,
+    cost_baseline_known,
+    fmt_num,
+)
 from src.report.risks import _severity_counts_text, filtered_risks
 from src.report.roadmap import _wave_headline_stats, resolve_migration_waves
 from src.shared.engine_names import display_engine
@@ -105,7 +114,12 @@ def test_the_file_is_report_json_rendered_byte_for_byte(run: PipelineResult) -> 
 
 
 def test_every_section_once_in_order_on_landscape_pages(run: PipelineResult) -> None:
-    assert outline(_pdf(run)) == list(executive_report.SECTION_HEADINGS)
+    # #1133: the pages this report states something for, in SECTION_HEADINGS' order. A
+    # job whose report offers no way to adopt (one synthesized before #1128) has no such
+    # page, and no blank one either.
+    headings = executive_report.section_headings(_report(run))
+    assert headings == [h for h in executive_report.SECTION_HEADINGS if h in headings]
+    assert outline(_pdf(run)) == headings
     for page in _reader(run).pages:
         assert (float(page.mediabox.width), float(page.mediabox.height)) == (
             executive_report.PAGE_W,
@@ -195,6 +209,109 @@ def test_every_wave_its_counts_and_its_reason(run: PipelineResult) -> None:
         why = without_table_names(w["rationale"], names)
         assert why, f"wave {w['wave']} lost its whole reason"
         assert printed(f"Why: {why}") in text, w["wave"]
+
+
+# replay_stale (#1133): the saved replay fixtures' report.json was synthesized before the
+# slice plan and the adoption paths (#1128), so it states no engine phase and no path; a
+# fresh e2e-llm run states both, as the deterministic samples do.
+@pytest.mark.replay_stale
+def test_every_wave_states_its_stages(run: PipelineResult) -> None:
+    """#1133: each wave's stage count and stage kinds, from its engine phase
+    (``facts.slice_plan.wave_phases``), in the words of the engineering report's stage
+    table and with no table name.
+    ``replay_stale``: the saved replay report predates the slice plan's wave phases."""
+    facts = _report(run)["facts"]
+    phases = facts["slice_plan"]["wave_phases"]
+    assert phases, "the sample's slice plan rolls up into no engine phase"
+    waves = section_texts(_pdf(run), run.db)[executive_report.H_WAVES]
+    for phase in phases:
+        n = phase["stage_count"]
+        kinds = words.stage_kinds_text(phase)
+        assert kinds, phase["phase_wave"]
+        expected = f"{n} {'stage' if n == 1 else 'stages'} ({kinds})"
+        assert f"{executive_report.L_STAGES}: {expected}" in waves, phase["phase_wave"]
+
+
+def _adoption_page(run: PipelineResult) -> str:
+    return section_texts(_pdf(run), run.db)[executive_report.H_ADOPTION]
+
+
+@pytest.mark.replay_stale
+def test_the_ways_to_adopt_page_states_every_path_the_facts_name(run: PipelineResult) -> None:
+    """#1133: the capped path table, every cell the figure ``facts.adoption`` states, the
+    cost basis, and the full target in one step, in the engineering report's words.
+    Only ``summary_path_ids``' paths.
+    ``replay_stale``: the saved replay report predates the adoption paths (#1128), so it
+    offers none and has no such page."""
+    facts = _report(run)["facts"]
+    block = facts["adoption"]
+    assert block["paths"], "the sample's plan offers no way to adopt"
+    page = _adoption_page(run)
+    md = normalize("\n".join(adoption_md(facts, "x", _SaidOnce())))
+    for shared in (words.intro_text(facts), words.cost_note(facts)):
+        assert normalize(shared) in page and normalize(shared) in md, shared
+    per_path = words.per_path_priced(facts)
+    shown = words.summary_paths(facts)
+    assert 1 <= len(shown) <= SUMMARY_PATH_LIMIT
+    for p in shown:
+        label = words.path_label(p["path_id"], block["default_path_id"])
+        cost = words.cost_text(p, per_path)
+        row = f"{label} {p['step_count']} {p['gate_count']} {p['queries_moved']} {cost}"
+        assert normalize(row) in page, row
+        assert f"| {label} | {p['queries_moved']} | {cost} |" in md, label
+    ids = {p["path_id"] for p in shown}
+    for p in block["paths"]:
+        if p["path_id"] not in ids:
+            assert words.path_label(p["path_id"]) not in page, p["path_id"]
+    cap = words.cap_text(facts, "The rows below")
+    assert bool(cap) == (len(block["paths"]) > SUMMARY_PATH_LIMIT)
+    if cap:
+        assert normalize(cap) in page
+    # The one-step form of the full target, with the fixed "suits one step" sentence.
+    one = words.one_step_block(facts)
+    assert one, "the sample's full target states no one-step form"
+    for line in [*words.one_step_lines(one), words.one_step_verdict(one)]:
+        assert normalize(line) in page and normalize(line) in md, line
+    for check in words.one_step_check_rows(one):
+        assert " ".join(check) in page, check
+    # Nothing ranks a path, and the default is the staged full target, as today.
+    assert block["default_path_id"] == "full_target"
+    assert page.count(words.DEFAULT_SUFFIX) == 1
+
+
+@pytest.mark.replay_stale
+def test_the_ways_to_adopt_page_prints_a_difference_only_when_one_is_stated(
+    run: PipelineResult,
+) -> None:
+    """A difference from the relational move only is printed exactly when
+    ``relational_monthly_cost_usd`` is stated (ADR-033 Amendment 2), and never for the
+    relational move only itself. ``replay_stale``: the saved replay report predates the
+    paths and their per-path sizing (#2170)."""
+    facts = _report(run)["facts"]
+    page = _adoption_page(run)
+    stated = words.relational_cost_stated(facts)
+    assert stated, "every sample is priced per path since #2214"
+    assert words.DIFFERENCE_HEADER in page
+    for p in words.summary_paths(facts):
+        difference = words.cost_difference(p)
+        if p["path_id"] == "relational_only":
+            assert difference == ""
+        else:
+            assert difference and difference in page, p["path_id"]
+
+
+@pytest.mark.replay_stale
+def test_the_ways_to_adopt_page_prints_no_moving_table_count(run: PipelineResult) -> None:
+    """Review of #2241: no figure equal to ``full_target.tables_migrate`` is printed on
+    the page under a label that reads as tables moving (#2237: on discourse 66 against the
+    headline 188; trailgear disagrees even after it). ``replay_stale``: the saved replay
+    report predates the paths."""
+    facts = _report(run)["facts"]
+    full = next(p for p in facts["adoption"]["paths"] if p["path_id"] == "full_target")
+    page = _adoption_page(run)
+    n = full["tables_migrate"]
+    assert not re.search(rf"\b{n}\s+(?:source\s+)?tables?\b", page), n
+    assert "tables migrate" not in page.lower() and "tables move" not in page.lower()
 
 
 def test_every_open_risk_and_the_risk_counts(run: PipelineResult) -> None:

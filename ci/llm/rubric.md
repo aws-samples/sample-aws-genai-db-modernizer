@@ -344,6 +344,15 @@ Where to look when scoring each criterion (the inputs are above).
   engines and tables against `facts.engines[].tables_served` (multi-engine
   rule) and `facts.eliminated_engines`, and ordering rationale against
   `facts.reality_check` and the per-engine risks.
+  `executive_pdf > Ways to adopt` shows `engineering_report > Adoption paths` in
+  the same words: the same paths (the plan stopped after each step), with their
+  steps, gates, queries off the relational engine, monthly cost, difference from
+  the relational move only, open critical and high risks and engines, the same
+  one-step lines and checks, and the paths not offered. The staged full target is
+  the default and nothing ranks the paths. An earlier path's cost shows "-" when
+  the report was not priced path by path, and the difference column is left out
+  when there is no relational move only. Neither prints how many tables a path
+  moves. A report with no paths has no such page: that is not a defect.
 
 - **hedging, concision, contradictions:** the prose of `executive_pdf` and
   `engineering_report`; for contradictions, also `facts` (a headline that
