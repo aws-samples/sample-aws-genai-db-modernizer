@@ -568,3 +568,51 @@ def choice_scope_text(tables: int, no_table: int, queries: int) -> str:
     statements = f"{no_table} {plural_noun(no_table, 'statement')} with no source table"
     head = f"{tables} {plural_noun(tables, 'table')} and {statements}" if tables else statements
     return f"{head}, {q}"
+
+
+# A sentence this long is stated once in the report (#1454); the same length the report
+# guard (``tests/report_concision.py``) holds every sample to.
+_ONCE_MIN_WORDS = 15
+_SENTENCE_END = re.compile(r"((?<=[.!?])[:;]?\s+)")
+
+
+class _SaidOnce:
+    """Text that states each long sentence once (#1454).
+
+    Analysis risks carry a catalog explanation ("Aurora serves single-table CRUD natively
+    ...") that the register prints for the queries still flagged and "Resolved by the
+    assignment" prints again for the queries the assignment moved. The first line to
+    print a sentence keeps it; a later line says where it is stated. Sentences are cut
+    where the guard cuts them, so a sentence is replaced only when it reads word for word
+    as one printed before. The adoption paths and the waves' stages share one ledger for
+    their gates (#1131): a path's first gate is step 1's own gate, and two stages of
+    different steps can have the same filled gate."""
+
+    def __init__(self) -> None:
+        self._seen: dict[str, str] = {}
+
+    def line(self, text: str, where: str) -> str:
+        """``text`` with each long sentence stated before replaced by a pointer to
+        ``where`` (the first line's own label: ``under RISK-001`` or ``above``)."""
+        parts = _SENTENCE_END.split(text)
+        previous = ""  # the pointer the sentence before became, if it became one
+        for i in range(0, len(parts), 2):
+            key = " ".join(parts[i].replace("**", "").split()).strip(" -*:,.;")
+            if len(key.split()) < _ONCE_MIN_WORDS:
+                previous = ""
+                continue
+            if key in self._seen:
+                pointer = f"Stated {self._seen[key]}"
+                if pointer == previous:
+                    # Two repeated sentences in a row pointing at one place: one pointer
+                    # (the judge read "Stated in the X note. Stated in the X note.").
+                    parts[i] = ""
+                    parts[i - 1] = ""
+                    continue
+                end = parts[i][len(parts[i].rstrip(" .;:,")) :]
+                parts[i] = f"{pointer}{end or '.'}"
+                previous = pointer
+            else:
+                self._seen[key] = where
+                previous = ""
+        return "".join(parts)

@@ -14,11 +14,13 @@ from src.shared.report_facts import wave_facts
 from src.shared.wave_readiness import READINESS_RULE_NOTE
 
 from . import escaping
+from .adoption import ADOPTION_POINTER, adoption_paths_shown, wave_stages_md
 from .engine_roles import _RELATIONAL_ENGINES
 from .facts import report_facts
 from .facts import wave_facts_by_number as _facts_by_wave
 from .formatting import (
     _completed_designs,
+    _SaidOnce,
     cutover_responsibility_text,
     fmt_num,
     plural_noun,
@@ -282,25 +284,38 @@ def _gate_text(
     return f"{gate[:cut]} {GATE_LIST_POINTER}{gate[cut:]}"
 
 
-def _roadmap_md(report: dict[str, Any]) -> list[str]:
-    """Engineering Report "Migration roadmap" section (#225): tables and queries per wave.
+def one_step_pointer(report: dict[str, Any]) -> str:
+    """The direct, single-step alternative this deliverable already shows (#321).
 
-    #321: one suggested adoption path, not the only one -- points at the
-    direct, single-step alternative. #321 review (finding 5): the pointer is
-    conditional on "Target schemas by engine" actually being written below
-    (only when a schema design completed, same condition
-    ``render_engineering_report_md`` itself uses) -- it falls back to "the
+    #321 review (finding 5): the pointer is conditional on "Target schemas by engine"
+    actually being written below (only when a schema design completed, the same
+    condition ``render_engineering_report_md`` itself uses) -- it falls back to "the
     Target engines table above", which is always present whenever a wave is.
     """
-    waves = resolve_migration_waves(report)
-    if not waves:
-        return []
-    pointer = (
+    return (
         'the target schemas in "Target schemas by engine" below'
         if _completed_designs(report)
         else "the target architecture in the Target engines table above"
     )
-    n_waves = int(report_facts(report).get("migration_wave_count") or 0)
+
+
+def _roadmap_md(report: dict[str, Any], gates: _SaidOnce | None = None) -> list[str]:
+    """Engineering Report "Migration roadmap" section (#225): tables and queries per wave.
+
+    #321: one suggested adoption path, not the only one -- points at the direct,
+    single-step alternative. #1131: once "Adoption paths" is rendered above, it points
+    there instead, since that section states the full target and its one-step form.
+
+    ``gates`` is the ledger that keeps a gate stated once in the report, shared with
+    "Adoption paths" so a stage gate a path already states is not printed twice.
+    """
+    waves = resolve_migration_waves(report)
+    if not waves:
+        return []
+    rf = report_facts(report)
+    gates = gates if gates is not None else _SaidOnce()
+    pointer = ADOPTION_POINTER if adoption_paths_shown(rf) else one_step_pointer(report)
+    n_waves = int(rf.get("migration_wave_count") or 0)
     out = [
         f"## Migration roadmap ({n_waves} {plural_noun(n_waves, 'wave')})",
         "",
@@ -403,6 +418,8 @@ def _roadmap_md(report: dict[str, Any]) -> list[str]:
             # name are quoted as the report quotes them elsewhere (#2084).
             readiness = escaping.md_text_with_ids(wf["readiness_line"], query_ids, pattern_ids=True)
             out.append(f"- Readiness: {readiness}")
+        # #1131: the wave's stages, as the slice plan's wave_phases roll them up.
+        out += wave_stages_md(rf, int(w.get("wave") or 0), gates)
         out += _heterogeneous_lines_md(report, wf)
         out.append("")
     return out

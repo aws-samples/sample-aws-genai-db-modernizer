@@ -5,7 +5,6 @@
 
 from __future__ import annotations
 
-import re
 from collections.abc import Collection
 from typing import Any
 
@@ -40,6 +39,7 @@ from src.shared.workload_fit_labels import (
 )
 
 from . import escaping
+from .adoption import adoption_md
 from .architecture import (
     KEPT_IN_SYNC_NOTE,
     KEPT_IN_SYNC_SOURCES_NOTE,
@@ -62,10 +62,12 @@ from .facts import (
     report_facts,
 )
 from .formatting import (
+    _ONCE_MIN_WORDS,
     _completed_designs,
     _cost_baseline_text,
     _fmt_usd,
     _retired_in_use_lines,
+    _SaidOnce,
     access_pattern_scope,
     commit_footer,
     cost_baseline_known,
@@ -95,7 +97,7 @@ from .risks import (
     resolved_risks,
     shared_mitigation_refs,
 )
-from .roadmap import _roadmap_md
+from .roadmap import _roadmap_md, one_step_pointer
 from .routines import routines_md
 from .sources_of_truth import sources_of_truth_md
 from .table_owners import (
@@ -1137,9 +1139,6 @@ def _risk_details_md(report: dict[str, Any], risk: dict[str, Any], eng: str) -> 
     return out
 
 
-# A sentence this long is stated once in the report's risk sections (#1454); the same
-# length the report guard (``tests/report_concision.py``) holds every sample to.
-_ONCE_MIN_WORDS = 15
 # A resolved risk's reason this short is stated by every risk it resolves, so each line
 # reads on its own: "Resolved because" plus the reason stays under ``_ONCE_MIN_WORDS``, the
 # length the report never repeats. A longer one is stated once, under the first, and the
@@ -1155,47 +1154,6 @@ _ORDINALS = {
     7: "seventh",
     8: "eighth",
 }
-_SENTENCE_END = re.compile(r"((?<=[.!?])[:;]?\s+)")
-
-
-class _SaidOnce:
-    """Risk text that states each long sentence once (#1454).
-
-    Analysis risks carry a catalog explanation ("Aurora serves single-table CRUD natively
-    ...") that the register prints for the queries still flagged and "Resolved by the
-    assignment" prints again for the queries the assignment moved. The first line to
-    print a sentence keeps it; a later line says where it is stated. Sentences are cut
-    where the guard cuts them, so a sentence is replaced only when it reads word for word
-    as one printed before."""
-
-    def __init__(self) -> None:
-        self._seen: dict[str, str] = {}
-
-    def line(self, text: str, where: str) -> str:
-        """``text`` with each long sentence stated before replaced by a pointer to
-        ``where`` (the first line's own label: ``under RISK-001`` or ``above``)."""
-        parts = _SENTENCE_END.split(text)
-        previous = ""  # the pointer the sentence before became, if it became one
-        for i in range(0, len(parts), 2):
-            key = " ".join(parts[i].replace("**", "").split()).strip(" -*:,.;")
-            if len(key.split()) < _ONCE_MIN_WORDS:
-                previous = ""
-                continue
-            if key in self._seen:
-                pointer = f"Stated {self._seen[key]}"
-                if pointer == previous:
-                    # Two repeated sentences in a row pointing at one place: one pointer
-                    # (the judge read "Stated in the X note. Stated in the X note.").
-                    parts[i] = ""
-                    parts[i - 1] = ""
-                    continue
-                end = parts[i][len(parts[i].rstrip(" .;:,")) :]
-                parts[i] = f"{pointer}{end or '.'}"
-                previous = pointer
-            else:
-                self._seen[key] = where
-                previous = ""
-        return "".join(parts)
 
 
 def _close_call_body(body: str, risk: dict[str, Any], listed: bool) -> str:
@@ -1518,7 +1476,11 @@ def render_engineering_report_md(
     out += close_calls_md(report)
     out += _reroutes_md(report)
     out += _cache_layer_md(report)
-    out += _roadmap_md(report)
+    # #1131: the adoption paths, their one-step form, then the roadmap whose waves gain
+    # their stages. One gate ledger for both, so a gate is stated once (#1170).
+    gates = _SaidOnce()
+    out += adoption_md(facts, one_step_pointer(report), gates)
+    out += _roadmap_md(report, gates)
     out += sources_of_truth_md(report)
 
     # #1454, #1574: one ledger of long sentences for the migration notes and the risk

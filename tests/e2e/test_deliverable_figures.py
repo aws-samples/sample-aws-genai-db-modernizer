@@ -53,6 +53,7 @@ from src.agents.referee.slice_inputs import slice_inputs
 from src.agents.referee.synthesis_handler import synthesis_path_pricer
 from src.agents.referee.table_assignments import retained_engine_for
 from src.report.formatting import price_list_text
+from src.report.renderers import render_engineering_report_md
 from src.shared.assumptions import assumption_items
 from src.shared.catalog.prices import estimates_price_basis
 from src.shared.engine_names import display_engine
@@ -66,6 +67,10 @@ from src.tools.analysis.relational_gaps import detect_relational_gaps
 from tests.e2e.deliverable_figures import (
     SEVERITIES,
     Figures,
+    _int,
+    _md_sections,
+    _md_table_rows,
+    _usd,
     engineering_figures,
     expected_figures,
     final_architecture,
@@ -465,6 +470,146 @@ def test_engineering_report_figures(run: PipelineResult) -> None:
     report = _report_json(run)
     figs = engineering_figures(run.deliverable("engineering-report.md").read_text())
     _settle(run.db, "engineering report", _problems(report, figs, _engineering_required))
+
+
+def _path_label(path_id: str, default_path_id: str = "") -> str:
+    """The name the report shows a path by, built here from the stored ``path_id`` so the
+    renderer's own labels are the thing under test."""
+    base = {"relational_only": "Relational move only", "full_target": "Full target"}.get(
+        path_id
+    ) or f"Through step {path_id.rsplit('_', 1)[-1]}"
+    return f"{base}, the default" if path_id == default_path_id else base
+
+
+def test_the_adoption_paths_section_shows_the_stored_path_figures(run: PipelineResult) -> None:
+    """#1131: "Adoption paths" shows the paths the capped view names (#2172), every
+    figure read from ``facts.adoption``, each wave's steps and stages come from
+    ``facts.slice_plan``, an earlier path's cost only with ``per_path_sizing``, and no
+    path states its moving tables while the headline figure disagrees with it (#2237, the
+    prerequisite recorded on #1131; the whole report is checked below)."""
+    report = _report_json(run)
+    facts = report["facts"]
+    adoption = facts["adoption"]
+    md = md_plain(run.deliverable("engineering-report.md").read_text())
+    if not adoption["paths"]:
+        # A sample whose plan states no step offers no path, and the section is left out.
+        assert "## Adoption paths" not in md
+        return
+    sections = dict(_md_sections(md, 2))
+    body = sections[f"Adoption paths ({adoption['path_count']})"]
+    assert md.index("## Adoption paths (") < md.index("## Migration roadmap (")
+    assert adoption["cost_basis_note"] in body
+    # The capped view's rows, in path order, each figure the stored one.
+    header = next(line for line in body.splitlines() if line.startswith("| Path |"))
+    relational = adoption["relational_monthly_cost_usd"]
+    per_path = adoption["cost_basis"] == "per_path_sizing"
+    relational_step = next(
+        (s for s in facts["slice_plan"]["plan_steps"] if s["kind"] == "relational_step"), None
+    )
+    moved = (
+        f"Queries off {display_engine(relational_step['engine'])}"
+        if relational_step
+        else "Queries moved"
+    )
+    expected_header = ["Path", moved, "Monthly cost"]
+    if relational is not None:
+        expected_header.append("Against the relational move only")
+    expected_header.append("Open critical and high risks")
+    assert [c.strip() for c in header.strip().strip("|").split("|")] == expected_header
+    default = adoption["default_path_id"]
+    by_id = {p["path_id"]: p for p in adoption["paths"]}
+    labels = [_path_label(p, default) for p in adoption["summary_path_ids"]]
+    rows = [r for r in _md_table_rows(body) if r[0] in set(labels)]
+    assert [r[0] for r in rows] == labels, run.db
+    # A path the capped view leaves out gets neither a row nor a block.
+    for path_id in by_id:
+        if path_id not in adoption["summary_path_ids"]:
+            left_out = _path_label(path_id, default)
+            assert f"| {left_out} |" not in body, left_out
+            assert f"### {left_out}\n" not in body, left_out
+    for path_id, row in zip(adoption["summary_path_ids"], rows, strict=True):
+        path = by_id[path_id]
+        where = f"{run.db} {path_id}"
+        assert row[0] == _path_label(path_id, default), where
+        assert _int(row[1]) == path["queries_moved"], where
+        priced = per_path or path_id == "full_target"
+        assert (_usd(row[2]) if priced else row[2]) == (
+            path["monthly_cost_usd"] if priced else "-"
+        ), where
+        assert _int(row[-1]) == path["critical_high_risks"], where
+        block = body.split(f"### {_path_label(path_id, default)}\n", 1)[1].split("\n### ", 1)[0]
+        names = ", ".join(display_engine(e) for e in path["engines"])
+        assert f"- Engines: {names}" in block, where
+        assert f"; {path['stage_count']} stages, {path['gate_count']} gates" in block, where
+        cost_line = f"- Monthly cost: ${path['monthly_cost_usd']:,.2f}"
+        assert (cost_line in block) == priced, where
+        if path["replicated_table_count"]:
+            assert f"- {path['replicated_table_count']:,} tables read through a CDC copy" in (
+                block
+            ), where
+        if relational is None:
+            assert "the relational move only" not in block, where
+    # A path's own moving-table count is not printed anywhere, in either wording.
+    assert "Tables migrate" not in body and "tables migrate" not in body
+    # The one-step form, from facts.adoption.one_step.
+    one = adoption["one_step"]
+    step_body = body.split("### One step\n", 1)[1]
+    assert (
+        f"in place of {one['staged_step_count']:,} steps and "
+        f"{one['staged_stage_count']:,} stages." in step_body
+    )
+    assert f"holds all {one['gate_count']:,} stage gates." in step_body
+    for check in one["one_step_checks"]:
+        assert check["rule"] not in step_body, check["rule"]
+        held = "yes" if check["passed"] else "no"
+        assert f"| {check['observed']:,} | {check['limit']:,} | {held} |" in step_body
+    # Each wave's stages are its phase's, in the roadmap.
+    roadmap = sections[next(h for h in sections if h.startswith("Migration roadmap ("))]
+    for phase in facts["slice_plan"]["wave_phases"]:
+        wave = roadmap.split(f"### Wave {phase['phase_wave']}:", 1)[1].split("\n### ", 1)[0]
+        numbers = phase["step_numbers"]
+        span = f"Step {numbers[0]}" if len(numbers) == 1 else f"Steps {numbers[0]} to {numbers[-1]}"
+        stages = phase["stage_count"]
+        noun = "stage" if stages == 1 else "stages"
+        assert f"- {span} ({stages:,} {noun}):" in wave, phase["phase_wave"]
+        # One row per stage, in run order, under the wave's stage table.
+        stage_labels = [
+            line.split("|")[1].strip()
+            for line in wave.splitlines()
+            if line.startswith("| ") and len(line.split("|")) == 7
+        ]
+        assert [s for s in stage_labels if s != "Stage"] == phase["stage_labels"], phase[
+            "phase_wave"
+        ]
+
+
+# A figure no real report holds, written into every place the paths' moving-table count
+# lives, so the check below finds it wherever the report would print it.
+_MOVING_TABLES_SENTINEL = 9137
+
+
+def test_no_deliverable_line_states_a_path_s_moving_table_count(run: PipelineResult) -> None:
+    """Review of #2241 (Critical 1): the whole engineering report, not only "Adoption
+    paths", states neither ``paths[].tables_migrate`` nor wave 1's ``leaves_count`` (the
+    same count). Both disagree with the headline "tables migrate" until #2237 lands (on
+    discourse 66 against 188), and on a cross-engine source even after it."""
+    report = _report_json(run)
+    facts = report["facts"]
+    if not facts["adoption"]["paths"]:
+        # No path, so no section and no stage: nothing of the plan's is printed.
+        assert "## Adoption paths" not in render_engineering_report_md(report), run.db
+        return
+    for path in facts["adoption"]["paths"]:
+        path["tables_migrate"] = _MOVING_TABLES_SENTINEL
+    for step in facts["slice_plan"]["plan_steps"]:
+        if step.get("table_classes"):
+            step["table_classes"]["leaves_count"] = _MOVING_TABLES_SENTINEL
+    assert facts["tables_migrate"] != _MOVING_TABLES_SENTINEL
+    md = render_engineering_report_md(report)
+    assert "## Adoption paths (" in md, run.db
+    assert str(_MOVING_TABLES_SENTINEL) not in md, run.db
+    assert f"{_MOVING_TABLES_SENTINEL:,}" not in md, run.db
+    assert "owned by a later step" not in md, run.db
 
 
 def test_the_trace_appendix_agrees_with_the_unresolved_ties(run: PipelineResult) -> None:
