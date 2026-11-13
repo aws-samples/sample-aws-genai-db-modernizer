@@ -27,7 +27,7 @@ from src.report.architecture import KEPT_IN_SYNC_NOTE
 from src.report.escaping import md_text
 from src.report.executive_report import COST_SCOPE_SHORT, render_executive_report_pdf
 from src.report.renderers import render_engineering_report_md
-from src.report.table_owners import OWNER_RULE, OWNER_RULE_SHORT
+from src.report.table_owners import owner_rule, owner_rule_short, ownership_facts
 from src.shared.report_facts import COST_CAVEAT, COST_SCOPE_LABEL
 from tests.executive_pdf import normalize, repeated_across_sections, section_texts
 from tests.report_concision import section
@@ -92,6 +92,9 @@ def test_the_owner_rule_is_printed_whole_after_the_scope_note(report) -> None:
     amendment), so it is not a repeat, and "Also read by names those engines" needs it."""
     recommendation = _sections(report)["The recommendation"]
     assert normalize(KEPT_IN_SYNC_NOTE) in recommendation
-    assert normalize(OWNER_RULE_SHORT) in recommendation
+    # The report's own rule (#2166 review: this saved run follows the most-queries one).
+    ownership = ownership_facts(report)
+    assert ownership is not None
+    assert normalize(owner_rule_short(ownership)) in recommendation
     md = render_engineering_report_md(report)
-    assert md_text(OWNER_RULE) in section(md, "Migration map")
+    assert md_text(owner_rule(ownership)) in section(md, "Migration map")

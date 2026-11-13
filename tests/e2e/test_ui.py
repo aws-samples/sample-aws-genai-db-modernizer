@@ -702,11 +702,12 @@ def test_results_page_states_each_tables_owner_also_read_by_and_cache(
     the engines that also read it and its cache, with the same counts. Collapsed when
     the page opens; a job with no table_mappings has no such section. On the designed
     wordpress job, wp_postmeta is owned by DynamoDB and also read by Aurora MySQL, and
-    wp_wc_tax_rate_classes, which no query writes, is owned by the engine serving its
-    reads, DynamoDB (wp_usermeta until #1893, then wp_users until the refreshed sample of
-    #1955 wrote it; tests/e2e/test_table_owners.py). On the same job on the collection
-    bundled before #1955, wp_users, which no query writes there, is owned by Aurora MySQL
-    and also read by DynamoDB."""
+    wp_wc_tax_rate_classes, which no query writes and only DynamoDB reads, stays with the
+    relational step, Aurora MySQL, and is also read by DynamoDB (#2166, ADR-033 Amendment
+    1; wp_usermeta until #1893, then wp_users until the refreshed sample of #1955 wrote
+    it; tests/e2e/test_table_owners.py). On the same job on the collection bundled before
+    #1955, wp_users, which no query writes there, is owned by Aurora MySQL and also read
+    by DynamoDB."""
     from src.shared.engine_names import display_engine
 
     runs = list(all_runs)
@@ -776,8 +777,9 @@ def test_results_page_states_each_tables_owner_also_read_by_and_cache(
                 unwritten = section.locator(
                     '[data-table="wordpress.wp_wc_tax_rate_classes"]'
                 ).locator("xpath=ancestor::tr")
-                assert unwritten.locator('[data-cell="owner"]').inner_text() == "DynamoDB"
-                assert unwritten.locator('[data-cell="also-read-by"]').inner_text() == "—"
+                # #2166: no query writes it, so the relational step keeps it.
+                assert unwritten.locator('[data-cell="owner"]').inner_text() == "Aurora MySQL"
+                assert unwritten.locator('[data-cell="also-read-by"]').inner_text() == "DynamoDB"
         assert ev == {"console": [], "pageerror": [], "failed": []}, (r.job_id, ev)
 
 

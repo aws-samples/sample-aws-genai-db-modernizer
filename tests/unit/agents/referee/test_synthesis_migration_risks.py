@@ -132,13 +132,15 @@ def _rules(risks: list[dict]) -> set[str]:
 
 def test_the_wave_risks_are_raised_and_the_summary_counts_them(store) -> None:
     """An assignment without write groups: the wave's kept table, which a captured
-    query writes, is a CDC copy (one MEDIUM sync risk for the wave)."""
+    query writes, is a CDC copy (one MEDIUM sync risk for the wave). ``users`` and
+    ``sessions`` have no writer, so the relational step keeps them and DynamoDB reads a
+    one-time copy (#2166): the same risk names them."""
     result = run_synthesis_deterministic(JOB, DB, store, assignment_version=2)
     risks = result["risk_assessment"]["risks"]
     sync = [r for r in risks if r.get("rule") == "sync.wave"]
     assert len(sync) == 1
     assert sync[0]["severity"] == "MEDIUM"
-    assert sync[0]["affected_tables"] == ["orders"]
+    assert sync[0]["affected_tables"] == ["orders", "sessions", "users"]
     assert sync[0]["wave"] == 2
     level = result["risk_assessment"]["overall_risk_level"]
     noun = "risk" if len(risks) == 1 else "risks"
@@ -193,16 +195,18 @@ def test_with_write_groups_the_sync_risks_follow_the_sources_of_truth(store) -> 
     assert sync["severity"] == "MEDIUM"
     assert "orders" in sync["affected_tables"]
     assert "rel1" in sync["query_ids"]
-    # users is DynamoDB's, never written, and Aurora MySQL reads it: a one-time copy the
-    # risk counts with the CDC copy, so the two add up to the tables read off their owner.
-    assert "users" in sync["affected_tables"] and "rel_users" in sync["query_ids"]
+    # users and sessions are never written, so the relational step keeps them (#2166)
+    # and DynamoDB's reads of them read a one-time copy, which the risk counts with the
+    # CDC copy, so the two add up to the tables read off their owner. Aurora MySQL's read
+    # of users reads its own table.
+    assert sync["affected_tables"] == ["orders", "sessions", "users"]
+    assert sync["query_ids"] == ["kv1", "kv2", "rel1"]
     assert sync["description"].startswith(
-        f"[dynamodb] Wave 2: {len(sync['query_ids'])} queries read 2 tables on an engine "
-        "that does not own them. 1 of them reads a copy of 1 table that CDC keeps current "
-        "from DynamoDB"
+        "[dynamodb] Wave 2: 3 queries read 3 tables on an engine that does not own them. "
+        "1 of them reads a copy of 1 table that CDC keeps current from DynamoDB"
     )
     assert sync["description"].endswith(
-        "The other table is written by no captured query, so a one-time copy serves it."
+        "The other 2 tables are written by no captured query, so a one-time copy serves them."
     )
     _write_synthesis_report(store, result, assignment_version=2)
     report = store.read_json(f"{DB}/{JOB}/synthesis/v2/report.json")

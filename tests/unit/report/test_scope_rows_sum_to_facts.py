@@ -314,3 +314,21 @@ def test_a_saved_report_with_a_shared_read_renders_rows_that_add_up() -> None:
     )
     assert cell in render_engineering_report_md(report)
     assert cell in " ".join(executive_text(report).split())
+
+
+def test_a_row_with_both_kinds_of_kept_table_says_kept_current_once() -> None:
+    """#2166 review: discourse's DocumentDB row read "78 kept current by CDC, 40 kept
+    current by CDC, also read by DynamoDB (counted in its row)". With a kept-current
+    count before it, the counted-under part says "more" instead of repeating the label;
+    the figures stay the stored ones."""
+    report = _with_facts(_report())
+    for e in report["facts"]["engines"]:
+        if e["engine"] == "documentdb":
+            e["kept_in_sync_tables"] = 78
+            e["kept_in_sync_counted_under"] = {"dynamodb": 40}
+    md = render_engineering_report_md(report)
+    cell = "78 kept current by CDC, 40 more also read by DynamoDB (counted in its row)"
+    assert cell in md
+    assert "40 kept current by CDC, also read by" not in md
+    flat = " ".join(executive_text(report).split())
+    assert cell in flat

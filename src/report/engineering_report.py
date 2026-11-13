@@ -101,10 +101,10 @@ from .roadmap import _roadmap_md, one_step_pointer
 from .routines import routines_md
 from .sources_of_truth import sources_of_truth_md
 from .table_owners import (
-    OWNER_RULE,
     also_read_by_cell,
     cached_by_cell,
     owner_cell,
+    owner_rule,
     ownership_facts,
     ownership_summary_text,
     target_cell,
@@ -1441,7 +1441,7 @@ def render_engineering_report_md(
         out += [
             f"## Migration map ({mapped} {plural_noun(mapped, 'table')}{split})",
             "",
-            f"{escaping.md_text(OWNER_RULE)}{split_note}{gaps}{sources_pointer}",
+            f"{escaping.md_text(owner_rule(ownership))}{split_note}{gaps}{sources_pointer}",
             "",
             escaping.md_text(ownership_summary_text(ownership)),
             "",

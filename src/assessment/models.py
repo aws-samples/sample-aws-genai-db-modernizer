@@ -734,10 +734,10 @@ class TableLine(_Strict):
         None,
         description=(
             "writes: the engine of its writes; split_writes: writes on several engines, "
-            "the owner serves most of its queries; most_queries: no writes, the engine "
-            "serving most of its "
-            "queries; retained: no owner engine queries it, the retained relational "
-            "engine; design: no queries, from the schema design"
+            "the relational engine keeps it; retained: no writes, the relational engine "
+            "(or the source database with none) keeps it; most_queries: no writes, the "
+            "engine serving most of its queries (a report written before #2166); design: "
+            "no queries, from the schema design"
         ),
     )
     also_read_by: list[str] = Field(

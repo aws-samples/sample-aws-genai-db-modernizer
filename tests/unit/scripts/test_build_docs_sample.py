@@ -314,7 +314,11 @@ _NEWER_THAN_THE_RECORDING = (
     "adoption",  # #1128
 )
 # Fields added inside a recorded fact, filled in the same way (#399).
-_NEWER_FIELDS_THAN_THE_RECORDING = {"cache_layer": ("role_sentence",)}
+_NEWER_FIELDS_THAN_THE_RECORDING = {
+    "cache_layer": ("role_sentence",),
+    # #2166: the rule the lines follow, filled in from them for the recorded run.
+    "table_owner_lines": ("unwritten_owner_rule",),
+}
 # Fields added to each engine row, filled in the same way (#2162).
 _NEWER_ENGINE_FIELDS_THAN_THE_RECORDING = ("kept_in_sync_counted_under",)
 

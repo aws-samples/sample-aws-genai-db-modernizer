@@ -5,8 +5,8 @@
 
 On the designed wordpress job (a schema design for every kept engine, no model), the
 deliverables state one line per mapped source table: its owner, the engine that takes
-its writes (ADR-031 Amendment 9; a table no query writes, the engine serving most of
-its queries; never a cache), every other engine whose queries read it through CDC
+its writes (ADR-031 Amendment 9; a table no query writes stays with the relational
+step, #2166; never a cache), every other engine whose queries read it through CDC
 replicas, and the cache in front of its reads. ``report.json``'s ``table_mappings``
 rows, ``facts.table_owner_lines``, the engineering report's Migration map and the
 executive report state the same lines and counts. The UI results page is checked in
@@ -31,7 +31,7 @@ import pytest
 from src.report.facts import report_facts
 from src.shared.cache_engines import CACHE_ENGINES
 from src.shared.engine_names import display_engine
-from src.shared.report_facts import compute_report_facts
+from src.shared.report_facts import compute_report_facts, wave_retained_engine
 from tests.e2e.deliverable_figures import md_plain, pdf_page_texts
 from tests.e2e.pipeline import PipelineResult
 
@@ -118,19 +118,19 @@ def test_wp_postmeta_is_owned_by_its_writer_and_also_read_by_the_other_engine(
     assert cells[1:4] == ["DynamoDB", "Aurora MySQL", "ElastiCache"], cells
 
 
-def test_wp_users_is_owned_by_its_writer_and_a_table_no_query_writes_by_its_reader(
+def test_wp_users_is_owned_by_its_writer_and_a_table_no_query_writes_by_the_relational_step(
     designed_run: PipelineResult,
 ) -> None:
-    """#212's second case: a table no query writes is owned by the engine serving most
-    of its queries.
+    """#212's second case: a table no query writes stays with the relational step (#2166,
+    ADR-033 Amendment 1), whichever engine reads it; the engines that read it read a copy.
 
     #1893: this was ``wp_usermeta``, then ``wp_users``. #1955: the refreshed sample's
     workload creates customers, so queries write ``wp_users`` (its writes are on
     DynamoDB, which owns it; Aurora MySQL reads a copy), and the one mapped table no
-    query writes is ``wp_wc_tax_rate_classes``, read only on DynamoDB. A table no query
-    writes that two engines read is covered by
-    tests/unit/shared/test_table_owner_facts.py
-    (``test_a_table_no_query_writes_is_owned_by_the_engine_serving_most_of_its_queries``)."""
+    query writes is ``wp_wc_tax_rate_classes``, read only on DynamoDB: Aurora MySQL keeps
+    it and DynamoDB reads a copy. A table no query writes that two engines read is covered
+    by tests/unit/shared/test_table_owner_facts.py
+    (``test_a_table_no_query_writes_stays_with_the_relational_step``)."""
     report = _report(designed_run)
     assignment = _assignment(designed_run, report)
     writers = {
@@ -153,19 +153,18 @@ def test_wp_users_is_owned_by_its_writer_and_a_table_no_query_writes_by_its_read
     assert set(_engines_reading(assignment, TAX_RATE_CLASSES)) == {"dynamodb"}
     row = _mapping(report, TAX_RATE_CLASSES)
     assert (row["owner"], row["owner_basis"], row["also_read_by"]) == (
-        "dynamodb",
-        "most_queries",
-        [],
+        "aurora_mysql",
+        "retained",
+        ["dynamodb"],
     )
 
 
-@pytest.mark.passes_on_main  # main's check, on the collection main bundled
-def test_a_table_no_query_writes_and_two_engines_read_is_owned_by_most_queries(
+def test_a_table_no_query_writes_and_two_engines_read_stays_with_the_relational_step(
     designed_pre_1955: PipelineResult,
 ) -> None:
     """#212's second case with two readers, on the collection bundled before #1955
-    (``designed_pre_1955``): no query writes ``wp_users``, so its owner is the engine
-    serving most of its queries, here not the engine the map recommends.
+    (``designed_pre_1955``): no query writes ``wp_users``, so the relational step keeps it
+    (#2166), here not the engine the map recommends.
 
     #1893: this was ``wp_usermeta`` (3 reads on Aurora MySQL, 1 on DynamoDB). Over its own
     window ``3a74580e`` reads it at 1.24 calls/s (0.95 over 24 hours) and ties DynamoDB and
@@ -183,7 +182,7 @@ def test_a_table_no_query_writes_and_two_engines_read_is_owned_by_most_queries(
     assert row["recommended_database"] == "dynamodb"
     assert (row["owner"], row["owner_basis"], row["also_read_by"]) == (
         "aurora_mysql",
-        "most_queries",
+        "retained",
         ["dynamodb"],
     )
     assert row["owner"] not in CACHE_ENGINES
@@ -199,9 +198,11 @@ def test_a_cached_table_keeps_its_owner_and_counts_as_migrating(
     table the cache fronts has a system-of-record owner and is counted where that
     owner's tables are, never on a cache-layer line of its own.
 
-    #1955: on the refreshed sample every mapped table migrates (each one's writes are on
-    DynamoDB), so its heading has no split; the collection bundled before it keeps two
-    tables in sync from Aurora MySQL, so its heading names the split ("N migrate")."""
+    #1955: on the refreshed sample every mapped table but one migrates (its writes are on
+    DynamoDB); #2166: the one no query writes, ``wp_wc_tax_rate_classes``, stays on Aurora
+    MySQL and DynamoDB reads a copy, so the heading names the split ("N migrate, 1 kept
+    current by CDC"). The collection bundled before #1955 keeps tables in sync from Aurora
+    MySQL too."""
     job: PipelineResult = request.getfixturevalue(job_name)
     report = _report(job)
     row = _mapping(report, OPTIONS)
@@ -221,10 +222,9 @@ def test_a_cached_table_keeps_its_owner_and_counts_as_migrating(
     assert "cache layer" not in heading
     if job_name == "designed_pre_1955":
         assert split.get("kept_in_sync"), split
-        assert f"{split['migrate']} migrate" in heading
     else:
-        assert split == {"migrate": len(report["table_mappings"])}
-        assert heading == f"## Migration map ({split['migrate']} tables)"
+        assert split == {"migrate": len(report["table_mappings"]) - 1, "kept_in_sync": 1}
+    assert f"{split['migrate']} migrate" in heading
     assert split["migrate"] == report["facts"]["tables_migrate"]
 
 
@@ -242,14 +242,15 @@ def test_every_line_follows_the_owner_rule(job_name: str, request: pytest.Fixtur
         for w in report["migration_waves"]
         for o in w.get("table_owners") or []
     }
-    # #1955: the refreshed sample's designed job keeps no table in sync from an owner in
-    # another wave (every mapped table's writes are on DynamoDB, the last wave), so its
-    # wave plan names no owner line; the job on the collection bundled before #1955 keeps
-    # wp_term_relationships and wp_users in sync from Aurora MySQL.
+    # #1955: on the refreshed sample's designed job every mapped table's writes are on
+    # DynamoDB but one; #2166: that one, wp_wc_tax_rate_classes, no query writes, so
+    # Aurora MySQL keeps it and DynamoDB's wave names it as its only owner line. The job
+    # on the collection bundled before #1955 keeps wp_term_relationships and wp_users in
+    # sync from Aurora MySQL.
     if job_name == "designed_pre_1955":
         assert wave_owner, "the designed job keeps some table in sync from its owner"
     else:
-        assert wave_owner == {}, "the refreshed sample keeps no table in sync"
+        assert wave_owner == {TAX_RATE_CLASSES: "aurora_mysql"}, wave_owner
     for line in lines:
         if line["table"] in wave_owner:
             assert line["owner"] == wave_owner[line["table"]], line
@@ -264,7 +265,9 @@ def test_every_line_follows_the_owner_rule(job_name: str, request: pytest.Fixtur
             assert line["owner_basis"] == "writes", line
             assert {r["engine"] for r in written["replicas"]} <= set(line["also_read_by"]), line
         else:
-            assert line["owner_basis"] == "most_queries", line
+            # Nothing writes it: the relational step keeps it (#2166, ADR-033 Amendment 1).
+            assert line["owner_basis"] == "retained", line
+            assert line["owner"] == wave_retained_engine(report["migration_waves"]), line
 
 
 def test_report_json_rows_and_facts_agree(designed_run: PipelineResult) -> None:
@@ -281,14 +284,38 @@ def test_an_old_copy_of_the_report_gets_the_same_lines_from_the_facts_reader(
     designed_run: PipelineResult,
 ) -> None:
     """The same report with the #212 fields taken out, as a report written before them
-    is: the facts reader's backfill gives every line synthesis gave."""
+    is: the facts reader's backfill gives every owner, reader and cache synthesis gave,
+    from the report's own waves. A report written before #212 keeps its own basis
+    (#2166 review): a table nothing writes that some engine queries is ``most_queries``
+    there, and the rule it prints is that one."""
     report = _report(designed_run)
     old = copy.deepcopy(report)
     for m in old["table_mappings"]:
         for key in ("owner", "owner_basis", "also_read_by", "cached_by"):
             m.pop(key)
     old["facts"].pop("table_owner_lines")
-    assert report_facts(old)["table_owner_lines"] == report["facts"]["table_owner_lines"]
+    filled = report_facts(old)["table_owner_lines"]
+    stored = report["facts"]["table_owner_lines"]
+    assert stored["unwritten_owner_rule"] == "relational_step"
+    keep = ("table", "owner", "also_read_by", "cached_by", "target_engine", "target_table")
+    assert [{k: r.get(k) for k in keep} for r in filled["table_lines"]] == [
+        {k: r.get(k) for k in keep} for r in stored["table_lines"]
+    ]
+    for key in ("table_count", "owned_table_counts", "no_owner_table_count", "cached_table_count"):
+        assert filled[key] == stored[key], key
+    for was, now in zip(stored["table_lines"], filled["table_lines"], strict=True):
+        if was["owner_basis"] == "retained":
+            # Queried: the old rule's basis; queried by no owner engine: retained still.
+            assert now["owner_basis"] in ("most_queries", "retained"), now
+        else:
+            assert now["owner_basis"] == was["owner_basis"], now
+    # So this stripped copy states the old rule although the report it came from follows
+    # the new one. That pair cannot occur in practice -- a report written now carries both
+    # its lines and its rule, and one written before #212 carries neither -- and it is the
+    # price of reproducing the old labelling faithfully, which the pre-#212 guarantee
+    # needs (#2166 review round 2, minor 3). It is not the rule for a report written now:
+    # ``test_the_results_route_hands_the_ui_the_designed_jobs_own_rule`` states that.
+    assert filled["unwritten_owner_rule"] == "most_queries"
     assert report_facts(old)["table_basis"] == report["facts"]["table_basis"]
 
 
@@ -328,3 +355,51 @@ def test_the_engineering_and_executive_reports_state_the_same_counts(
     assert sum(1 for cells in rows.values() if cells[2] != "—") == also
     pdf = " ".join(pdf_page_texts(str(designed_run.deliverable("executive-report.pdf"))))
     assert f"Table owners: {sentence}" in pdf
+
+
+def test_the_results_route_hands_the_ui_the_designed_jobs_own_rule(
+    designed_run: PipelineResult,
+) -> None:
+    """#2166 review round 2: the UI reads `facts.table_owner_lines` from the results
+    payload, so the route must carry this job's own `unwritten_owner_rule` (ADR-032).
+    The saved designed job goes through the real route here; `TableOwnersCallout`'s
+    `ruleKey` then picks the sentence from this value (its own tests cover the mapping).
+    A job main saved carries no such field and gets the rule its lines follow, which is
+    `most_queries` while any line names a reader as the owner of an unwritten table.
+    """
+    from unittest.mock import MagicMock
+
+    from fastapi.testclient import TestClient
+
+    from src.api.main import app
+    from src.api.routes import results as route
+
+    report = _report(designed_run)
+    stored = report["facts"]["table_owner_lines"]
+    assert stored["unwritten_owner_rule"] == "relational_step"
+    main_shape = copy.deepcopy(report)
+    main_shape["facts"]["table_owner_lines"].pop("unwritten_owner_rule")
+    for row in main_shape["table_mappings"]:
+        if row.get("owner_basis") == "retained":
+            row.update(owner="dynamodb", owner_basis="most_queries")
+    for line in main_shape["facts"]["table_owner_lines"]["table_lines"]:
+        if line.get("owner_basis") == "retained":
+            line.update(owner="dynamodb", owner_basis="most_queries")
+
+    sfn, s3 = MagicMock(), MagicMock()
+    sfn.describe_execution.return_value = {
+        "status": "SUCCEEDED",
+        "input": {"database_name": designed_run.db, "source_database_type": "mysql"},
+    }
+    s3.read_triage.return_value = None
+    route.sfn_service, route.s3_service = sfn, s3
+    try:
+        client = TestClient(app)
+        for payload, expected in ((report, "relational_step"), (main_shape, "most_queries")):
+            s3.read_synthesis.return_value = copy.deepcopy(payload)
+            body = client.get(f"/api/v1/assessments/{designed_run.job_id}/results").json()
+            lines = body["synthesis"]["facts"]["table_owner_lines"]
+            assert lines["unwritten_owner_rule"] == expected
+            assert lines["table_count"] == stored["table_count"]
+    finally:
+        route.sfn_service, route.s3_service = None, None

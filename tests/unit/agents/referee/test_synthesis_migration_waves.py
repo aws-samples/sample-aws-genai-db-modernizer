@@ -407,12 +407,10 @@ class TestMigrationWavesKeepRealUnmappedTablesButDropNoise:
         assert "2 of these tables and views are mapped to a target engine in the migration map" in (
             aurora["rationale"]
         )
-        # #1284: "orders" is mapped to Aurora MySQL itself, so only "users" moves in
-        # a later wave (DynamoDB); the figure is the facts layer's, stated once.
-        assert compute_report_facts(result)["waves"][0]["moved_by_later_waves"] == 1
-        assert (
-            "later waves move 1 of the 3 off Aurora MySQL, and the other 2 stay on Aurora MySQL: "
-            "1 migration-map row that does not migrate and 1 table or view the map does not "
-            "list."
-        ) in aurora["rationale"]
+        # #1284: "orders" is mapped to Aurora MySQL itself. #2166: no captured query
+        # writes "users", so the relational step keeps it and DynamoDB reads a copy: no
+        # later wave moves a table off Aurora MySQL. The figure is the facts layer's,
+        # stated once.
+        assert compute_report_facts(result)["waves"][0]["moved_by_later_waves"] == 0
+        assert "no later wave moves any of the 3 off Aurora MySQL." in aurora["rationale"]
         assert "in a later wave" not in aurora["rationale"]

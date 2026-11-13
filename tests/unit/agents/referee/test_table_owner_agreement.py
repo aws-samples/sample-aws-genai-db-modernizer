@@ -121,8 +121,9 @@ def _backfilled(report: dict[str, Any]) -> dict[str, Any]:
 
 def test_one_read_on_each_engine_and_no_write() -> None:
     """A 1-1 read tie on a table no query writes, recommended DynamoDB: the wave plan's
-    rule gives it to the retained engine, and the map, the DynamoDB wave's kept-in-sync
-    line and Sources of truth all agree."""
+    rule keeps it on the relational step's engine (#2166: no writer, so no reader owns
+    it), and the map, the DynamoDB wave's kept-in-sync line and Sources of truth all
+    agree."""
     job = _job(
         [
             _qa("r1", "dynamodb", [T]),
@@ -134,7 +135,7 @@ def test_one_read_on_each_engine_and_no_write() -> None:
     report = job["report"]
     line = _line(report)
     assert job["owners"][T] == "aurora_mysql"
-    assert (line["owner"], line["owner_basis"]) == ("aurora_mysql", "most_queries")
+    assert (line["owner"], line["owner_basis"]) == ("aurora_mysql", "retained")
     assert line["also_read_by"] == ["dynamodb"]
     # The wave plan: DynamoDB's wave keeps it in sync from Aurora MySQL.
     wave = _dynamodb_wave(job["waves"])
@@ -142,13 +143,17 @@ def test_one_read_on_each_engine_and_no_write() -> None:
     assert report["facts"]["table_basis"]["mapped_tables_by_move"] == {"kept_in_sync": 1}
     # Sources of truth: no query writes it, so it is not listed.
     assert T not in {r["table"] for r in report["table_sources"]}
-    assert _backfilled(report) == line
+    # The same lines filled in at read time, as for a report written before #212: the
+    # owner is the wave plan's; the basis is the one that report's rule gives (#2166
+    # review: an old file keeps its own rule and basis).
+    assert _backfilled(report) == {**line, "owner_basis": "most_queries"}
 
 
+@pytest.mark.passes_on_main
 def test_writes_split_two_to_one() -> None:
     """Writes 2 on DynamoDB and 1 on Aurora MySQL, plus 5 Aurora MySQL reads: Sources of
     truth has no source of truth for it, the map says "no single writer", and the owner
-    it names is the wave plan's own (``_durable_owner``: most queries)."""
+    it names is the wave plan's own (``_durable_owner``: the relational step, #2166)."""
     job = _job(
         [
             _qa("w1", "dynamodb", [T]),

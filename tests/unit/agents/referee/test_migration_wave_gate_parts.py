@@ -331,6 +331,7 @@ def test_the_gate_whole_is_the_facts_moving_table_count_and_the_remainder_is_nam
     assert "The other" in wave["gate"] and "moves with no further" in wave["gate"]
 
 
+@pytest.mark.passes_on_main
 def test_a_merged_wave_states_each_engines_own_moving_count():
     """#551: in a DynamoDB/DocumentDB wave the "of the N" is that engine's own count,
     the one `facts.waves[].moving_by_engine` carries, not the wave's total."""
@@ -339,8 +340,14 @@ def test_a_merged_wave_states_each_engines_own_moving_count():
     ranking = [*RANKING, {"target": "documentdb", "assigned_queries": 2, "workload_percent": 1.0}]
     table_assignments = [
         *TABLE_ASSIGNMENTS,
+        # Written on DocumentDB, so they move there (#2166: the owner is the writer).
         *(
-            {"table_id": t, "primary_engine": "documentdb", "engines": ["documentdb"]}
+            {
+                "table_id": t,
+                "primary_engine": "documentdb",
+                "engines": ["documentdb"],
+                "source_of_truth": "documentdb",
+            }
             for t in ("wp_docs", "wp_docs2")
         ),
     ]

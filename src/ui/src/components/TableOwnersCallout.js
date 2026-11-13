@@ -13,7 +13,7 @@ import { tableOwnershipOf } from "../utils/reportFacts";
  * "Table owners" (#212, ADR-031 Amendment 9): one line per mapped source table
  * from report.json's facts.table_owner_lines -- the same lines the engineering
  * report's Migration map states: its owner (the engine that takes its writes;
- * a table no query writes, the engine serving most of its queries; never a
+ * a table no query writes, the plan's relational engine (#2166); never a
  * cache), the other engines that also read it through CDC replicas, and the
  * cache in front of its reads. The counts are the facts layer's (ADR-032); this
  * only formats them. Collapsed when the page opens, like Sources of truth.
@@ -35,6 +35,15 @@ function ownerText(row, t) {
   if (row.owner_basis !== 'split_writes') return name;
   const split = t('analysis-results.table-owners.split-writes');
   return row.owner ? `${name} (${split})` : split;
+}
+
+// #2166 review: the rule the report's own lines follow (facts.table_owner_lines.
+// unwritten_owner_rule): a report saved before #2166 gave a table nothing writes to
+// the engine serving most of its queries, so it states that rule above its rows.
+export function ruleKey(ownership) {
+  return ownership.unwritten_owner_rule === 'most_queries'
+    ? 'analysis-results.table-owners.rule-most-queries'
+    : 'analysis-results.table-owners.rule';
 }
 
 const TableOwnersCallout = memo(({ synthesis, t }) => {
@@ -71,7 +80,7 @@ const TableOwnersCallout = memo(({ synthesis, t }) => {
         headerText={t('analysis-results.table-owners.header', { count: ownership.table_count })}
       >
         <SpaceBetween size="s">
-          <Box>{t('analysis-results.table-owners.rule')}</Box>
+          <Box data-figure="owner-rule">{t(ruleKey(ownership))}</Box>
           <Box data-figure="owned-tables">
             {owned.map(([engine, count]) => (
               <div key={engine} data-engine={engine}>

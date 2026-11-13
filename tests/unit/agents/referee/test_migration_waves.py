@@ -36,24 +36,33 @@ RANKING = [
     {"target": "opensearch", "assigned_queries": 4, "workload_percent": 3.7},
 ]
 
+# DynamoDB takes the writes of the three tables it serves (ADR-031 Amendment 9): a
+# table's owner is its writer, never its main reader (#2166).
 TABLE_ASSIGNMENTS = [
     {
         "table_id": "wp_posts",
         "primary_engine": "dynamodb",
         "engines": ["dynamodb"],
         "query_count": 40,
+        "write_engines": ["dynamodb"],
+        "source_of_truth": "dynamodb",
     },
     {
         "table_id": "wp_postmeta",
         "primary_engine": "dynamodb",
         "engines": ["dynamodb"],
         "query_count": 30,
+        "write_engines": ["dynamodb"],
+        "source_of_truth": "dynamodb",
     },
     {
         "table_id": "wp_comments",
         "primary_engine": "dynamodb",
         "engines": ["dynamodb", "opensearch"],
         "query_count": 20,
+        "write_engines": ["dynamodb"],
+        "source_of_truth": "dynamodb",
+        "replica_engines": ["opensearch"],
     },
     {
         "table_id": "wp_options",
@@ -965,9 +974,10 @@ class TestSearchReadModelWave:
 
     def test_table_whose_primary_engine_is_opensearch_gets_a_durable_owner(self):
         # Finding 1: an upstream bug (#317) can leave primary_engine=opensearch.
-        # The wave must still name a real owner — the first non-search engine in
-        # `engines`, here dynamodb — and that table must show up in DynamoDB's
-        # wave, not vanish from every wave.
+        # The wave must still name a real owner and the table must show up in
+        # DynamoDB's wave, not vanish from every wave. Nothing writes it, so the
+        # owner is the relational step's engine, not DynamoDB, its other reader
+        # (#2166, ADR-033 Amendment 1).
         table_assignments = [
             *TABLE_ASSIGNMENTS,
             {
@@ -985,7 +995,7 @@ class TestSearchReadModelWave:
         search = waves[3]
         assert "wp_users" in dynamo["tables"]
         owner = next(o for o in search["table_owners"] if o["table"] == "wp_users")
-        assert owner["owner"] == "dynamodb"
+        assert owner["owner"] == "aurora_mysql"
 
     def test_table_whose_only_engine_is_opensearch_falls_back_to_retained(self):
         table_assignments = [
@@ -1013,15 +1023,19 @@ class TestSearchReadModelWave:
     def test_durable_owner_skips_an_elasticache_primary_engine(self):
         # #318 review: _durable_owner was generalized from skipping only
         # SEARCH_ENGINES to skipping NON_OWNER_ENGINES, so a cache engine as
-        # primary_engine (never legitimate, but defense in depth) is also
-        # passed over for the first real owner in `engines`.
+        # primary_engine (never legitimate, but defense in depth) never owns.
+        # Nothing writes the table, so the relational step keeps it, not
+        # DynamoDB, its other reader (#2166).
         table = {
             "table_id": "wp_sessions",
             "primary_engine": "elasticache",
             "engines": ["elasticache", "dynamodb"],
             "query_count": 10,
         }
-        assert _durable_owner(table, retained_engine="aurora_mysql") == "dynamodb"
+        assert _durable_owner(table, retained_engine="aurora_mysql") == "aurora_mysql"
+        # Written on DynamoDB: its writer owns it.
+        written = {**table, "source_of_truth": "dynamodb"}
+        assert _durable_owner(written, retained_engine="aurora_mysql") == "dynamodb"
 
     def test_durable_owner_falls_back_to_retained_when_only_elasticache(self):
         table = {
@@ -1140,7 +1154,9 @@ class TestPseudoAndUnknownTables:
 
 
 def _derive_table_assignments(
-    query_assignments: list[dict], retained_engine: str | None = None
+    query_assignments: list[dict],
+    retained_engine: str | None = None,
+    writers: dict[str, str] | None = None,
 ) -> list[dict]:
     """A tiny, test-only stand-in for ``table_assignments.derive_table_assignments``:
     builds a self-consistent ``table_assignments`` straight from
@@ -1148,7 +1164,9 @@ def _derive_table_assignments(
     touching the table; ``primary_engine`` is the plurality winner, ties
     broken toward ``retained_engine``) so a #562 regression test's two inputs
     cannot silently disagree with each other the way hand-written fixtures
-    can.
+    can. ``writers`` names the engine a table's writes sit on (its
+    ``source_of_truth``): the wave plan's owner of the table (#2166); a table
+    not in it has no writer, and the relational step keeps it.
     """
     counts: dict[str, dict[str, int]] = {}
     for qa in query_assignments:
@@ -1158,7 +1176,10 @@ def _derive_table_assignments(
     rows = []
     for t, engine_counts in counts.items():
         primary = max(engine_counts, key=lambda e: (engine_counts[e], e == retained_engine, e))
-        rows.append({"table_id": t, "primary_engine": primary, "engines": sorted(engine_counts)})
+        row = {"table_id": t, "primary_engine": primary, "engines": sorted(engine_counts)}
+        if (writer := (writers or {}).get(t)) is not None:
+            row.update(write_engines=[writer], source_of_truth=writer)
+        rows.append(row)
     return rows
 
 
@@ -1186,11 +1207,23 @@ class TestQueryScopedTables:
             "wp_wc_reserved_stock": "dynamodb",
             "wp_woocommerce_downloadable_product_permissions": "aurora_mysql",
         }
+        # Each table's writes sit on the engine that owns it (#2166: the owner is the
+        # writer); the tables Aurora MySQL keeps are written there too.
         table_assignments = [
-            {"table_id": t, "primary_engine": "documentdb", "engines": ["documentdb"]}
+            {
+                "table_id": t,
+                "primary_engine": "documentdb",
+                "engines": ["documentdb"],
+                "source_of_truth": "documentdb",
+            }
             for t in owned
         ] + [
-            {"table_id": t, "primary_engine": owner, "engines": sorted([owner, "documentdb"])}
+            {
+                "table_id": t,
+                "primary_engine": owner,
+                "engines": sorted([owner, "documentdb"]),
+                "source_of_truth": owner,
+            }
             for t, owner in synced.items()
         ]
         query_assignments = [
@@ -1285,6 +1318,7 @@ class TestQueryScopedTables:
         dynamo_wave = next(w for w in waves if w["engines"] == ["dynamodb"])
         assert "t_shared" in dynamo_wave["tables"]
 
+    @pytest.mark.passes_on_main
     def test_coverage_note_now_runs_for_document_and_other_target_waves(self):
         # #562: the dual-read gate text used to be wired up for DynamoDB
         # only. Both directions now fire for a DocumentDB wave too.
@@ -1297,10 +1331,10 @@ class TestQueryScopedTables:
         # data can never produce (``derive_table_assignments`` always adds
         # an assigned query's own engine to the table's ``engines`` list).
         #
-        # wp_posts: 2 DocumentDB touches, 1 Aurora MySQL touch -> DocumentDB
-        # owns it (forward case: Aurora MySQL's own query still reads a
-        # table DocumentDB owns). wp_legacy: 2 Aurora MySQL touches, 1
-        # DocumentDB touch -> Aurora MySQL owns it, DocumentDB merely serves
+        # wp_posts: written on DocumentDB -> DocumentDB owns it (forward
+        # case: Aurora MySQL's own query still reads a table DocumentDB
+        # owns). wp_legacy: nothing writes it -> the relational step, Aurora
+        # MySQL, keeps it (#2166), DocumentDB merely serves
         # it (reverse case: DocumentDB's own query reads a table it does not
         # own -- the served-but-not-owned table #562 added to DocumentDB's
         # wave in the first place).
@@ -1313,7 +1347,7 @@ class TestQueryScopedTables:
             {"query_id": "qd2", "assigned_engine": "documentdb", "source_tables": ["wp_legacy"]},
         ]
         table_assignments = _derive_table_assignments(
-            query_assignments, retained_engine="aurora_mysql"
+            query_assignments, retained_engine="aurora_mysql", writers={"wp_posts": "documentdb"}
         )
         ranking = [
             {"target": "documentdb", "assigned_queries": 3, "workload_percent": 50.0},
@@ -1346,6 +1380,7 @@ class TestQueryScopedTables:
         assert "Aurora MySQL owns (wave 1) and keeps owning" in doc_wave["gate"]
         assert "keep a DocumentDB copy of them current via CDC" in doc_wave["gate"]
 
+    @pytest.mark.passes_on_main
     def test_kept_in_sync_table_is_named_even_read_together_with_an_owned_table(self):
         # #568 review round 2, Important 2: on real discourse data,
         # ``discourse.child_themes`` and ``discourse.post_actions`` are kept
@@ -1395,8 +1430,11 @@ class TestQueryScopedTables:
                 "source_tables": ["post_actions"],
             },
         ]
+        # DocumentDB writes the two tables it owns (#2166: the owner is the writer).
         table_assignments = _derive_table_assignments(
-            query_assignments, retained_engine="aurora_mysql"
+            query_assignments,
+            retained_engine="aurora_mysql",
+            writers={"themes": "documentdb", "reviewable_scores": "documentdb"},
         )
         ranking = [
             {"target": "documentdb", "assigned_queries": 4, "workload_percent": 50.0},

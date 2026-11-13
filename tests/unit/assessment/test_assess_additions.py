@@ -22,6 +22,7 @@ from src.agents.referee.aurora_choice import source_database_engine
 from src.assessment import AssessmentResult
 from src.assessment.models import LABEL_BY_PHASE, ResultLabel, StatementType
 from src.shared.catalog.patterns import engine_pattern, patterns
+from src.shared.engine_names import SOURCE_DATABASE
 from src.shared.report_facts import assignment_table_usage, table_owner_line, table_owner_reason
 from src.storage.assignment_versioning import resolve_effective_assignment_version
 from tests.unit.assessment.conftest import COLLECTIONS, PLACED_JOB, assessed, placed_run
@@ -204,21 +205,50 @@ def test_table_reason_by_writes() -> None:
     )
 
 
-def test_table_reason_by_most_queries() -> None:
-    assert _reason({}, {"dynamodb": 1}) == "No statement writes it; DynamoDB serves its only query."
-    assert _reason({}, {"dynamodb": 3, "aurora_mysql": 1}) == (
+def _old_reason(
+    writes: dict[str, int], queries: dict[str, int], retained: str | None = None
+) -> str:
+    """The reason a report written before #212 gets: its lines keep the rule its own
+    waves used, the owner engine serving most of its queries (#2166)."""
+    line = table_owner_line(writes, queries, [], (), retained_engine=retained, design_fallback=True)
+    reason = table_owner_reason(line, writes, queries, retained)
+    assert reason is not None
+    return reason
+
+
+def test_table_reason_with_no_writer() -> None:
+    """#2166: nothing writes it, so the relational step keeps it, whichever engine
+    reads it most."""
+    assert _reason({}, {"dynamodb": 1}, retained="aurora_mysql") == (
+        "No statement writes it, so it stays on Aurora MySQL, the plan's relational engine; "
+        "DynamoDB reads a copy kept current from Aurora MySQL via CDC."
+    )
+    assert _reason({}, {"dynamodb": 3, "aurora_mysql": 1}, retained="aurora_mysql") == (
+        "No statement writes it, so it stays on Aurora MySQL, the plan's relational engine; "
+        "DynamoDB reads a copy kept current from Aurora MySQL via CDC."
+    )
+
+
+@pytest.mark.passes_on_main
+def test_table_reason_by_most_queries_in_an_older_report() -> None:
+    assert _old_reason({}, {"dynamodb": 1}) == (
+        "No statement writes it; DynamoDB serves its only query."
+    )
+    assert _old_reason({}, {"dynamodb": 3, "aurora_mysql": 1}, retained="aurora_mysql") == (
         "No statement writes it; DynamoDB serves 3 of its 4 queries, more than any other "
         "engine that can own a table; Aurora MySQL reads a copy kept current from DynamoDB "
         "via CDC."
     )
 
 
+@pytest.mark.passes_on_main  # an older report keeps main's own tie wording
 def test_table_reason_names_how_a_tie_was_settled() -> None:
-    to_retained = _reason({}, {"dynamodb": 1, "aurora_mysql": 1}, retained="aurora_mysql")
+    """Only an older report's reader owner was settled by a tie (#2166)."""
+    to_retained = _old_reason({}, {"dynamodb": 1, "aurora_mysql": 1}, retained="aurora_mysql")
     assert "Aurora MySQL serves 1 of its 2 queries, tied with DynamoDB; a tie goes to the " in (
         to_retained
     )
-    by_id = _reason({}, {"dynamodb": 1, "documentdb": 1})
+    by_id = _old_reason({}, {"dynamodb": 1, "documentdb": 1})
     assert (
         "DocumentDB serves 1 of its 2 queries, tied with DynamoDB; a tie goes to the engine "
         in (by_id)
@@ -238,15 +268,25 @@ def test_the_tie_rule_wording_matches_the_id_order() -> None:
 
 def test_table_reason_when_the_owner_serves_every_query() -> None:
     assert (
-        _reason({}, {"dynamodb": 3})
+        _reason({}, {"aurora_mysql": 3}, retained="aurora_mysql")
+        == "No statement writes it, so it stays on Aurora MySQL, the plan's relational engine."
+    )
+    assert (
+        _old_reason({}, {"dynamodb": 3})
         == "No statement writes it; DynamoDB serves all 3 of its queries."
     )
 
 
 def test_table_reason_with_split_writes() -> None:
-    reason = _reason({"dynamodb": 1, "aurora_mysql": 2}, {"dynamodb": 3, "aurora_mysql": 2})
-    assert reason.startswith("Its writes are on Aurora MySQL and DynamoDB, so the owner is ")
-    assert "DynamoDB serves 3 of its 5 queries" in reason
+    writes, queries = {"dynamodb": 1, "aurora_mysql": 2}, {"dynamodb": 3, "aurora_mysql": 2}
+    assert _reason(writes, queries, retained="aurora_mysql") == (
+        "Its writes are on Aurora MySQL and DynamoDB, so no single engine owns it and it "
+        "stays on Aurora MySQL, the plan's relational engine; DynamoDB reads a copy kept "
+        "current from Aurora MySQL via CDC."
+    )
+    old = _old_reason(writes, queries)
+    assert old.startswith("Its writes are on Aurora MySQL and DynamoDB, so the owner is ")
+    assert "DynamoDB serves 3 of its 5 queries" in old
 
 
 def test_table_reason_retained_and_none() -> None:
@@ -254,9 +294,16 @@ def test_table_reason_retained_and_none() -> None:
         "No engine that can own a table queries it, so it stays on Aurora MySQL, the "
         "retained relational engine."
     )
+    # No relational step: the source database keeps it (#2166), never the cache.
     line = table_owner_line({}, {"elasticache": 2}, ["elasticache"], ())
-    assert line["owner"] is None
-    assert table_owner_reason(line, {}, {"elasticache": 2}) is None
+    assert line["owner"] == SOURCE_DATABASE
+    assert table_owner_reason(line, {}, {"elasticache": 2}) == (
+        "No statement writes it and no relational engine is in scope, so it stays on the "
+        "source database."
+    )
+    old = table_owner_line({}, {"elasticache": 2}, ["elasticache"], (), design_fallback=True)
+    assert old["owner"] is None
+    assert table_owner_reason(old, {}, {"elasticache": 2}) is None
 
 
 # --------------------------------------------------------------------------- statements

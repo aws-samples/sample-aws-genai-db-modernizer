@@ -827,7 +827,9 @@ class TableMapping(BaseModel):
         description=(
             "The table's owner as the wave plan states it: the engine that takes its writes "
             "(one writer per table); a table no query writes, or one whose writes are split: "
-            "the owner engine serving most of its queries. Never a cache or search engine"
+            "the relational step's engine, else the source database (#2166; a report written "
+            "before: the owner engine serving most of its queries). Never a cache or search "
+            "engine"
         ),
     )
     owner_basis: Literal["writes", "split_writes", "most_queries", "retained", "design"] | None = (
@@ -3124,6 +3126,15 @@ class TableOwnershipFacts(BaseModel):
     cached_table_count: int = Field(0, ge=0, description="Tables a cache engine fronts")
     cache_engines: list[str] = Field(
         default_factory=list, description="The cache engines named in cached_by, sorted"
+    )
+    unwritten_owner_rule: Literal["relational_step", "most_queries"] | None = Field(
+        None,
+        description=(
+            "The rule the lines give a table nothing writes (#2166): relational_step, the "
+            "plan's relational engine; most_queries, the engine serving most of its queries "
+            "(a report saved before #2166). Every deliverable prints the rule sentence it "
+            "names; filled in at read time for a block stored before it"
+        ),
     )
     table_lines: list[TableOwnershipRow] = Field(
         default_factory=list, description="Sorted by table"

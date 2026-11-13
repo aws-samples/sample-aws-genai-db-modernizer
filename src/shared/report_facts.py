@@ -74,6 +74,7 @@ from src.shared.risk_severity import (
 from src.shared.signal_labels import SIGNAL_NOUNS
 from src.shared.source_cache import cost_basis_sentence
 from src.shared.table_keys import normalize_table_name
+from src.shared.table_writer import table_writer
 from src.shared.target_databases import engine_scope_display_order
 from src.shared.trade_off_topics import (
     TOPIC_LABELS,
@@ -2922,15 +2923,23 @@ def table_source_facts(report: dict[str, Any]) -> dict[str, Any] | None:
 # ---------------------------------------------------------------------------
 
 # Why a table's owner is its owner. The owner itself is always the wave plan's
-# (``migration_waves.wave_table_owners``, ``_durable_owner``): its source of truth,
-# else its ``primary_engine`` (``migration_wave_engines.primary_owner_engine``), else
-# the retained engine; this only says which of those applied.
+# (``migration_waves.wave_table_owners``, ``_durable_owner``): its writer
+# (``table_writer``: its source of truth, else the relational step's engine, else the
+# source database, #2166); this only says which of those applied.
 OWNER_BY_WRITES = "writes"  # the one engine its in-scope writes sit on (source of truth)
 OWNER_BY_SPLIT_WRITES = "split_writes"  # writes on several engines: no single writer
-OWNER_BY_MOST_QUERIES = "most_queries"  # no write: the engine serving most of its queries
-OWNER_BY_RETAINED = "retained"  # no owner engine queries it: wave 1's retained engine
+# No write, owned by the engine serving most of its queries: the rule of a report
+# written before #2166 only, kept so its lines still say why.
+OWNER_BY_MOST_QUERIES = "most_queries"
+OWNER_BY_RETAINED = "retained"  # no single writer: the relational step's engine keeps it
 # A report written before #212 that carries no query of the table: its design's engine.
 OWNER_BY_DESIGN = "design"
+# Which rule a report's lines give a table nothing writes (#2166 review): the relational
+# step's engine, or, in a report saved before #2166, the engine serving most of its
+# queries. The rule sentence every deliverable prints above the lines is the one this
+# names (``unwritten_owner_rule``).
+UNWRITTEN_BY_RELATIONAL_STEP = "relational_step"
+UNWRITTEN_BY_MOST_QUERIES = "most_queries"
 OWNER_BASES = (
     OWNER_BY_WRITES,
     OWNER_BY_SPLIT_WRITES,
@@ -2960,17 +2969,19 @@ def table_owner_line(
 
     The owner is the wave plan's, so the Migration map, the wave plan's owner lines and
     kept-in-sync counts and Sources of truth never disagree (ADR-031 Amendment 9). With
-    no ``owner`` given (a report written before #212) the same rule is applied here:
-    the one engine its writes sit on, else the owner engine serving most of its queries
-    (``primary_owner_engine``: a tie to the retained engine), else the retained engine.
-    A cache or search engine (``NON_OWNER_ENGINES``) never owns a table.
-    ``design_fallback`` is for such an older report only: a table it carries no query
-    of (so the rule has nothing to count) takes its design's engine before the
-    retained one (``design``).
+    no ``owner`` given (``assess()`` before synthesis) the same rule is applied here
+    (``table_writer``, #2166): the one engine its writes sit on, else the retained engine
+    (the relational step's), else the source database. A cache or search engine
+    (``NON_OWNER_ENGINES``) never owns a table. ``design_fallback`` is for a report
+    written before #212, filled at read time: it keeps the rule its own waves used, the
+    one writer, else the owner engine serving most of its queries
+    (``primary_owner_engine``: a tie to the retained engine), else, for a table it
+    carries no query of, its design's engine (``design``), else the retained engine.
 
     - **owner_basis**: ``writes`` (one writer), ``split_writes`` (writes on several
       engines: no single writer, as Sources of truth says; the owner is still the wave
-      plan's), ``most_queries`` (no write), ``retained`` (no owner engine queries it).
+      plan's), ``retained`` (no write: the relational step keeps it), ``most_queries``
+      (no write, and the owner is a reader: a report written before #2166).
     - **also_read_by**: every other engine with an in-scope query on the table, which
       reads a copy kept in sync from the owner via CDC; most queries first, then by id.
     - **cached_by**: the cache engine fronting one of its reads, or whose schema design
@@ -2985,19 +2996,30 @@ def table_owner_line(
         design = next((e for e in designs if e not in NON_OWNER_ENGINES), None)
         if len(w) == 1 and w[0] not in NON_OWNER_ENGINES:
             owner = w[0]
-        elif (counted := primary_owner_engine(q, retained)) is not None:
-            owner = counted
-        elif design_fallback and not w and not q and design:
-            owner, by_design = design, True
+        elif design_fallback:
+            # A report written before #212 keeps the rule its own waves used (the owner
+            # engine serving most of its queries), so its map and waves still agree.
+            if (counted := primary_owner_engine(q, retained)) is not None:
+                owner = counted
+            elif not w and not q and design:
+                owner, by_design = design, True
+            else:
+                owner = retained
         else:
-            owner = retained
+            owner = table_writer("", {}, retained)
     if by_design:
         basis: str | None = OWNER_BY_DESIGN
     elif len(w) > 1:
         basis = OWNER_BY_SPLIT_WRITES
     elif w:
         basis = OWNER_BY_WRITES
-    elif any(e not in NON_OWNER_ENGINES for e in q):
+    elif design_fallback:
+        # A report written before #212 keeps its own basis too: no write, queried.
+        if any(e not in NON_OWNER_ENGINES for e in q):
+            basis = OWNER_BY_MOST_QUERIES
+        else:
+            basis = OWNER_BY_RETAINED if owner else None
+    elif owner and owner != table_writer("", {}, retained) and owner in q:
         basis = OWNER_BY_MOST_QUERIES
     else:
         basis = OWNER_BY_RETAINED if owner else None
@@ -3030,8 +3052,8 @@ def table_owner_reason(
     ``writes`` and ``queries`` are the table's usage the line was built from
     (:func:`assignment_table_usage`): its write statements and all its queries per
     engine; ``retained_engine`` is the one the line was given. The sentence states the
-    owner basis with the counts behind it (and how a tie on queries was settled:
-    ``primary_owner_engine``), then the engines that read a copy. None when the line
+    owner basis with the counts behind it (for an older report's reader owner, how a tie
+    on queries was settled: ``primary_owner_engine``), then the engines that read a copy. None when the line
     has no owner basis.
     """
     owner = str(line.get("owner") or "")
@@ -3060,10 +3082,26 @@ def table_owner_reason(
         share += f", tied with {_engine_list(tied)}; {rule}"
     elif len(served) > 1:
         share += ", more than any other engine that can own a table"
+    # The relational step keeps a table with no single writer (``table_writer``, #2166).
+    if owner == SOURCE_DATABASE:
+        name = "the source database"
+        kept = "it stays on the source database"
+    else:
+        kept = f"it stays on {name}, the plan's relational engine"
+    relational = owner == table_writer("", {}, retained_engine)
     if basis == OWNER_BY_DESIGN:
         text = f"{name} owns it in the schema design; no statement in scope queries it"
     elif basis == OWNER_BY_WRITES:
         text = f"{name} takes every statement that writes it ({_statements(writes.get(owner, 0))})"
+    elif basis == OWNER_BY_RETAINED and owner == SOURCE_DATABASE:
+        text = f"No statement writes it and no relational engine is in scope, so {kept}"
+    elif basis == OWNER_BY_RETAINED and served:
+        text = f"No statement writes it, so {kept}"
+    elif basis == OWNER_BY_SPLIT_WRITES and relational:
+        writers = sorted(
+            (str(e) for e, n in writes.items() if e and n), key=lambda e: (-writes[e], e)
+        )
+        text = f"Its writes are on {_engine_list(writers)}, so no single engine owns it and {kept}"
     elif basis == OWNER_BY_RETAINED or not on_owner:
         text = f"No engine that can own a table queries it, so it stays on {name}, the retained relational engine"
     elif basis == OWNER_BY_SPLIT_WRITES:
@@ -3078,6 +3116,16 @@ def table_owner_reason(
         verb = "reads" if len(readers) == 1 else "read"
         text += f"; {_engine_list(readers)} {verb} a copy kept current from {name} via CDC"
     return text + "."
+
+
+def unwritten_owner_rule(table_lines: Iterable[Mapping[str, Any]]) -> str:
+    """The rule a report's owner lines give a table nothing writes (#2166 review):
+    ``most_queries`` when a line's owner was taken from its queries (a report saved
+    before #2166, or one written before #212 filled at read time), else
+    ``relational_step``. Every deliverable prints the rule sentence this names."""
+    if any(r.get("owner_basis") == OWNER_BY_MOST_QUERIES for r in table_lines):
+        return UNWRITTEN_BY_MOST_QUERIES
+    return UNWRITTEN_BY_RELATIONAL_STEP
 
 
 def wave_listed_owners(waves: Iterable[Mapping[str, Any]] | None) -> dict[str, str]:
@@ -3385,6 +3433,7 @@ def table_ownership_facts(
         ),
         "cached_table_count": sum(1 for r in tables if r["cached_by"]),
         "cache_engines": sorted({str(r["cached_by"]) for r in tables if r["cached_by"]}),
+        "unwritten_owner_rule": unwritten_owner_rule(tables),
         "table_lines": tables,
     }
 

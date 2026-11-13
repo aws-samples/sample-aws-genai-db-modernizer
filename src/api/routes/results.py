@@ -81,22 +81,14 @@ def get_results(job_id: str = Depends(job_id_param)):
     # one written before 1.38 its per-kind unservable counts (#888), one written before
     # the retired-engine statements existed gains them (#1076), and one written before
     # #1146 its query-pattern figures.
-    facts = synthesis.get("facts")
-    unservable = facts.get("unservable") if isinstance(facts, dict) else None
-    if (
-        not isinstance(facts, dict)
-        or "access_pattern_totals" not in facts
-        or "moving_query_count" not in facts
-        or "query_total_count" not in facts
-        or "resolved_risks_by_severity" not in facts
-        or "retired_in_use_engines" not in facts
-        or "query_pattern_counts" not in facts
-        or "cache_layer" not in facts
-        or (isinstance(unservable, dict) and "no_fit_query_count" not in unservable)
-        # #1329: and one written before it, its no-engine-in-scope count.
-        or (isinstance(unservable, dict) and "no_engine_in_scope_query_count" not in unservable)
-    ):
-        synthesis["facts"] = report_facts(synthesis)
+    # #2166 review: every report goes through the reader, whatever its facts block
+    # carries. This used to run only when one of a listed set of figures was absent, so
+    # each new fact needed a clause here and the UI silently missed the ones nobody
+    # added (``table_owner_lines.unwritten_owner_rule``: the rule the callout states).
+    # ``report_facts`` fills in only what is missing and returns the stored block
+    # untouched when nothing is, so this costs a report that has everything nothing and
+    # cannot go stale. In memory only: nothing here writes report.json.
+    synthesis["facts"] = report_facts(synthesis)
 
     # #996: the deterministic summary stored by an older run can name the other targets
     # by raw engine id and word its risk and access-pattern counts the old way. The

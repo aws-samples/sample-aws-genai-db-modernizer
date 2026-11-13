@@ -14,7 +14,7 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
-from src.report.table_owners import OWNER_RULE, ownership_summary_text
+from src.report.table_owners import OWNER_RULE, OWNER_RULE_MOST_QUERIES, ownership_summary_text
 
 REPO = Path(__file__).resolve().parents[3]
 EN = json.loads((REPO / "src/ui/src/locales/en.json").read_text())
@@ -22,6 +22,11 @@ EN = json.loads((REPO / "src/ui/src/locales/en.json").read_text())
 
 def test_the_ui_states_the_owner_rule_word_for_word() -> None:
     assert EN["analysis-results.table-owners.rule"] == OWNER_RULE
+
+
+def test_the_ui_states_an_older_reports_rule_word_for_word() -> None:
+    """#2166 review: a report saved before #2166 states the rule its own lines follow."""
+    assert EN["analysis-results.table-owners.rule-most-queries"] == OWNER_RULE_MOST_QUERIES
 
 
 def test_the_ui_counts_use_the_reports_wording() -> None:

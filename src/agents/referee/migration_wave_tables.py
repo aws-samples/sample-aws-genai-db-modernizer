@@ -12,6 +12,7 @@ from src.shared.engine_names import display_engine
 from src.shared.gate_facts import GATE_LIST_MAX
 from src.shared.migration_risk_rules import join_words
 from src.shared.migration_wave_engines import KV_ENGINES, NON_OWNER_ENGINES, RELATIONAL_ENGINES
+from src.shared.table_writer import table_writer
 
 
 def _plural(n: int, noun: str) -> str:
@@ -75,47 +76,30 @@ def _short_version(version: Any) -> str | None:
 
 
 def _durable_owner(table: dict[str, Any], retained_engine: str | None) -> str:
-    """The engine that durably owns ``table`` — never a cache or read-model engine.
+    """The engine that durably owns ``table``: its writer (``table_writer``, #2166).
 
-    ``primary_engine`` is used unless it is a non-owner engine
-    (``NON_OWNER_ENGINES``: a cache, which fronts hot reads but owns nothing,
-    or a read-model/search engine, which indexes data synced from a real
-    owner), in which case the first owner engine in ``engines`` takes over,
-    and failing that the source-compatible retained engine (#225, #317):
-    every table a non-owner engine serves must resolve to a real owner,
-    never the non-owner engine itself.
+    A written table's owner is its ``source_of_truth`` (#992, ADR-031 Amendment 9): the
+    one engine all its writes land on, which the other engines that serve it replicate
+    from. A table nothing writes, or whose writes have no single engine, stays with the
+    relational step's engine (``retained_engine``), and the engines that read it read a
+    copy; with no relational step the source database keeps it (ADR-033 Amendment 1, the
+    rule the slice plan's move units read). Never the plurality ``primary_engine``, a
+    summary label (Decision 1): a table only DynamoDB reads is still the relational
+    step's.
 
-    Follow-up considered after #317 fixed this at the source
-    (``table_assignments.derive_table_assignments`` now never picks a
-    read-model or cache engine as ``primary_engine``): reducing this function
-    to just ``return str(table.get("primary_engine") or retained_engine or
-    "unresolved")`` would be simpler, but ``table_assignments`` here is a
-    plain ``dict`` this builder does not require to come from that resolver
-    (a stored artifact predating #317, a hand-built fixture, a future
-    caller), and the explicit regression tests for exactly this shape
-    (``test_migration_waves.py::TestSearchReadModelWave``) exist for that
-    reason. Keeping the non-owner skip here is defense in depth, not a
-    live bug; simplifying it is a follow-up for whoever next touches this
-    function, not required by #317.
-
-    A written table's owner is its ``source_of_truth`` (#992, ADR-031 Decision
-    15): the one engine all its writes land on, which the other engines that
-    serve it replicate from. The plurality ``primary_engine`` is only a summary
-    (Decision 1), so it never names the owner of a written table: a table
-    written on DynamoDB is owned there even when more of its reads run on
-    Aurora.
+    A cache or search engine (``NON_OWNER_ENGINES``) never owns a table (#225, #317):
+    a ``source_of_truth`` or ``retained_engine`` naming one is skipped. Routing never
+    puts a write there, so this is defense in depth for a hand-built or stored row.
     """
+    table_id = str(table.get("table_id") or "")
     source_of_truth = table.get("source_of_truth")
-    if source_of_truth and source_of_truth not in NON_OWNER_ENGINES:
-        return str(source_of_truth)
-    primary = table.get("primary_engine")
-    engines = table.get("engines") or ([primary] if primary else [])
-    if primary and primary not in NON_OWNER_ENGINES:
-        return str(primary)
-    for engine in engines:
-        if engine and engine not in NON_OWNER_ENGINES:
-            return str(engine)
-    return retained_engine or "unresolved"
+    writers = (
+        {table_id: str(source_of_truth)}
+        if source_of_truth and source_of_truth not in NON_OWNER_ENGINES
+        else {}
+    )
+    relational = retained_engine if retained_engine not in NON_OWNER_ENGINES else None
+    return table_writer(table_id, writers, relational)
 
 
 def _served_tables(engine: str, table_assignments: list[dict[str, Any]]) -> list[dict[str, Any]]:
