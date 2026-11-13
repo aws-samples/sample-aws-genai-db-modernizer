@@ -65,8 +65,16 @@ DynamoDB part of the latest split has a readable draft and neither the group rev
 merge have started, the ``--status`` command and then steps 6c and 6d; when every part's review
 is recorded and the merge has not run, the ``run_pe_review.py`` command and then step 6d.
 
-Stdlib only, no repo imports. It writes one file, the first-seen times above, and reads
-nothing else of its own. Any error, a missing state file or an unreadable
+The dispatch ledger (#2215, ``dispatch_ledger.py``): when the job has one and the CLI sends
+``background_tasks``, the hook reconciles it before deciding: a running subagent the ledger
+does not list as outstanding is opened again, so the wait it names blocks rather than
+printing ``nothing_pending`` at once (a block, a wait with no sleep, a block again, ... would
+spin, since each tool call resets Claude Code's count of blocks in a row); with nothing
+running every outstanding entry is settled, and the reason names the Done signal check, not
+the wait.
+
+Stdlib only, no repo imports. It writes two files, the first-seen times above and the
+dispatch ledger, and reads nothing else of its own. Any error, a missing state file or an unreadable
 transcript allows (fail open); the e2e-llm transcript check stays the backstop.
 """
 
@@ -83,6 +91,7 @@ from pathlib import Path
 from typing import Any
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+import dispatch_ledger  # noqa: E402
 import hook_common  # noqa: E402
 
 RESULT = "MODERNIZE_RESULT:"
@@ -308,7 +317,10 @@ def _reason(job: str, db: str, parts: tuple[int, int] | None, reviewed: int | No
             "then the 6d merge."
         )
     else:
-        hint = "Run the documented status command of the current phase and its next step."
+        hint = (
+            "Run the documented status command of the current phase (its Done signal check, "
+            "not the wait) and its next step."
+        )
     return (
         "Blocked: nothing is running and this /modernize --auto run has no MODERNIZE_RESULT "
         f"line, so ending the turn ends the run. {hint} Continue now, or end with "
@@ -384,6 +396,38 @@ def first_seen(job_dir: Path, agents: list[dict[str, Any]], now: float) -> dict[
     return current
 
 
+def reconcile_ledger(
+    job_dir: Path, tasks: Any, agents: list[dict[str, Any]], now: float, session: Any = None
+) -> None:
+    """Bring this session's entries in the job's dispatch ledger (#2215) in line with
+    ``background_tasks``, when the ledger exists, the CLI sends them, and ``session`` is
+    the one the job cursor names: a subagent still running that the ledger does not list
+    as outstanding is opened again, so the wait this hook names blocks instead of printing
+    ``nothing_pending`` at once (no loop with no sleep); with nothing running, this
+    session's outstanding entries are settled, so the next wait says ``nothing_pending``.
+    Another session's entries are never touched. Best effort."""
+    if not isinstance(tasks, list) or not dispatch_ledger.valid_session(session):
+        return
+    entries = dispatch_ledger.read(job_dir)
+    if entries is None:
+        return  # no ledger: the wait keeps its bounded wait
+    out = dispatch_ledger.outstanding(entries, session)
+    try:
+        if agents:
+            running = [str(a["id"]) for a in agents if a.get("id")]
+            reopen = [i for i in running if i not in out and dispatch_ledger.valid_id(i)]
+            if reopen:
+                dispatch_ledger.mark_dispatched(
+                    job_dir, reopen, now, session=session, reopen=True, by="stop hook"
+                )
+        elif not tasks and out:
+            dispatch_ledger.mark_reported(
+                job_dir, sorted(out), now, session=session, by="stop hook"
+            )
+    except OSError:
+        pass
+
+
 def _phase(project: Path) -> str:
     state = _read_json(project / ".modernizer-state.json")
     phase = state.get("current_phase") if isinstance(state, dict) else None
@@ -416,9 +460,13 @@ def decide(event: dict[str, Any], project: Path, now: float | None = None) -> st
     if not root.is_absolute():
         root = project / root
     job_dir = root / job[1] / job[0]
+    now = time.time() if now is None else now
+    state = _read_json(project / ".modernizer-state.json")
+    owner = state.get("session_id") if isinstance(state, dict) else None
+    session = event.get("session_id")
+    reconcile_ledger(job_dir, tasks, agents, now, session if session == owner else None)
     if agents:
         # Headless, a turn that ends while subagents run can end the run (#2175).
-        now = time.time() if now is None else now
         seen = first_seen(job_dir, agents, now)
         for agent in agents:
             agent_id = str(agent.get("id"))

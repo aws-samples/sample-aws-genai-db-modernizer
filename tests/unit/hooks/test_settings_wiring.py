@@ -43,6 +43,8 @@ def test_interactive_settings() -> None:
         "remind_llm_run.py": ("Stop", ""),
         "remind_quote_printed_summary.py": ("PostToolUse", "Bash"),
         "require_gate_shown.py": ("PreToolUse", "Bash|Agent|Task"),
+        "record_dispatch.py": ("PostToolUse", "Agent|Task|SendMessage"),
+        "record_report.py": ("SubagentStop", ""),
     }
 
 
@@ -57,4 +59,6 @@ def test_headless_settings() -> None:
         "remind_quote_printed_summary.py": ("PostToolUse", "Bash"),
         "require_gate_shown.py": ("PreToolUse", "Bash|Agent|Task"),
         "require_modernize_result.py": ("Stop", ""),
+        "record_dispatch.py": ("PostToolUse", "Agent|Task|SendMessage"),
+        "record_report.py": ("SubagentStop", ""),
     }

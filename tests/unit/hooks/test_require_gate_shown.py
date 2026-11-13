@@ -731,3 +731,25 @@ def test_the_mode_comes_from_the_latest_modernize_prompt(tmp_path: Path) -> None
         path = _write(tmp_path, [*records, _thinking("msg-next")])
         check = hook.gate_check(hook.iter_records(path), JOB)
         assert (check.status, check.auto) == ("not_quoted", auto)
+
+
+@pytest.mark.parametrize(
+    "flags",
+    [
+        "--mark-dispatched a1",
+        "--mark-reported a1",
+        "--mark-dispatched a1 --mark-reported a1",
+        "--wait-for-report 110",
+        "--mark-reported=a1 --wait-for-report 110",
+    ],
+)
+def test_ledger_marks_and_the_report_wait_are_not_phase6(flags: str) -> None:
+    """#2215: the orchestrator records every dispatch, the reality-check subagent's
+    before the gate included; a mark or a wait starts no schema design, so the gate never
+    holds it and it never counts as the start of Phase 6."""
+    command = f"uv run python scripts/run_schema_design.py --job-id j1 --db d1 {flags}"
+    assert hook.phase6_job({"tool_name": "Bash", "tool_input": {"command": command}}) is None
+    split = (
+        "uv run python scripts/run_schema_design.py --job-id j1 --db d1 --engine dynamodb --split"
+    )
+    assert hook.phase6_job({"tool_name": "Bash", "tool_input": {"command": split}}) == "j1"

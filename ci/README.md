@@ -557,15 +557,16 @@ Ten small scripts that refuse a guardrail bypass at the tool call. Each reads th
 | Script | Event / matcher | Where | Rule |
 |---|---|---|---|
 | `block_commit_bypass.py` | PreToolUse `Bash` | both | Blocks `git commit --no-verify` (or `-n`), the pre-commit skip variable and `git -c core.hooksPath=... commit`. |
-| `block_credential_output.py` | PreToolUse `Bash` | both | Blocks a call that prints a cloud credential helper's output, because a Bash call's output stays in the session log (#1165). Capturing the output in a variable, piping it into a `--password-stdin` login or redirecting it to a file passes. |
+| `block_credential_output.py` | PreToolUse `Bash` | both | Blocks a call that prints a cloud credential helper's output, which would stay in the session log (#1165); capturing, piping or redirecting it passes. |
 | `block_fork_pr_push.py` | PreToolUse `Bash` | both | In a worktree checked out for a contributor's fork PR, refuses a `git push` to anything but the fork (#1165). |
-| `block_baseline_edit.py` | PreToolUse `Edit\|Write\|MultiEdit` | both | Blocks hand edits of the generated baselines and snapshots, naming the command that regenerates each. |
-| `block_contract_version_edit.py` | PreToolUse `Edit\|Write\|MultiEdit` | both | Blocks a hand edit of an existing contract's `contract_version` default or of a Version History line, naming `scripts/bump_contract.py` and `scripts/resolve_contract_versions.py` (#1408). |
+| `block_baseline_edit.py` | PreToolUse `Edit\|Write\|MultiEdit` | both | Blocks hand edits of generated baselines and snapshots, naming each one's regenerating command. |
+| `block_contract_version_edit.py` | PreToolUse `Edit\|Write\|MultiEdit` | both | Blocks a hand edit of a contract's `contract_version` default or Version History, naming `scripts/bump_contract.py` (#1408). |
 | `remind_llm_run.py` | Stop | `settings.json` only | Says when the branch's changes need a real-model run (`ci/needs_llm_run.py` says `required`). Never blocks. |
 | `enforce_tool_use_rule.py` | PreToolUse `Bash` | `settings.ci.json` only | Refuses a Bash call that is not exactly one simple command covered by a `Bash(...)` allow rule in `settings.ci.json` (the shared tool-use rule). |
 | `require_gate_shown.py` | PreToolUse `Bash\|Agent\|Task` | both | Holds schema design in a `/modernize` run until the approval gate ran on its own and its block is in the orchestrator's own chat text (#1401, #1626). |
 | `remind_quote_printed_summary.py` | PostToolUse `Bash` | both | After `print_summary.py --gate` or `--final`, tells the model to paste the printed block verbatim (#1605). Never blocks. |
 | `require_modernize_result.py` | Stop | `settings.ci.json` only | `/modernize --auto`/`-y` only (`/wave-edit`: text only): refuses a stop with no `MODERNIZE_RESULT` line and nothing (#1574) or a subagent (#2175) running. |
+| `record_dispatch.py`, `record_report.py` | PostToolUse `Agent\|Task\|SendMessage`, SubagentStop | both | Record dispatches and reports in the job's ledger (#2215). |
 
 "both" means `settings.json` and `settings.ci.json`. Headless runs load both files (`--setting-sources project` plus `--settings`), and a command listed in both runs once. `hook_common.split_compound_command` is a tested copy of `ci/llm/run.py`'s splitter, which a hook cannot import. The headless run also denies `Bash(git push *)`, so `block_fork_pr_push.py` matters in interactive sessions.
 
@@ -673,3 +674,10 @@ obvious entries lives here instead:
   `decisions/wave-edit/`, moves that wave's design files to `wave-redesign/` the
   same way, and prints one JSON line. It has no `--rollback`: a failed round
   is rolled back with `run_wave_redesign.py --rollback`.
+- `Bash(uv run python scripts/run_schema_design.py *)` also covers
+  `--mark-dispatched <id> ...` and `--mark-reported <id> ...` (#2215): the
+  headless orchestrator's dispatch ledger. They write one file,
+  `<job>/_logs/dispatch_ledger.json` (atomically), take only subagent ids
+  (letters, digits, `_.:-`) and print one JSON line; `--wait-for-report` reads
+  that ledger and returns `nothing_pending` only when it lists no outstanding
+  subagent. No new allow rule is needed.

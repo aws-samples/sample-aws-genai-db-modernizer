@@ -444,3 +444,113 @@ def test_every_other_engine_reviewed_keeps_the_dynamodb_step(run_hook, project) 
     res = run_hook(SCRIPT, event, env=_env(project))
     assert _blocked(res), res.stderr
     assert "Every DynamoDB part's review is recorded (3 of 3)" in res.stderr
+
+
+# ---------------------------------------------------------------------------
+# #2215: the Stop hook and the wait together never spin. Each wait is a tool call, which
+# resets Claude Code's count of blocks in a row, so a wait the hook names that returns at
+# once (nothing_pending) while a subagent runs would loop with no sleep until it reports.
+# ---------------------------------------------------------------------------
+
+
+def _job_dir(project: Path) -> Path:
+    return project / "artifacts" / DB / JOB
+
+
+def _owned_by_s1(project: Path) -> None:
+    """The job cursor names the session the events come from (``_event``'s ``s1``)."""
+    path = project / ".modernizer-state.json"
+    path.write_text(json.dumps({**json.loads(path.read_text()), "session_id": "s1"}))
+
+
+def _named_wait_sleeps(project: Path) -> tuple[str, float]:
+    """Run the wait the hook names, with a fake clock; its line's status and time slept."""
+    from scripts import run_schema_design
+
+    slept: list[float] = []
+    now = [0.0]
+
+    def sleep(seconds: float) -> None:
+        slept.append(seconds)
+        now[0] += seconds
+
+    import contextlib
+    import io
+
+    buf = io.StringIO()
+    with contextlib.redirect_stdout(buf):
+        run_schema_design.run_wait_for_report(
+            _job_dir(project), 110, sleep=sleep, clock=lambda: now[0], session="s1"
+        )
+    return json.loads(buf.getvalue().strip().splitlines()[-1])["status"], sum(slept)
+
+
+@pytest.mark.parametrize(
+    ("dispatched", "reported"),
+    [
+        (["a1"], ["a1"]),  # the orchestrator recorded a report too early
+        ([], []),  # it never recorded the dispatch
+        (["a1"], []),  # recorded as it should be
+    ],
+)
+def test_a_running_subagent_makes_the_named_wait_block(
+    run_hook, project, dispatched, reported
+) -> None:
+    from scripts.hooks import dispatch_ledger
+
+    job = _job_dir(project)
+    _owned_by_s1(project)
+    dispatch_ledger.mark_dispatched(job, ["z9", *dispatched], session="s1")
+    dispatch_ledger.mark_reported(job, ["z9", *reported], session="s1")
+    records = [_rec("user", AUTO_PROMPT), _launch("a1", datetime.now(UTC) - timedelta(minutes=2))]
+    for _ in range(3):  # stop, wait, stop, wait, ...: every named wait sleeps
+        res = run_hook(
+            SCRIPT, _event(project, records, background_tasks=[PART_1]), env=_env(project)
+        )
+        assert _waiting(res), res.stderr
+        status, slept = _named_wait_sleeps(project)
+        assert status != "nothing_pending" and slept == 110.0
+    entries = dispatch_ledger.read(job) or {}
+    assert sorted(dispatch_ledger.outstanding(entries, "s1")) == ["a1"]
+
+
+def test_with_nothing_running_the_hook_settles_the_ledger_and_names_the_check(
+    run_hook, project
+) -> None:
+    from scripts.hooks import dispatch_ledger
+
+    job = _job_dir(project)
+    _owned_by_s1(project)
+    dispatch_ledger.mark_dispatched(job, ["a1", "a2"], session="s1")  # reports never recorded
+    dispatch_ledger.mark_dispatched(job, ["other1"], session="s-other")  # another session's
+    res = run_hook(SCRIPT, _event(project), env=_env(project))
+    assert _blocked(res), res.stderr
+    assert "--wait-for-report" not in res.stderr
+    entries = dispatch_ledger.read(job) or {}
+    assert dispatch_ledger.outstanding(entries, "s1") == {}
+    assert list(dispatch_ledger.outstanding(entries, "s-other")) == ["other1"]  # untouched
+    status, slept = _named_wait_sleeps(project)
+    assert status == "nothing_pending" and slept == 0.0
+
+
+def test_with_no_ledger_the_hook_writes_none(run_hook, project) -> None:
+    """No ledger: the wait keeps its bounded wait (it always sleeps), so nothing to fix."""
+    from scripts.hooks import dispatch_ledger
+
+    records = [_rec("user", AUTO_PROMPT), _launch("a1", datetime.now(UTC) - timedelta(minutes=2))]
+    res = run_hook(SCRIPT, _event(project, records, background_tasks=[PART_1]), env=_env(project))
+    assert _waiting(res), res.stderr
+    assert not (_job_dir(project) / dispatch_ledger.LEDGER).exists()
+    assert _named_wait_sleeps(project) == ("no_change", 110.0)
+
+
+def test_the_hook_never_touches_a_ledger_of_a_job_another_session_runs(run_hook, project) -> None:
+    from scripts.hooks import dispatch_ledger
+
+    job = _job_dir(project)
+    path = project / ".modernizer-state.json"
+    path.write_text(json.dumps({**json.loads(path.read_text()), "session_id": "s-other"}))
+    dispatch_ledger.mark_dispatched(job, ["a2"], session="s-other")
+    before = (job / dispatch_ledger.LEDGER).read_text()
+    run_hook(SCRIPT, _event(project), env=_env(project))  # nothing running, session s1
+    assert (job / dispatch_ledger.LEDGER).read_text() == before

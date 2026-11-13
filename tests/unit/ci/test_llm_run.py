@@ -3919,3 +3919,75 @@ def test_every_escape_level_of_a_value_is_decoded_before_the_comparison(
     assert entry.get("key") == "[withheld]" and entry["context"][0]["json_path"] == "$[*]"
     assert entry["context"][0]["length"] == 12
     assert "Xv7W" not in manifest
+
+
+@pytest.mark.parametrize(
+    "flags",
+    [
+        "--mark-dispatched a1",
+        "--mark-reported a1",
+        "--mark-dispatched a1 --mark-reported a1",
+        "--wait-for-report 110",
+        "--mark-reported a1 --wait-for-report 110",
+    ],
+)
+def test_ledger_marks_and_the_report_wait_never_start_schema_design(flags: str) -> None:
+    """#2215: the dispatch ledger runs in every phase. A wordpress run marked its
+    reality-check subagent with run_schema_design.py before the gate, and the check took
+    that for the start of schema design ("quoted ... only after schema design started")."""
+    call = {
+        "type": "tool_use",
+        "name": "Bash",
+        "input": {
+            "command": f"uv run python scripts/run_schema_design.py --job-id j --db d {flags}"
+        },
+    }
+    assert not run._phase6_starts("assistant", call)
+    split = json.loads(json.dumps(call))
+    split["input"][
+        "command"
+    ] = "uv run python scripts/run_schema_design.py --job-id j --db d --engine dynamodb --split"
+    assert run._phase6_starts("assistant", split)
+
+
+def test_a_ledger_mark_before_the_gate_keeps_a_passing_run_passing(tmp_path: Path) -> None:
+    records = _ui_records()
+    gate_at = next(
+        i
+        for i, rec in enumerate(records)
+        if rec.get("type") == "assistant"
+        and "print_summary.py" in json.dumps(rec)
+        and "--gate" in json.dumps(rec)
+    )
+    mark = "uv run python scripts/run_schema_design.py --job-id j --db d --mark-dispatched a1 --mark-reported a1"
+    records[gate_at:gate_at] = [
+        {
+            "type": "assistant",
+            "message": {
+                "id": "msg-mark",
+                "role": "assistant",
+                "content": [
+                    {
+                        "type": "tool_use",
+                        "id": "tu-mark",
+                        "name": "Bash",
+                        "input": {"command": mark},
+                    }
+                ],
+            },
+        },
+        {
+            "type": "user",
+            "message": {
+                "role": "user",
+                "content": [
+                    {
+                        "type": "tool_result",
+                        "tool_use_id": "tu-mark",
+                        "content": '{"status": "recorded", "outstanding": []}',
+                    }
+                ],
+            },
+        },
+    ]
+    run.check_transcript(_transcript(tmp_path, records), "ui")
