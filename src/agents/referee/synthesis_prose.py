@@ -23,6 +23,9 @@ text is checked, whatever mode wrote the design and however old it is:
   dropped where the sentence reads the same without it
   (``prose_style.replace_confidence_figures``); one it cannot drop goes back to
   deterministic text like any other hit;
+- the design split's own term "design part(s)" reads "part(s) of the design"
+  (``prose_style.replace_pipeline_terms``); a field with any other pipeline term
+  (``prose_style.PIPELINE_TERMS``, #2184) goes back to deterministic text;
 - a field with any other item of the plain-prose style list goes back to
   deterministic text: a trade-off or an access pattern gets a short sentence
   built from its own structured fields, an optimization's recommendation names
@@ -51,8 +54,10 @@ from src.shared.engine_names import display_engine, display_engine_ids
 from src.shared.prose_style import (
     find_style_hits,
     has_confidence_figure,
+    pipeline_terms_in,
     replace_confidence_figures,
     replace_dashes,
+    replace_pipeline_terms,
 )
 
 # Model-written fields that fall back to empty text: the risk builder then uses
@@ -140,16 +145,21 @@ def clean_schema_design_prose(
 
     def clean(path: str, value: str, fallback: Callable[[], str]) -> str:
         # #1574: a raw engine id the model copied from its input reads as the engine's name.
-        cleaned = display_engine_ids(
-            replace_confidence_figures(replace_dashes(value, names), names)
+        # #2184: "design part" reads "part of the design"; another pipeline term rejects.
+        cleaned = replace_pipeline_terms(
+            display_engine_ids(replace_confidence_figures(replace_dashes(value, names), names))
         )
         found = {f'"{h.term}"' for h in find_style_hits(cleaned, names)}
         if has_confidence_figure(cleaned):
             found.add('"N% confidence"')
+        internal = sorted(f'"{t}"' for t in pipeline_terms_in(cleaned))
         terms = sorted(found)
-        if not terms:
+        if not terms and not internal:
             return cleaned
-        rejections.append(f"{engine} {path}: plain-prose style list ({', '.join(terms)})")
+        if terms:
+            rejections.append(f"{engine} {path}: plain-prose style list ({', '.join(terms)})")
+        if internal:
+            rejections.append(f"{engine} {path}: pipeline terms ({', '.join(internal)})")
         return fallback()
 
     def each_field(key: str, fields: tuple[str, ...], fallback: Callable[..., str]) -> None:

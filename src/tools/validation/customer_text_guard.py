@@ -95,7 +95,7 @@ from src.agents.referee.engine_exclusions import EXCLUSION_RULES
 from src.agents.referee.query_scoring import GATE_KINDS
 from src.agents.referee.tie_break import TIE_KINDS
 from src.shared.engine_names import ENGINE_DISPLAY_NAMES, ENGINE_ID_RE, is_iam_name
-from src.shared.prose_style import CONFIDENCE_FIGURE_RE
+from src.shared.prose_style import CONFIDENCE_FIGURE_RE, PIPELINE_TERMS
 
 # Fields distinctive enough that no other field in src/contracts/ shares their
 # bare name -- excluded at any depth. See the module docstring for why a
@@ -521,12 +521,8 @@ _CONFIDENCE_WORDING_RE = CONFIDENCE_FIGURE_RE  # one definition: src.shared.pros
 # customer -- see the module docstring above and engine_exclusions.py's own). Built
 # from the rules themselves so a new rule is covered automatically.
 # The design split's own terms (#2141): a cut placement unit's risk says what happened
-# in customer words, never in the pipeline's.
-PIPELINE_TERMS: tuple[str, ...] = (
-    "routing places together",
-    "design part",
-    "the merge reconciled",
-)
+# in customer words, never in the pipeline's. One list, shared with the model-text pass
+# that rewrites or rejects them (``prose_style.PIPELINE_TERMS``, #2184).
 LOG_ONLY_PHRASES: tuple[str, ...] = (
     *(rule.description for rule in EXCLUSION_RULES),
     *PIPELINE_TERMS,
