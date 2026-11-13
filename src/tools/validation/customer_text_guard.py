@@ -243,6 +243,7 @@ ID_FIELD_PATHS = frozenset(
         ("move_units", "engine"),  # MoveUnit.engine
         ("reverse_replicas", "engine"),  # ReverseReplica.engine
         ("not_offered", "serving_engines"),  # NotOfferedPath.serving_engines
+        ("engine_costs", "engine"),  # AdoptionEngineCost.engine (#2170)
         # Move unit and slice keys lead with an engine id ("dynamodb:wp_posts"): ids.
         ("move_units", "key"),  # MoveUnit.key
         ("step_stages", "unit_keys"),  # SliceStage.unit_keys

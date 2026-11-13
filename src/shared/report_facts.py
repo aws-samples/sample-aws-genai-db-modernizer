@@ -44,7 +44,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 from src.shared import catalog
-from src.shared.adoption_facts import adoption_facts, slice_plan_facts
+from src.shared.adoption_facts import PathPricer, adoption_facts, slice_plan_facts
 from src.shared.cache_engines import CACHE_ENGINES
 from src.shared.cache_role import cache_role_sentence
 from src.shared.capability_labels import capability_label, flag_redesign_hints, redesign_hints
@@ -3838,6 +3838,7 @@ def compute_report_facts(
     readiness: bool = True,
     routines: Mapping[str, Any] | None = None,
     slice_inputs: SliceInputs | None = None,
+    path_pricer: PathPricer | None = None,
 ) -> dict[str, Any]:
     """Every customer-facing figure, computed once (``SynthesisOutputContract.facts``).
 
@@ -3880,6 +3881,9 @@ def compute_report_facts(
     ``slice_inputs`` is what the slice plan reads of the assignment and the collection
     (``src.shared.move_units.SliceInputs``, #1129, #1698): synthesis passes it, and
     a report rebuilt without it states the empty plan.
+    ``path_pricer`` prices each adoption path for the queries it places on each engine,
+    with the TCO's own sizing (``src.shared.adoption_facts.PathPricer``, #2170): synthesis
+    passes it, and without it each path states the full target's estimates.
     """
     if waves is None:
         waves = [w for w in (report.get("migration_waves") or []) if isinstance(w, dict)]
@@ -4070,7 +4074,7 @@ def compute_report_facts(
                 risks_by_engine=by_engine,
             )
         ),
-        "adoption": adoption_facts(report, plan, slice_inputs),
+        "adoption": adoption_facts(report, plan, slice_inputs, price=path_pricer),
     }
 
 

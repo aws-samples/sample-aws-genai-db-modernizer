@@ -19,7 +19,9 @@ LLM seam functions (for Skill Sync / external LLM integration):
 """
 
 import dataclasses
+from collections.abc import Mapping
 from datetime import UTC, datetime
+from typing import Any
 
 from src.agents.prompt_framing import with_untrusted_notice
 from src.agents.referee.assigned_cost import engine_queries
@@ -99,6 +101,7 @@ from src.contracts.executive_summary_response import (
 )
 from src.contracts.skipped_placeholders import SkippedSynthesisReport
 from src.contracts.synthesis_output import SynthesisOutputContract
+from src.shared.adoption_facts import PathPricer
 from src.shared.assumptions import (
     assumption_items,
     growth_assumption,
@@ -420,26 +423,17 @@ def run_synthesis_deterministic(
     # (built above): the DynamoDB cost counts it and facts.derived_copy_sync lists it.
     # #805, #1753: both design-time costs read the in-scope queries the TCO sizes each
     # engine for, on the collection's average load.
-    sized_query_ids = _sized_query_ids(data)
-    derived_copy_syncs = syncs_by_engine(
-        {e: a.schema_design for e, a in data.engines.items()},
-        risk_assessment.get("risks") or [],
-        data.collector,
-        sized_query_ids,
-    )
-    tco = build_tco_analysis(
-        data,
+    # #2170: one TCO for the headline, the growth scenarios and each adoption path, so
+    # every figure is the same sizing with the same prices; the risks it reads are the
+    # ones the headline was priced with.
+    priced_with = _TcoInputs(
         retired_costs=retired_costs,
         wave_one_engine=wave_retained_engine(migration_waves),
         retired_bases=retired_bases,
-        derived_copy_syncs=derived_copy_syncs,
-        # #805: the DynamoDB design's GSIs, priced once from the design (no design, no cost).
-        gsi_costs=gsi_costs_by_engine(
-            {e: a.schema_design for e, a in data.engines.items()},
-            data.collector,
-            sized_query_ids,
-        ),
+        risks=tuple(risk_assessment.get("risks") or []),
     )
+    derived_copy_syncs = priced_with.syncs(data)
+    tco = priced_with.tco(data, syncs=derived_copy_syncs)
     # #1195: a kept engine's ranking entry states its TCO figure (sized for its assigned
     # queries), never the whole-collection analysis estimate, so every cost agrees.
     sized = {
@@ -450,27 +444,12 @@ def run_synthesis_deterministic(
     for entry in ranking:
         if entry.get("target") in sized:
             entry["monthly_cost_usd"] = sized[str(entry["target"])]
+
     # #1990: growth is a scenario, never in the headline: the same TCO arithmetic at each
     # scenario growth's scaled rates, and the busiest estimated partition key value.
-    designs_by_engine = {e: a.schema_design for e, a in data.engines.items()}
-
     def _priced(collector: dict) -> float:
         scaled = dataclasses.replace(data, collector=collector)
-        return float(
-            build_tco_analysis(
-                scaled,
-                retired_costs=retired_costs,
-                wave_one_engine=wave_retained_engine(migration_waves),
-                retired_bases=retired_bases,
-                derived_copy_syncs=syncs_by_engine(
-                    designs_by_engine,
-                    risk_assessment.get("risks") or [],
-                    collector,
-                    sized_query_ids,
-                ),
-                gsi_costs=gsi_costs_by_engine(designs_by_engine, collector, sized_query_ids),
-            )["projected_monthly_cost"]
-        )
+        return float(priced_with.tco(scaled)["projected_monthly_cost"])
 
     # #2001 review S1: the busiest estimated key value over every entry, computed once:
     # the risk states it, and facts.busiest_partition_key (and the growth scenario) too.
@@ -772,6 +751,8 @@ def run_synthesis_deterministic(
         "growth_scenarios": growth_scenarios,
         "growth": [growth, growth_origin],
         "derived_copy_syncs": derived_copy_syncs,
+        # #2170: each adoption path's engines, sized for the queries it places on them.
+        "path_pricer": priced_with.path_pricer(data, tco),
         "eliminated_engines": eliminated,
         "considered_not_recommended": considered,
         "engines_in_use": sorted(running),
@@ -1712,6 +1693,9 @@ def _report_output_data(store: ArtifactStore, result: dict, assignment_version: 
         ),
         # #1129, #1698: the slice plan's move units, graph and steps, from the effective
         # assignment and the collection.
+        # #2170: each adoption path priced for the queries it places on each engine, with
+        # the TCO's own sizing (an older caller's result without it prices none).
+        path_pricer=result.get("path_pricer"),
         slice_inputs=(
             slice_inputs(
                 data.assignment,
@@ -1734,11 +1718,99 @@ def _report_output_data(store: ArtifactStore, result: dict, assignment_version: 
     return output_data
 
 
-def _sized_query_ids(data: SynthesisData) -> dict[str, list[str]] | None:
-    """By engine, the in-scope queries the TCO sizes it for; None with no assignment."""
+def synthesis_path_pricer(
+    store: ArtifactStore, database_name: str, job_id: str, assignment_version: int
+) -> PathPricer:
+    """The adoption-path pricer synthesis hands the facts layer for this job (#2170):
+    each path's cost re-prices the TCO for its placement, which needs synthesis's data
+    (the assignment, the collection, the designs and the risks), as the growth scenarios
+    do. A rebuild of ``facts`` from a job passes it to ``compute_report_facts`` so the
+    adoption block is the facts layer's output; nothing is written."""
+    result = run_synthesis_deterministic(job_id, database_name, store, assignment_version)
+    pricer: PathPricer = result["path_pricer"]
+    return pricer
+
+
+def _sized_query_ids(
+    data: SynthesisData, placed: Mapping[str, str] | None = None
+) -> dict[str, list[str]] | None:
+    """By engine, the in-scope queries the TCO sizes it for (with an adoption path's
+    ``placed``, #2170); None with no assignment."""
     if not (data.assignment or {}).get("query_assignments"):
         return None
-    return {e: engine_queries(data.assignment, e)[1] for e in data.engines}
+    return {e: engine_queries(data.assignment, e, placed)[1] for e in data.engines}
+
+
+@dataclasses.dataclass(frozen=True)
+class _TcoInputs:
+    """What the TCO is priced with besides the job's data (#2170): one function prices
+    the headline, the growth scenarios and every adoption path."""
+
+    retired_costs: dict[str, float] | None
+    wave_one_engine: str | None
+    retired_bases: dict[str, dict] | None
+    risks: tuple[Mapping[str, Any], ...]
+
+    def syncs(
+        self, data: SynthesisData, placed: Mapping[str, str] | None = None
+    ) -> dict[str, dict[str, Any]]:
+        """#1566: the derived copies' stream sync, for the queries each engine is sized
+        for; #805, #1753: both design-time costs read them, on the collection's average
+        load."""
+        return syncs_by_engine(
+            {e: a.schema_design for e, a in data.engines.items()},
+            self.risks,
+            data.collector,
+            _sized_query_ids(data, placed),
+        )
+
+    def tco(
+        self,
+        data: SynthesisData,
+        placed: Mapping[str, str] | None = None,
+        syncs: dict[str, dict[str, Any]] | None = None,
+    ) -> dict:
+        """The TCO for ``data``; ``placed`` is an adoption path's placement (None: the
+        full target), ``syncs`` its stream syncs when already computed."""
+        return build_tco_analysis(
+            data,
+            retired_costs=self.retired_costs,
+            # #1378: wave 1's Aurora engine stores the tables no in-scope query reads.
+            wave_one_engine=self.wave_one_engine,
+            retired_bases=self.retired_bases,
+            derived_copy_syncs=syncs if syncs is not None else self.syncs(data, placed),
+            # #805: the DynamoDB design's GSIs, priced once from the design (no design, no cost).
+            gsi_costs=gsi_costs_by_engine(
+                {e: a.schema_design for e, a in data.engines.items()},
+                data.collector,
+                _sized_query_ids(data, placed),
+            ),
+            placed=placed,
+        )
+
+    def path_pricer(self, data: SynthesisData, headline: Mapping[str, Any]) -> PathPricer:
+        """``facts.adoption``'s pricer (#2170): by engine, its TCO row for a path's
+        placement, as an ``AdoptionEngineCost``. An empty placement is the full target:
+        the ``headline`` TCO itself. Each placement is priced once."""
+        priced: dict[frozenset[tuple[str, str]], list[Any]] = {}
+
+        def price(placed: Mapping[str, str]) -> dict[str, dict[str, Any]]:
+            key = frozenset(placed.items())
+            if key not in priced:
+                tco = self.tco(data, placed) if placed else headline
+                priced[key] = list(tco.get("cost_breakdown") or [])
+            rows = priced[key]
+            return {
+                str(row["database"]): {
+                    "engine": str(row["database"]),
+                    "monthly_cost_usd": row["monthly_cost_usd"],
+                    "sizing": row.get("sizing"),
+                }
+                for row in rows
+                if isinstance(row, dict) and isinstance(row.get("monthly_cost_usd"), (int, float))
+            }
+
+        return price
 
 
 def _write_synthesis_report(

@@ -361,9 +361,9 @@ def test_the_facts_layer_hands_the_slice_inputs_to_the_paths(
 
     seen: list[Any] = []
 
-    def spy(report: Any, plan: Any, inputs: Any = None) -> dict[str, Any]:
+    def spy(report: Any, plan: Any, inputs: Any = None, price: Any = None) -> dict[str, Any]:
         seen.append(inputs)
-        return adoption_facts(report, plan, inputs)
+        return adoption_facts(report, plan, inputs, price=price)
 
     monkeypatch.setattr(report_facts_module, "adoption_facts", spy)
     inputs = job.inputs(relational_gate_failures={"aurora_mysql": ("q10",)})

@@ -4365,6 +4365,18 @@ def _path_step(path_id: str) -> int | None:
     return int(match.group(1)) if match.group(1) else None
 
 
+class AdoptionEngineCost(BaseModel):
+    """One engine's estimate on an adoption path (#2170): the TCO's own estimator and
+    prices, run on the queries the path places on the engine (a query whose step the
+    path does not take stays on the relational engine)."""
+
+    engine: str
+    monthly_cost_usd: float = Field(..., ge=0)
+    sizing: CostSizing | None = Field(
+        None, description="What the figure was sized for; None: the analysis estimate"
+    )
+
+
 class AdoptionPathFacts(BaseModel):
     """One offered adoption path (#1130): the plan stopped after a step, as a projection
     of the assignment (no Move, no re-scoring). Every figure a deliverable prints."""
@@ -4378,17 +4390,38 @@ class AdoptionPathFacts(BaseModel):
     queries_moved: int = Field(..., ge=0, description="In-scope queries it leaves off Aurora")
     queries_by_engine: dict[str, int] = Field(default_factory=dict)
     tables_migrate: int = Field(..., ge=0, description="Tables whose writer it moves off Aurora")
-    monthly_cost_usd: float = Field(..., ge=0, description="Its engines' cost_breakdown, summed")
-    cost_delta_vs_relational_usd: float = Field(...)
+    monthly_cost_usd: float = Field(
+        ...,
+        ge=0,
+        description=(
+            "Its engines' estimates summed: engine_costs' (per_path_sizing), or each "
+            "engine's full-target cost_breakdown row (full_target_estimates)"
+        ),
+    )
+    engine_costs: list[AdoptionEngineCost] = Field(
+        default_factory=list,
+        description=(
+            "Each of its engines once, sized for the queries the path places on it "
+            "(#2170); empty on a report written before per-path sizing"
+        ),
+    )
+    cost_delta_vs_relational_usd: float = Field(
+        ...,
+        description=(
+            "Its cost less the relational move only's (AdoptionFacts."
+            "relational_monthly_cost_usd when stated)"
+        ),
+    )
     cost_delta_vs_current_usd: float | None = Field(
         None, description="None when the current cost is not known"
     )
     cost_is_upper_bound: bool = Field(
         False,
         description=(
-            "Whether its cost is an upper bound. False while each engine's estimate is "
-            "sized for the queries it serves in the full target (#1130, #2170), so a path that "
-            "leaves more queries on Aurora is not bounded by it"
+            "Whether its cost is an upper bound. False: with per_path_sizing each engine "
+            "is sized for the queries the path places on it, an estimate and not a bound "
+            "(#2170); with full_target_estimates a path that leaves more queries on Aurora "
+            "is not bounded by the full target's Aurora estimate (#1130)"
         ),
     )
     critical_high_risks: int = Field(..., ge=0)
@@ -4415,6 +4448,17 @@ class AdoptionPathFacts(BaseModel):
         )
         if self.replicated_tables != sorted(set(self.replicated_tables)):
             raise ValueError("replicated_tables are sorted, each once")
+        if self.engine_costs:
+            priced = [c.engine for c in self.engine_costs]
+            _unique(priced, "engine_costs engines")
+            if set(priced) != set(self.engines):
+                raise ValueError("engine_costs prices each of the path's engines once")
+            total = round(sum(c.monthly_cost_usd for c in self.engine_costs), 2)
+            if self.monthly_cost_usd != total:
+                raise ValueError(
+                    f"{self.path_id}: monthly_cost_usd is {self.monthly_cost_usd}, its "
+                    f"engine_costs sum to {total}"
+                )
         return self
 
 
@@ -4438,10 +4482,17 @@ class NotOfferedPath(BaseModel):
 
 
 # What every path's cost rests on (#1130, #2170), with the one customer-safe line that
-# states it. The TCO sizes each engine for the queries it serves in the full target, and
-# no path re-estimates an engine for the queries an earlier stop leaves on it.
-AdoptionCostBasis = Literal["full_target_estimates"]
+# states it. ``per_path_sizing``: each path's engines are sized for the queries that path
+# places on them, with the TCO's own estimators and prices (#2170). ``full_target_estimates``
+# (a report written before #2170, or a caller with no TCO to price from): each engine's
+# estimate for the full target, not estimated again for what an earlier stop leaves on it.
+AdoptionCostBasis = Literal["full_target_estimates", "per_path_sizing"]
 ADOPTION_COST_BASIS_NOTES: dict[str, str] = {
+    "per_path_sizing": (
+        "Each path's cost adds up its engines' estimates for the queries that path "
+        "places on each of them, so the relational engine is estimated for every query "
+        "the path leaves on it."
+    ),
     "full_target_estimates": (
         "Each path's cost adds up its engines' estimates for the full target. An engine "
         "is not estimated again for the queries an earlier path leaves on it, so an "
@@ -4488,6 +4539,18 @@ class AdoptionFacts(BaseModel):
     cost_basis_note: str | None = Field(
         None, description="The cost basis as one customer-safe sentence"
     )
+    relational_monthly_cost_usd: float | None = Field(
+        None,
+        ge=0,
+        description=(
+            "The relational move only's cost (the engines of the steps that move no "
+            "query, sized with every moving query on the relational engine), which each "
+            "path's cost_delta_vs_relational_usd is measured from; stated with "
+            "per_path_sizing only, and only when the plan has a relational step: with none, "
+            "relational_only is not offered (no_relational_engine) and no difference from "
+            "it is printed (#2170)"
+        ),
+    )
     not_offered: list[NotOfferedPath] = Field(default_factory=list)
     one_step: OneStepFacts | None = Field(None)
 
@@ -4519,6 +4582,24 @@ class AdoptionFacts(BaseModel):
         expected_note = ADOPTION_COST_BASIS_NOTES.get(self.cost_basis or "")
         if self.cost_basis_note != expected_note:
             raise ValueError("cost_basis_note is the cost basis's own sentence")
+        sized = self.cost_basis == "per_path_sizing"
+        for p in self.paths:
+            if bool(p.engine_costs) != sized:
+                raise ValueError(
+                    f"{p.path_id}: engine_costs are stated exactly when the basis is "
+                    "per_path_sizing"
+                )
+        if self.relational_monthly_cost_usd is not None and not sized:
+            raise ValueError("relational_monthly_cost_usd is stated with per_path_sizing only")
+        if self.relational_monthly_cost_usd is not None:
+            for p in self.paths:
+                delta = round(p.monthly_cost_usd - self.relational_monthly_cost_usd, 2)
+                if p.cost_delta_vs_relational_usd != delta:
+                    raise ValueError(
+                        f"{p.path_id}: cost_delta_vs_relational_usd is "
+                        f"{p.cost_delta_vs_relational_usd}, its cost less the relational "
+                        f"move only's gives {delta}"
+                    )
         return self
 
 
@@ -4541,8 +4622,13 @@ def _streams(plan: SlicePlanFacts, steps: list[SliceStep]) -> int:
     )
 
 
-def _expected_path(plan: SlicePlanFacts, stop: int) -> dict[str, Any]:
-    """Every figure of the path that stops after step ``stop``, from the plan alone."""
+def _expected_path(plan: SlicePlanFacts, stop: int, sized: bool = False) -> dict[str, Any]:
+    """Every figure of the path that stops after step ``stop``, from the plan alone.
+
+    ``sized`` (``per_path_sizing``, #2170): the path's cost is its own engines' sized
+    estimates, which the plan cannot recompute, so its cost and difference are left to
+    ``AdoptionPathFacts`` and ``AdoptionFacts`` (their sum, and the difference from the
+    relational move only) and to the full target's check against the plan's costs."""
     steps = plan.plan_steps
     taken = steps[:stop]
     moving = [s for s in taken if s.kind in MOVING_STEP_KINDS]
@@ -4569,14 +4655,21 @@ def _expected_path(plan: SlicePlanFacts, stop: int) -> dict[str, Any]:
             *(t for r in u.reverse_replicas for t in r.tables),
         ]
     }
+    priced = (
+        {}
+        if sized
+        else {
+            "monthly_cost_usd": cost,
+            "cost_delta_vs_relational_usd": round(cost - relational_cost, 2),
+        }
+    )
     return {
         "engines": set(engines),
         "stage_count": sum(s.stage_count for s in taken),
         "queries_moved": moved,
         "queries_by_engine": by_engine,
         "tables_migrate": sum(s.owned_table_count for s in moving),
-        "monthly_cost_usd": cost,
-        "cost_delta_vs_relational_usd": round(cost - relational_cost, 2),
+        **priced,
         "critical_high_risks": risks,
         "replicated_tables": sorted(replicated),
         "temporary_stream_count": _streams(plan, taken),
@@ -4591,6 +4684,14 @@ def check_adoption_against_plan(adoption: AdoptionFacts, plan: SlicePlanFacts) -
     lead = 0
     while lead < len(steps) and steps[lead].kind in NO_MOVE_STEP_KINDS:
         lead += 1
+    has_relational = bool(steps) and steps[0].kind == "relational_step"
+    if (
+        adoption.cost_basis == "per_path_sizing"
+        and (adoption.relational_monthly_cost_usd is not None) != has_relational
+    ):
+        raise ValueError(
+            "relational_monthly_cost_usd is stated exactly when the plan has a relational step"
+        )
     for path in adoption.paths:
         if path.stops_after_step > len(steps):
             raise ValueError(f"{path.path_id} stops after a step the plan does not have")
@@ -4602,7 +4703,23 @@ def check_adoption_against_plan(adoption: AdoptionFacts, plan: SlicePlanFacts) -
             lead < path.stops_after_step < len(steps)
         ):
             raise ValueError(f"{path.path_id} must stop between relational_only and full_target")
-        expected = _expected_path(plan, path.stops_after_step)
+        sized = adoption.cost_basis == "per_path_sizing"
+        expected = _expected_path(plan, path.stops_after_step, sized)
+        if sized and path.stops_after_step == len(steps):
+            # #2170: the full target places nothing, so it is priced as the headline.
+            for c in path.engine_costs:
+                if c.monthly_cost_usd != plan.engine_monthly_cost_usd.get(c.engine):
+                    raise ValueError(
+                        f"the full target prices {c.engine} at {c.monthly_cost_usd}, today's "
+                        f"estimate is {plan.engine_monthly_cost_usd.get(c.engine)}"
+                    )
+        if (
+            sized
+            and path.path_id == "relational_only"
+            and set(path.engines) == {s.engine for s in steps if s.kind in NO_MOVE_STEP_KINDS}
+            and path.monthly_cost_usd != adoption.relational_monthly_cost_usd
+        ):
+            raise ValueError("relational_only costs relational_monthly_cost_usd")
         stated = path.model_dump()
         stated["engines"] = set(path.engines)
         for name, value in expected.items():

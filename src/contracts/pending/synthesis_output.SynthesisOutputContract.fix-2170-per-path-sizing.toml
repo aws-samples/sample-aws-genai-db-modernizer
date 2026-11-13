@@ -1,0 +1,6 @@
+# A pending contract version bump (ADR-008 Decision 8). The number is assigned by
+# uv run python scripts/resolve_contract_versions.py --release at release (a MAJOR: in its pull request).
+contract = "synthesis_output.SynthesisOutputContract"
+kind = "minor"
+reason = "Added optional ``AdoptionPathFacts.engine_costs`` (each of a path's engines, sized for the queries the path places on it, with its ``sizing``) and ``AdoptionFacts.relational_monthly_cost_usd`` (the relational move only's cost, each path's difference measured from it, stated only when the plan has a relational step); added the ``per_path_sizing`` value to ``facts.adoption.cost_basis`` with its sentence; ``check_adoption_against_plan`` checks the full target's engine costs against the plan's. A report written with ``full_target_estimates`` loads unchanged (#2170)."
+issue = 2170
