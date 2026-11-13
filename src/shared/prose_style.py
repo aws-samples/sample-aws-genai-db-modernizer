@@ -296,7 +296,42 @@ PIPELINE_TERMS_RULE = (
     "How the work is split is not part of the design: never write "
     + ", ".join(f'"{t}"' for t in PIPELINE_TERMS[:-1])
     + f' or "{PIPELINE_TERMS[-1]}". Name the table that holds the rows ("the `users` '
-    'table"), or write "another part of the design".'
+    'table"), or write "another part of the design". The tool is never "the pipeline", '
+    '"this pipeline" or "our pipeline" either: say what the deliverable provides ("no '
+    'trigger DDL is generated"), not what the pipeline emits.'
+)
+
+# #2206: the tool calling itself "the pipeline". "this/our pipeline" always is one; "the
+# pipeline" only when a tool verb follows ("the pipeline emits", "does not generate"), so
+# "the aggregation pipeline", "a sync pipeline" and "the CI/CD pipeline" are never matched
+# (a word between "the" and "pipeline" breaks the match).
+SELF_REFERENCE_TERMS: tuple[str, ...] = ("the pipeline", "this pipeline", "our pipeline")
+
+_TOOL_VERB = (
+    r"(?:emit(?:s|ted|ting)?|generat(?:e|es|ed|ing)|writ(?:e|es|ing)|wrote|written"
+    r"|produc(?:e|es|ed|ing)|creat(?:e|es|ed|ing)|output(?:s|ted|ting)?"
+    r"|render(?:s|ed|ing)?|build(?:s|ing)?|built|ship(?:s|ped|ping)?)"
+)
+_TOOL_ADVERB = (
+    r"(?:(?:does|do|did|will|would|can|could|should)\s*(?:not|n['\u2019]t)?"
+    r"|cannot|never|currently|also|only|then|still|already|yet|always|first|not)"
+)
+_SELF_REFERENCE_RES: tuple[tuple[str, re.Pattern[str]], ...] = (
+    (
+        "the pipeline",
+        re.compile(rf"\bthe\s+pipeline\s+(?:{_TOOL_ADVERB}\s+)*{_TOOL_VERB}\b", re.IGNORECASE),
+    ),
+    ("this pipeline", re.compile(r"\bthis\s+pipeline\b", re.IGNORECASE)),
+    ("our pipeline", re.compile(r"\bour\s+pipeline\b", re.IGNORECASE)),
+)
+
+# "The pipeline emits no trigger DDL" -> "No trigger DDL is generated". Only this "no X"
+# form has a natural rewrite; every other self-reference sends the field back.
+_EMITS_NO_RE = re.compile(
+    r"\bthe\s+pipeline\s+(?:emit|generate|produce|create|write)s\s+no\s+"
+    r"(?P<obj>[^.;:,!?\n]+?)"
+    r"(?=\s*(?:[.,;:!?]|$)|\s+(?:so|because|but|since|which)\b)",
+    re.IGNORECASE,
 )
 
 
@@ -325,20 +360,30 @@ def pipeline_term_spans(text: str) -> list[tuple[str, int, int]]:
     if not text:
         return []
     spans = [(t, m.start(), m.end()) for t, rx in _TERM_RES for m in rx.finditer(text)]
+    spans += [(t, m.start(), m.end()) for t, rx in _SELF_REFERENCE_RES for m in rx.finditer(text)]
     return sorted(spans, key=lambda s: s[1])
 
 
 def pipeline_terms_in(text: str) -> list[str]:
     """The pipeline terms ``text`` contains, each once, in ``PIPELINE_TERMS`` order."""
     found = {t for t, _, _ in pipeline_term_spans(text)}
-    return [t for t in PIPELINE_TERMS if t in found]
+    return [t for t in (*PIPELINE_TERMS, *SELF_REFERENCE_TERMS) if t in found]
 
 
 def replace_pipeline_terms(text: str) -> str:
-    """Rewrite "design part(s)" in model text as "part(s) of the design" where that
-    reads naturally; a possessive or labelled use is left for the caller to reject."""
+    """Rewrite "design part(s)" in model text as "part(s) of the design" and "the
+    pipeline emits no X" as "no X is generated" where that reads naturally; any other
+    use is left for the caller to reject."""
     if not text:
         return text
+
+    def no_object(m: re.Match[str]) -> str:
+        before = m.string[: m.start()].rstrip()
+        starts = not before or before[-1] in ".!?:\n"
+        obj = m.group("obj").strip()
+        last = obj.split()[-1].rstrip(")`\"'").lower()
+        plural = last.endswith("s") and not last.endswith(("ss", "us", "is"))
+        return f"{'No' if starts else 'no'} {obj} {'are' if plural else 'is'} generated"
 
     def sub(m: re.Match[str]) -> str:
         before = m.string[: m.start()].rstrip()
@@ -346,7 +391,7 @@ def replace_pipeline_terms(text: str) -> str:
         head = "Part" if m.group(1)[0].isupper() and starts else "part"
         return f"{head}{m.group(3).lower()} of the design"
 
-    return _DESIGN_PART_RE.sub(sub, text)
+    return _DESIGN_PART_RE.sub(sub, _EMITS_NO_RE.sub(no_object, text))
 
 
 # --- internal confidence figures (#1569) ------------------------------------
