@@ -28,7 +28,11 @@ from typing import Any
 
 from src.agents.schema_design.group_merger import ENGINE_LIST_FIELDS
 from src.agents.schema_design.revision_verifier import check_coverage
-from src.agents.schema_design.scope import COVERAGE_PREFIX, covered_query_ids
+from src.agents.schema_design.scope import (
+    COVERAGE_PREFIX,
+    check_failed_message,
+    covered_query_ids,
+)
 from src.storage.artifact_store import ArtifactStore
 
 logger = logging.getLogger(__name__)
@@ -126,8 +130,9 @@ def check_design_coverage(
 
     Empty for an engine outside :data:`COVERAGE_ENGINES`, a legacy version 0, a job
     with no assignment or collector output, or a skipped placeholder (no
-    ``access_patterns``). A check that breaks is logged and fails nothing, as the scope
-    check does; a contract version error is raised."""
+    ``access_patterns``). A check that breaks fails closed (#2154): its one message names
+    the error, so the design fails validation, as the scope check does; a contract version
+    error is raised."""
     from src.shared.contract_versioning import ContractVersionError
     from src.storage.assignment_versioning import read_assignment
     from src.storage.collector_for_models import read_collector_for_models
@@ -146,8 +151,8 @@ def check_design_coverage(
         return coverage_violations(engine, schema_output, required, input_parts(store, base_key))
     except ContractVersionError:
         raise
-    except Exception as exc:  # never fail a design because the check broke
+    except Exception as exc:  # noqa: BLE001 - fails closed (#2154): a violation, not a pass
         logger.warning(
-            "Coverage check skipped for %s (assignment v%s): %s", engine, assignment_version, exc
+            "Coverage check failed for %s (assignment v%s): %s", engine, assignment_version, exc
         )
-        return []
+        return [check_failed_message(COVERAGE_PREFIX, engine, exc)]

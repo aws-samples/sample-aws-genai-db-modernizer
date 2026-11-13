@@ -72,6 +72,20 @@ messages, so a fixed design does not keep a stale one."""
 #: The messages :func:`apply_scope_violations` owns and recomputes on every check.
 CHECK_PREFIXES = (SCOPE_PREFIX, COVERAGE_PREFIX)
 
+
+def check_failed_message(prefix: str, engine: str, exc: BaseException) -> str:
+    """The one violation a scope or coverage check that broke records (#2154).
+
+    It starts with the check's ``prefix``, so a later check that runs replaces it,
+    and names only the error type: the design fails validation with a reason
+    instead of passing unchecked.
+    """
+    return (
+        f"{prefix}{engine}: the check could not run ({type(exc).__name__}), so the design "
+        "is not accepted unchecked. Fix the job's artifacts and check the design again."
+    )
+
+
 # (list field, label field, table fields, query-id fields, nested lists)
 # A nested list entry is (field, label field, table fields, query-id fields).
 _Spec = tuple[

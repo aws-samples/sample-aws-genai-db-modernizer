@@ -48,9 +48,11 @@ from src.agents.schema_design.group_trace import scope_decision_trace
 from src.agents.schema_design.output_contract import SchemaContractError, write_schema_output
 from src.agents.schema_design.scope import (
     EMPTY_REPORT,
+    SCOPE_PREFIX,
     ScopeReport,
     apply_scope_violations,
     assess_schema_scope,
+    check_failed_message,
 )
 from src.contracts.analysis_output import (
     carried_writes_in_scope,
@@ -807,20 +809,25 @@ def check_schema_scope(
     """Check ``schema_output`` against the scope assignment ``v{N}`` gives the engine.
 
     Empty report when there is no assignment to check against (legacy version
-    0, or the artifact is absent) or the check itself fails unexpectedly (an
-    unreadable artifact, a shape nobody anticipated): that is logged and the
-    design is not failed on it. Never raises.
+    0, or the artifact is absent). A check that breaks (an unreadable artifact, a
+    shape nobody anticipated) fails closed (#2154): its one violation names the
+    error, so the design fails validation instead of passing unchecked. A contract
+    version error is raised. Never raises otherwise.
     """
+    from src.shared.contract_versioning import ContractVersionError
+
     try:
         assignment = read_assignment(store, database_name, job_id, assignment_version)
         if assignment is None:
             return EMPTY_REPORT
         report = assess_schema_scope(target_type, schema_output, assignment)
-    except Exception as exc:  # never fail a design because the check broke
+    except ContractVersionError:
+        raise
+    except Exception as exc:  # noqa: BLE001 - fails closed (#2154): a violation, not a pass
         logger.warning(
-            "Scope check skipped for %s (assignment v%s): %s", target_type, assignment_version, exc
+            "Scope check failed for %s (assignment v%s): %s", target_type, assignment_version, exc
         )
-        return EMPTY_REPORT
+        return ScopeReport([check_failed_message(SCOPE_PREFIX, target_type, exc)], [])
     for warning in report.warnings:
         logger.warning(warning)
     return report
