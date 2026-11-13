@@ -254,7 +254,8 @@ class RoutineSourcesError(ValueError):
     ``routine_sources``, built from each error's location and message only: the entries
     are routine code, so no part of an input is kept, and nothing is chained
     (``__cause__`` and ``__context__`` are None). :meth:`errors` lists ``loc`` and
-    ``msg`` per error."""
+    ``msg`` per error, and :meth:`json` the same as JSON. A request for 1.3 that sets
+    ``routine_sources`` is refused with it too."""
 
     def __init__(self, details: list[dict[str, Any]]) -> None:
         self._details = details
@@ -267,6 +268,13 @@ class RoutineSourcesError(ValueError):
         """Each error's ``loc`` and ``msg``, as :meth:`pydantic.ValidationError.errors`
         gives them, with no input."""
         return [dict(d) for d in self._details]
+
+    def json(self, *, indent: int | None = None) -> str:
+        """:meth:`errors` as JSON, as :meth:`pydantic.ValidationError.json` gives it,
+        with no input."""
+        return json.dumps(
+            [{"loc": list(d["loc"]), "msg": d["msg"]} for d in self._details], indent=indent
+        )
 
 
 def _routine_sources_error(exc: ValidationError) -> RoutineSourcesError | None:
@@ -368,17 +376,22 @@ def check_contract_version(version: Any) -> None:
         )
 
 
-def check_request_fields(request: AssessmentRequest) -> None:
-    """Refuse a request pinned to 1.3 that sets a field 1.4 added
-    (:data:`REQUEST_FIELDS_ADDED_IN_1_4`), also for one that skipped validation."""
-    if request.contract_version != "1.3":
-        return
-    named = [name for name in REQUEST_FIELDS_ADDED_IN_1_4 if getattr(request, name) is not None]
-    if named:
+def _refuse_fields_of_1_4(version: Any, named: list[str]) -> None:
+    """Refuse ``named`` (fields 1.4 added) on a request for ``version`` when that is 1.3.
+    The message names the fields and the versions, never a value."""
+    if version == "1.3" and named:
         raise ValueError(
             f"{', '.join(named)} is a field of contract 1.4{_not_released_note('1.4')}: pin "
             'contract_version "1.4" to pass it, or leave it out for 1.3'
         )
+
+
+def check_request_fields(request: AssessmentRequest) -> None:
+    """Refuse a request pinned to 1.3 that sets a field 1.4 added
+    (:data:`REQUEST_FIELDS_ADDED_IN_1_4`), for a request that skipped validation
+    (validation refuses it in the field's own validator)."""
+    named = [name for name in REQUEST_FIELDS_ADDED_IN_1_4 if getattr(request, name) is not None]
+    _refuse_fields_of_1_4(request.contract_version, named)
 
 
 # --------------------------------------------------------------------------- request
@@ -590,16 +603,16 @@ class AssessmentRequest(_VersionChecked):
     ) -> list[dict[str, Any]] | None:
         if value is None:
             return None
+        # A request for 1.3 (pinned, or unpinned while 1.3 is the default) cannot set it.
+        # Refused here, in the field's own validator, so the error lies under
+        # routine_sources and comes out as RoutineSourcesError, with no input: a
+        # model-level error would carry the whole request, every statement included.
+        _refuse_fields_of_1_4(info.data.get("contract_version"), ["routine_sources"])
         from src.assessment.routine_sources import check_origins, validate_routine_sources
 
         validated = validate_routine_sources(value)
         check_origins(validated, info.data.get("collection"))
         return validated
-
-    @model_validator(mode="after")
-    def _fields_of_its_version(self) -> AssessmentRequest:
-        check_request_fields(self)
-        return self
 
 
 # --------------------------------------------------------------------------- result
