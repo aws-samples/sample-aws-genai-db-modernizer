@@ -3,11 +3,14 @@
 
 """Tests for engine exclusion rules and assignment integration."""
 
-from src.agents.referee.engine_exclusions import (
-    check_all_exclusions,
-    check_exclusions,
-    validate_customer_overrides,
-)
+from src.agents.referee.engine_exclusions import EXCLUSION_RULES, ExclusionResult, check_exclusions
+
+
+def check_all_exclusions(query_id: str, query_text: str) -> list[ExclusionResult]:
+    """Every engine's exclusion of the query (the production gate checks one engine at a
+    time; ``check_all_exclusions`` had no caller and was removed, #2154)."""
+    engines = dict.fromkeys(rule.engine for rule in EXCLUSION_RULES)
+    return [r for e in engines if (r := check_exclusions(query_id, query_text, e)) is not None]
 
 
 class TestExclusionRules:
@@ -86,63 +89,3 @@ class TestCheckAllExclusions:
         sql = "SELECT category, COUNT(*) FROM posts GROUP BY category"
         results = check_all_exclusions("q1", sql)
         assert len(results) == 0
-
-
-class TestCustomerOverrideValidation:
-    """Test that customer overrides are caught for hard exclusions only."""
-
-    def test_catches_leading_wildcard_assigned_to_dynamodb(self):
-        assignments = [
-            {
-                "query_id": "q1",
-                "assigned_engine": "dynamodb",
-                "customer_override": True,
-            }
-        ]
-        queries = [
-            {"query_id": "q1", "query_text": "SELECT * FROM posts WHERE title LIKE '%term%'"}
-        ]
-        violations = validate_customer_overrides(assignments, queries)
-        assert len(violations) == 1
-        assert violations[0]["query_id"] == "q1"
-        assert violations[0]["original_engine"] == "dynamodb"
-        assert violations[0]["rule_id"] == "ddb-no-leading-wildcard"
-
-    def test_allows_aggregation_override_to_dynamodb(self):
-        """Aggregation on DynamoDB is allowed — schema agent will design pre-computed pattern."""
-        assignments = [
-            {
-                "query_id": "q1",
-                "assigned_engine": "dynamodb",
-                "customer_override": True,
-            }
-        ]
-        queries = [{"query_id": "q1", "query_text": "SELECT COUNT(*) FROM posts GROUP BY status"}]
-        violations = validate_customer_overrides(assignments, queries)
-        assert len(violations) == 0
-
-    def test_ignores_non_override_assignments(self):
-        assignments = [
-            {
-                "query_id": "q1",
-                "assigned_engine": "opensearch",
-                "customer_override": False,
-            }
-        ]
-        queries = [
-            {"query_id": "q1", "query_text": "INSERT INTO t (c) SELECT c FROM t2 WHERE x = 1"}
-        ]
-        violations = validate_customer_overrides(assignments, queries)
-        assert len(violations) == 0
-
-    def test_valid_override_passes(self):
-        assignments = [
-            {
-                "query_id": "q1",
-                "assigned_engine": "dynamodb",
-                "customer_override": True,
-            }
-        ]
-        queries = [{"query_id": "q1", "query_text": "SELECT * FROM users WHERE id = ?"}]
-        violations = validate_customer_overrides(assignments, queries)
-        assert len(violations) == 0

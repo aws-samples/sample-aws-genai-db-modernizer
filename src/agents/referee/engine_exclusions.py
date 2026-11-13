@@ -9,9 +9,9 @@ binary: if a query matches an exclusion rule for an engine, that engine CANNOT
 serve it. The first assignment's own scoring pass (``assignment_resolver.
 resolve``) zeroes that engine for the query instead of picking it.
 
-This also handles customer override validation: if a customer manually
-assigns a query to an engine excluded for it, the override is rejected
-(``assignment_overrides.ExcludedEngineOverride``, #548) with the plain,
+A customer override onto an engine excluded for the query is rejected by
+the override gate (``assignment_overrides.customer_gate_failure``, through the
+shared scorer, #548 and #801) with the plain,
 customer-facing ``customer_message`` below -- never ``description``, which is
 the technical, log-only reason -- so the customer can pick a different engine
 instead of having their choice silently moved somewhere else.
@@ -27,7 +27,6 @@ from dataclasses import dataclass
 
 from src.shared import catalog
 from src.tools.sql.query_facts import query_facts
-from src.tools.sql.view_lineage import access_text
 
 
 @dataclass(frozen=True)
@@ -122,67 +121,3 @@ def check_exclusions(
                 customer_message=rule.customer_message,
             )
     return None
-
-
-def check_all_exclusions(
-    query_id: str, query_text: str, source_engine: str | None = None
-) -> list[ExclusionResult]:
-    """Check a query against ALL engines' exclusion rules.
-
-    Returns a list of all exclusions that apply (can be empty).
-    """
-    results = []
-    for engine in _RULES_BY_ENGINE:
-        result = check_exclusions(query_id, query_text, engine, source_engine)
-        if result:
-            results.append(result)
-    return results
-
-
-def validate_customer_overrides(
-    query_assignments: list[dict],
-    queries: list[dict],
-    source_engine: str | None = None,
-) -> list[dict]:
-    """Validate customer-assigned queries against exclusion rules.
-
-    For each assignment where customer_override=True, checks if the assigned
-    engine is excluded for that query. Returns a list of override violations
-    with the plain, customer-facing rejection reason (#548: the override is
-    rejected, never silently moved to a different engine).
-
-    Args:
-        query_assignments: list of assignment dicts with query_id, assigned_engine, customer_override
-        queries: list of query dicts with query_id and query_text
-        source_engine: the collector's source engine (the query facts' dialect)
-
-    Returns:
-        List of dicts: {query_id, original_engine, rule_id, customer_message}
-        for each violated override.
-    """
-    query_text_map = {q["query_id"]: access_text(q) for q in queries}
-    violations = []
-
-    for assignment in query_assignments:
-        if not assignment.get("customer_override", False):
-            continue
-
-        qid = assignment["query_id"]
-        engine = assignment["assigned_engine"]
-        query_text = query_text_map.get(qid, "")
-
-        if not query_text:
-            continue
-
-        exclusion = check_exclusions(qid, query_text, engine, source_engine)
-        if exclusion:
-            violations.append(
-                {
-                    "query_id": qid,
-                    "original_engine": engine,
-                    "rule_id": exclusion.rule_id,
-                    "customer_message": exclusion.customer_message,
-                }
-            )
-
-    return violations
