@@ -23,7 +23,7 @@ gave every contract one; it is read as legacy, with a debug log.
   contract file registry below, and returns it (through its adapter for an
   older MAJOR). Every ``ArtifactStore.read_json`` returns what it returns, so
   the raw-dict reads of contract files are checked in one place. A collector output
-  also comes back with its literal values redacted (``_READ_TRANSFORMS``, #1625).
+  also comes back with its literal values redacted (``_read_transforms``, #1625).
 - :func:`carries_contract` tells a stored contract from a raw upload (a
   collection has no ``contract_version``) and checks the contract's version.
 
@@ -69,11 +69,8 @@ class ContractVersionError(Exception):
             )
         else:
             reason = f"it is not MAJOR.MINOR; this code reads {contract} {expected!r}"
-        shown = repr(stored)
-        if len(shown) > 40:  # a stored value is file content: never echo much of it
-            shown = shown[:37] + "..."
         super().__init__(
-            f"{artifact}: stored {contract} contract_version {shown} cannot be read: "
+            f"{artifact}: stored {contract} contract_version {_shown(stored)} cannot be read: "
             f"{reason} (ADR-008 Decision 4)"
         )
 
@@ -89,6 +86,46 @@ class ContractVersionError(Exception):
             "This assessment was saved by an incompatible version of the tool "
             f"({found}, expected {major}.*)."
         )
+
+
+class UnsafeArtifactError(ContractVersionError):
+    """A stored contract whose content fails a check every read of it makes (#2155).
+
+    A saved Aurora design whose column type is not on the DDL type allowlist is one.
+    A subclass of :class:`ContractVersionError` so every handler of a refused stored
+    artifact refuses this one the same way (the API's 409, a FAILED job, a script's
+    exit), never as "not available". ``str(exc)`` names the artifact and the field's
+    position, with at most 40 characters of the stored value; :attr:`public_message`
+    names neither.
+    """
+
+    def __init__(
+        self, *, artifact: str, contract: str, where: str, value: object, engine_name: str
+    ) -> None:
+        Exception.__init__(
+            self,
+            f"{artifact}: stored {contract} cannot be read: {where} {_shown(value)} "
+            f"is not an allowed {engine_name} column type",
+        )
+        self.artifact = artifact
+        self.contract = contract
+        self.stored = value
+        self.expected = ""
+        self.where = where
+        self.engine_name = engine_name
+
+    @property
+    def public_message(self) -> str:
+        return (
+            f"This assessment's saved {self.engine_name} design has a column type that "
+            "is not an allowed SQL type, so it was not loaded."
+        )
+
+
+def _shown(value: object) -> str:
+    """``repr(value)``, cut to 40 characters: a stored value is file content."""
+    shown = repr(value)
+    return shown if len(shown) <= 40 else shown[:37] + "..."
 
 
 def current_version(model: type[BaseModel]) -> str:
@@ -748,13 +785,13 @@ def read_contract_payload(
 ) -> Mapping[str, Any]:
     """What every read of ``model``'s contract returns for ``payload``: checked, through
     the adapter of an older MAJOR (:func:`read_payload`), then through the transforms
-    every read applies whatever the version (``_READ_TRANSFORMS``). A store read gets it
+    every read applies whatever the version (``_read_transforms``). A store read gets it
     through :func:`check_artifact`; an uploaded contract (the CLI, the API, ``assess()``)
     is read through it before it is stamped with today's version (#1636), so an upload
     and a stored file read the same."""
     data = read_payload(payload, model, artifact=artifact)
-    transform = _READ_TRANSFORMS.get(f"{model.__module__}:{model.__qualname__}")
-    return transform(data) if transform is not None else data
+    transform = _read_transforms().get(f"{model.__module__}:{model.__qualname__}")
+    return transform(data, artifact) if transform is not None else data
 
 
 def _redacted_collector_output(payload: Mapping[str, Any]) -> Mapping[str, Any]:
@@ -774,10 +811,52 @@ def _collector_output_on_read(payload: Mapping[str, Any]) -> Mapping[str, Any]:
     return _collector_output_from_4(dict(_redacted_collector_output(payload)))
 
 
-# Applied to every read of the contract, whatever its version, after the version check:
-# a stored collector output from before #1625 can hold literal values in its query
-# text, and none may reach an output; one from before #1636 can hold a 0 for an unknown
-# row count, and none may read as an empty table.
-_READ_TRANSFORMS: dict[str, Callable[[Mapping[str, Any]], Mapping[str, Any]]] = {
-    _COLLECTOR: _collector_output_on_read,
-}
+_ReadTransform = Callable[[Mapping[str, Any], str], Mapping[str, Any]]
+
+
+def _aurora_design_on_read(engine: str) -> _ReadTransform:
+    """A saved ``engine`` design as every read returns it (#2155): each column type run
+    through the DDL type allowlist generation runs (``check_design_column_types``), so a
+    type edited into the file is refused (:class:`UnsafeArtifactError`), never read."""
+
+    def on_read(payload: Mapping[str, Any], artifact: str) -> Mapping[str, Any]:
+        from src.contracts.aurora_design_delta import (
+            SavedDesignTypeError,
+            check_design_column_types,
+        )
+        from src.shared.engine_names import display_engine
+
+        try:
+            return check_design_column_types(payload, engine)
+        except SavedDesignTypeError as exc:
+            raise UnsafeArtifactError(
+                artifact=artifact,
+                contract=f"{engine} schema design",
+                where=exc.where,
+                value=exc.value,
+                engine_name=display_engine(engine),
+            ) from None
+
+    return on_read
+
+
+# Applied to every read of the contract, whatever its version, after the version check
+# (each gets the payload and the artifact it was read from): a stored collector output
+# from before #1625 can hold literal values in its query text, and none may reach an
+# output; one from before #1636 can hold a 0 for an unknown row count, and none may read
+# as an empty table. A saved Aurora design's column types reach DDL, so each passes the
+# same type allowlist generation runs (#2155).
+@cache
+def _read_transforms() -> dict[str, _ReadTransform]:
+    """``"module:Class"`` -> its transform: the collector output's, and each design
+    contract of an engine the DDL type allowlist has rules for (``ENGINE_TYPE_RULES``)."""
+    from src.contracts.aurora_design_delta import ENGINE_TYPE_RULES
+
+    transforms: dict[str, _ReadTransform] = {
+        _COLLECTOR: lambda payload, _artifact: _collector_output_on_read(payload),
+    }
+    for pattern, target in _schema_output_targets():
+        for engine in ENGINE_TYPE_RULES:
+            if pattern == _SCHEMA_OUTPUT.format(engine=re.escape(engine)):
+                transforms[target] = _aurora_design_on_read(engine)
+    return transforms

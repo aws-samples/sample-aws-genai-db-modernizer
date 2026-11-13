@@ -17,6 +17,8 @@ match a strict type grammar (:func:`validate_aurora_type`), and indexes are
 structured (name, columns, flags) and rendered by the DDL generator with
 quoted identifiers. A legacy ``CREATE INDEX`` string is accepted only when it
 parses completely under a strict grammar, and is then re-rendered the same way.
+A saved design's column types run the same type grammar on every read
+(:func:`check_design_column_types`, #2155), so an edited file is refused too.
 
 Shared by both Aurora engines: the merged output is validated against the
 engine's own contract afterwards.
@@ -25,6 +27,7 @@ engine's own contract afterwards.
 from __future__ import annotations
 
 import re
+from collections.abc import Mapping
 from typing import Any, Literal, get_args
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
@@ -244,6 +247,59 @@ def validate_aurora_type(value: str, engine: str | None = None) -> str:
             "VARCHAR(255), NUMERIC(10,2))"
         )
     return normalized
+
+
+class SavedDesignTypeError(ValueError):
+    """A saved Aurora design holds a column type the allowlist refuses (#2155).
+
+    ``where`` is the column's position (``table_definitions[i].columns[j].aurora_type``),
+    never its table or column name, and ``value`` the refused value as stored.
+    """
+
+    def __init__(self, where: str, value: object, reason: str) -> None:
+        self.where = where
+        self.value = value
+        super().__init__(f"{where}: {reason}")
+
+
+def check_design_column_types(payload: Mapping[str, Any], engine: str) -> Mapping[str, Any]:
+    """``payload`` (a saved ``engine`` design) with every column type checked (#2155).
+
+    Each ``table_definitions[].columns[].aurora_type`` runs ``validate_aurora_type`` for
+    ``engine``, the same allowlist generation runs, so a type edited into a saved file
+    never reaches DDL. Raises :class:`SavedDesignTypeError` on the first one it refuses.
+    Returns ``payload`` itself when every type is already normalized, else a copy with
+    the normalized types (a legal type in odd spacing reads as generation writes it).
+    """
+    tables = payload.get("table_definitions")
+    if not isinstance(tables, list):
+        return payload
+    out_tables: list[Any] = []
+    changed = False
+    for i, table in enumerate(tables):
+        columns = table.get("columns") if isinstance(table, Mapping) else None
+        if not isinstance(columns, list):
+            out_tables.append(table)
+            continue
+        out_columns: list[Any] = []
+        for j, column in enumerate(columns):
+            if not isinstance(column, Mapping) or "aurora_type" not in column:
+                out_columns.append(column)
+                continue
+            value = column["aurora_type"]
+            where = f"table_definitions[{i}].columns[{j}].aurora_type"
+            try:
+                normalized = validate_aurora_type(value, engine)
+            except ValueError as exc:
+                raise SavedDesignTypeError(where, value, str(exc)) from None
+            if normalized != value:
+                changed = True
+                column = {**column, "aurora_type": normalized}
+            out_columns.append(column)
+        out_tables.append({**table, "columns": out_columns})
+    if not changed:
+        return payload
+    return {**payload, "table_definitions": out_tables}
 
 
 def _identifier(value: str, what: str) -> str:

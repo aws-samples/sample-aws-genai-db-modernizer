@@ -118,6 +118,29 @@ def test_a_refused_schema_design_is_a_409_not_a_missing_design(job: Path) -> Non
     _assert_refused("/schema-designs")
 
 
+def test_a_saved_aurora_design_with_an_injected_type_is_a_409(job: Path) -> None:
+    """#2155: the UI reads designs here; a type outside the DDL allowlist is refused."""
+    design = {
+        "contract_version": "1.1",
+        "job_id": JOB,
+        "source_database": DB,
+        "migration_strategy": "carry_over",
+        "table_definitions": [
+            {
+                "table_name": "users",
+                "columns": [
+                    {"name": "id", "aurora_type": "BIGINT); DROP TABLE users; --"},
+                ],
+            }
+        ],
+    }
+    _write(job, "schema-aurora_postgresql/v1/schema_output.json", design)
+    status, body = _get("/schema-designs")
+    assert status == 409, body
+    assert isinstance(body, dict) and "column type" in body["detail"]
+    assert "DROP" not in json.dumps(body) and "/" not in body["detail"]
+
+
 def test_a_readable_job_still_answers(job: Path) -> None:
     """Control: the same routes at the current MAJOR are not refused."""
     _write(job, "assignment/v1/assignment.json", _ASSIGNMENT)

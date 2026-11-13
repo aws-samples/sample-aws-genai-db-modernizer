@@ -22,7 +22,7 @@ from __future__ import annotations
 
 from typing import Literal
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 from .aurora_access_pattern import AccessPattern
 from .schema_design_output import TradeOff
@@ -40,6 +40,15 @@ class TargetColumn(BaseModel):
     )
 
     model_config = ConfigDict(extra="ignore")
+
+    @field_validator("aurora_type")
+    @classmethod
+    def _allowlisted_type(cls, v: str) -> str:
+        """The DDL type allowlist generation runs, on every parse of a design (#2155)."""
+        # Imported here: aurora_design_delta imports this module.
+        from .aurora_design_delta import validate_aurora_type
+
+        return validate_aurora_type(v, "aurora_postgresql")
 
 
 class TargetTable(BaseModel):
