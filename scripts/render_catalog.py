@@ -396,6 +396,7 @@ _MATCH_FLAGS = (
     ("auto_increment", "auto-increment (serial, identity) columns"),
     ("uppercase_names", "table and column names with a capital letter"),
     ("partial_indexes", "partial indexes (with a WHERE predicate)"),
+    ("text_unique_keys", "unique and primary keys with a text column"),
 )
 
 
@@ -487,6 +488,11 @@ def _match_text(rule: GapRule) -> str:
             + " (not a user's same-named function)"
         )
     parts += [label for name, label in _MATCH_FLAGS if getattr(match, name)]
+    if match.index_key_bytes_over is not None:
+        parts.append(
+            f"index keys whose text columns pass {match.index_key_bytes_over} bytes at "
+            f"{match.index_key_bytes_per_character} bytes per character"
+        )
     if match.routines:
         parts.append("every procedure, function and trigger")
     return "; ".join(parts)

@@ -21,6 +21,7 @@ them:
   open the text's quoted spans, by the same dialect scan;
 - schema rules read column data types, defaults and auto-increment flags, table and
   column names, table storage engines and collations, index types and predicates,
+  unique keys with a text column and key lengths in bytes (#2227),
   object schemas and procedure languages; ``routines`` lists every procedure,
   function and trigger;
   ``always`` applies to every source of the rule's engines;
@@ -421,6 +422,10 @@ def _schema_evidence(
                     match.partial_indexes and str(index.get("predicate") or "").strip()
                 ):
                     evidence.tables.add(table_id)
+        if match.text_unique_keys or match.index_key_bytes_over is not None:
+            for column_name in _key_evidence(match, table):
+                evidence.tables.add(table_id)
+                evidence.objects.add(("column", f"{table_id}.{column_name}"))
         if _outside_schemas(match, table):
             evidence.tables.add(table_id)
         storage = str(table.get("storage_engine") or "").lower()
@@ -459,6 +464,69 @@ def _schema_evidence(
                 evidence.tables.update(
                     _collected_tables([t["table_id"]] if t.get("table_id") else [], resolver)
                 )
+
+
+# #2227: the normalized types that hold text (Column.normalized_data_type), and the ones
+# whose key part has a length in characters.
+_TEXT_TYPES = frozenset({"string", "text"})
+_SIZED_TEXT_TYPE = "string"
+# Index kinds with no key length limit (a FULLTEXT or SPATIAL key takes no prefix).
+_UNLIMITED_KEY_INDEXES = frozenset({"fulltext", "spatial"})
+
+
+def _keys(table: Mapping[str, Any]) -> list[tuple[Mapping[str, Any], bool]]:
+    """Each index of ``table`` with whether it enforces uniqueness, then its primary key
+    (Table.primary_key; an index that is the primary key too only repeats its evidence)."""
+    keys: list[tuple[Mapping[str, Any], bool]] = [
+        (index, index.get("is_primary") is True or index.get("is_unique") is True)
+        for index in _as_list(table.get("indexes"))
+        if isinstance(index, Mapping)
+    ]
+    if primary_key := [c for c in _as_list(table.get("primary_key")) if c]:
+        keys.append(({"columns": primary_key}, True))
+    return keys
+
+
+def _key_evidence(match: GapMatch, table: Mapping[str, Any]) -> list[str]:
+    """The key columns of ``table`` that show what the key matchers look for (#2227): the
+    text columns of a unique or primary key (``text_unique_keys``), and the text columns
+    of a key over the byte limit (``index_key_bytes_over``)."""
+    columns = {
+        str(c.get("column_name") or "").lower(): c
+        for c in _as_list(table.get("columns"))
+        if isinstance(c, Mapping)
+    }
+    found: list[str] = []
+    for index, unique in _keys(table):
+        names = [str(n) for n in _as_list(index.get("columns")) if n]
+        text = [n for n in names if _normalized(columns.get(n.lower())) in _TEXT_TYPES]
+        if match.text_unique_keys and unique:
+            found += text
+        limit, per_char = match.index_key_bytes_over, match.index_key_bytes_per_character
+        if limit is None or per_char is None:
+            continue
+        if str(index.get("index_type") or "").lower() in _UNLIMITED_KEY_INDEXES:
+            continue
+        prefixes = _as_list(index.get("prefix_lengths"))
+        chars = 0
+        for pos, name in enumerate(names):
+            column = columns.get(name.lower())
+            if column is None or _normalized(column) != _SIZED_TEXT_TYPE:
+                continue
+            prefix = _chars(prefixes[pos] if pos < len(prefixes) else None)
+            chars += prefix or _chars(column.get("max_length"))
+        if chars * per_char > limit:
+            found += text
+    return found
+
+
+def _normalized(column: Mapping[str, Any] | None) -> str:
+    return str((column or {}).get("normalized_data_type") or "").lower()
+
+
+def _chars(value: Any) -> int:
+    """A collected length in characters, or 0 when there is none."""
+    return value if isinstance(value, int) and not isinstance(value, bool) and value > 0 else 0
 
 
 def _has_upper(name: Any) -> bool:

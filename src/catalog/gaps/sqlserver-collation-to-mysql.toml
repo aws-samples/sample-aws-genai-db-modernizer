@@ -1,0 +1,15 @@
+# Gap rule sqlserver-collation-to-mysql (#2227). Fields: src/shared/catalog/gaps.py.
+# Source: SQL Server to Aurora MySQL Migration Playbook (AWS DMS documentation), Collations; SQL Server documentation, Collation and Unicode support; MySQL 8.0 Reference Manual, Unicode Character Sets.
+id = "sqlserver-collation-to-mysql"
+feature = "Accent-sensitive and binary collations"
+source_engines = ["sqlserver"]
+targets = ["aurora_mysql"]
+impact = "behaves_differently"
+reason = "These tables use an accent-sensitive or binary SQL Server collation, and Aurora MySQL's default collation (utf8mb4_0900_ai_ci) ignores case and accents (e equals é), so unique keys on text can reject rows on load and lookups can return extra rows; give the columns utf8mb4_0900_as_ci for a _CI_AS collation, utf8mb4_0900_as_cs for _CS_AS or _CS_AI, and utf8mb4_bin for _BIN or _BIN2, noting that the 0900 collations compare trailing spaces, which SQL Server ignores."
+docs = "SQL Server to Aurora MySQL Migration Playbook (AWS DMS documentation), Collations; SQL Server documentation, Collation and Unicode support; MySQL 8.0 Reference Manual, Unicode Character Sets"
+
+# Looks for: Table collations that are case-sensitive, accent-sensitive or binary (every
+# SQL Server collation but _CI_AI). The SQL Server collection does not record a
+# collation yet, so the rule finds nothing until it does.
+[match]
+collations = ["*_cs_*", "*_as", "*_as_*", "*_bin", "*_bin_*", "*_bin2", "*_bin2_*"]

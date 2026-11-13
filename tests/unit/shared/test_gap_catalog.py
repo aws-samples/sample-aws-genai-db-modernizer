@@ -281,6 +281,49 @@ def test_the_index_types_are_the_collectors() -> None:
     assert INDEX_TYPES == {t.value for t in IndexType}
 
 
+# -- #2227: text unique keys and index key length ---------------------------------------
+
+
+@pytest.mark.parametrize(
+    "match",
+    [
+        "text_unique_keys = true",
+        "index_key_bytes_over = 3072\nindex_key_bytes_per_character = 4",
+    ],
+)
+def test_the_key_matchers_load_on_their_own(tmp_path: Path, match: str) -> None:
+    _write(tmp_path, match=match)
+    (rule,) = load_gap_rules(tmp_path, versions=aurora_version_lines())
+    assert rule.id == "a-rule"
+
+
+@pytest.mark.parametrize(
+    ("match", "message"),
+    [
+        ("text_unique_keys = false", "needs at least one matcher"),
+        ("always = true\ntext_unique_keys = true", "no other matcher"),
+        ("index_key_bytes_over = 3072", "go together"),
+        ("index_key_bytes_per_character = 4", "go together"),
+        ("index_key_bytes_over = 0\nindex_key_bytes_per_character = 4", "greater than 0"),
+        ("index_key_bytes_over = 3072\nindex_key_bytes_per_character = 0", "greater than 0"),
+        (
+            'version = "unknown"\nindex_key_bytes_over = 3072\nindex_key_bytes_per_character = 4',
+            "no other matcher",
+        ),
+    ],
+)
+def test_a_bad_key_matcher_fails_to_load(tmp_path: Path, match: str, message: str) -> None:
+    _write(tmp_path, match=match)
+    with pytest.raises(CatalogError, match=message):
+        load_gap_rules(tmp_path, versions=aurora_version_lines())
+
+
+def test_the_rule_catalog_page_says_what_the_key_matchers_look_for() -> None:
+    page = "\n".join(render_gaps_md(gap_rules(), aurora_version_lines(), {}))
+    assert "unique and primary keys with a text column" in page
+    assert "index keys whose text columns pass 3072 bytes at 4 bytes per character" in page
+
+
 # -- the extensions Aurora PostgreSQL offers (#1078) ------------------------------------
 
 EXTENSIONS_GOOD = """

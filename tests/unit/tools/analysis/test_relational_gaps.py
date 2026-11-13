@@ -86,6 +86,41 @@ def _index(**fields: Any) -> dict[str, Any]:
     return {"index_name": "ix", "columns": ["c0"], "is_unique": False, **fields}
 
 
+def _text_column(name: str, length: int | None, data_type: str = "VARCHAR2") -> dict[str, Any]:
+    """A character column as the collectors record it (#2227): its normalized type and
+    its length in characters."""
+    column: dict[str, Any] = {
+        "column_name": name,
+        "data_type": data_type,
+        "normalized_data_type": "string",
+    }
+    if length is not None:
+        column["max_length"] = length
+    return column
+
+
+def _key_table(
+    *columns: dict[str, Any],
+    unique: list[str] | None = None,
+    plain: list[str] | None = None,
+    table_id: str = "db.t",
+    **extra: Any,
+) -> dict[str, Any]:
+    """A table with ``columns``, a unique index on ``unique`` and a plain one on ``plain``."""
+    indexes = []
+    if unique:
+        indexes.append({"index_name": "ux", "columns": unique, "is_unique": True})
+    if plain:
+        indexes.append({"index_name": "ix", "columns": plain, "is_unique": False})
+    return {
+        "table_id": table_id,
+        "table_name": table_id.split(".")[-1],
+        "columns": list(columns),
+        "indexes": indexes,
+        **extra,
+    }
+
+
 def _ids(result: dict[str, Any] | None) -> set[str]:
     return {g["rule_id"] for g in (result or {}).get("gaps", [])}
 
@@ -812,6 +847,36 @@ CASES: dict[str, tuple[str, str, dict[str, Any], dict[str, Any] | None]] = {
         {"queries": ["SELECT lateral_id FROM t"]},
     ),
     "postgresql-case-sensitive-comparison": ("postgresql", "aurora_mysql", {}, None),
+    # #2227: collations and index key length that break an Oracle or SQL Server load
+    "oracle-case-sensitive-to-mysql": (
+        "oracle",
+        "aurora_mysql",
+        # a unique key on text: ABC and abc are two rows on Oracle, one on utf8mb4_0900_ai_ci
+        {"tables": [_key_table(_text_column("code", 20), unique=["code"])]},
+        # a numeric key, and a text column with only a non-unique index
+        {
+            "tables": [
+                _key_table(
+                    {"column_name": "id", "data_type": "NUMBER", "normalized_data_type": "decimal"},
+                    _text_column("code", 20),
+                    unique=["id"],
+                    plain=["code"],
+                )
+            ]
+        },
+    ),
+    "sqlserver-collation-to-mysql": (
+        "sqlserver",
+        "aurora_mysql",
+        {"tables": [_table("db.t", collation="SQL_Latin1_General_CP1_CI_AS")]},
+        {"tables": [_table("db.t", collation="Latin1_General_CI_AI")]},
+    ),
+    "mysql-index-key-length": (
+        "oracle",
+        "aurora_mysql",
+        {"tables": [_key_table(_text_column("name", 769), plain=["name"])]},
+        {"tables": [_key_table(_text_column("name", 768), plain=["name"])]},
+    ),
 }
 
 
@@ -1882,3 +1947,219 @@ def test_the_gap_facts_are_what_report_json_stores(engine: str, kwargs: dict[str
     result = detect_relational_gaps(_collector(engine, **kwargs), "aurora_postgresql")
     assert result is not None and any(g["objects"] for g in result["gaps"])
     assert RelationalGapFacts.model_validate(result).model_dump(mode="json") == result
+
+
+# #2227: collations and index key length that break an Oracle or SQL Server load.
+_CASE = "oracle-case-sensitive-to-mysql"
+_COLLATION = "sqlserver-collation-to-mysql"
+_KEY_LENGTH = "mysql-index-key-length"
+_NUMBER = {"column_name": "id", "data_type": "NUMBER", "normalized_data_type": "decimal"}
+_CLOB = {"column_name": "body", "data_type": "CLOB", "normalized_data_type": "text"}
+
+
+def _found(engine: str, table: dict[str, Any], rule_id: str) -> dict[str, Any] | None:
+    result = detect_relational_gaps(_collector(engine, tables=[table]), "aurora_mysql")
+    gaps: list[dict[str, Any]] = (result or {})["gaps"]
+    return next((g for g in gaps if g["rule_id"] == rule_id), None)
+
+
+@pytest.mark.parametrize(
+    ("table", "hit"),
+    [
+        # a unique index, a primary key index and a primary key list on text
+        (_key_table(_text_column("code", 20), unique=["code"]), True),
+        (
+            _key_table(
+                _text_column("code", 20),
+                indexes=[
+                    # is_primary alone marks the key, whatever is_unique says
+                    {
+                        "index_name": "pk",
+                        "columns": ["code"],
+                        "is_unique": False,
+                        "is_primary": True,
+                    }
+                ],
+            ),
+            True,
+        ),
+        (_key_table(_text_column("code", 20), primary_key=["code"]), True),
+        # a composite unique key with one text part, and a CLOB (normalized text) key part
+        (_key_table(_NUMBER, _text_column("code", 20), unique=["id", "code"]), True),
+        (_key_table(_NUMBER, _CLOB, unique=["id", "body"]), True),
+        # numeric keys, and text with only a non-unique index
+        (_key_table(_NUMBER, unique=["id"]), False),
+        (_key_table(_NUMBER, primary_key=["id"]), False),
+        (_key_table(_NUMBER, _text_column("code", 20), unique=["id"], plain=["code"]), False),
+        # a key column the table does not list, and a column of unknown type
+        (_key_table(_NUMBER, unique=["missing"]), False),
+        (_key_table({"column_name": "c", "data_type": "VARCHAR2"}, unique=["c"]), False),
+    ],
+)
+def test_oracle_text_unique_keys_are_case_only_duplicate_risks(
+    table: dict[str, Any], hit: bool
+) -> None:
+    gap = _found("oracle", table, _CASE)
+    assert (gap is not None) == hit
+    if gap is not None:
+        assert gap["tables"] == ["db.t"]
+        assert {o["kind"] for o in gap["objects"]} == {"column"}
+
+
+def test_oracle_case_rule_names_only_the_text_key_columns() -> None:
+    table = _key_table(
+        _NUMBER, _text_column("code", 20), _text_column("note", 200), unique=["id", "code"]
+    )
+    gap = _found("oracle", table, _CASE)
+    assert gap is not None and gap["objects"] == [
+        {"kind": "column", "id": "db.t.code", "note": None}
+    ]
+
+
+@pytest.mark.parametrize(
+    ("collation", "hit"),
+    [
+        ("SQL_Latin1_General_CP1_CI_AS", True),
+        ("Latin1_General_CI_AS", True),
+        ("Latin1_General_100_CI_AS_SC_UTF8", True),
+        ("Latin1_General_CI_AS_KS_WS", True),
+        ("Latin1_General_CS_AS", True),
+        ("Latin1_General_CS_AI", True),
+        ("Latin1_General_BIN", True),
+        ("Latin1_General_BIN2", True),
+        ("Latin1_General_100_BIN2_UTF8", True),
+        # utf8mb4_0900_ai_ci also ignores case and accents: nothing changes
+        ("Latin1_General_CI_AI", False),
+        ("SQL_Latin1_General_CP1_CI_AI", False),
+        (None, False),
+    ],
+)
+def test_sqlserver_collations_that_aurora_mysql_default_folds(
+    collation: str | None, hit: bool
+) -> None:
+    gap = _found("sqlserver", _table("db.t", collation=collation), _COLLATION)
+    assert (gap is not None) == hit
+    if gap is not None:
+        assert gap["tables"] == ["db.t"]
+
+
+@pytest.mark.parametrize("engine", ["mysql", "mariadb", "postgresql"])
+def test_mysql_and_postgresql_sources_never_raise_the_oracle_or_sqlserver_rules(
+    engine: str,
+) -> None:
+    """A text unique key and a _bin or _cs collation are ordinary on these sources: the
+    two rules are about Oracle's and SQL Server's comparison defaults."""
+    table = _key_table(
+        _text_column("code", 20, "varchar"),
+        unique=["code"],
+        collation="utf8mb4_bin",
+    )
+    for rule_id in (_CASE, _COLLATION):
+        assert _found(engine, table, rule_id) is None, rule_id
+
+
+@pytest.mark.parametrize(
+    ("table", "hit"),
+    [
+        # one column: 768 characters at 4 bytes is 3,072 bytes, the limit
+        (_key_table(_text_column("name", 768), plain=["name"]), False),
+        (_key_table(_text_column("name", 769), plain=["name"]), True),
+        (_key_table(_text_column("name", 769), unique=["name"]), True),
+        (_key_table(_text_column("name", 769), primary_key=["name"]), True),
+        # composite: each part fits, the key does not (400 + 400 characters)
+        (_key_table(_text_column("a", 400), _text_column("b", 400), plain=["a", "b"]), True),
+        (_key_table(_text_column("a", 400), _text_column("b", 368), plain=["a", "b"]), False),
+        # a long column with no index, and a numeric part next to a short one
+        (_key_table(_text_column("name", 4000), _NUMBER, plain=["id"]), False),
+        (_key_table(_text_column("name", 700), _NUMBER, plain=["name", "id"]), False),
+        # a CLOB or a length-less column: the draft keys a prefix of it itself
+        (_key_table(_CLOB, plain=["body"]), False),
+        (_key_table(_text_column("name", None), plain=["name"]), False),
+    ],
+)
+def test_index_keys_over_3072_bytes_in_utf8mb4(table: dict[str, Any], hit: bool) -> None:
+    gap = _found("oracle", table, _KEY_LENGTH)
+    assert (gap is not None) == hit
+    if gap is not None:
+        assert gap["tables"] == ["db.t"]
+        assert gap["objects"] and {o["kind"] for o in gap["objects"]} == {"column"}
+
+
+def test_a_recorded_key_prefix_counts_as_its_length() -> None:
+    """A MySQL source's ``a(191)`` key part costs 191 characters, not the column's."""
+    prefixed = {
+        "index_name": "ix",
+        "columns": ["a", "b"],
+        "is_unique": False,
+        "prefix_lengths": [191, None],
+    }
+    table = _key_table(
+        _text_column("a", 1000, "varchar"), _text_column("b", 400, "varchar"), indexes=[prefixed]
+    )
+    assert _found("mysql", table, _KEY_LENGTH) is None
+    whole = {**prefixed, "prefix_lengths": None}
+    assert _found("mysql", {**table, "indexes": [whole]}, _KEY_LENGTH) is not None
+    # a(700) + b(400) is 1,100 characters: the prefix counts, not nothing
+    longer = {**prefixed, "prefix_lengths": [700, None]}
+    assert _found("mysql", {**table, "indexes": [longer]}, _KEY_LENGTH) is not None
+
+
+def test_a_fulltext_index_has_no_key_length_limit() -> None:
+    fulltext: dict[str, Any] = {"index_name": "ft", "columns": ["name"], "is_unique": False}
+    table = _key_table(_text_column("name", 4000, "varchar"), indexes=[fulltext])
+    assert _found("mysql", table, _KEY_LENGTH) is not None
+    fulltext["index_type"] = "fulltext"
+    assert _found("mysql", table, _KEY_LENGTH) is None
+
+
+def test_the_key_length_rule_names_the_columns_of_the_long_key_only() -> None:
+    table = _key_table(
+        _text_column("a", 400),
+        _text_column("b", 400),
+        _text_column("c", 10),
+        unique=["c"],
+        plain=["a", "b"],
+    )
+    gap = _found("oracle", table, _KEY_LENGTH)
+    assert gap is not None and [o["id"] for o in gap["objects"]] == ["db.t.a", "db.t.b"]
+
+
+@pytest.mark.parametrize(
+    ("engine", "data_type"), [("oracle", "VARCHAR2"), ("sqlserver", "nvarchar")]
+)
+@pytest.mark.parametrize(
+    "lengths",
+    [(768,), (769,), (400, 400), (400, 368), (1000,), (100, 100, 100, 100, 100, 100, 100, 100)],
+)
+def test_the_key_length_rule_agrees_with_the_mysql_draft(
+    lengths: tuple[int, ...], engine: str, data_type: str
+) -> None:
+    """The rule fires exactly when the Aurora MySQL draft cannot create the index as the
+    source has it: the draft adds no prefix to a VARCHAR key part and notes the key over
+    3,072 bytes instead, so the rule asks for a rewrite rather than informing."""
+    from src.contracts.schema_design_input import AgentTable
+    from src.tools.schema.aurora_common.ddl_generator import generate_mysql_ddl
+
+    names = [f"c{i}" for i in range(len(lengths))]
+    table = _key_table(
+        *(_text_column(name, n, data_type) for name, n in zip(names, lengths, strict=True)),
+        plain=names,
+    )
+    agent = AgentTable.model_validate(
+        {
+            **table,
+            "row_count": None,
+            "columns": [{**c, "nullable": True} for c in table["columns"]],
+        }
+    )
+    notes = generate_mysql_ddl([agent], source_engine=engine).index_notes
+    draft_flags = any(n["index"] == "ix" and n.get("kind") == "key_prefix" for n in notes)
+    assert (_found(engine, table, _KEY_LENGTH) is not None) == draft_flags
+
+
+def test_the_key_length_rule_applies_to_every_source_moving_to_aurora_mysql_only() -> None:
+    rule = _rule(_KEY_LENGTH)
+    assert set(rule.source_engines) == SOURCE_ENGINES and rule.targets == ("aurora_mysql",)
+    table = _key_table(_text_column("name", 769), plain=["name"])
+    result = detect_relational_gaps(_collector("oracle", tables=[table]), "aurora_postgresql")
+    assert _KEY_LENGTH not in _ids(result)

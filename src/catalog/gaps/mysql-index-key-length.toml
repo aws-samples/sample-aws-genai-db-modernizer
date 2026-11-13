@@ -1,0 +1,15 @@
+# Gap rule mysql-index-key-length (#2227). Fields: src/shared/catalog/gaps.py.
+# Source: MySQL 8.0 Reference Manual, InnoDB Limits; MySQL 8.0 Reference Manual, The utf8mb4 Character Set.
+id = "mysql-index-key-length"
+feature = "Index keys over 3,072 bytes"
+source_engines = ["mysql", "mariadb", "postgresql", "sqlserver", "oracle", "db2"]
+targets = ["aurora_mysql"]
+impact = "needs_rewrite"
+reason = "InnoDB limits an index key to 3,072 bytes and Aurora MySQL stores text as utf8mb4 (4 bytes per character), so an index whose text columns add up to more than 768 characters, one varchar(769) or several shorter columns together, fails CREATE INDEX; the draft DDL adds no prefix to such a key and notes it, so key a prefix of the column (col(n), which then no longer enforces uniqueness on the whole value), shorten the column, or index a hash of it in a generated column."
+docs = "MySQL 8.0 Reference Manual, InnoDB Limits; MySQL 8.0 Reference Manual, The utf8mb4 Character Set"
+
+# Looks for: Index and primary keys whose text columns (their recorded key prefix, or
+# else their length in characters) pass 3,072 bytes at 4 bytes per character.
+[match]
+index_key_bytes_over = 3072
+index_key_bytes_per_character = 4

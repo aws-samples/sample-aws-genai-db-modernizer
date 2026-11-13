@@ -1,0 +1,15 @@
+# Gap rule oracle-case-sensitive-to-mysql (#2227). Fields: src/shared/catalog/gaps.py.
+# Source: Oracle Database Globalization Support Guide, Linguistic Sorting and Matching (NLS_COMP, NLS_SORT); MySQL 8.0 Reference Manual, Unicode Character Sets.
+id = "oracle-case-sensitive-to-mysql"
+feature = "Case-sensitive text keys"
+source_engines = ["oracle"]
+targets = ["aurora_mysql"]
+impact = "needs_rewrite"
+reason = "Oracle compares text by its binary value by default (NLS_COMP=BINARY), and Aurora MySQL's default collation (utf8mb4_0900_ai_ci) ignores case and accents, so a unique or primary key on text that holds values differing only in case or accents (ABC and abc) rejects rows on load, and lookups and joins on those columns return extra rows; give the columns a case-sensitive collation (utf8mb4_0900_bin or utf8mb4_0900_as_cs), or confirm the data has no such duplicates."
+docs = "Oracle Database Globalization Support Guide, Linguistic Sorting and Matching; MySQL 8.0 Reference Manual, Unicode Character Sets"
+
+# Looks for: Unique indexes and primary keys with a text column. The collection records
+# no NLS_COMP or NLS_SORT, so every Oracle source with such a key is listed (a source
+# that sets NLS_COMP=LINGUISTIC with a _CI sort is listed too).
+[match]
+text_unique_keys = true
