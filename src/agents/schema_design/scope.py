@@ -394,11 +394,6 @@ def assess_schema_scope(engine: str, schema_output: dict, assignment: dict) -> S
     return ScopeReport(violations, warnings)
 
 
-def validate_schema_scope(engine: str, schema_output: dict, assignment: dict) -> list[str]:
-    """Return the scope violations of ``schema_output`` (see :func:`assess_schema_scope`)."""
-    return assess_schema_scope(engine, schema_output, assignment).violations
-
-
 def apply_scope_violations(schema_output: dict, violations: list[str]) -> dict:
     """Return a copy of ``schema_output`` with its scope verdict replaced by ``violations``.
 

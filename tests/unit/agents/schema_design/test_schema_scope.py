@@ -4,7 +4,7 @@
 """Schema design scope validation (issue #203).
 
 A schema design may only reference the source tables and query IDs assigned
-(in scope) to its engine in the effective assignment. ``validate_schema_scope``
+(in scope) to its engine in the effective assignment. ``assess_schema_scope``
 reports every designed reference outside that scope; finalize, ``--merge`` and
 the Bedrock path turn those into ``validation_passed=false`` plus a
 ``validation_failed`` status. ``unsupported_patterns`` IDs are warnings only.
@@ -23,10 +23,15 @@ from src.agents.schema_design.scope import (
     apply_scope_violations,
     assess_schema_scope,
     covered_query_ids,
-    validate_schema_scope,
 )
 
 FIXTURES = Path(__file__).resolve().parents[3] / "fixtures"
+
+
+def validate_schema_scope(engine: str, schema_output: dict, assignment: dict) -> list[str]:
+    """The scope violations ``assess_schema_scope`` reports (the production check, run by
+    ``handler.check_schema_scope``; the module's own wrapper had no caller, #2154)."""
+    return assess_schema_scope(engine, schema_output, assignment).violations
 
 
 def _assignment(engine: str, other: str) -> dict:

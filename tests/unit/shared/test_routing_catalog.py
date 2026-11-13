@@ -37,7 +37,7 @@ from src.agents.referee.capability_registry import (
     ENGINE_CAPABILITIES,
     SIGNAL_TO_CAPABILITY,
 )
-from src.agents.referee.engine_exclusions import EXCLUSION_RULES, check_all_exclusions
+from src.agents.referee.engine_exclusions import EXCLUSION_RULES, check_exclusions
 from src.agents.referee.feasibility_review import _engine_role, _replication_recommendation
 from src.contracts.move_ledger import ReasonCode
 from src.shared import catalog
@@ -223,7 +223,8 @@ class TestTheGatesKeepTheirValues:
         ],
     )
     def test_each_exclusion_reads_its_fact(self, sql: str, excluded: set[str]) -> None:
-        assert {r.excluded_engine for r in check_all_exclusions("q1", sql, "mysql")} == excluded
+        engines = {rule.engine for rule in EXCLUSION_RULES}
+        assert {e for e in engines if check_exclusions("q1", sql, e, "mysql")} == excluded
 
     def _gates_with(self, tmp_path: Path, old: str, new: str) -> Path:
         path = tmp_path / "gates.toml"
