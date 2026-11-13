@@ -21,7 +21,7 @@ import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
-from src.agents.referee.move_ledger import replay
+from src.agents.referee.move_ledger import UnreadableMove, replay
 from src.api.models.graph_responses import QueryTraceResponse
 from src.api.routes import graph as graph_routes
 from src.contracts.move_ledger import Move
@@ -158,11 +158,13 @@ class TestMovedEdges:
         assert populate_from_moves(legacy, graph_store) == 0
         assert _moved_edges(graph_store) == []
 
-    def test_an_unreadable_move_is_skipped_not_fatal(self, graph_store, sample):
+    def test_an_unreadable_move_stops_the_population(self, graph_store, sample):
+        """#2154: a Move that breaks the contract is named, never dropped from the trace."""
         populate_from_collector(sample["collector"], graph_store)
         broken = copy.deepcopy(sample["v2"])
         broken["moves"].append({"seq": 99, "query_id": "x"})
-        assert populate_from_moves(broken, graph_store) == len(sample["v2"]["moves"])
+        with pytest.raises(UnreadableMove, match=r"Move \d+ does not match the Move contract"):
+            populate_from_moves(broken, graph_store)
 
     def test_engine_nodes_use_display_names(self, traced):
         names = {

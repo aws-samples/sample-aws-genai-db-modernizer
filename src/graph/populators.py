@@ -11,8 +11,6 @@ import time
 from collections.abc import Mapping
 from types import SimpleNamespace
 
-from pydantic import ValidationError
-
 from src.contracts.assignment_models import AssignmentStatus
 from src.contracts.move_ledger import Move, ReasonCode
 from src.graph.inputs_digest import graph_inputs_digest
@@ -333,16 +331,13 @@ def populate_from_moves(assignment: dict, store: GraphStore) -> int:
     history: an edge is keyed on (version, seq) and never overwritten. A Move
     of a query the collector did not record (no Query node) is skipped.
     Returns the number of Moves read (0 for a version written before the
-    ledger).
+    ledger). A Move that does not match the contract raises
+    ``move_ledger.UnreadableMove`` (#2154).
     """
     version = int(assignment.get("version") or 0)
-    moves: list[Move] = []
-    for raw in assignment.get("moves") or []:
-        try:
-            moves.append(Move.model_validate(raw))
-        except ValidationError:
-            # One unreadable record must not cost the whole graph its history.
-            logger.warning("graph: skipped an unreadable Move in assignment v%s", version)
+    # A Move that breaks the contract raises (#2154): the build fails and the
+    # previous graph is kept, instead of a history with a Move silently missing.
+    moves = version_moves(assignment)
     if not moves or version < 1:
         return 0
     engine_rows = [

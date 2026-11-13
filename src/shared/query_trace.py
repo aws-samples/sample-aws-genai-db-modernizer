@@ -31,9 +31,7 @@ from __future__ import annotations
 from collections.abc import Callable, Iterable, Mapping
 from typing import Any
 
-from pydantic import ValidationError
-
-from src.agents.referee.move_ledger import pin_after, query_score
+from src.agents.referee.move_ledger import pin_after, query_score, read_moves
 from src.contracts.move_ledger import UNSERVABLE, CandidateScore, Move, ReasonCode
 from src.contracts.query_trace import (
     CloseCall,
@@ -105,14 +103,9 @@ def assignment_lineage(read: Callable[[int], dict | None], effective_version: in
 
 
 def version_moves(assignment: dict) -> list[Move]:
-    """One version's Moves (``assignment.moves``); an unreadable record is skipped."""
-    moves: list[Move] = []
-    for raw in assignment.get("moves") or []:
-        try:
-            moves.append(Move.model_validate(raw))
-        except ValidationError:
-            continue
-    return moves
+    """One version's Moves (``assignment.moves``); an unreadable record raises
+    ``move_ledger.UnreadableMove`` (#2154), never skipped."""
+    return read_moves(assignment)
 
 
 def ledger_moves(lineage: Iterable[dict]) -> dict[str, list[tuple[int, Move]]]:
