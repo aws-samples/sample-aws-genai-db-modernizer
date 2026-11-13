@@ -12,6 +12,7 @@ AdventureWorks collection (SQL Server), never against a recount of its own.
 
 from __future__ import annotations
 
+from pathlib import Path
 from typing import Any, get_args
 
 import pytest
@@ -420,16 +421,25 @@ def test_a_reality_check_run_logs_no_warning(caplog: pytest.LogCaptureFixture) -
     assert [r.getMessage() for r in caplog.records if r.levelno >= logging.WARNING] == []
 
 
-def test_synthesis_refuses_a_missing_design(caplog: pytest.LogCaptureFixture) -> None:
+def test_synthesis_refuses_a_missing_design(
+    caplog: pytest.LogCaptureFixture, tmp_path: Path
+) -> None:
     """Synthesis itself, which expects schema design, refuses an engine with neither a
     design nor a skip record (#2154); a caller that stops before schema design neither
     raises nor warns."""
     import logging
+    import shutil
 
     from src.agents.referee.synthesis_data import MissingSchemaDesigns, load_synthesis_data
+    from src.storage.local_store import LocalArtifactStore
 
-    result, _, store = placed_run("trailgear")
+    result, _, shared = placed_run("trailgear")
     version = result.summary.assignment_version
+    # A copy without any design record: another test may have synthesized the shared run.
+    shutil.copytree(shared.base_dir, tmp_path, dirs_exist_ok=True)
+    for records in (tmp_path / "trailgear" / PLACED_JOB).glob("schema-*"):
+        shutil.rmtree(records)
+    store = LocalArtifactStore(str(tmp_path))
     with pytest.raises(MissingSchemaDesigns, match=f"assignment v{version}"):
         load_synthesis_data(store, PLACED_JOB, "trailgear", version)
     caplog.clear()

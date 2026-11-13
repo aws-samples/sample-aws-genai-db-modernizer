@@ -588,6 +588,11 @@ DESIGNER_INPUT_ROOTS = (
 )
 REVIEWED_DETERMINISTIC_IMPORTS: dict[str, str] = {
     "src/storage/artifact_store.py": "file storage only",
+    "src/shared/design_records.py": (
+        "the schema-design handler reads a skip record's status to clear it when a design "
+        "starts (#2154); nothing of the module reaches a designer input, and a skip "
+        "reason is one of the code's own fixed sentences, never customer text"
+    ),
     "src/shared/contract_versioning.py": (
         "the schema-design handler's scope check imports its error class only to re-raise a "
         "stored artifact's contract version refusal (#2154); nothing reaches a model input"
