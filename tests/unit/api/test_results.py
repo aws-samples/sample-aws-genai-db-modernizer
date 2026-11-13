@@ -523,6 +523,61 @@ class TestResultsPageWording:
         assert body["no_open_risks_caveat"] == NO_OPEN_RISKS_CAVEAT
 
 
+REAL_RUN = Path(__file__).resolve().parents[2] / "fixtures/real_runs/wordpress-both/report.json"
+
+
+class TestTheUiGetsTheOwnerRule:
+    """#2166 review round 2: the results payload always carries the rule the report's own
+    owner lines follow (``facts.table_owner_lines.unwritten_owner_rule``), so the UI
+    callout cannot fall back to the wrong sentence. The route recomputes the facts with
+    the same reader the deliverables use, for every report, so a field added to the facts
+    layer reaches the UI without a list here naming it.
+    """
+
+    def _payload_facts(self, services: dict, report: dict) -> dict:
+        services["s3"].read_synthesis.return_value = copy.deepcopy(report)
+        services["s3"].read_triage.return_value = None
+        body = client.get("/api/v1/assessments/job-1/results").json()
+        facts: dict = body["synthesis"]["facts"]
+        return facts
+
+    def test_a_report_saved_by_todays_main_states_the_most_queries_rule(self, mock_services):
+        """The committed wordpress-both run: every figure the route used to check is
+        stored, so nothing but the reader itself gives the UI this rule."""
+        report = json.loads(REAL_RUN.read_text())
+        stored = report["facts"]["table_owner_lines"]
+        assert "unwritten_owner_rule" not in stored
+        assert ("dynamodb", "most_queries") in {
+            (r["owner"], r["owner_basis"]) for r in stored["table_lines"]
+        }
+        facts = self._payload_facts(mock_services, report)
+        lines = facts["table_owner_lines"]
+        assert lines["unwritten_owner_rule"] == "most_queries"
+        # The stored figures are untouched: the reader fills in, it never recounts.
+        assert lines["table_count"] == stored["table_count"]
+        assert lines["owned_table_counts"] == stored["owned_table_counts"]
+        assert [r["table"] for r in lines["table_lines"]] == [
+            r["table"] for r in stored["table_lines"]
+        ]
+
+    def test_a_report_written_since_2166_states_the_relational_step_rule(self, mock_services):
+        report = json.loads(REAL_RUN.read_text())
+        for row in report["table_mappings"]:
+            if row.get("owner_basis") == "most_queries":
+                row.update(owner="aurora_mysql", owner_basis="retained")
+        report["facts"] = compute_report_facts(report)
+        assert report["facts"]["table_owner_lines"]["unwritten_owner_rule"] == "relational_step"
+        facts = self._payload_facts(mock_services, report)
+        assert facts["table_owner_lines"]["unwritten_owner_rule"] == "relational_step"
+
+    def test_a_round_tripped_none_still_states_the_reports_own_rule(self, mock_services):
+        """A stored block re-dumped through the contract carries the key as None."""
+        report = json.loads(REAL_RUN.read_text())
+        report["facts"]["table_owner_lines"]["unwritten_owner_rule"] = None
+        facts = self._payload_facts(mock_services, report)
+        assert facts["table_owner_lines"]["unwritten_owner_rule"] == "most_queries"
+
+
 def test_results_routes_never_block_the_event_loop() -> None:
     """#1593: these handlers read artifacts and clean prose synchronously. As
     ``async def`` they ran on the API's event loop, so on a large job every other

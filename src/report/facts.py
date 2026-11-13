@@ -45,6 +45,7 @@ from src.shared.report_facts import (
     table_ownership_facts,
     trade_off_topic_facts,
     unservable_query_facts,
+    unwritten_owner_rule,
     wave_one_moved_by_later_waves,
     wave_readiness_rows,
 )
@@ -105,7 +106,8 @@ def report_facts(report: dict[str, Any]) -> dict[str, Any]:
     written before #2162 counted a table both engines of a wave read in both rows), one
     written before #1120 no cross-engine wave 1 figures or note, one written before #1284
     no ``waves[].moved_by_later_waves``, one written before #212 no ``table_owner_lines``
-    (and a map split by recommended engine), one written before #1329 no
+    (and a map split by recommended engine), one written before #2166 no
+    ``table_owner_lines.unwritten_owner_rule``, one written before #1329 no
     ``unservable.no_engine_in_scope_query_count``, one written before #1410 no
     ``query_group_counts``, and one written before
     #1146 no ``query_pattern_counts`` (filled in from ``query_pattern_groups``: None for a
@@ -192,6 +194,17 @@ def report_facts(report: dict[str, Any]) -> dict[str, Any]:
             missing["table_owner_lines"] = table_ownership_facts(
                 report, resolve_migration_waves(report)
             )
+        elif isinstance(stored := facts.get("table_owner_lines"), dict) and not stored.get(
+            "unwritten_owner_rule"
+        ):
+            # A block written before #2166: the rule its own lines follow, from them. The
+            # value decides, not the key, so a block re-dumped through the contract (the
+            # field reads back as None) is filled in too, as ``owned_table_mappings``
+            # reads ``also_read_by``.
+            missing["table_owner_lines"] = {
+                **stored,
+                "unwritten_owner_rule": unwritten_owner_rule(stored.get("table_lines") or []),
+            }
         if any(_needs_table_split(e) for e in facts["engines"]):
             # And each migration target's split of its served tables (#1169), on the
             # #2162 definition: a kept-current table both engines of a wave read counts

@@ -349,6 +349,8 @@ _NOT_MAPPED_RE = re.compile(
 # #2162: "5 kept current by CDC, also read by DynamoDB (counted in its row)", a
 # kept-current table another engine of the wave also reads, counted in that engine's
 # row (``under:<engine>:<other>``); its own comma and parentheses are part of the part.
+# After the row's own kept-current count it reads "40 more also read by DynamoDB (counted
+# in its row)" (#2166 review), so the cell says "kept current by CDC" once.
 _COUNTED_IN = "(counted in its row)"
 _SCOPE_SPLIT_RE = re.compile(
     rf"([\d,]+) source tables?(?: served: ((?:[^()$]|{re.escape(_COUNTED_IN)})+?))?(?: \((?!counted in its row\))|$)"
@@ -356,7 +358,7 @@ _SCOPE_SPLIT_RE = re.compile(
 _KEPT = "kept current by CDC|kept in sync"
 _SCOPE_PART_RE = re.compile(
     rf"^([\d,]+) (migrate|{_KEPT}|move to ({_NAMES_RE})|"
-    rf"kept current by CDC, also read by ({_NAMES_RE}) {re.escape(_COUNTED_IN)})$"
+    rf"(?:kept current by CDC,|more) also read by ({_NAMES_RE}) {re.escape(_COUNTED_IN)})$"
 )
 _SCOPE_PARTS_SPLIT_RE = re.compile(r", (?=[\d,]+ )")
 

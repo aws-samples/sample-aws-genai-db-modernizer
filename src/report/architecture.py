@@ -72,9 +72,12 @@ def counted_once_note(engines: list[dict[str, Any]]) -> str:
     )
 
 
-def counted_under_text(n: int, engine: str) -> str:
-    """ "5 kept current by CDC, also read by DynamoDB (counted in its row)" (#2162)."""
-    return f"{n} {KEPT_IN_SYNC_LABEL}, also read by {display_engine(engine)} (counted in its row)"
+def counted_under_text(n: int, engine: str, after_kept: bool = False) -> str:
+    """ "5 kept current by CDC, also read by DynamoDB (counted in its row)" (#2162), or,
+    after the row's own kept-current count, "5 more also read by DynamoDB (counted in its
+    row)", so the cell says "kept current by CDC" once (#2166 review)."""
+    label = "more" if after_kept else f"{KEPT_IN_SYNC_LABEL},"
+    return f"{n} {label} also read by {display_engine(engine)} (counted in its row)"
 
 
 MAP_SPLIT_NOTE = (
@@ -108,7 +111,7 @@ def _scope_text(e: dict[str, Any], report: dict[str, Any]) -> str:
         parts = [f"{e.get('tables_migrate', 0)} {MIGRATE_LABEL}"]
         parts += [f"{k} move to {display_engine(o)}" for o, k in moves_to.items() if k]
         parts += [f"{kept} {KEPT_IN_SYNC_LABEL}"] if kept else []
-        parts += [counted_under_text(k, o) for o, k in under.items() if k]
+        parts += [counted_under_text(k, o, after_kept=bool(kept)) for o, k in under.items() if k]
         splits = bool(kept) or any(moves_to.values()) or any(under.values())
         split = f" served: {', '.join(parts)}" if splits else ""
         return f"{n} source {plural_noun(n, 'table')}{split}" + (

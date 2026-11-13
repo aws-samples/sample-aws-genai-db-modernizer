@@ -244,6 +244,8 @@ The result's stable surface follows semantic versioning (`contract_version`, sep
 
 - `contract_version`, `label`, `library_version`, `ruleset_version` and `ruleset_hash`, `options` (as applied, engine ids normalised) and `scope` (echoed);
 - `summary`: `run_through_reached`, `source_engine`, `assignment_version`, `statement_count`, `statements_per_engine`, `unservable_count`, `post_schema_terminal_count`, `unique_delta_threshold`, `relational_engine`, `engines[]` (with `unique_query_ids`), `consolidations[]` (with `action` and `queries_retained`), `tables[]` (per source table: `owner`, `owner_basis`, `also_read_by`, `cached_by`, `reason`), `designed_engines`, `design_note` and `table_facts[]` (with `row_count_basis`, and `foreign_keys[].avg_children_per_parent` and `basis`);
+
+  A table no statement writes is owned by the relational engine (`owner_basis: retained`), or, with none in the plan, by `source_database`, a table a cache alone maps included (it used to have no owner). `owner_basis: most_queries` (a reader owns a table nothing writes) appears only in a result read from a report saved before this rule (#2166). <!-- claim: tests/unit/agents/referee/test_unwritten_table_owner.py::test_the_owner_line_with_no_wave_owner_follows_the_same_rule, tests/unit/assessment/test_assess_additions.py::test_table_reason_retained_and_none, tests/unit/report/test_owner_rule_by_report.py::test_a_report_saved_before_2166_states_its_own_rule -->
 - `statements[]`: per statement, `query_id`, `query_tags`, `query_type`, `join_count`, `tables`, `calls_per_second`, `rewritten_by_caller`, `engine`, `confidence`, `reason_code`, `consolidated_from`, `excluded`, `unservable_reason`, `fit`, `signals`, `matched_patterns`, `tied_engines`, `reason_text`, `post_schema_terminal`, `query_text`, `matched_anti_patterns`, `fit_breakdown`, `parse_status` and `from_query_id`;
 - `groups[]`: statements that move together, `kind` `"co_dependency"` (they join the same tables) or `"write_group"` (every write of one table: a table has one writer);
 - `designs`: a designed result's data model per designed engine ([The design block](#the-design-block)); `null` unless `label` is `designed`.
@@ -690,26 +692,28 @@ A request for a SQL Server collection with two reads, scoped to Aurora PostgreSQ
       {
         "table_id": "sales.Orders",
         "owner": "aurora_postgresql",
-        "owner_basis": "most_queries",
+        "owner_basis": "retained",
         "also_read_by": [],
         "cached_by": null,
-        "reason": "No statement writes it; Aurora PostgreSQL serves its only query."
+        "reason": "No statement writes it, so it stays on Aurora PostgreSQL, the plan's relational engine."
       },
       {
         "table_id": "sales.OrderLines",
         "owner": "aurora_postgresql",
-        "owner_basis": "most_queries",
+        "owner_basis": "retained",
         "also_read_by": [],
         "cached_by": null,
-        "reason": "No statement writes it; Aurora PostgreSQL serves its only query."
+        "reason": "No statement writes it, so it stays on Aurora PostgreSQL, the plan's relational engine."
       },
       {
         "table_id": "sales.Carts",
-        "owner": "dynamodb",
-        "owner_basis": "most_queries",
-        "also_read_by": [],
+        "owner": "aurora_postgresql",
+        "owner_basis": "retained",
+        "also_read_by": [
+          "dynamodb"
+        ],
         "cached_by": null,
-        "reason": "No statement writes it; DynamoDB serves its only query."
+        "reason": "No statement writes it, so it stays on Aurora PostgreSQL, the plan's relational engine; DynamoDB reads a copy kept current from Aurora PostgreSQL via CDC."
       }
     ],
     "designed_engines": [],

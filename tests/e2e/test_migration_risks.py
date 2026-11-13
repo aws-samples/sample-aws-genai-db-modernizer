@@ -260,9 +260,9 @@ def test_the_sync_risk_counts_every_table_read_off_its_owner(
     }
     assert read_off_owner and read_off_owner <= synced, sorted(read_off_owner - synced)
     # A risk with CDC copies and one-time copies states their total, and the total is the
-    # tables it lists: the job before #1955 has both. On the refreshed sample every mapped
-    # table's writes are on DynamoDB, so no table is copied once: its risk states the CDC
-    # copies only, and their counts are its own evidence too.
+    # tables it lists. Both jobs have both: on the refreshed sample every mapped table's
+    # writes are on DynamoDB but one, and #2166 keeps that one, wp_wc_tax_rate_classes,
+    # which no query writes, on Aurora MySQL, so DynamoDB reads it as a one-time copy.
     totals = [
         (
             r,
@@ -273,13 +273,11 @@ def test_the_sync_risk_counts_every_table_read_off_its_owner(
         )
         for r in sync
     ]
-    if job_name == "designed_pre_1955":
-        assert any(m for _, m in totals), [r["description"] for r in sync]
-    else:
-        assert not any(m for _, m in totals), [r["description"] for r in sync]
-        for r in sync:
-            reads, tables, once = _sync_figures(r["description"])
-            assert (reads, tables, once) == (len(r["query_ids"]), len(r["affected_tables"]), 0)
+    assert any(m for _, m in totals), [r["description"] for r in sync]
+    if job_name != "designed_pre_1955":
+        (risk,) = sync
+        assert "wordpress.wp_wc_tax_rate_classes" in risk["affected_tables"]
+        assert _sync_figures(risk["description"])[2] == 1, risk["description"]
     # The review on #1644: the risk's tables and the facts' count are one computation
     # (``non_owner_read_tables_by_wave``), so the waves' tables add up to it.
     owners = report["facts"]["table_owner_lines"]
@@ -437,10 +435,16 @@ NOT_BACKFILLED = frozenset({"design.redesign"})
 # the stored text is compared by its CDC figures, and its one-time copies, counted one
 # way only, are at most the new count.
 REWORDED = frozenset({"routing.close_calls", "sync.wave"})
+# #2166: a fresh synthesis keeps a table nothing writes on the relational step, so its
+# sync risk also names the reads other engines make of such tables; the 1.41 report's
+# own waves gave them to their main reader. Its reads are compared as a subset.
+RULE_CHANGED_READS = frozenset({"sync.wave"})
 
 
 def _as_stored(risk: dict[str, Any]) -> dict[str, Any]:
     out = {**risk, "affected_tables": None, "risk_id": None}
+    if risk.get("rule") in RULE_CHANGED_READS:
+        out["query_ids"] = None
     return {**out, "description": None} if risk.get("rule") in REWORDED else out
 
 
@@ -528,6 +532,7 @@ def test_a_report_from_before_the_rule_renders_the_same_risks(
         if b.get("rule") == "routing.close_calls":
             assert _close_call_figures(b["description"]) == _close_call_figures(f["description"])
         if b.get("rule") == "sync.wave":
+            assert set(b["query_ids"]) <= set(f["query_ids"]), b["risk_id"]
             stored, fresh = _sync_figures(b["description"]), _sync_figures(f["description"])
             assert stored[:2] == fresh[:2] and stored[2] <= fresh[2], (stored, fresh)
     assert [r["risk_id"] for r in backfilled] == [

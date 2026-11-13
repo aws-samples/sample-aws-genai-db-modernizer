@@ -22,16 +22,42 @@ from .facts import report_facts
 from .formatting import plural_noun
 
 # The owner rule, as every deliverable states it (the executive report has no columns).
+# Since #2166 a table no query writes stays on the plan's relational engine; a report
+# saved before it gave such a table to the engine serving most of its queries. Each
+# report prints the rule its own lines follow (``facts.table_owner_lines.
+# unwritten_owner_rule``, :func:`owner_rule_short`), never a computation here.
+_ONE_OWNER = "Each table has one owner, as in the wave plan: the engine that takes its writes; "
+_NO_CACHE_OWNER = (
+    " A cache never owns a table. Every other engine that reads a table reads a copy kept "
+    "current from its owner via CDC."
+)
 OWNER_RULE_SHORT = (
-    "Each table has one owner, as in the wave plan: the engine that takes its writes; a "
-    "table no query writes is owned by the engine that serves most of its queries. A cache "
-    "never owns a table. Every other engine that reads a table reads a copy kept current "
-    "from its owner via CDC."
+    f"{_ONE_OWNER}a table no query writes stays on the plan's relational engine, or on the "
+    f"source database when the plan has none.{_NO_CACHE_OWNER}"
 )
-OWNER_RULE = (
-    f"{OWNER_RULE_SHORT} Also read by names those engines; Cached by names the cache in "
-    "front of the table's reads."
+OWNER_RULE_SHORT_MOST_QUERIES = (
+    f"{_ONE_OWNER}a table no query writes is owned by the engine that serves most of its "
+    f"queries.{_NO_CACHE_OWNER}"
 )
+_COLUMNS = (
+    " Also read by names those engines; Cached by names the cache in front of the table's reads."
+)
+OWNER_RULE = f"{OWNER_RULE_SHORT}{_COLUMNS}"
+OWNER_RULE_MOST_QUERIES = f"{OWNER_RULE_SHORT_MOST_QUERIES}{_COLUMNS}"
+
+
+def _most_queries_rule(facts: dict[str, Any]) -> bool:
+    return bool(facts.get("unwritten_owner_rule") == "most_queries")
+
+
+def owner_rule_short(facts: dict[str, Any]) -> str:
+    """The owner rule ``facts.table_owner_lines`` names (``unwritten_owner_rule``)."""
+    return OWNER_RULE_SHORT_MOST_QUERIES if _most_queries_rule(facts) else OWNER_RULE_SHORT
+
+
+def owner_rule(facts: dict[str, Any]) -> str:
+    """:func:`owner_rule_short` with the Migration map's column note."""
+    return OWNER_RULE_MOST_QUERIES if _most_queries_rule(facts) else OWNER_RULE
 
 
 def ownership_facts(report: dict[str, Any]) -> dict[str, Any] | None:

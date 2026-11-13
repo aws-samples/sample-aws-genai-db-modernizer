@@ -6,8 +6,9 @@
 ADR-031 Amendment 9: a table has one writer, the engine that takes its writes; that
 engine owns the table. Every other engine with an in-scope query on it reads a copy
 kept in sync from the owner via CDC, and the cache layer fronts its hot reads. A
-table no query writes is owned by the engine serving most of its queries. A
-cache-only engine owns no table, whatever the schema design maps to it.
+table no query writes stays with the relational step's engine, or the source database
+when there is none (#2166, ADR-033 Amendment 1). A cache-only engine owns no table,
+whatever the schema design maps to it.
 
 The figures are computed once, in ``src.shared.report_facts`` (ADR-032), from the
 final assignment and its write groups; a report written before them gets the same
@@ -26,6 +27,7 @@ import pytest
 
 from src.contracts.synthesis_output import SynthesisOutputContract
 from src.report.facts import report_facts
+from src.shared.engine_names import SOURCE_DATABASE
 from src.shared.migration_risk_rules import wave_of_engine
 from src.shared.report_facts import (
     OWNER_BY_MOST_QUERIES,
@@ -64,14 +66,26 @@ def test_the_one_writer_owns_the_table_and_every_other_engine_also_reads_it() ->
     }
 
 
-def test_a_table_no_query_writes_is_owned_by_the_engine_serving_most_of_its_queries() -> None:
+def test_a_table_no_query_writes_stays_with_the_relational_step() -> None:
+    """#2166: whichever engine reads it most; a report written before #212 keeps the
+    rule its own waves used, the owner engine serving most of its queries."""
+    queries = {"dynamodb": 3, "aurora_mysql": 1}
     line = table_owner_line(
-        writes={}, queries={"dynamodb": 1, "aurora_mysql": 3}, cached_by=[], design_engines=[]
+        writes={}, queries=queries, cached_by=[], design_engines=[], retained_engine="aurora_mysql"
     )
     assert line["owner"] == "aurora_mysql"
-    assert line["owner_basis"] == OWNER_BY_MOST_QUERIES
+    assert line["owner_basis"] == OWNER_BY_RETAINED
     assert line["also_read_by"] == ["dynamodb"]
     assert line["cached_by"] is None
+    old = table_owner_line(
+        writes={},
+        queries=queries,
+        cached_by=[],
+        design_engines=[],
+        retained_engine="aurora_mysql",
+        design_fallback=True,
+    )
+    assert (old["owner"], old["owner_basis"]) == ("dynamodb", OWNER_BY_MOST_QUERIES)
 
 
 def test_a_cache_only_engine_never_owns_a_table() -> None:
@@ -82,14 +96,21 @@ def test_a_cache_only_engine_never_owns_a_table() -> None:
         queries={"aurora_mysql": 2, "elasticache": 9},
         cached_by=[],
         design_engines=["elasticache", "aurora_mysql"],
+        retained_engine="aurora_mysql",
     )
     assert line["owner"] == "aurora_mysql"
     assert line["also_read_by"] == []
     assert line["cached_by"] == "elasticache"
-    # Mapped by the cache design alone, with no query on it and no retained engine.
+    # Mapped by the cache design alone, with no query on it and no relational step:
+    # the source database keeps it (#2166), never the cache.
     alone = table_owner_line(writes={}, queries={}, cached_by=[], design_engines=["elasticache"])
-    assert alone["owner"] is None and alone["owner_basis"] is None
+    assert (alone["owner"], alone["owner_basis"]) == (SOURCE_DATABASE, OWNER_BY_RETAINED)
     assert alone["cached_by"] == "elasticache"
+    # A report written before #212 with no relational step names no owner, as before.
+    old = table_owner_line(
+        writes={}, queries={}, cached_by=[], design_engines=["elasticache"], design_fallback=True
+    )
+    assert old["owner"] is None and old["owner_basis"] is None
 
 
 def test_the_wave_plans_owner_is_the_owner() -> None:
@@ -153,11 +174,18 @@ def test_a_table_no_owner_engine_queries_is_owned_by_the_retained_engine() -> No
 
 
 def test_a_search_engine_never_owns_a_table() -> None:
+    queries = {"opensearch": 4, "dynamodb": 1}
     line = table_owner_line(
-        writes={}, queries={"opensearch": 4, "dynamodb": 1}, cached_by=[], design_engines=[]
+        writes={}, queries=queries, cached_by=[], design_engines=[], retained_engine="aurora_mysql"
     )
-    assert line["owner"] == "dynamodb"
-    assert line["also_read_by"] == ["opensearch"]
+    # Nothing writes it, so the relational step keeps it (#2166); both engines read a copy.
+    assert line["owner"] == "aurora_mysql"
+    assert line["also_read_by"] == ["opensearch", "dynamodb"]
+    old = table_owner_line(
+        writes={}, queries=queries, cached_by=[], design_engines=[], design_fallback=True
+    )
+    assert old["owner"] == "dynamodb"
+    assert old["also_read_by"] == ["opensearch"]
 
 
 def test_also_read_by_lists_most_queries_first_then_by_id() -> None:
@@ -203,6 +231,7 @@ def test_the_assignment_gives_writes_queries_and_cached_reads_per_table() -> Non
     }
 
 
+@pytest.mark.passes_on_main
 def test_every_mapping_row_gets_its_owner_line() -> None:
     mappings = [
         {
@@ -219,10 +248,11 @@ def test_every_mapping_row_gets_its_owner_line() -> None:
     usage = {
         "db.t": {"writes": {"aurora_mysql": 1}, "queries": {"aurora_mysql": 3}, "cached_by": []}
     }
-    rows = table_owner_fields(mappings, usage)
+    rows = table_owner_fields(mappings, usage, retained_engine="aurora_mysql")
+    # db.v: no query writes it (or reads it), so the relational step keeps it (#2166).
     assert [(r["owner"], r["owner_basis"], r["cached_by"]) for r in rows] == [
         ("aurora_mysql", OWNER_BY_WRITES, "elasticache"),
-        (None, None, None),
+        ("aurora_mysql", OWNER_BY_RETAINED, None),
     ]
     assert mappings[0].get("owner") is None, "the input rows are not changed"
 
@@ -252,6 +282,7 @@ def _report(mappings: list[dict[str, Any]], **extra: Any) -> dict[str, Any]:
     return report
 
 
+@pytest.mark.passes_on_main
 def test_the_facts_block_counts_the_owners_the_readers_and_the_cached_tables() -> None:
     mappings = table_owner_fields(
         [
@@ -267,11 +298,13 @@ def test_the_facts_block_counts_the_owners_the_readers_and_the_cached_tables() -
             },
             "db.b": {"writes": {}, "queries": {"aurora_mysql": 1}, "cached_by": []},
         },
+        retained_engine="aurora_mysql",
     )
     facts = compute_report_facts(_report(mappings))["table_owner_lines"]
     assert facts["table_count"] == 3
-    assert facts["owned_table_counts"] == {"aurora_mysql": 1, "dynamodb": 1}
-    assert facts["no_owner_table_count"] == 1
+    # db.b and db.c: nothing writes them, so the relational step keeps them (#2166).
+    assert facts["owned_table_counts"] == {"aurora_mysql": 2, "dynamodb": 1}
+    assert facts["no_owner_table_count"] == 0
     assert facts["also_read_table_count"] == 1
     # db.a by a cached read of it, db.b and db.c by the cache design that keys them.
     assert facts["cached_table_count"] == 3

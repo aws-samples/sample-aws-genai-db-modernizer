@@ -28,8 +28,10 @@ import pytest
 from src.contracts.data_movement_plan import DataMovementPlan, HubPlan
 from src.shared.catalog.prices import HOURS_PER_MONTH, price_table
 from src.shared.contract_versioning import load_contract
-from src.shared.engine_names import display_engine
+from src.shared.engine_names import SOURCE_DATABASE, display_engine
 from src.shared.migration_wave_engines import CACHE_ENGINES, RELATIONAL_ENGINES
+from src.shared.placeholder_tables import saved_write_groups
+from src.shared.report_facts import wave_retained_engine
 from tests.e2e.pipeline import REPO, PipelineResult, _env, unzip_sample
 
 SCRIPT = "scripts/run_data_movement_plan.py"
@@ -85,8 +87,15 @@ def _assignment(root: Path, db: str, job: str, report: dict) -> dict:
 
 
 def _check_plans(
-    plans: list[DataMovementPlan], hub: HubPlan | None, report: dict, assignment: dict
+    plans: list[DataMovementPlan],
+    hub: HubPlan | None,
+    report: dict,
+    assignment: dict,
+    synthesized_now: bool = True,
 ) -> None:
+    """``synthesized_now`` is False for a saved real-model run (``run.external``): its
+    stored waves were written by the code of its day, so the checks of a rule newer
+    than the saved run (#2166) are not read from it."""
     waves = report["migration_waves"]
     by_wave = {w["wave"]: w for w in waves}
     # One plan per step, numbered as facts.slice_plan numbers it (#1698, ADR-033 Decision
@@ -184,6 +193,22 @@ def _check_plans(
                 # A replica fed by a non-relational owner has no feed from the hub yet.
                 if target.source_of_truth not in RELATIONAL_ENGINES | {plan.source.engine}:
                     assert (table, target.engine) in reverse, (plan.wave, table, target.engine)
+    # A table nothing writes stays with the relational step (#2166, ADR-033 Amendment 1):
+    # no wave names a reader its owner, so no plan asks a non-relational engine to feed
+    # a copy of it.
+    written = set(saved_write_groups(assignment))
+    relational = wave_retained_engine(waves)
+    for wave in waves if synthesized_now else []:
+        for row in wave.get("table_owners") or []:
+            if row["table"] not in written:
+                assert row["owner"] == (relational or SOURCE_DATABASE), (wave["wave"], row)
+    for plan in later if synthesized_now else []:
+        unwritten = sorted(
+            u.table
+            for u in plan.unsupported
+            if u.kind == "reverse_replication" and u.table not in written
+        )
+        assert not unwritten, (plan.wave, len(unwritten), unwritten[:5])
     # The committed price table carries the DMS, MSK and MSK Connect sections (#1424), so a
     # plan states its cost from them, or names the one thing it could not price: a hub
     # table the collector did not measure.
@@ -215,7 +240,9 @@ def test_each_sample_job_gets_one_valid_plan_per_step(run: PipelineResult, tmp_p
     root = _copy_job(run, tmp_path)
     plans, hub = _plan_job(root, run.db, run.job_id)
     report = _report(root, run.db, run.job_id)
-    _check_plans(plans, hub, report, _assignment(root, run.db, run.job_id, report))
+    _check_plans(
+        plans, hub, report, _assignment(root, run.db, run.job_id, report), not run.external
+    )
 
 
 def test_the_plans_ignore_the_hash_seed(run: PipelineResult, tmp_path: Path) -> None:

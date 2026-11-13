@@ -51,11 +51,12 @@ TEMPLATE_PATH = (
 # The partial design (#1176 review): three of the tables DynamoDB's wave moves left
 # out of the map, and one table no DynamoDB query reads mapped, so the Migration map's
 # "no target table yet" and "no query routed to DynamoDB reads" sentences (#1173)
-# both have an e2e job.
+# both have an e2e job. Each is a table DynamoDB writes: since #2166 a table nothing
+# writes (``wp_wc_tax_rate_classes``, here before) stays on Aurora MySQL and does not move.
 PARTIAL_LEAVE_OUT = (
     "wordpress.wp_wc_product_meta_lookup",
     "wordpress.wp_wc_reserved_stock",
-    "wordpress.wp_wc_tax_rate_classes",
+    "wordpress.wp_woocommerce_api_keys",
 )
 PARTIAL_EXTRA = ("wordpress.wp_links",)
 

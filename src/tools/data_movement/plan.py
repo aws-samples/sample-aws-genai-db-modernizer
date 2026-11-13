@@ -87,7 +87,7 @@ from src.contracts.data_movement_plan import (
 from src.shared import catalog
 from src.shared.catalog.dms_sizing import dms_sizing
 from src.shared.catalog.prices import HOURS_PER_MONTH, PriceTable
-from src.shared.engine_names import display_engine
+from src.shared.engine_names import SOURCE_DATABASE, display_engine
 from src.shared.migration_wave_engines import CACHE_ENGINES, RELATIONAL_ENGINES, SEARCH_ENGINES
 from src.shared.table_writer import table_writer
 from src.tools.data_movement.dms_sizing import (
@@ -851,10 +851,12 @@ def _owner_of(
     readers: list[str],
     fallback: str,
 ) -> str:
-    """The engine that holds ``table``'s writes once the wave is done."""
+    """The engine that holds ``table``'s writes once the wave is done. The wave plan's
+    ``source_database`` owner (a table nothing writes with no relational step, #2166) is
+    this plan's source engine, ``fallback``."""
     for row in wave.get("table_owners") or []:
         if row.get("table") == table and row.get("owner") and row["owner"] not in readers:
-            return str(row["owner"])
+            return fallback if row["owner"] == SOURCE_DATABASE else str(row["owner"])
     owners_in_wave = sorted(
         str(r["owner"])
         for r in wave.get("table_owners") or []

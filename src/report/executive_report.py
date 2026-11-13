@@ -124,7 +124,7 @@ from .risks import (
 from .roadmap import _SUGGESTED_PATH_NOTE, _moves_from_label, _wave_headline_stats
 from .roadmap import resolve_migration_waves as _resolve_waves
 from .routines import lists_routines, routine_summary_lines, routine_wave
-from .table_owners import OWNER_RULE_SHORT, ownership_facts, ownership_summary_text
+from .table_owners import owner_rule_short, ownership_facts, ownership_summary_text
 from .unreviewed import unreviewed_moves_line
 from .unservable import (
     UNSERVABLE_SCOPE_SOME,
@@ -1008,7 +1008,7 @@ def _recommendation(report: dict[str, Any], st: dict[str, ParagraphStyle], names
         flow += [
             _gap(8),
             _labelled(L_TABLE_OWNERS, ownership_summary_text(ownership), st["small"]),
-            _para(OWNER_RULE_SHORT, st["small"]),
+            _para(owner_rule_short(ownership), st["small"]),
         ]
     return flow
 

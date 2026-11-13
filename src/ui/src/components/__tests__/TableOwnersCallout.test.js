@@ -145,3 +145,20 @@ test('renders nothing for a report that maps no table', () => {
   render({});
   expect(container.innerHTML).toBe('');
 });
+
+// #2166 review: a report states the owner rule its own lines follow
+// (facts.table_owner_lines.unwritten_owner_rule), never a fixed sentence.
+test('states the relational-step rule for a report written since #2166', () => {
+  render({ table_owner_lines: { ...ownership, unwritten_owner_rule: 'relational_step' } });
+  const rule = container.querySelector('[data-figure="owner-rule"]').textContent;
+  expect(rule).toBe(en['analysis-results.table-owners.rule']);
+  expect(rule).toContain("a table no query writes stays on the plan's relational engine");
+});
+
+test("states an older report's own rule above its most-queries rows", () => {
+  render({ table_owner_lines: { ...ownership, unwritten_owner_rule: 'most_queries' } });
+  const rule = container.querySelector('[data-figure="owner-rule"]').textContent;
+  expect(rule).toBe(en['analysis-results.table-owners.rule-most-queries']);
+  expect(rule).toContain('is owned by the engine that serves most of its queries');
+  expect(rule).not.toContain("plan's relational engine");
+});
