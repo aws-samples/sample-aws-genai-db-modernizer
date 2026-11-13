@@ -191,6 +191,10 @@ def _design_targets(
     """
     base = f"{db}/{job_id}/schema-{engine}/v{version}"
     if _grouped(engine):
+        output = _read(store, f"{base}/schema_output.json")
+        if isinstance(output, dict) and output.get("status") == "skipped":
+            # Nothing to design, or the user skipped it (#2200): its drafts are not a design.
+            return [], "its design was skipped (nothing to review)"
         manifest = _read(store, f"{base}/groups_manifest.json")
         if not isinstance(manifest, dict):
             return [], f"not split on v{version}"

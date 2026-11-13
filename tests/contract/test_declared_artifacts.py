@@ -276,7 +276,8 @@ def _mocked_model_run(directory: Path) -> None:
             Path(group["draft"]),
             _draft(group_input["collector_output"]["queries"]["query_patterns"]),
         )
-    reviews = _script(directory, "run_pe_review.py", *common)
+    # 6c: DynamoDB's review starts once its parts are in (#2200), before the others' designs.
+    reviews = _script(directory, "run_pe_review.py", *common, "--engine", "dynamodb")
     for review in reviews["reviews"]:
         _write(
             Path(review["response"]),

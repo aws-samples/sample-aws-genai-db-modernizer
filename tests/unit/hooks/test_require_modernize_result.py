@@ -391,3 +391,56 @@ def test_without_the_tasks_field_a_review_still_out_or_a_started_merge_allows(
     event = _event(project)
     del event["background_tasks"]
     assert _allowed(run_hook(SCRIPT, event, env=_env(project)))
+
+
+# #2200 review: a review now starts as soon as its own design is done, so every DynamoDB
+# part can be reviewed while another engine's design or review still runs.
+
+
+def _other_engine(project: Path, reviewed: bool, engine: str = "documentdb") -> None:
+    state = project / ".modernizer-state.json"
+    data = json.loads(state.read_text())
+    data["selected_engines"] = ["dynamodb", engine]
+    state.write_text(json.dumps(data))
+    if reviewed:
+        vdir = project / "artifacts" / DB / JOB / f"schema-{engine}" / "v1"
+        vdir.mkdir(parents=True, exist_ok=True)
+        (vdir / "schema_output.json").write_text("{}")
+        (vdir / "design_trace.json").write_text(json.dumps({"pe_review": {"verdict": "OK"}}))
+
+
+@pytest.mark.parametrize("reviews_done", [True, False])
+def test_without_the_tasks_field_another_engine_still_out_is_a_wait(
+    run_hook, project, reviews_done: bool
+) -> None:
+    """Every DynamoDB draft (or review) is in, but DocumentDB has no recorded review yet:
+    its design or review may still be running, so the fallback does not block."""
+    if reviews_done:
+        _record_reviews(project, range(3))
+    _other_engine(project, reviewed=False)
+    event = _event(project)
+    del event["background_tasks"]
+    assert _allowed(run_hook(SCRIPT, event, env=_env(project)))
+
+
+def test_with_nothing_running_another_engine_still_out_names_no_dynamodb_step(
+    run_hook, project
+) -> None:
+    """With nothing running the stop is still refused, but the reason no longer sends the
+    run to the 6d merge while another engine's review is not recorded."""
+    _record_reviews(project, range(3))
+    _other_engine(project, reviewed=False)
+    res = run_hook(SCRIPT, _event(project), env=_env(project))
+    assert _blocked(res)
+    assert "Every DynamoDB part" not in res.stderr and "6d merge" not in res.stderr
+
+
+@pytest.mark.passes_on_main  # every other engine reviewed: the 6d hint stays, as before
+def test_every_other_engine_reviewed_keeps_the_dynamodb_step(run_hook, project) -> None:
+    _record_reviews(project, range(3))
+    _other_engine(project, reviewed=True)
+    event = _event(project)
+    del event["background_tasks"]
+    res = run_hook(SCRIPT, event, env=_env(project))
+    assert _blocked(res), res.stderr
+    assert "Every DynamoDB part's review is recorded (3 of 3)" in res.stderr

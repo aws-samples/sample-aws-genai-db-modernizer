@@ -287,9 +287,28 @@ class TestApply:
         assert pe.apply_pe_review_llm_output(store, DB, JOB, 3, "documentdb")["status"] == "error"
 
 
+def _finalized(store: LocalArtifactStore, engine: str) -> None:
+    """The record ``run_schema_design.py --finalize`` writes: the design is complete, so
+    the check without ``--engine`` lists it (#2200)."""
+    response = f"{PREFIX}/llm_responses/schema_design_{engine}.json"
+    store.write_json(response, {})
+    base = f"{PREFIX}/schema-{engine}/v{V}"
+    store.write_json(
+        f"{base}/{run_schema_design._FINALIZE_RECORD}",
+        {
+            "status": "complete",
+            "response_sha256": run_schema_design._digest(store, response),
+            "output_sha256": run_schema_design._digest(store, f"{base}/schema_output.json"),
+        },
+    )
+
+
 class TestScript:
+    @pytest.mark.passes_on_main  # #2200 only finalizes the fixture's designs first
     def test_prepare_then_finalize_print_one_line_each(self, store, monkeypatch, capsys) -> None:
         root = str(store.base_dir)
+        for engine in ("aurora_mysql", "documentdb"):
+            _finalized(store, engine)
         code, line = _script(run_pe_review, monkeypatch, capsys, root, "--assignment-version", "2")
         assert code == 0 and line["status"] == "awaiting_llm" and len(line["reviews"]) == 4
         documentdb = line["reviews"][1]
