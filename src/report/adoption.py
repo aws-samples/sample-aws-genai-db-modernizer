@@ -54,10 +54,11 @@ from .formatting import _fmt_usd, fmt_num, plural_noun, plural_verb
 #: report's section heading (review of #2241): the path labels, the path blocks and the
 #: roadmap's stages use them.
 DEFINITIONS = (
-    "A step moves one group of queries to one engine, and each wave of the roadmap holds "
-    "one or more steps. A step runs in stages, each with its own gate. A stage moves "
-    "units: a unit is the smallest set of queries and tables that moves on its own, and "
-    "the pilot is the first unit to move."
+    "The relational step moves the whole database, a cache step fronts reads and moves no "
+    "data, and every other step moves one group of queries to one engine; each wave of "
+    "the roadmap holds one or more steps. A step runs in stages, each with its own gate. "
+    "A stage moves units: a unit is the smallest set of queries and tables that moves on "
+    "its own, and each step's pilot is its first unit to move."
 )
 
 #: The one-step verdict, the fixed "suits one step" sentence both reports print (#2240,

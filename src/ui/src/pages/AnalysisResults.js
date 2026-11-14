@@ -57,6 +57,7 @@ import NoOpenRisksSection from "../components/NoOpenRisksSection";
 import UnreviewedMovesNote from "../components/UnreviewedMovesNote";
 import EngineChoicesNote from "../components/EngineChoicesNote";
 import MigrationWavePlan from "../components/MigrationWavePlan";
+import { schemaSectionIdOf } from "../utils/adoptionPaths";
 import RoutineMigrationSection from "../components/RoutineMigrationSection";
 import ExecutiveSummaryStats from "../components/ExecutiveSummaryStats";
 import SourcesOfTruthCallout from "../components/SourcesOfTruthCallout";
@@ -2131,7 +2132,11 @@ const AnalysisResultsPage = memo(() => {
 
             {/* Migration roadmap (#957): report.json's waves, the same ones the
                 PDF and the engineering report show. */}
-            <MigrationWavePlan synthesis={synthesis} t={t} />
+            <MigrationWavePlan
+              synthesis={synthesis}
+              t={t}
+              schemaSectionId={schemaSectionIdOf(totalAccessPatterns > 0 || cachePatternCount > 0, auroraDesigns.length > 0)}
+            />
 
             {/* Routines (#1939): how the job's routines migrate, the to-do and each
                 routine behind a routine risk, from facts.routines, as both reports

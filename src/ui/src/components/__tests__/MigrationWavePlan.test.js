@@ -42,6 +42,25 @@ jest.mock('@cloudscape-design/components/expandable-section', () => ({
   default: ({ headerText, children }) => <details><summary>{headerText}</summary>{children}</details>,
 }));
 
+// #1132: the adoption paths panel's components (not rendered by a report without
+// facts.adoption, but imported).
+jest.mock('@cloudscape-design/components/column-layout', () => ({
+  __esModule: true,
+  default: ({ children }) => <div>{children}</div>,
+}));
+jest.mock('@cloudscape-design/components/toggle-button', () => ({
+  __esModule: true,
+  default: ({ children }) => <button type="button">{children}</button>,
+}));
+jest.mock('@cloudscape-design/components/button', () => ({
+  __esModule: true,
+  default: ({ children }) => <button type="button">{children}</button>,
+}));
+jest.mock('@cloudscape-design/components/link', () => ({
+  __esModule: true,
+  default: ({ children, href }) => <a href={href}>{children}</a>,
+}));
+
 global.IS_REACT_ACT_ENVIRONMENT = true;
 
 let container;

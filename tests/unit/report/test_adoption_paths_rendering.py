@@ -302,6 +302,17 @@ def test_the_section_defines_step_stage_unit_and_pilot_once() -> None:
         assert re.search(rf"\b{word}\b", DEFINITIONS), word
 
 
+def test_the_definitions_fit_every_kind_of_step() -> None:
+    """#2246 item 2: the relational step moves the whole database and a cache step moves
+    no data, so "a step moves one group of queries" alone does not fit them; and every
+    step has its own pilot, not one first unit for the whole plan."""
+    assert "The relational step moves the whole database" in DEFINITIONS
+    assert "a cache step fronts reads and moves no data" in DEFINITIONS
+    assert "every other step moves one group of queries to one engine" in DEFINITIONS
+    assert "each step's pilot is its first unit to move" in DEFINITIONS
+    assert "the pilot is the first unit to move" not in DEFINITIONS
+
+
 def _rows(lines: list[str]) -> list[list[str]]:
     """The cells of every table row in ``lines`` (header and separator rows dropped)."""
     out = []

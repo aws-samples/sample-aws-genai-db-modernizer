@@ -144,6 +144,10 @@ const GUARDED_UI_FILES = [
   'utils/queryRouting.js',
   'utils/migrationWaves.js',
   'components/MigrationWavePlan.js',
+  // #1132: the adoption paths, the waves' stages and the one-step option.
+  'utils/adoptionPaths.js',
+  'components/AdoptionPathPanel.js',
+  'components/WaveStages.js',
   'components/RoutineMigrationSection.js',
   'components/ExecutiveSummaryStats.js',
   'components/DeliverablesPanel.js',
