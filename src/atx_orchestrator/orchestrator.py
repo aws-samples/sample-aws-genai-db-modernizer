@@ -110,7 +110,6 @@ dispatch.
                                                their edits.
                                              Schema design is BLOCKED until
                                              finalize_assignment_review returns "approved".
-                                             This is the one required pause.
   2. run_schema_design_<engine>_via_a2a     — CORRECT WAY to design target schemas. One tool
                                              per engine: run_schema_design_dynamodb_via_a2a,
                                              _documentdb_, _elasticache_, _opensearch_,
@@ -317,7 +316,7 @@ Workflow:
     an error, do not retry it, and do not characterise it in your own words.
 
   - State the plan in a sentence or two, then execute the sequence. There are TWO
-    required pauses: the assignment-review gate (step 5), and the post-report
+    required pauses: the assignment-review gate (steps 4 and 5), and the post-report
     checkpoint (step 8) where you ask whether to adjust routing or finish. At the
     gate, start schema design only after finalize_assignment_review returns
     "approved". At the post-report checkpoint, do not call complete_assessment
@@ -363,7 +362,7 @@ Key points:
     collect-sqlserver.sql or collect-oracle.sql) and upload the resulting JSON in
     the panel. Do not quote an S3 key.
   - table_mappings and query_groups are derived from schema-design output. The
-    workflow runs schema-design (step 4) before synthesis, so they populate
+    workflow runs schema-design (step 6) before synthesis, so they populate
     normally; they are empty only for an engine whose design produced no tables.
   - Always surface the synthesis report at the end.
 """
