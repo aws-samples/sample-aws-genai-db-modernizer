@@ -1027,3 +1027,38 @@ def test_the_mysql_round_trips_are_deselected_not_skipped_in_a_gated_run():
                  test_a_rollback_microseconds_zones_and_types_are_told_apart_on_mysql,
                  test_column_names_user_variables_and_counters_on_mysql):  # fmt: skip
         assert "integration" in {m.name for m in test.pytestmark}
+
+
+def _my_event(name, note):
+    return (
+        f"CREATE EVENT {name} ON SCHEDULE EVERY 1 HOUR DO "
+        f"INSERT INTO audit (account_id, op, at, draw) VALUES (1, '{note}', NOW(), RAND())"
+    )
+
+
+@pytest.mark.integration
+@needs_mysql
+def test_an_equal_event_and_a_changed_one_compare_by_their_table_changes_on_mysql():
+    """An event's one run (#1971) is a call: its table changes are the data compared."""
+    if os.geteuid() == 0:
+        return
+    spec = {"schedule": "RECURRING", "interval_value": 1, "interval_field": "HOUR"}
+
+    def proof(name):
+        return RoutineProofInput.model_validate(
+            {
+                "routine_id": f"src.{name}",
+                "kind": "event",
+                "name": name,
+                "event": spec,
+                "tables": ["audit"],
+            }
+        )
+
+    same, changed = proof("same_ev"), proof("changed_ev")
+    pairs = [_pair(same, _my_event("same_ev", "x"), _my_event("same_ev", "x")),
+             _pair(changed, _my_event("changed_ev", "x"), _my_event("changed_ev", "y"))]  # fmt: skip
+    one, two = _my_compare(pairs)
+    assert (one.outcome, one.differences) == ("no_differences_found", ()), one
+    assert two.outcome == "different"
+    assert {d.table for d in two.differences} == {"audit"}

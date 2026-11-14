@@ -112,3 +112,47 @@ def test_an_event_runs_once_on_demand_while_the_scheduler_stays_off():
         assert de.execute(h, "SELECT @@event_scheduler").rows == [["OFF"]]
         names = de.execute(h, "SELECT COUNT(*) FROM information_schema.EVENTS").rows
         assert names == [[4]]  # the runs left the events as they were
+
+
+def test_an_event_the_server_drops_on_creation_or_one_with_an_odd_name_fails_alone():
+    """A one-time event whose time has passed is dropped as it is created; ``my-ev`` is a
+    legal name no runner can be named after. Neither fails the load or its neighbours."""
+    odd = [
+        de.SourceRoutine("old", "event",
+            "CREATE EVENT old ON SCHEDULE AT '2020-01-01 00:00:00' ON COMPLETION NOT PRESERVE "
+            "DISABLE DO INSERT INTO order_log (id, note) VALUES (900, 'old')"),
+        de.SourceRoutine("ended", "event",
+            "CREATE EVENT ended ON SCHEDULE EVERY 1 HOUR STARTS '2019-01-01 00:00:00' "
+            "ENDS '2020-01-01 00:00:00' DO INSERT INTO order_log (id, note) VALUES (901, 'e')"),
+        de.SourceRoutine("my-ev", "event",
+            "CREATE EVENT `my-ev` ON SCHEDULE EVERY 1 HOUR DO "
+            "INSERT INTO order_log (id, note) VALUES (902, 'odd')"),
+        de.SourceRoutine("replica_off", "event",
+            "CREATE EVENT replica_off ON SCHEDULE EVERY 1 HOUR DISABLE ON SLAVE DO "
+            "INSERT INTO order_log (id, note) VALUES (903, 'replica')"),
+        SOURCES[0],
+    ]  # fmt: skip
+    calls = {n: run_call_for(n) for n in ("old", "ended", "my-ev", "replica_off", "log_orders")}
+    status = {"status": "REPLICA_SIDE_DISABLED"}
+    assert EventSpec.model_validate({"schedule": "ONE TIME", **status}).enabled is False
+    with de.running("mysql", de.available_majors("mysql")[0]) as h:
+        inputs = build_proof_inputs(EVENTS[:1], TABLES, dialect="mysql", seed=2)
+        load_setup(h, inputs, odd)  # no error: the dropped events do not fail the setup
+        states = dict(
+            de.execute(h, "SELECT EVENT_NAME, STATUS FROM information_schema.EVENTS").rows
+        )
+        assert states["replica_off"] in ("REPLICA_SIDE_DISABLED", "SLAVESIDE_DISABLED")
+        assert "old" not in states and "ended" not in states
+        for gone in ("old", "ended"):
+            result = run_call(h, calls[gone])
+            assert result.error and "no body to run" in result.error
+        assert run_call(h, calls["log_orders"]).error is None
+        assert run_call(h, calls["replica_off"]).error is None
+        assert {"ran", "replica"} <= _log(h)
+        assert de.call(h, de.SourceRoutine("my-ev", "event", ""), [], []).error  # its own failure
+
+
+def run_call_for(name):
+    from src.tools.routines.proof_inputs import ProofCall
+
+    return ProofCall(f"src.{name}", "run", "call", name, "event")
