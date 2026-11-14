@@ -3944,6 +3944,77 @@ class RelationalTableClasses(BaseModel):
         return self
 
 
+class StepTies(BaseModel):
+    """What a step shares with the other steps and what cutting it off costs, counted once
+    from the plan's dependencies and units (#1699), so every sentence and deliverable
+    states the same figures (ADR-032)."""
+
+    later_step_count: int = Field(0, ge=0, description="The steps that run after it")
+    dependent_steps: list[int] = Field(
+        default_factory=list, description="The later steps with a dependency on its units"
+    )
+    dependent_step_count: int = Field(0, ge=0)
+    shared_with_steps: list[int] = Field(
+        default_factory=list,
+        description=(
+            "The other steps, the relational step excepted, its units are tied to through a "
+            "table, in either direction"
+        ),
+    )
+    shared_tables: list[str] = Field(
+        default_factory=list, description="The tables those ties run through"
+    )
+    shared_table_count: int = Field(0, ge=0)
+    fronted_step: int | None = Field(
+        None, description="A cache step's: the one earlier step whose tables it caches"
+    )
+    fronted_tables: list[str] = Field(
+        default_factory=list, description="A cache step's: the tables it caches there"
+    )
+    fronted_table_count: int = Field(0, ge=0)
+    replica_table_count: int | None = Field(
+        None,
+        ge=0,
+        description=(
+            "A moving step's tables copied across, either way (a slice step's cut cost); "
+            "None for the relational and cache steps, and for an engine-wave step stored "
+            "before #1699"
+        ),
+    )
+    write_site_count: int | None = Field(
+        None, ge=0, description="A moving step's write statements that change engine"
+    )
+    ordered_with_steps: list[int] = Field(
+        default_factory=list,
+        description="A slice step's: the other slice steps of its wave, which its order is among",
+    )
+    runs_after_steps: list[int] = Field(
+        default_factory=list,
+        description=(
+            "A slice step shared by many parts (hub score at least HUB_HEAVY): the steps of "
+            "its wave that run before it because they are not"
+        ),
+    )
+
+    @model_validator(mode="after")
+    def _counts(self) -> "StepTies":
+        _count_matches(self.dependent_step_count, self.dependent_steps, "dependent_step_count")
+        _count_matches(self.shared_table_count, self.shared_tables, "shared_table_count")
+        _count_matches(self.fronted_table_count, self.fronted_tables, "fronted_table_count")
+        for name in ("dependent_steps", "shared_with_steps", "ordered_with_steps"):
+            numbers = getattr(self, name)
+            if numbers != sorted(set(numbers)):
+                raise ValueError(f"{name} lists each step once, in order")
+        _unique(self.shared_tables, "shared_tables")
+        if len(self.dependent_steps) > self.later_step_count:
+            raise ValueError("a step has no more dependent steps than later steps")
+        if (self.fronted_step is None) != (not self.fronted_tables):
+            raise ValueError("a fronted step names its tables, and only it")
+        if not set(self.runs_after_steps) <= set(self.ordered_with_steps):
+            raise ValueError("runs_after_steps are steps of its own wave")
+        return self
+
+
 class SliceStep(BaseModel):
     """One step of the plan (#1698, ADR-033 Decision 1): step 1 is the relational step
     (wave 1); each later step moves one slice, or the cache's reads, to one engine
@@ -3992,6 +4063,10 @@ class SliceStep(BaseModel):
     table_classes: RelationalTableClasses | None = Field(
         None, description="The relational step only"
     )
+    ties: StepTies | None = Field(
+        None,
+        description="The figures its why sentence states (#1699); None in a plan stored before it",
+    )
     why: str | None = Field(
         None,
         description=(
@@ -4038,6 +4113,23 @@ class SliceStep(BaseModel):
             raise ValueError("only a slice step carries slice metrics")
         if self.table_classes is not None and self.kind != "relational_step":
             raise ValueError("only the relational step carries table classes")
+        if self.ties is not None:
+            ties = self.ties
+            if any(n <= self.step_number for n in ties.dependent_steps):
+                raise ValueError("a step's dependent steps run after it")
+            if self.step_number in ties.shared_with_steps + ties.ordered_with_steps:
+                raise ValueError("a step does not share with or order among itself")
+            if ties.fronted_step is not None and (
+                self.kind != "cache" or ties.fronted_step >= self.step_number
+            ):
+                raise ValueError("only a cache step fronts a step, an earlier one")
+            if (ties.ordered_with_steps or ties.runs_after_steps) and self.kind != "slice":
+                raise ValueError("only a slice step is ordered among its wave's steps")
+            if self.metrics is not None and (
+                ties.replica_table_count != self.metrics.cut_cost.replica_table_count
+                or ties.write_site_count != self.metrics.cut_cost.write_site_count
+            ):
+                raise ValueError("a slice step's ties state its cut cost")
         return self
 
 
@@ -4129,7 +4221,8 @@ class SlicePlanFacts(BaseModel):
         description=(
             "The plain name of each order metric, by its UnitMetrics, SliceMetrics or "
             "CutCost field: the one set of words every deliverable uses for them (#1699, "
-            "``step_explanations.METRIC_LABELS``); empty in a plan stored before it"
+            "``step_explanations.METRIC_LABELS``); empty in a plan stored before it, and "
+            "missing a metric added after it was stored, which the reader fills"
         ),
     )
 
@@ -4137,8 +4230,10 @@ class SlicePlanFacts(BaseModel):
     def _consistent(self) -> "SlicePlanFacts":
         _count_matches(self.step_count, self.plan_steps, "step_count")
         metrics = {*UnitMetrics.model_fields, *SliceMetrics.model_fields, *CutCost.model_fields}
-        if self.metric_labels and set(self.metric_labels) != metrics:
-            raise ValueError("metric_labels names each order metric, and only them")
+        if not set(self.metric_labels) <= metrics:
+            # A subset loads: a plan saved before a metric was added names fewer, and the
+            # reader fills the missing names (``step_explanations.needs_step_explanations``).
+            raise ValueError("metric_labels names only order metrics")
         if [s.step_number for s in self.plan_steps] != list(range(1, len(self.plan_steps) + 1)):
             raise ValueError("steps are numbered 1, 2, ... in order")
         if (self.slice_basis is None) == (self.step_basis == "slices"):

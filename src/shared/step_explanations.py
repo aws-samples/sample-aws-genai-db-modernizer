@@ -4,19 +4,22 @@
 """Each step's "why" sentence and the plan metrics' plain names (#1699).
 
 ``facts.slice_plan`` orders its steps by rules a reader cannot see: the relational step
-first, then the migration waves' order, and inside a wave each slice's share of calls
-against what cutting it off needs (``dependency_graph.slice_order_key``). Every step
+first, then each step in its engine's wave of the roadmap (the migration waves), and
+inside a wave the slices by each one's share of calls against what cutting it off needs,
+the slices shared by many parts last (``dependency_graph.slice_order_key``). Every step
 states, in one sentence filled from a fixed template, what it moves, why it sits where
 it does, what it shares with other steps, what it needs copied across and what holds
 it. ``METRIC_LABELS`` names each order metric in plain words, the one set of words the
 sentences and every deliverable use.
 
-Every number is read from the plan itself (the step's own counts, its stages' holding
-risks, its slice metrics, its units' copies and writes, the plan's dependencies): no
-figure is recomputed from the assignment, and nothing here ranks a step or an engine,
-names a graph term, or says anything about the cutover. A model may smooth the wording;
-it never adds a claim or a number (#1699). ``tests/unit/shared/test_step_explanations.py``
-guards the templates.
+Every number in a sentence is a figure the plan states: the step's own counts, its
+stages' holding risks and its ``ties`` (``StepTies``), which ``step_ties`` counts once
+from the plan's dependencies and steps; a moving step's tables copied across and write
+statements that change engine are its slice metrics' cut cost, or for an engine-wave
+step the same ``dependency_graph.cut_cost`` the slice plan passes in. Nothing here ranks
+a step or an engine, names a graph term, or says anything about the cutover. A model may
+smooth the wording; it never adds a claim or a number (#1699).
+``tests/unit/shared/test_step_explanations.py`` guards the templates.
 """
 
 from __future__ import annotations
@@ -31,6 +34,7 @@ __all__ = [
     "METRIC_LABELS",
     "TEMPLATES",
     "needs_step_explanations",
+    "step_ties",
     "step_why",
     "with_step_explanations",
 ]
@@ -58,28 +62,26 @@ RELATIONAL_WHY = (
 )
 BUILT_ON_SOME = "{dependents} of the {later} later steps {verb} on the tables it carries"
 BUILT_ON_ALL = "all {later} later steps build on the tables it carries"
+BUILT_ON_BOTH = "both later steps build on the tables it carries"
 BUILT_ON_ONE = "the later step builds on the tables it carries"
 BUILT_ON_NONE = "no later step builds on the tables it carries"
 NO_LATER_STEP = "no later step follows it"
 
 CACHE_WHY = (
-    "Step {step} puts {engine} in front of {reads}, {share} of calls, and moves no " "data{fronts}."
+    "Step {step} puts {engine} in front of {reads}, {share} of calls, and moves no data{fronts}."
 )
 CACHE_FRONTS = "; it caches {tables} that step {source} carries on {fronted}"
 
-SLICE_WHY = (
-    "Step {step} moves {queries} and {tables} to {engine}, {share} of calls, placed in "
-    "wave {wave} by those calls against its {copied} and {writes}{hub}; {shares}{held}."
+MOVING_WHY = (
+    "Step {step} moves {queries} and {tables} to {engine}, {share} of calls, in wave "
+    "{wave} of the roadmap{cut}{hub}; {shares}{held}."
 )
-HUB_LATE = "; as it is shared by many parts, it runs after every step in wave {wave} that is not"
-
-ENGINE_WAVE_WHY = (
-    "Step {step} moves {queries} and {tables} to {engine}, {share} of calls, as wave "
-    "{wave} of the roadmap, with its {copied} and {writes}; {shares}{held}."
-)
+CUT_ORDERED = ", ordered in that wave by those calls against its {copied} and {writes}"
+CUT_STATED = ", with its {copied} and {writes}"
+HUB_AFTER = "; it runs after {steps} of its wave, which {verb} not shared by many parts"
 
 SHARES_SOME = "it shares {tables} with {steps}"
-SHARES_NONE_BUT_FIRST = "no step but step 1 shares its tables"
+SHARES_NONE_BUT_FIRST = "no step but step {first} shares its tables"
 SHARES_NONE = "no other step shares its tables"
 HELD = ", and {risks} {verb} back {queries} until {pronoun} closed"
 
@@ -88,14 +90,16 @@ TEMPLATES: tuple[str, ...] = (
     RELATIONAL_WHY,
     BUILT_ON_SOME,
     BUILT_ON_ALL,
+    BUILT_ON_BOTH,
     BUILT_ON_ONE,
     BUILT_ON_NONE,
     NO_LATER_STEP,
     CACHE_WHY,
     CACHE_FRONTS,
-    SLICE_WHY,
-    HUB_LATE,
-    ENGINE_WAVE_WHY,
+    MOVING_WHY,
+    CUT_ORDERED,
+    CUT_STATED,
+    HUB_AFTER,
     SHARES_SOME,
     SHARES_NONE_BUT_FIRST,
     SHARES_NONE,
@@ -124,7 +128,7 @@ def _steps(numbers: Iterable[int]) -> str:
     return f"{word} {_and([str(n) for n in ordered])}"
 
 
-# --- The figures each sentence reads ---------------------------------------------------
+# --- The figures, counted once -----------------------------------------------------------
 
 
 def _step_of(plan: Mapping[str, Any]) -> dict[str, int]:
@@ -137,61 +141,99 @@ def _step_of(plan: Mapping[str, Any]) -> dict[str, int]:
     }
 
 
-def _ties(plan: Mapping[str, Any], number: int) -> list[tuple[int, list[str]]]:
-    """(the other step, the tables the tie runs through) for each dependency between one
-    of step ``number``'s units and another step's unit."""
+def _hub_heavy(step: Mapping[str, Any]) -> bool:
+    return float((step.get("metrics") or {}).get("hub_score") or 0.0) >= HUB_HEAVY
+
+
+def _cut(
+    step: Mapping[str, Any], cut_costs: Mapping[int, tuple[int, int]]
+) -> tuple[int | None, int | None]:
+    """A moving step's tables copied across and write statements that change engine: its
+    slice cut cost, else the slice plan's ``cut_cost`` for it, else as stored."""
+    if step.get("kind") not in ("slice", "engine_wave"):
+        return None, None
+    cut = (step.get("metrics") or {}).get("cut_cost")
+    if isinstance(cut, Mapping):
+        return int(cut["replica_table_count"]), int(cut["write_site_count"])
+    number = int(step["step_number"])
+    if number in cut_costs:
+        return cut_costs[number]
+    stored = step.get("ties") or {}
+    return stored.get("replica_table_count"), stored.get("write_site_count")
+
+
+def step_ties(
+    plan: Mapping[str, Any], cut_costs: Mapping[int, tuple[int, int]] | None = None
+) -> dict[int, dict[str, Any]]:
+    """Each step's ``ties`` (``StepTies``), by step number: the one place the figures its
+    sentence states are counted, from the plan's dependencies and steps. ``cut_costs`` is
+    an engine-wave step's ``dependency_graph.cut_cost``, which the slice plan passes in."""
+    steps = [s for s in plan.get("plan_steps") or [] if isinstance(s, Mapping)]
     step_of = _step_of(plan)
-    out = []
+    relational = {int(s["step_number"]) for s in steps if s.get("kind") == "relational_step"}
+    edges: list[tuple[int, int, list[str], list[str]]] = []
     for dep in plan.get("dependencies") or []:
-        a, b = step_of.get(dep.get("unit_key")), step_of.get(dep.get("depends_on"))
-        if a is None or b is None or a == b or number not in (a, b):
+        later, earlier = step_of.get(dep.get("unit_key")), step_of.get(dep.get("depends_on"))
+        if later is None or earlier is None or later == earlier:
             continue
-        out.append((b if a == number else a, [str(t) for t in dep.get("tables") or []]))
+        tables = [str(t) for t in dep.get("tables") or []]
+        edges.append((later, earlier, tables, [str(k) for k in dep.get("kinds") or []]))
+    out: dict[int, dict[str, Any]] = {}
+    for step in steps:
+        n = int(step["step_number"])
+        dependents = sorted({a for a, b, _, _ in edges if b == n})
+        shared = [
+            (b if a == n else a, tables)
+            for a, b, tables, _ in edges
+            if n in (a, b) and (b if a == n else a) not in relational and tables
+        ]
+        fronts = [
+            (b, tables)
+            for a, b, tables, kinds in edges
+            if a == n and step.get("kind") == "cache" and "cache_fronts" in kinds and tables
+        ]
+        fronted_steps = sorted({b for b, _ in fronts})
+        fronted = sorted({t for _, ts in fronts for t in ts}) if len(fronted_steps) == 1 else []
+        wave = [
+            s
+            for s in steps
+            if step.get("kind") == "slice"
+            and s.get("kind") == "slice"
+            and s.get("phase_wave") == step.get("phase_wave")
+            and int(s["step_number"]) != n
+        ]
+        copied, writes = _cut(step, cut_costs or {})
+        tables = sorted({t for _, ts in shared for t in ts})
+        out[n] = {
+            "later_step_count": sum(1 for s in steps if int(s["step_number"]) > n),
+            "dependent_steps": dependents,
+            "dependent_step_count": len(dependents),
+            "shared_with_steps": sorted({other for other, _ in shared}),
+            "shared_tables": tables,
+            "shared_table_count": len(tables),
+            "fronted_step": fronted_steps[0] if fronted else None,
+            "fronted_tables": fronted,
+            "fronted_table_count": len(fronted),
+            "replica_table_count": copied,
+            "write_site_count": writes,
+            "ordered_with_steps": sorted(int(s["step_number"]) for s in wave),
+            "runs_after_steps": (
+                sorted(
+                    int(s["step_number"])
+                    for s in wave
+                    if int(s["step_number"]) < n and not _hub_heavy(s)
+                )
+                if _hub_heavy(step)
+                else []
+            ),
+        }
     return out
 
 
-def _relational_number(plan: Mapping[str, Any]) -> int | None:
-    for step in plan.get("plan_steps") or []:
-        if step.get("kind") == "relational_step":
-            return int(step["step_number"])
-    return None
+# --- The sentence ------------------------------------------------------------------------
 
 
-def _shares(plan: Mapping[str, Any], number: int) -> str:
-    relational = _relational_number(plan)
-    tied = [(other, tables) for other, tables in _ties(plan, number) if other != relational]
-    tables = sorted({t for _, ts in tied for t in ts})
-    if tables:
-        return SHARES_SOME.format(
-            tables=_count(len(tables), "table", "tables"),
-            steps=_steps(other for other, ts in tied if ts),
-        )
-    return SHARES_NONE_BUT_FIRST if relational is not None else SHARES_NONE
-
-
-def _units(plan: Mapping[str, Any], step: Mapping[str, Any]) -> list[Mapping[str, Any]]:
-    by_key = {u.get("key"): u for u in plan.get("move_units") or []}
-    keys = [k for stage in step.get("step_stages") or [] for k in stage.get("unit_keys") or []]
-    return [by_key[k] for k in keys if k in by_key]
-
-
-def _copied_and_writes(plan: Mapping[str, Any], step: Mapping[str, Any]) -> tuple[int, int]:
-    """The step's tables copied across, either way, and its write statements that change
-    engine: a slice step's cut cost as stored, else the same count over its units."""
-    cut = (step.get("metrics") or {}).get("cut_cost")
-    if isinstance(cut, Mapping):
-        return int(cut.get("replica_table_count") or 0), int(cut.get("write_site_count") or 0)
-    units = _units(plan, step)
-    owned = {t for u in units for t in u.get("owned_tables") or []}
-    copies_in = {r.get("table") for u in units for r in u.get("replicated_in") or []} - owned
-    copies_out = {
-        t for u in units for r in u.get("reverse_replicas") or [] for t in r.get("tables") or []
-    }
-    writes = {q for u in units for q in u.get("write_query_ids") or []}
-    return len(copies_in | copies_out), len(writes)
-
-
-def _held(plan: Mapping[str, Any], step: Mapping[str, Any]) -> str:
+def _held(step: Mapping[str, Any]) -> str:
     held = [s for s in step.get("step_stages") or [] if s.get("kind") == "risk_held"]
     risks = sorted({str(r) for s in held for r in s.get("holding_risk_ids") or []})
     if not risks:
@@ -205,68 +247,76 @@ def _held(plan: Mapping[str, Any], step: Mapping[str, Any]) -> str:
     )
 
 
-def _built_on(plan: Mapping[str, Any], number: int) -> str:
-    later = [
-        int(s["step_number"])
-        for s in plan.get("plan_steps") or []
-        if int(s["step_number"]) > number
-    ]
+def _built_on(ties: Mapping[str, Any]) -> str:
+    later = int(ties["later_step_count"])
+    dependents = int(ties["dependent_step_count"])
     if not later:
         return NO_LATER_STEP
-    dependents = {other for other, _ in _ties(plan, number) if other > number}
     if not dependents:
         return BUILT_ON_NONE
-    if len(later) == 1:
+    if later == 1:
         return BUILT_ON_ONE
-    if len(dependents) == len(later):
-        return BUILT_ON_ALL.format(later=len(later))
+    if dependents == later:
+        return BUILT_ON_BOTH if later == 2 else BUILT_ON_ALL.format(later=later)
     return BUILT_ON_SOME.format(
-        dependents=len(dependents),
-        later=len(later),
-        verb="builds" if len(dependents) == 1 else "build",
+        dependents=dependents, later=later, verb="builds" if dependents == 1 else "build"
     )
 
 
-def _cache_fronts(plan: Mapping[str, Any], step: Mapping[str, Any]) -> str:
-    """The step the cache fronts: its ``cache_fronts`` ties, with their tables."""
-    number = int(step["step_number"])
-    keys = {u.get("key") for u in _units(plan, step)}
-    step_of = _step_of(plan)
-    engine_of = {u.get("key"): u.get("engine") for u in plan.get("move_units") or []}
-    fronted = [
-        d
-        for d in plan.get("dependencies") or []
-        if d.get("unit_key") in keys
-        and "cache_fronts" in (d.get("kinds") or [])
-        and step_of.get(d.get("depends_on"), number) != number
+def _shares(plan: Mapping[str, Any], ties: Mapping[str, Any]) -> str:
+    if ties["shared_table_count"]:
+        return SHARES_SOME.format(
+            tables=_count(int(ties["shared_table_count"]), "table", "tables"),
+            steps=_steps(ties["shared_with_steps"]),
+        )
+    first = [
+        s.get("step_number")
+        for s in plan.get("plan_steps") or []
+        if s.get("kind") == "relational_step"
     ]
-    sources = sorted({step_of[d["depends_on"]] for d in fronted})
-    tables = sorted({str(t) for d in fronted for t in d.get("tables") or []})
-    if len(sources) != 1 or not tables:
+    return SHARES_NONE_BUT_FIRST.format(first=first[0]) if first else SHARES_NONE
+
+
+def _fronts(plan: Mapping[str, Any], ties: Mapping[str, Any]) -> str:
+    source = ties.get("fronted_step")
+    if source is None:
         return ""
-    engines = sorted({str(engine_of.get(d["depends_on"])) for d in fronted})
+    engine = next(
+        s.get("engine") for s in plan.get("plan_steps") or [] if s.get("step_number") == source
+    )
     return CACHE_FRONTS.format(
-        tables=_count(len(tables), "table", "tables"),
-        source=sources[0],
-        fronted=_and([display_engine(e) for e in engines]),
+        tables=_count(int(ties["fronted_table_count"]), "table", "tables"),
+        source=source,
+        fronted=display_engine(str(engine)),
+    )
+
+
+def _cut_clause(ties: Mapping[str, Any]) -> str:
+    copied, writes = ties.get("replica_table_count"), ties.get("write_site_count")
+    if copied is None or writes is None:
+        return ""
+    template = CUT_ORDERED if ties.get("ordered_with_steps") else CUT_STATED
+    return template.format(
+        copied=_count(int(copied), "table copied across", METRIC_LABELS["replica_table_count"]),
+        writes=_count(
+            int(writes), "write statement that changes engine", METRIC_LABELS["write_site_count"]
+        ),
     )
 
 
 def step_why(plan: Mapping[str, Any], step: Mapping[str, Any]) -> str:
-    """``step``'s "why" sentence, filled from its kind's template with the plan's figures."""
+    """``step``'s "why" sentence, filled from its kind's template with its ``ties`` (or
+    ``step_ties``' when it has none yet) and its own counts."""
     number = int(step["step_number"])
-    kind = step.get("kind")
+    ties = step.get("ties") or step_ties(plan)[number]
     engine = display_engine(str(step.get("engine")))
     queries = _count(int(step.get("query_count") or 0), "query", "queries")
     tables = _count(int(step.get("owned_table_count") or 0), "table", "tables")
     share = _percent(step.get("call_share_percent") or 0.0)
+    kind = step.get("kind")
     if kind == "relational_step":
         return RELATIONAL_WHY.format(
-            step=number,
-            engine=engine,
-            queries=queries,
-            tables=tables,
-            built_on=_built_on(plan, number),
+            step=number, engine=engine, queries=queries, tables=tables, built_on=_built_on(ties)
         )
     if kind == "cache":
         return CACHE_WHY.format(
@@ -274,50 +324,52 @@ def step_why(plan: Mapping[str, Any], step: Mapping[str, Any]) -> str:
             engine=engine,
             reads=_count(int(step.get("query_count") or 0), "read", "reads"),
             share=share,
-            fronts=_cache_fronts(plan, step),
+            fronts=_fronts(plan, ties),
         )
-    copied, writes = _copied_and_writes(plan, step)
-    fields = {
-        "step": number,
-        "queries": queries,
-        "tables": tables,
-        "engine": engine,
-        "share": share,
-        "wave": step.get("phase_wave"),
-        "copied": _count(copied, "table copied across", METRIC_LABELS["replica_table_count"]),
-        "writes": _count(
-            writes, "write statement that changes engine", METRIC_LABELS["write_site_count"]
+    after = ties.get("runs_after_steps") or []
+    return MOVING_WHY.format(
+        step=number,
+        queries=queries,
+        tables=tables,
+        engine=engine,
+        share=share,
+        wave=step.get("phase_wave"),
+        cut=_cut_clause(ties),
+        hub=(
+            HUB_AFTER.format(steps=_steps(after), verb="is" if len(after) == 1 else "are")
+            if after
+            else ""
         ),
-        "shares": _shares(plan, number),
-        "held": _held(plan, step),
-    }
-    if kind == "slice":
-        hub = float((step.get("metrics") or {}).get("hub_score") or 0.0)
-        late = HUB_LATE.format(wave=step.get("phase_wave")) if hub >= HUB_HEAVY else ""
-        return SLICE_WHY.format(hub=late, **fields)
-    return ENGINE_WAVE_WHY.format(**fields)
+        shares=_shares(plan, ties),
+        held=_held(step),
+    )
 
 
-def with_step_explanations(plan: Mapping[str, Any]) -> dict[str, Any]:
-    """``plan`` with each step's ``why`` and the plan's ``metric_labels``: the one function
-    synthesis and the reader of an older report call (ADR-032 Decision 4)."""
-    out = dict(plan)
-    out["plan_steps"] = [
-        {**step, "why": step_why(plan, step)} for step in plan.get("plan_steps") or []
-    ]
-    out["metric_labels"] = dict(METRIC_LABELS)
-    return out
+def with_step_explanations(
+    plan: Mapping[str, Any], cut_costs: Mapping[int, tuple[int, int]] | None = None
+) -> dict[str, Any]:
+    """``plan`` with what it lacks of each step's ``ties`` and ``why`` and of the plan's
+    ``metric_labels``; what it states is kept. The one function synthesis and the reader of
+    an older report call (ADR-032 Decision 4)."""
+    ties = step_ties(plan, cut_costs)
+    steps = []
+    for step in plan.get("plan_steps") or []:
+        filled = {**step, "ties": step.get("ties") or ties[int(step["step_number"])]}
+        filled["why"] = step.get("why") or step_why(plan, filled)
+        steps.append(filled)
+    stored = plan.get("metric_labels") or {}
+    return {**plan, "plan_steps": steps, "metric_labels": {**METRIC_LABELS, **stored}}
 
 
 def needs_step_explanations(plan: Any) -> bool:
-    """A stored plan written before #1699: steps, and no metric labels or a step with no
-    ``why`` (a plan re-dumped through the contract reads it back as None). A stored plan
-    with no steps names no metric, so it is read as stored."""
+    """A stored plan written before #1699 or before a metric was added: a metric with no
+    label, or a step with no ``ties`` or ``why`` (a plan re-dumped through the contract
+    reads them back as None)."""
     if not isinstance(plan, Mapping):
         return False
-    steps = plan.get("plan_steps") or []
-    if not steps:
-        return False
-    return not plan.get("metric_labels") or any(
-        isinstance(s, Mapping) and not s.get("why") for s in steps
+    if not set(METRIC_LABELS) <= set(plan.get("metric_labels") or {}):
+        return True
+    return any(
+        isinstance(s, Mapping) and (not s.get("why") or not s.get("ties"))
+        for s in plan.get("plan_steps") or []
     )

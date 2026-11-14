@@ -305,8 +305,11 @@ def report_facts(report: dict[str, Any]) -> dict[str, Any]:
                 missing["adoption"] = adoption_facts(report, plan)
         stored_plan = missing.get("slice_plan", facts.get("slice_plan"))
         if isinstance(stored_plan, dict) and needs_step_explanations(stored_plan):
-            # A plan stored before #1699: each step's why sentence and the metrics' plain
-            # names, from the same function synthesis calls, over the stored figures.
+            # A plan stored before #1699 (or before a metric was added): each step's ties
+            # and why sentence and the metrics' plain names, from the same function
+            # synthesis calls, over the stored figures; what it states is kept. An empty
+            # plan gains the labels only. An engine-wave step stored before #1699 has no
+            # cut cost to state, so its sentence leaves it out.
             missing["slice_plan"] = with_step_explanations(stored_plan)
         return {**facts, **missing} if missing else facts
     # #1992: a report with no facts block was written before the wave readiness check,

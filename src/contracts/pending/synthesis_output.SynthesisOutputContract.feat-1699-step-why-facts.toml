@@ -2,5 +2,5 @@
 # uv run python scripts/resolve_contract_versions.py --release at release (a MAJOR: in its pull request).
 contract = "synthesis_output.SynthesisOutputContract"
 kind = "minor"
-reason = "Added optional ``SliceStep.why`` (why the step sits where it does, one sentence from a fixed template filled with the plan's own figures: what it moves, what it shares with other steps, what it needs copied across, what holds it) and ``SlicePlanFacts.metric_labels`` (the plain name of each order metric, the one set of words for them). A plan stored before them loads unchanged; the reader fills both from the same function (#1699)."
+reason = "Added optional ``SliceStep.why`` (why the step sits where it does, one sentence from a fixed template filled with the plan's own figures), ``SliceStep.ties`` (``StepTies``: the figures it states, counted once from the plan's dependencies and steps, with a moving step's cut cost) and ``SlicePlanFacts.metric_labels`` (the plain name of each order metric; a subset of the metric fields loads, so a plan saved before a metric is added still loads). A plan stored before them loads unchanged; the reader fills what it lacks from the same function (#1699)."
 issue = 1699

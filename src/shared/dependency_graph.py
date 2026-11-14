@@ -343,18 +343,33 @@ def measure_slices(
     hub = _betweenness(quotient)
     for s in slices:
         members = [units[k] for k in s.unit_keys]
-        owned = {t for u in members for t in u.owned_tables}
-        copies_in = {t for u in members for t, _ in u.replicated_in} - owned
-        copies_out = {t for u in members for _, tables, _ in u.reverse_replicas for t in tables}
+        copies_in, copies_out = _copies(members)
         queries = {q for u in members for q in u.query_ids}
         crossing_in = {q for q in queries if tables_of.get(q, frozenset()) & copies_in}
         reverse = {q for u in members for _, _, reads in u.reverse_replicas for q in reads}
         s.gravity = gravity(len(crossing_in) + len(reverse), len(queries) + len(reverse))
         s.hub_score = hub.get(s.key, 0.0)
-        s.replica_table_count = len(copies_in | copies_out)
-        s.write_site_count = len({q for u in members for q in u.write_query_ids})
+        s.replica_table_count, s.write_site_count = cut_cost(members)
         calls = sum(u.calls_per_second for u in members)
         s.value_call_share_percent = share(calls, calls_total)
+
+
+def _copies(members: Iterable[Unit]) -> tuple[set[str], set[str]]:
+    """The tables ``members`` read as a copy of another engine's, and the tables they own
+    that another engine reads as a copy."""
+    members = list(members)
+    owned = {t for u in members for t in u.owned_tables}
+    copies_in = {t for u in members for t, _ in u.replicated_in} - owned
+    copies_out = {t for u in members for _, tables, _ in u.reverse_replicas for t in tables}
+    return copies_in, copies_out
+
+
+def cut_cost(members: Iterable[Unit]) -> tuple[int, int]:
+    """What cutting ``members`` off the rest costs: the tables copied across, either way,
+    and the write statements that change engine (``CutCost``'s first two figures)."""
+    members = list(members)
+    copies_in, copies_out = _copies(members)
+    return len(copies_in | copies_out), len({q for u in members for q in u.write_query_ids})
 
 
 def share(calls: float, total: float) -> float:
