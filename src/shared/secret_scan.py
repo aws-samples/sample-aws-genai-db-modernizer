@@ -371,6 +371,61 @@ def _bind_parameter(m: re.Match[str], value: str) -> bool:
     return name.lower() in _BARE_BIND_NAMES or _KEY_NAME_RE.fullmatch(name) is not None
 
 
+# A column reference that is a whole value: one to four dot-joined parts, each a bare
+# identifier, a ``[bracketed]`` one or a ``"double-quoted"`` one (#2253).
+_IDENT_PART = r'[A-Za-z_]\w*|\[[A-Za-z_]\w*\]|"[A-Za-z_]\w*"'
+_COLUMN_REF_RE = re.compile(rf"(?:(?:{_IDENT_PART})\.){{0,3}}(?:{_IDENT_PART})(?=[\s,;)]|$)", re.A)
+# A short table alias: up to three letters, or one letter and a digit (``u``, ``t1``).
+_ALIAS_RE = re.compile(r"[A-Za-z]{1,3}|[A-Za-z]\d")
+# The rest of a value after a column reference: up to the next whitespace.
+_VALUE_REST_RE = re.compile(r"\S*")
+
+
+def _words(name: str) -> bool:
+    """Each ``_``-joined piece of ``name`` is word-shaped, in any case (``USER_PASSWORD``,
+    ``api_key``, ``PasswordHash``): no digit, no random run of letters."""
+    pieces = [piece for piece in name.split("_") if piece]
+    return bool(pieces) and all(
+        _word_shaped(piece) or _word_shaped(piece.capitalize()) for piece in pieces
+    )
+
+
+def _variable_from_column(m: re.Match[str]) -> bool:
+    """``@variable = <column>`` in a T-SQL ``SELECT`` list (#2253): a key written as one
+    ``@variable`` (not ``@@``) with ``=``, whose whole unquoted value is a column
+    reference (``_COLUMN_REF_RE``: ``Password``, ``u.Password``, ``[u].[Password]``,
+    ``"Password"``), with nothing but ``),;`` after it before whitespace, whose column
+    is itself a credential key name with no digit, made of words (``_words``), and
+    whose qualifiers are words or a short alias (``_ALIAS_RE``). A ``.env`` line
+    and a connection string (the ``_key_value_assignment`` rule, read from the ``@``)
+    stay values."""
+    if m.groupdict().get("sep") != "=":
+        return False
+    line, at, sep = m.string, m.start("key") - 1, m.start("sep")
+    if at < 0 or line[at] != "@" or line[at - 1 : at] in ("@", ";"):
+        return False
+    spaced = line[sep - 1 : sep].isspace() or line[sep + 1 : sep + 2].isspace()
+    if not spaced and _ENV_START_RE.fullmatch(line, 0, at) is not None:
+        return False
+    start = m.start("qv") if m.group("v") is not None else m.start("u")
+    if line[m.end("sep") : start].strip():
+        return False  # a backtick before the value: Markdown, not SQL
+    ref = _COLUMN_REF_RE.match(line, start)
+    if ref is None:
+        return False
+    # The reference must be the whole value, up to a closing ``)``, ``,`` or ``;``:
+    # ``Password,@Token=...`` or ``Password;pwd=...`` hides a value glued after it.
+    rest = _VALUE_REST_RE.match(line, ref.end())
+    if rest is None or rest.group(0).strip("),;"):
+        return False
+    *qualifiers, column = (part.strip('[]"') for part in ref.group(0).split("."))
+    return (
+        _KEY_NAME_RE.fullmatch(column) is not None
+        and _words(column)
+        and all(_ALIAS_RE.fullmatch(q) or _words(q) for q in qualifiers)
+    )
+
+
 # The first word of the pipeline's own key note (``src/shared/key_refusals.py``
 # ``candidate_explanation``): `` `table.column`: accepted: ... `` / ``refused for ...``.
 _KEY_NOTE_WORDS = frozenset({"accepted:", "refused"})
@@ -485,9 +540,9 @@ def _pair_matches(
 ) -> list[tuple[str, tuple[int, int], str]]:
     """Each credential key's value on ``line``: its kind, span and key name. Every
     pair is checked; an allowed value (a placeholder, a marker, a bare JSON literal or
-    short count, a bind parameter, a column note, and with ``narrow_key_names`` prose
-    under a token or API key name) is left out, and never exempts the rest of the
-    line."""
+    short count, a bind parameter, a ``@variable`` set from a column, a column note,
+    and with ``narrow_key_names`` prose under a token or API key name) is left out, and
+    never exempts the rest of the line."""
     found: dict[tuple[int, int], tuple[str, str]] = {}
     if _KEY_WORD_RE.search(line) is None:
         return []
@@ -497,6 +552,9 @@ def _pair_matches(
                 continue
             group = "v" if m.groupdict().get("v") is not None else "u"
             value = m.group(group) or ""
+            # A T-SQL variable set from a credential-named column (#2253).
+            if rx is _PAIR_RES[1] and _variable_from_column(m):
+                continue
             if group == "u":
                 # Not a value: an unquoted JSON literal or short count, a SQL bind
                 # parameter after "=", a `table.column`: <SQL type> column note.
