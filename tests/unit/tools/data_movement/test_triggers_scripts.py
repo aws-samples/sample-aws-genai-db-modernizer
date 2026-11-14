@@ -500,3 +500,85 @@ def test_a_hundred_thousand_triggers_write_in_linear_time(tmp_path):
         max_rounds=3,
     )
     assert (big_dir / "step" / TRIGGERS_FILE).read_text().count("ENABLE TRIGGER") == 100_000
+
+
+# --------------------------------------------------------------------------- #2273: event databases
+
+
+def _event_in(tmp_path, *databases, **kw):
+    """A MySQL contract with one deferred event in each of ``databases`` (and nothing else)."""
+    rows, sources = [], []
+    for i, db in enumerate(databases):
+        name = f"ev{i}"
+        rows.append(row(f"{db}.{name}", "event", schema=db, name=name, specific=name,
+                        status="rewritten"))  # fmt: skip
+        sources.append(mysql_source(name, f"CREATE DEFINER=`app`@`%` EVENT `{name}` ON SCHEDULE "
+                                    "EVERY 1 DAY STARTS '2036-01-01 00:00:00' DISABLE DO SELECT 1",
+                                    kind="event", schema=db))  # fmt: skip
+    artifact = migration(rows, "mysql")
+    store = _job(tmp_path, artifact, sources, "mysql")
+    contract = contract_with_routines(artifact)
+    return _write_scripts(tmp_path, store, contract, **kw), store, contract
+
+
+def _lines(text: str, verb: str) -> list[str]:
+    return [line for line in text.splitlines() if line.startswith(verb)]
+
+
+def test_the_mysql_triggers_enable_script_creates_the_database_a_deferred_event_lives_in(tmp_path):
+    # `jobs` holds no table step 1 moves and no carried routine: nothing else creates it.
+    scripts, _, _ = _event_in(tmp_path, "shop", "jobs", "odd`db")
+    assert (scripts.in_script, scripts.excluded) == (3, [])
+    text = _read(tmp_path, TRIGGERS_FILE)
+    assert _lines(text, "CREATE DATABASE") == [
+        "CREATE DATABASE IF NOT EXISTS `jobs`;",  # no COLLATE: as step-1.ddl.sql's database
+        "CREATE DATABASE IF NOT EXISTS `odd``db`;",
+    ]  # shop holds a moved table: step 1's DDL creates it
+    assert text.index("SET NAMES utf8mb4;") < text.index("CREATE DATABASE IF NOT EXISTS `jobs`;")
+    assert text.index("`odd``db`;") < text.index("USE `jobs`;")
+    flat = " ".join(line[3:].strip() for line in text.splitlines() if line.startswith("-- "))
+    assert "the script grants nothing: EXECUTE on each database" in flat
+    from src.tools.data_movement.dms_step import SERVER_DEFAULTS
+
+    assert SERVER_DEFAULTS in flat
+    md = _read(tmp_path, TRIGGERS_INSTRUCTIONS)
+    assert "- Databases it creates, which neither step 1's DDL nor the routines deploy" in md
+    assert "creates: 2 (" in md and "`EXECUTE` on each database" in md
+
+
+@pytest.mark.passes_on_main
+def test_the_triggers_enable_script_creates_nothing_when_the_tables_database_holds_the_event(
+    tmp_path,
+):
+    _event_in(tmp_path, "shop")
+    text = _read(tmp_path, TRIGGERS_FILE)
+    assert _lines(text, "CREATE DATABASE") == [] and "grants nothing" not in text
+    assert "Databases it creates" not in _read(tmp_path, TRIGGERS_INSTRUCTIONS)
+
+
+def test_the_triggers_enable_script_names_the_target_database_once_and_the_resume_file_too(
+    tmp_path,
+):
+    from src.tools.data_movement.triggers_scripts import RESUME_FILE
+
+    _, store, contract = _event_in(tmp_path, "jobs", "jobs", target_database="jobs_new")
+    assert _lines(_read(tmp_path, TRIGGERS_FILE), "CREATE DATABASE") == [
+        "CREATE DATABASE IF NOT EXISTS `jobs_new`;"]  # fmt: skip
+    # The resume file runs alone: a database it needs may not be there yet.
+    present = {("event", "jobs_new", "", "ev0")}
+    _write_scripts(tmp_path, store, contract, target_database="jobs_new", present=present)
+    assert _lines(_read(tmp_path, RESUME_FILE), "CREATE DATABASE") == [
+        "CREATE DATABASE IF NOT EXISTS `jobs_new`;"]  # fmt: skip
+
+
+def test_an_event_in_a_database_that_differs_from_the_tables_only_by_case_is_left_out(tmp_path):
+    from src.tools.data_movement.routine_scripts import CASE_DIFFERS_WHY
+
+    scripts, _, _ = _event_in(tmp_path, "Shop", "jobs")
+    assert scripts.excluded == [("event", "Shop.ev0", "database_case_differs")]
+    assert scripts.in_script == 1
+    text = _read(tmp_path, TRIGGERS_FILE)
+    assert _lines(text, "CREATE DATABASE") == ["CREATE DATABASE IF NOT EXISTS `jobs`;"]
+    assert "USE `Shop`;" not in text and "CREATE DATABASE IF NOT EXISTS `Shop`" not in text
+    md = " ".join(_read(tmp_path, TRIGGERS_INSTRUCTIONS).split())
+    assert f"- Left out as `database_case_differs`: 1. For each, {CASE_DIFFERS_WHY}" in md
