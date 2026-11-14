@@ -226,7 +226,7 @@ def test_strands_accepts_an_answer_with_null_lists_on_the_first_try() -> None:
     use = {"toolUseId": "t1", "name": tool.tool_name, "input": answer}
 
     async def run() -> list[Any]:
-        return [e async for e in tool.stream(use, {}, structured_output_context=context)]
+        return [e async for e in tool.stream(use, {}, structured_output_context=context)]  # type: ignore[arg-type]
 
     result = asyncio.run(run())[-1].tool_result
     assert result["status"] == "success", result

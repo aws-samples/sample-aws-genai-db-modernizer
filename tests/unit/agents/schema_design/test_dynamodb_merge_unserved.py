@@ -73,7 +73,7 @@ def _dropped_merge() -> dict:
 
 
 def _users_pattern(merged: dict) -> str:
-    return next(
+    return next(  # type: ignore[no-any-return]
         ap["pattern_id"] for ap in merged["access_patterns"] if "q-users-by-id" in ap["query_ids"]
     )
 

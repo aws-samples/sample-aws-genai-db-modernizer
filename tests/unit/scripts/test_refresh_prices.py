@@ -32,7 +32,7 @@ def all_offers() -> dict[str, rp.OfferFile]:
 def offers(all_offers) -> dict[str, rp.OfferFile]:
     """The offers the committed table was read from: since the first online refresh
     (#1567) that includes the data movement files."""
-    return all_offers
+    return all_offers  # type: ignore[no-any-return]
 
 
 @pytest.fixture(scope="module")

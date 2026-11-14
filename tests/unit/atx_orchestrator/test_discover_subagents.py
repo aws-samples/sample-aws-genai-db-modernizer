@@ -116,14 +116,14 @@ class TestDiscoverSubagentsCallable:
 
     @pytest.mark.asyncio
     async def test_returns_list_of_agent_versions(self) -> None:
-        result = await discover_subagents()
+        result = await discover_subagents()  # type: ignore[call-arg]
         assert isinstance(result, list)
         assert len(result) >= 1
 
     @pytest.mark.asyncio
     async def test_mock_shape_has_expected_fields(self) -> None:
         """SDK mock returns GetAgentVersionOutput with version+metadata+configuration."""
-        result = await discover_subagents()
+        result = await discover_subagents()  # type: ignore[call-arg]
         first = result[0]
         assert getattr(first, "version", None) is not None
         assert getattr(first, "metadata", None) is not None

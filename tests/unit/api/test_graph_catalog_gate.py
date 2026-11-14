@@ -89,7 +89,7 @@ def test_the_catalog_routes_validate_the_job_id_and_lease_the_graph(key):
 
 
 @pytest.mark.passes_on_main  # the guard is app-wide: it already covers every path
-@pytest.mark.parametrize(("method", "path", "body"), CATALOG_ROUTES + CURATED_ROUTES)
+@pytest.mark.parametrize(("method", "path", "body"), CATALOG_ROUTES + CURATED_ROUTES)  # type: ignore[operator]
 def test_a_foreign_host_header_is_refused_before_the_route(no_job, method, path, body):
     client = TestClient(app, base_url="http://evil.example")
     resp = client.request(method, path, content=body, headers={"Content-Type": "application/json"})
@@ -108,7 +108,7 @@ def test_a_loopback_host_reaches_the_route(no_job, method, path, body, monkeypat
 
 
 @pytest.mark.passes_on_main  # CORS is app-wide: it already covers every path
-@pytest.mark.parametrize(("method", "path", "body"), CATALOG_ROUTES + CURATED_ROUTES)
+@pytest.mark.parametrize(("method", "path", "body"), CATALOG_ROUTES + CURATED_ROUTES)  # type: ignore[operator]
 def test_another_origin_gets_no_cors_grant(no_job, method, path, body):
     client = TestClient(app, base_url="http://localhost:8000")
     resp = client.request(

@@ -133,15 +133,19 @@ repos:
         exclude: ^contrib/
         args: ['--fix', '--exit-non-zero-on-fix']
 
-  # Python type checking
-  - repo: https://github.com/pre-commit/mirrors-mypy
-    rev: v2.3.1
+  # Python type checking. The same `uv run mypy` ci/lint.sh runs, in the project
+  # environment, with its paths and per-tree rules from [tool.mypy] in pyproject.toml,
+  # so a type error cannot pass one and fail the other (#2245). A hook in its own
+  # environment saw untyped imports as Any and disagreed with the project's mypy.
+  - repo: local
     hooks:
       - id: mypy
         name: Type check with mypy
+        entry: uv run mypy
+        language: system
+        types: [python]
         exclude: ^contrib/
-        args: ['--ignore-missing-imports', '--no-strict-optional']
-        additional_dependencies: ['pydantic>=2.7.2']
+        pass_filenames: false
 
   # The one security scan (#1844): semgrep with the rules ci/security.toml pins, gitleaks
   # and bandit, on the staged files. The GitHub `security` job runs the same script on

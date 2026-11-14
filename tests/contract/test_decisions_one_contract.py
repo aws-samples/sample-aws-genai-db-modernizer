@@ -28,7 +28,7 @@ FILES = {
 }
 
 
-@pytest.mark.parametrize(("name", "model"), sorted(FILES.items(), key=lambda kv: kv[0]))
+@pytest.mark.parametrize(("name", "model"), sorted(FILES.items(), key=lambda kv: kv[0]))  # type: ignore[index]
 def test_each_decisions_file_maps_to_exactly_one_contract(name, model) -> None:
     path = f"db/job/decisions/{name}"
     matches = [target for pattern, target in versioning._registry() if pattern.search(path)]

@@ -99,7 +99,7 @@ def test_baseline_runs_are_averaged_and_the_change_is_against_their_mean(tmp_pat
         _results(tmp_path / "l1", total=3.0, judge=3.9, wall=500, schema_cost=0.5),
         _results(tmp_path / "l2", total=3.2, judge=3.9, wall=520, schema_cost=0.5),
     ]
-    data = compare_costs.compare(lever, baselines=base)
+    data = compare_costs.compare(lever, baselines=base)  # type: ignore[arg-type]
     by_metric = {row["metric"]: row for row in data["rows"]}
     total = by_metric["total cost (CLI)"]
     assert total["baseline_mean"] == pytest.approx(3.7)
@@ -181,7 +181,7 @@ def test_a_mean_over_fewer_runs_than_its_group_says_how_many(tmp_path: Path) -> 
         _results(tmp_path / "b2", total=3.8, judge=None, wall=580),
     ]
     lever = [_results(tmp_path / "l1", total=3.0, judge=3.9, wall=500)]
-    data = compare_costs.compare(lever, baselines=base)
+    data = compare_costs.compare(lever, baselines=base)  # type: ignore[arg-type]
     judge = {row["metric"]: row for row in data["rows"]}["judge mean"]
     assert (judge["baseline_mean"], judge["baseline_n"]) == (3.8, 1)
     lines = {line.split("|")[1].strip(): line for line in compare_costs.render(data).splitlines()}

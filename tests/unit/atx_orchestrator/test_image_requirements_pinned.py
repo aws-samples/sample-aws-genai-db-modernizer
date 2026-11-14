@@ -32,7 +32,7 @@ def _pins(path: Path) -> dict[str, str]:
         match = PIN.match(line)
         if match:
             pins[canonicalize_name(match[1])] = match[2]
-    return pins
+    return pins  # type: ignore[return-value]
 
 
 def test_requirements_txt_is_fresh_against_the_lock() -> None:
@@ -71,7 +71,7 @@ def test_pins_equal_the_locked_versions() -> None:
     pins = _pins(IMAGE / "requirements.txt")
     assert pins, "requirements.txt has no exact pins"
     for name, version in pins.items():
-        assert locked[name] == version, f"{name}: image pins {version}, uv.lock has {locked[name]}"
+        assert locked[name] == version, f"{name}: image pins {version}, uv.lock has {locked[name]}"  # type: ignore[index]
 
 
 def test_strands_floor_is_shared_by_project_and_image() -> None:

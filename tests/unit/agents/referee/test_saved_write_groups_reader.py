@@ -207,7 +207,7 @@ class TestEveryReaderDropsASavedPlaceholderGroup:
         assert saved_write_groups(_legacy()) == {"shop.orders": ["w3", "w4"]}
         assert saved_write_groups(None) == {}
         assert saved_write_groups({}) == {}
-        model = Assignment.model_construct(write_groups=dict(LEGACY_GROUPS))
+        model = Assignment.model_construct(write_groups=dict(LEGACY_GROUPS))  # type: ignore[call-arg]
         assert saved_write_groups(model) == {"shop.orders": ["w3", "w4"]}
 
     def test_the_table_usage_behind_the_owner_reasons(self) -> None:
@@ -247,7 +247,7 @@ class TestEveryReaderDropsASavedPlaceholderGroup:
         seen: list[Any] = []
         result = {"revised_assignments": [], "assignment": _legacy(), "consolidations": []}
         with (
-            patch.object(rcp, "patterns_for_assignment", lambda qas, wg: seen.append(wg) or []),
+            patch.object(rcp, "patterns_for_assignment", lambda qas, wg: seen.append(wg) or []),  # type: ignore[func-returns-value]
             patch.object(rcp, "_build_recommendations", lambda *a, **k: []),
         ):
             rcp.refresh_patterns_and_recommendations(result)

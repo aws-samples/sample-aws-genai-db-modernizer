@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import shutil
 from pathlib import Path
+from typing import Any
 
 from src.graph.explorer_overlays import read_overlays
 from src.graph.populators import rebuild_graph
@@ -213,7 +214,7 @@ def test_the_stored_figures_equal_their_sources(run: PipelineResult, tmp_path: P
     groups = [
         sorted(str(q) for q in g) for g in assignment_placement_groups(assignment) if len(g) >= 2
     ]
-    units = {}
+    units: dict[Any, Any] = {}
     for r in graph.query(
         "MATCH (q:Query)-[:MEMBER_OF]->(u:MoveUnit {effective: true}) "
         "RETURN u.id AS u, u.size AS size, q.id AS q"

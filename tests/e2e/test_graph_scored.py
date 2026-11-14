@@ -16,6 +16,7 @@ from __future__ import annotations
 import json
 import shutil
 from pathlib import Path
+from typing import Any
 
 from src.graph.populators import rebuild_graph
 from src.graph.schema import initialize_schema
@@ -41,7 +42,7 @@ def _lineage(job: Path, effective: int) -> list[dict]:
 def _record_entry(record: dict | None, qid: str, engine: str) -> dict | None:
     for row in (record or {}).get("queries") or []:
         if row.get("query_id") == qid:
-            return (row.get("score_dimensions") or {}).get(engine)
+            return (row.get("score_dimensions") or {}).get(engine)  # type: ignore[no-any-return]
     return None
 
 
@@ -105,7 +106,7 @@ def test_scored_edges_match_the_recorded_ladders(run: PipelineResult, tmp_path: 
     assert len(rows) == len(found) == len(expected)
     assert found == expected
     # Exactly one assigned engine per query on its current ladder, when the ladder has it.
-    current_assigned = {}
+    current_assigned: dict[Any, Any] = {}
     for (q, _v, e), value in found.items():
         if value[3] and value[2]:
             current_assigned.setdefault(q, []).append(e)

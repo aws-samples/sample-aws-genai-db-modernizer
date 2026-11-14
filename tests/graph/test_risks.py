@@ -336,7 +336,7 @@ def _cookbook_query(heading: str) -> str:
     lines = COOKBOOK.read_text().splitlines()
     start = next(i for i, line in enumerate(lines) if line.startswith(f"### {heading}"))
     line = next(line for line in lines[start:] if line.startswith('{"cypher":'))
-    return json.loads(line)["cypher"]
+    return json.loads(line)["cypher"]  # type: ignore[no-any-return]
 
 
 # fixture -> (tables in query 3, tables in query E)
