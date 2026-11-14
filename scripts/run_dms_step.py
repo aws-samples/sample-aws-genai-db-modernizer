@@ -2264,7 +2264,11 @@ def triggers_scripts(root: str, db: str, job_id: str, inputs: MoveInputs,
                                     _step_dir(root, db, job_id),
                                     target_database=inputs.target_database_name,
                                     target_user=target_user, present=present)  # fmt: skip
-    excluded = [{"routine_id": i, "kind": k, "reason": c} for k, i, c in scripts.excluded]
+    from src.tools.data_movement.routine_scripts import CASE_DIFFERS, CASE_DIFFERS_TRIGGERS_WHY
+
+    excluded = [{"routine_id": i, "kind": k, "reason": c,
+                 **({"why": CASE_DIFFERS_TRIGGERS_WHY} if c == CASE_DIFFERS else {})}
+                for k, i, c in scripts.excluded]  # fmt: skip
     out: dict[str, Any] = {"status": scripts.status, "expected": scripts.expected,
                            "excluded": len(excluded), "excluded_routines": excluded[:ROUTINES_SHOWN],
                            "runs_it": "the customer; /move never runs it"}  # fmt: skip

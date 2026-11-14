@@ -35,9 +35,10 @@ writes three files into ``data-movement/step-1/``, from the step contract's rout
 There is no rollback section: nothing here disables a trigger again or drops a routine.
 
 On Aurora MySQL the script first creates, ``IF NOT EXISTS`` and as step 1's DDL does (no
-character set or collation), each database its triggers and events live in that neither that
-DDL nor ``routines-deploy.sql`` creates (#2273); a database that differs from a moved table's
-only by case is never created, and what lives in it is left out (``database_case_differs``).
+character set or collation), every database its triggers and events live in except those
+step 1's DDL creates (#2273); one ``routines-deploy.sql`` already created is left as it is.
+A database that differs from a moved table's only by case is never created, and what lives
+in it is left out (``database_case_differs``).
 
 A trigger or event the triggers-enable script cannot act on is left out and named, by id and reason code,
 in the script's header and on the printed line: one step 1 does not carry (its contract
@@ -68,7 +69,7 @@ from src.contracts.transformation_contract import StepContract, StepRoutine, Ste
 from src.shared.cutover_message import CUTOVER_DISCLAIMER
 from src.tools.data_movement.routine_scripts import (
     CASE_DIFFERS,
-    CASE_DIFFERS_WHY,
+    CASE_DIFFERS_TRIGGERS_WHY,
     PG_LOCK_TIMEOUT,
     CheckScript,
     RoutineScriptError,
@@ -410,7 +411,7 @@ def _header(
             "",
             "SET NAMES utf8mb4;",
             "",
-            *schema_statements(engine, schemas),
+            *schema_statements(engine, schemas, triggers=True),
         ]
     return lines
 
@@ -492,14 +493,18 @@ def _instructions(engine: str, scripts: TriggersScripts, output: str, created: i
         )
     if created:
         lines.append(
-            f"- Databases it creates, which neither step 1's DDL nor the routines deploy script "
-            f"creates: {created} (`{TRIGGERS_FILE}` names them). Each is created by the user "
-            "that runs it, and the script grants nothing: `EXECUTE` on each database for the "
-            "application user is yours to add."
+            f"- Databases it creates, which step 1's DDL does not: {created} (`{TRIGGERS_FILE}` "
+            "names them; one the routines deploy script already created is left as it is, "
+            "`IF NOT EXISTS`). The user that runs it needs `CREATE` and `EVENT` on each new "
+            "database, since creating one gives its creator no privileges on it. Each event "
+            "runs as its DEFINER, which needs the privileges its body uses. The script grants "
+            "nothing."
         )
     clashes = sum(1 for _, _, code in scripts.excluded if code == CASE_DIFFERS)
     if clashes:
-        lines.append(f"- Left out as `{CASE_DIFFERS}`: {clashes}. For each, {CASE_DIFFERS_WHY}")
+        lines.append(
+            f"- Left out as `{CASE_DIFFERS}`: {clashes}. For each, {CASE_DIFFERS_TRIGGERS_WHY}"
+        )
     if not pg:
         lines.append(
             "- **MySQL events fire on their schedule once created**, when the cluster's "

@@ -537,13 +537,18 @@ def test_the_mysql_triggers_enable_script_creates_the_database_a_deferred_event_
     assert text.index("SET NAMES utf8mb4;") < text.index("CREATE DATABASE IF NOT EXISTS `jobs`;")
     assert text.index("`odd``db`;") < text.index("USE `jobs`;")
     flat = " ".join(line[3:].strip() for line in text.splitlines() if line.startswith("-- "))
-    assert "the script grants nothing: EXECUTE on each database" in flat
     from src.tools.data_movement.dms_step import SERVER_DEFAULTS
 
     assert SERVER_DEFAULTS in flat
+    # The runner's privileges, not the application's: this script holds events.
+    assert "needs CREATE and EVENT on each new database" in flat
+    assert "EXECUTE" not in flat and "the routines live in" not in flat
+    assert "The databases its triggers and events live in that step 1's DDL does not create" in flat
     md = _read(tmp_path, TRIGGERS_INSTRUCTIONS)
-    assert "- Databases it creates, which neither step 1's DDL nor the routines deploy" in md
-    assert "creates: 2 (" in md and "`EXECUTE` on each database" in md
+    assert "- Databases it creates, which step 1's DDL does not: 2 (" in md
+    assert "one the routines deploy script already created is left as it is" in md
+    assert "needs `CREATE` and `EVENT` on each new database" in " ".join(md.split())
+    assert "EXECUTE" not in md
 
 
 @pytest.mark.passes_on_main
@@ -572,7 +577,7 @@ def test_the_triggers_enable_script_names_the_target_database_once_and_the_resum
 
 
 def test_an_event_in_a_database_that_differs_from_the_tables_only_by_case_is_left_out(tmp_path):
-    from src.tools.data_movement.routine_scripts import CASE_DIFFERS_WHY
+    from src.tools.data_movement.routine_scripts import CASE_DIFFERS_TRIGGERS_WHY
 
     scripts, _, _ = _event_in(tmp_path, "Shop", "jobs")
     assert scripts.excluded == [("event", "Shop.ev0", "database_case_differs")]
@@ -581,4 +586,59 @@ def test_an_event_in_a_database_that_differs_from_the_tables_only_by_case_is_lef
     assert _lines(text, "CREATE DATABASE") == ["CREATE DATABASE IF NOT EXISTS `jobs`;"]
     assert "USE `Shop`;" not in text and "CREATE DATABASE IF NOT EXISTS `Shop`" not in text
     md = " ".join(_read(tmp_path, TRIGGERS_INSTRUCTIONS).split())
-    assert f"- Left out as `database_case_differs`: 1. For each, {CASE_DIFFERS_WHY}" in md
+    assert f"- Left out as `database_case_differs`: 1. For each, {CASE_DIFFERS_TRIGGERS_WHY}" in md
+    # The check that reports a left-out trigger or event is the triggers one.
+    assert "triggers-enable-check.sql" in CASE_DIFFERS_TRIGGERS_WHY
+    assert "routines-check.sql" not in CASE_DIFFERS_TRIGGERS_WHY
+
+
+def test_a_database_the_deploy_already_created_is_counted_and_left_to_if_not_exists(tmp_path):
+    # shop_functions holds a carried procedure (the deploy creates it) and a deferred event.
+    rows = [row("shop_functions.tally", "procedure", schema="shop_functions", status="rewritten",
+                signature="", specific="tally"),
+            row("shop_functions.sweep", "event", schema="shop_functions", status="rewritten",
+                specific="sweep")]  # fmt: skip
+    sources = [mysql_source("tally", "CREATE DEFINER=`app`@`%` PROCEDURE `tally`()\nBEGIN SELECT 1; END",
+                            schema="shop_functions"),
+               mysql_source("sweep", "CREATE DEFINER=`app`@`%` EVENT `sweep` ON SCHEDULE EVERY 1 DAY "
+                            "STARTS '2036-01-01 00:00:00' DISABLE DO SELECT 1", kind="event",
+                            schema="shop_functions")]  # fmt: skip
+    artifact = migration(rows, "mysql")
+    store = _job(tmp_path, artifact, sources, "mysql")
+    _write_scripts(tmp_path, store, contract_with_routines(artifact))
+    assert _lines(_read(tmp_path, TRIGGERS_FILE), "CREATE DATABASE") == [
+        "CREATE DATABASE IF NOT EXISTS `shop_functions`;"]  # fmt: skip
+    assert "neither step 1's DDL nor the routines deploy" not in _read(
+        tmp_path, TRIGGERS_INSTRUCTIONS
+    )
+
+
+def test_the_database_clauses_of_the_ddl_the_deploy_and_the_triggers_script_agree(tmp_path):
+    # One rule for all three scripts: when the DDL's database gains a collation (#2276), the
+    # deploy and the triggers script must follow, or this fails.
+    import re
+
+    from src.tools.data_movement.dms_step import render_ddl
+    from src.tools.data_movement.routine_scripts import DEPLOY_FILE, write_routine_scripts
+    from tests.unit.tools.data_movement.dms_step_fixtures import make_step1_inputs
+
+    def clauses(text: str) -> set[str]:
+        return set(re.findall(r"^CREATE DATABASE IF NOT EXISTS `(?:[^`]|``)+`(.*);$", text, re.M))
+
+    rows = [row("shop_functions.tally", "procedure", schema="shop_functions", status="rewritten",
+                signature="", specific="tally"),
+            row("jobs.sweep", "event", schema="jobs", status="rewritten", specific="sweep")]  # fmt: skip
+    sources = [mysql_source("tally", "CREATE DEFINER=`app`@`%` PROCEDURE `tally`()\nBEGIN SELECT 1; END",
+                            schema="shop_functions"),
+               mysql_source("sweep", "CREATE DEFINER=`app`@`%` EVENT `sweep` ON SCHEDULE EVERY 1 DAY "
+                            "STARTS '2036-01-01 00:00:00' DISABLE DO SELECT 1", kind="event",
+                            schema="jobs")]  # fmt: skip
+    artifact = migration(rows, "mysql")
+    store = _job(tmp_path, artifact, sources, "mysql")
+    contract = contract_with_routines(artifact)
+    write_routine_scripts(store, "shop", "job1", contract, SHA, tmp_path / "step")
+    _write_scripts(tmp_path, store, contract)
+    deploy, triggers = _read(tmp_path, DEPLOY_FILE), _read(tmp_path, TRIGGERS_FILE)
+    ddl = render_ddl(make_step1_inputs("aurora_mysql"))
+    assert "`shop_functions`" in deploy and "`jobs`" in triggers
+    assert clauses(ddl) and clauses(deploy) == clauses(triggers) == clauses(ddl)
