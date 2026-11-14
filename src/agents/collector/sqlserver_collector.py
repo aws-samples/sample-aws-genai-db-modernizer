@@ -404,7 +404,7 @@ def _collect_schema_raw(db: SQLServerRemoteCollector, include_bodies: bool = Tru
     routine_status: dict | None = None
     try:
         routine_stats, routine_status = db.collect_routine_stats()
-        attach_routine_stats(procedures, triggers, routine_stats)
+        attach_routine_stats(procedures, triggers, routine_stats, source_engine="sqlserver")
     except Exception:
         logger.warning("Failed to collect routine stats")
 

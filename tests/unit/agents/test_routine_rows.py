@@ -69,7 +69,7 @@ def test_stats_attach_by_kind_schema_and_name_and_sum_overloads():
         {"routine_name": "tg", "schema_name": "dbo", "object_type": "TRIGGER", "execution_count": 7},
         {"routine_name": "gone", "schema_name": "dbo", "object_type": "PROCEDURE", "execution_count": 9},
     ]  # fmt: skip
-    attach_routine_stats(procs, trigs, stats)
+    attach_routine_stats(procs, trigs, stats, source_engine="sqlserver")
     assert (procs[0]["execution_count"], procs[0]["total_time_ms"]) == (10, 50.0)
     assert procs[1]["execution_count"] == 3  # no schema on the row: matched by name
     assert "total_time_ms" not in procs[1]
@@ -80,14 +80,15 @@ def test_stats_attach_by_kind_schema_and_name_and_sum_overloads():
 def test_stats_never_cross_schemas_when_both_sides_name_one():
     procs = [{"routine_name": "p", "schema_name": "a"}]
     attach_routine_stats(procs, [], [{"routine_name": "p", "schema_name": "b",
-                                       "object_type": "PROCEDURE", "execution_count": 5}])  # fmt: skip
+                                       "object_type": "PROCEDURE", "execution_count": 5}],
+                         source_engine="mysql")  # fmt: skip
     assert "execution_count" not in procs[0]
 
 
 def test_no_stats_section_changes_nothing():
     procs = [{"routine_name": "p"}]
     for stats in (None, [], "x", [None, {"execution_count": 1}]):
-        attach_routine_stats(procs, [], stats)
+        attach_routine_stats(procs, [], stats, source_engine="mysql")
     assert procs == [{"routine_name": "p"}]
 
 

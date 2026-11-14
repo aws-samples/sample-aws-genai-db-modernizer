@@ -674,7 +674,7 @@ def _collect_schema_raw(db: MySQLRemoteCollector, include_bodies: bool = True) -
     routine_status: dict | None = None
     try:
         routine_stats, routine_status = db.collect_routine_stats()
-        attach_routine_stats(procedures, triggers, routine_stats)
+        attach_routine_stats(procedures, triggers, routine_stats, source_engine="mysql")
     except Exception:
         logger.warning("Failed to collect routine stats")
     capture: dict = {"include_bodies": include_bodies}

@@ -501,7 +501,9 @@ def _routine_rows(data: Mapping, metadata: object, source_engine: str) -> dict[s
         dict(e) for e in raw_event_triggers if isinstance(e, dict)
     ] if isinstance(raw_event_triggers, list) else []  # fmt: skip
     attach_routine_sources(procedures, triggers, data.get("routine_sources"))
-    attach_routine_stats(procedures, triggers, data.get("routine_stats"))
+    attach_routine_stats(
+        procedures, triggers, data.get("routine_stats"), source_engine=source_engine
+    )
     if not collection_includes_bodies(data):
         # #1933: the file says it ran with the opt-out; whatever bodies it still holds
         # (an edited script) are dropped, sizes kept.
