@@ -484,12 +484,19 @@ def test_the_raw_text_check_undoes_every_json_escape(value: str, raw: str) -> No
 
 def test_a_short_value_cut_at_a_quote_is_recorded_and_a_quoted_one_is_not() -> None:
     """#2213 review round 2, Important 1: the scan records a value under 4 characters
-    it ended at a ``"`` or ``\\`` that does not close it (``Zq9"Xv7...``), since the
-    rest of it is unknown; a quoted JSON value (``"abc"``) is whole."""
-    cut_quote = private_scan.redact('password = Zq9"Xv7Wm3Kt5\n', narrow_key_names=True)
-    cut_backslash = private_scan.redact('{"password": "Zq9\\"Xv7Wm3Kt5"}', narrow_key_names=True)
-    whole = private_scan.redact('{"password": "abc"}', narrow_key_names=True)
-    assert cut_quote.cut == {"Zq9"} and cut_backslash.cut == {"Zq9"} and whole.cut == set()
+    it ended at a ``"`` or ``\\`` that does not close it, since the rest of it is
+    unknown: a quote run before ``,`` (``Zq9",Xv7...``), an escaped quote no quote
+    closes (a cut line). An embedded quote or backslash is part of the value since
+    #2247, so ``Zq9"Xv7...`` and ``"Zq9\\"Xv7..."`` are whole, as is ``"abc"``."""
+    cut_quote = private_scan.redact('password = Zq9",Xv7Wm3Kt5\n', narrow_key_names=True)
+    cut_backslash = private_scan.redact('{"password": "Zq9\\"Xv7Wm3Kt5', narrow_key_names=True)
+    assert cut_quote.cut == {"Zq9"} and cut_backslash.cut == {"Zq9"}
+    for text in (
+        'password = Zq9"Xv7Wm3Kt5\n',  # pragma: allowlist secret
+        '{"password": "Zq9\\"Xv7Wm3Kt5"}',  # pragma: allowlist secret
+        '{"password": "abc"}',
+    ):
+        assert private_scan.redact(text, narrow_key_names=True).cut == set()
     rewrite = private_scan.redact_json_keys(
         json.dumps({"tbl_zq9_cols": 1}), "json", [(_PW, "Zq9")], cut=["Zq9"]
     )
