@@ -2044,7 +2044,11 @@ def routines(clients: MoveClients, root: str, db: str, job_id: str, inputs: Move
     from src.contracts.routine_check import STATIC_LABEL
     from src.storage.local_store import LocalArtifactStore
     from src.tools.data_movement.dms_step import load_step1
-    from src.tools.data_movement.routine_scripts import write_routine_scripts
+    from src.tools.data_movement.routine_scripts import (
+        CASE_DIFFERS,
+        CASE_DIFFERS_WHY,
+        write_routine_scripts,
+    )
 
     store = LocalArtifactStore(base_dir=root)
     step = load_step1(store, db, job_id, with_ddl=False)
@@ -2066,7 +2070,8 @@ def routines(clients: MoveClients, root: str, db: str, job_id: str, inputs: Move
                                     _step_dir(root, db, job_id),
                                     target_database=inputs.target_database_name,
                                     target_user=target_user)  # fmt: skip
-    refused = [{"routine_id": i, "kind": k, "reason": c} for k, i, c in scripts.refused]
+    refused = [{"routine_id": i, "kind": k, "reason": c, **({"why": CASE_DIFFERS_WHY} if c == CASE_DIFFERS else {})}
+               for k, i, c in scripts.refused]  # fmt: skip
     return {"status": "ready", **base, "in_script": scripts.in_script, "refused": len(refused),
             "refused_routines": refused[:ROUTINES_SHOWN], "files": scripts.files}  # fmt: skip
 
@@ -2079,7 +2084,7 @@ def routines_check(root: str, db: str, job_id: str, inputs: MoveInputs) -> dict[
     from src.storage.local_store import LocalArtifactStore
     from src.tools.data_movement.dms_step import load_step1
     from src.tools.data_movement.routine_check import RoutineCheckOutputError, read_check
-    from src.tools.data_movement.routine_scripts import CHECK_OUTPUT
+    from src.tools.data_movement.routine_scripts import CASE_DIFFERS_WHY, CHECK_OUTPUT, case_differs
 
     store = LocalArtifactStore(base_dir=root)
     step = load_step1(store, db, job_id, with_ddl=False)
@@ -2097,9 +2102,22 @@ def routines_check(root: str, db: str, job_id: str, inputs: MoveInputs) -> dict[
         return {"status": "no_output", "expected": str(output), "label": STATIC_LABEL}
     checked: RoutineCheckResult = result
     store.write_json(key, checked.model_dump(mode="json"))
+    # A routine the deploy left out for a case-only database clash is missing on the target:
+    # its line says why, as `routines` did.
+    rows = (
+        {(r.kind, r.routine_id): r for r in step.contract.routines.routines}
+        if step.contract.routines
+        else {}
+    )
+    clashes = {
+        k for k, r in rows.items() if case_differs(r, step.contract, inputs.target_database_name)
+    }
+    mismatches = [{**m.model_dump(mode="json"),
+                   **({"why": CASE_DIFFERS_WHY} if m.problem == "missing" and (m.kind, m.routine_id) in clashes else {})}
+                  for m in result.mismatches[:ROUTINES_SHOWN]]  # fmt: skip
     return {"status": result.status, "label": result.label, "carried": result.carried,
             "confirmed": result.confirmed, "deferred": result.deferred,
-            "mismatches": [m.model_dump(mode="json") for m in result.mismatches[:ROUTINES_SHOWN]],
+            "mismatches": mismatches,
             "mismatch_count": len(result.mismatches), "not_carried": len(result.not_carried),
             "not_carried_routines": [m.model_dump(mode="json") for m in result.not_carried[:ROUTINES_SHOWN]],
             "result": str(Path(root) / key)}  # fmt: skip

@@ -271,6 +271,14 @@ def unsupported_fields(contract: StepContract) -> tuple[UnsupportedField, ...]:
     )
 
 
+#: What step-1.ddl.sql says of the character set and collation it does not set; the routine
+#: deploy script says the same of the databases it creates (#2148).
+SERVER_DEFAULTS = (
+    "It sets no character set or collation: the cluster's server defaults apply. Check them "
+    "against the source's before you run it."
+)
+
+
 def contract_tables(contract: StepContract) -> list[ContractTable]:
     """The tables step 1 moves: the contract's unblocked rules, sorted by table id, but not a
     rule that moves no rows (#1918, its table is still in the DDL). Views are never rules, so
@@ -1677,8 +1685,7 @@ def render_ddl(inputs: Step1Inputs) -> str:
         "About this DDL:",
         "- Keep the declared column names: DMS matches columns by name, not by position, so the column "
         "order does not matter but a renamed column gets no data.",
-        "- It sets no character set or collation: the cluster's server defaults apply. Check them against "
-        "the source's before you run it.",
+        f"- {SERVER_DEFAULTS}",
         "- The indexes of a saved schema design are not in this file: it creates the keys, the source's "
         "indexes and the foreign keys between moved tables only. Add the design's indexes when you choose.",
     ]
