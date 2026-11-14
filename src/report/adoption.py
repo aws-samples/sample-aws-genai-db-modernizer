@@ -23,10 +23,10 @@ Three figures are deliberately left out of every deliverable:
 - the tables a path moves off the relational engine (``paths[].tables_migrate``), and
   wave 1's tables a later step owns (``table_classes.leaves_count``, the same count): they
   and the headline ``facts.tables_migrate`` state the same end state's moving tables
-  differently until #2237 lands, and a deliverable prints one answer per figure
-  (ADR-032 Decision 1, the prerequisite recorded on #1131). Even then a cross-engine
-  source's headline counts the move to Aurora too, so the figure may only ever be printed
-  as "tables moved off <relational engine>";
+  differently on a cross-engine source (trailgear: 18 against 30; #2246 checked after
+  #2237), and a deliverable prints one answer per figure (ADR-032 Decision 1). Wave 1's
+  table classes say only "The other tables move in a later step."; the figure may only
+  ever be printed as "tables moved off <relational engine>";
 - an earlier path's cost when the report was not priced path by path
   (``cost_basis`` other than ``per_path_sizing``): its figure is the full target's
   estimates summed, not a cost of that end state (ADR-033 Amendment 2, the 2026-11-12

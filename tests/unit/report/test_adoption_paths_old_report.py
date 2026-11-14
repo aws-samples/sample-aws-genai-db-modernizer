@@ -9,6 +9,10 @@ at all: no "Adoption paths", no stages, and the roadmap's old one-step pointer. 
 golden files were rendered by main's code before #1131 (``engineering_report_no_adoption*.golden.txt``,
 stored as text so no Markdown linter rewrites them),
 and this module imports nothing #1131 added, so it runs on main too.
+
+Regenerate a golden with ``origin/main``'s code (a worktree of main), never the
+branch's: a golden rendered by the branch pins the branch's output, not the report as
+it was before the slice plan.
 """
 
 from __future__ import annotations

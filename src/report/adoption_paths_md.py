@@ -307,7 +307,8 @@ def _table_class_lines(plan: dict[str, Any], wave: int) -> list[str]:
         return []
     engine = escaping.md_text(display_engine(str((step or {}).get("engine") or "")))
     # Not ``leaves_count`` (the tables a later step owns): it is the paths' moving-table
-    # count, which disagrees with the headline "tables migrate" until #2237 lands.
+    # count, which trailgear's headline "tables migrate" disagrees with (#2246). Three
+    # classes of four would let a reader subtract it, so a count-free line closes them.
     stays = classes.get("stays_count") or 0
     copied, unread = classes.get("replicated_out_count") or 0, classes.get("unread_count") or 0
     rows = [
@@ -322,6 +323,8 @@ def _table_class_lines(plan: dict[str, Any], wave: int) -> list[str]:
     out = ["- Table classes:"]
     for count, text in rows:
         out.append(f"  - {fmt_num(count)} {plural_noun(count, 'table')} {text}")
+    if classes.get("leaves"):
+        out.append("  - The other tables move in a later step.")
     return out
 
 
@@ -383,7 +386,7 @@ def wave_stages_md(facts: dict[str, Any], wave: int, gates: _SaidOnce) -> list[s
             f"- Units of each stage, the first {_UNITS_SHOWN}:",
             "",
             *_table_md(
-                ["Stage", "Unit", "Queries", "Owns", "Reads a copy of", "CDC copy back to"],
+                ["Stage", "Pilot", "Queries", "Owns", "Reads a copy of", "CDC copy back to"],
                 unit_rows,
             ),
             "",
