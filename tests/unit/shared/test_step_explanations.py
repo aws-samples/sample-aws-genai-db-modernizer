@@ -675,3 +675,48 @@ def test_a_slice_shared_by_many_parts_runs_after_only_the_wave_s_steps_that_are_
     # The first slice of its wave runs after nothing, so it states no late clause.
     first = {"plan_steps": [_slice(3, 0.9), _slice(4, 0.1)]}
     assert why.step_ties(first)[3]["runs_after_steps"] == []
+
+
+# step number, the ties fields set to one bad value, the rule that refuses it.
+BAD_TIES = [
+    (3, {"shared_with_steps": [4, 4]}, "shared_with_steps lists each step once, in order"),
+    (3, {"ordered_with_steps": [4, 2]}, "ordered_with_steps lists each step once, in order"),
+    (
+        1,
+        {"dependent_steps": [2, 3, 4], "dependent_step_count": 3, "later_step_count": 2},
+        "no more dependent steps than later steps",
+    ),
+    (2, {"fronted_tables": [], "fronted_table_count": 0}, "a fronted step names its tables"),
+    (4, {"runs_after_steps": [2]}, "runs_after_steps are steps of its own wave"),
+    (3, {"dependent_steps": [1], "dependent_step_count": 1}, "dependent steps run after it"),
+    (3, {"shared_with_steps": [3]}, "does not share with or order among itself"),
+    (3, {"ordered_with_steps": [3, 4]}, "does not share with or order among itself"),
+    (2, {"fronted_step": 3}, "only a cache step fronts a step, an earlier one"),
+    (
+        3,
+        {"fronted_step": 1, "fronted_tables": ["app.orders"], "fronted_table_count": 1},
+        "only a cache step fronts a step, an earlier one",
+    ),
+    (2, {"ordered_with_steps": [3]}, "only a slice step is ordered among its wave's steps"),
+    (4, {"write_site_count": 6}, "ties state its cut cost"),
+]
+
+
+@pytest.mark.parametrize(("number", "bad", "rule"), BAD_TIES)
+def test_each_ties_rule_refuses_its_bad_value(number: int, bad: dict[str, Any], rule: str) -> None:
+    plan = copy.deepcopy(_plan())
+    SlicePlanFacts.model_validate(plan)
+    step = plan["plan_steps"][number - 1]
+    step["ties"] = {**step["ties"], **bad}
+    with pytest.raises(ValidationError, match=re.escape(rule)):
+        SlicePlanFacts.model_validate(plan)
+
+
+def test_a_step_with_a_why_but_no_ties_is_filled() -> None:
+    report = json.loads(PRE_1699.read_text(encoding="utf-8"))
+    filled = why.with_step_explanations(report["facts"]["slice_plan"])
+    gap = copy.deepcopy(filled)
+    gap["plan_steps"][2]["ties"] = None
+    assert why.needs_step_explanations(gap)
+    report["facts"]["slice_plan"] = gap
+    assert report_facts(report)["slice_plan"] == filled
