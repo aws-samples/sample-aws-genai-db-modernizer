@@ -61,6 +61,11 @@ def _num(value: Any) -> float | None:
     return float(value) if isinstance(value, (int, float)) and not isinstance(value, bool) else None
 
 
+def _dict(value: Any) -> dict[str, Any]:
+    """``value`` when it is a JSON object, else an empty one."""
+    return value if isinstance(value, dict) else {}
+
+
 def _load(spec: str | Path) -> tuple[str | None, Path, dict[str, Any]]:
     text = str(spec)
     label: str | None = None
@@ -132,10 +137,10 @@ def _agent_groups(row: dict[str, Any]) -> dict[str, dict[str, float | None]]:
 
 def _metrics(row: dict[str, Any]) -> list[tuple[str, str, float | None]]:
     usage = _token_usage(row)
-    total = usage.get("total") if isinstance(usage.get("total"), dict) else {}
-    cost = usage.get("cost") if isinstance(usage.get("cost"), dict) else {}
-    explore = row.get("explore") if isinstance(row.get("explore"), dict) else {}
-    judge = row.get("judge") if isinstance(row.get("judge"), dict) else {}
+    total = _dict(usage.get("total"))
+    cost = _dict(usage.get("cost"))
+    explore = _dict(row.get("explore"))
+    judge = _dict(row.get("judge"))
     list_price = _num(row.get("list_price_cost_usd"))
     if list_price is None:
         list_price = _num(cost.get("list_price_cost_usd"))

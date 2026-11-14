@@ -467,6 +467,12 @@ def test_the_upload_is_refused_under_the_ci_sandbox_before_any_aws_call(capsys, 
         stubber.assert_no_pending_responses()
 
 
+def test_the_upload_without_the_s3_and_sts_clients_says_so_instead_of_an_attribute_error():
+    clients = _clients(StubbedCredMgr(), uploads=False)  # only a deploy builds the two
+    with pytest.raises(RuntimeError, match="needs the S3 and STS clients"):
+        script._upload(clients, None, "stack", "{}")
+
+
 @pytest.mark.parametrize("bucket", ["My-Bucket", "a.b.c", "ab", "-bucket", "s3://bucket"])
 def test_a_template_bucket_that_is_not_a_plain_bucket_name_is_refused(tmp_path, capsys, bucket):
     _job(tmp_path, template_bucket="my-templates-1")

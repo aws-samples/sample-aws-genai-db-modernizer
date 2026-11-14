@@ -179,6 +179,7 @@ def run_standard(store, job_id: str, db: str, engine: str, llm_mode: str) -> Non
 
     collector_output = read_collector_for_models(store, db, job_id)
     analysis_input = _build_analysis_input(job_id, db, engine, collector_output)
+    mermaid: str | None  # the ElastiCache analysis may return no diagram
 
     if engine == "dynamodb":
         from src.agents.analysis.dynamodb_analysis_agent import analyze_for_dynamodb

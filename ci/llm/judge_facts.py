@@ -730,7 +730,7 @@ def build_facts(
 
     ranking = [r for r in report.get("ranking") or [] if isinstance(r, dict)]
     tco = report.get("tco_analysis") or {}
-    cost_by_engine = {
+    cost_by_engine: dict[Any, Any] = {
         c.get("database"): c.get("monthly_cost_usd") for c in tco.get("cost_breakdown") or []
     }
     table_mappings = report.get("table_mappings") or []
@@ -773,7 +773,7 @@ def build_facts(
     for tables in served.values():
         known_tables.update(tables)
 
-    engines = []
+    engines: list[dict[str, Any]] = []
     for entry in ranking:
         engine = entry.get("target") or entry.get("engine")
         is_cache = entry.get("role") == "cache_layer"
@@ -811,7 +811,9 @@ def build_facts(
                 ),
                 "monthly_cost_usd": cost_by_engine.get(engine, entry.get("monthly_cost_usd")),
                 "tables_served": _tables_served(
-                    served.get(engine), entry.get("assigned_queries"), partial_scope
+                    served.get(engine) if isinstance(engine, str) else None,
+                    entry.get("assigned_queries"),
+                    partial_scope,
                 ),
                 "primary_tables": [
                     _strip_db(m.get("source_table", ""), db)

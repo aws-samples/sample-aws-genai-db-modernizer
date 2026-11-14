@@ -37,9 +37,11 @@ def build_report(runs: list[CaseRun]) -> dict:
     errored = [r for r in runs if r.outcome is Outcome.ERRORED]
     skipped = [r for r in runs if r.outcome is Outcome.SKIPPED]
 
-    total_scored_q = sum(r.score.scored_count for r in scored)
-    total_ok_q = sum(r.score.acceptable_count for r in scored)
-    agg = sum(r.score.acceptable_accuracy for r in scored) / len(scored) if scored else 0.0
+    # `scored` holds only runs with a score; the list keeps the narrowing for mypy.
+    scores = [r.score for r in scored if r.score is not None]
+    total_scored_q = sum(s.scored_count for s in scores)
+    total_ok_q = sum(s.acceptable_count for s in scores)
+    agg = sum(s.acceptable_accuracy for s in scores) / len(scores) if scores else 0.0
 
     complete = not throttled and not errored
     banner = ""
