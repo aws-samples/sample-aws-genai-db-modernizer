@@ -2724,6 +2724,23 @@ def _redact_flagged_values(scans: Iterable[_Scanned]) -> None:
             scan.rewritten = rewrite.replaced
 
 
+def _rewritten_counts(every: Iterable[tuple[str, _Scanned]]) -> dict[str, int]:
+    """The manifest's ``rewritten``: each file the cross-file rewrite changed, with its
+    count of replacements. A name that holds a piece of a flagged value
+    (``private_scan.holds_a_piece``) is shown as ``[withheld]``, its counts summed, so
+    the manifest and ``results.json`` never carry it (#2266)."""
+    from ci.llm.private_scan import WITHHELD_NAME, holds_a_piece, value_pieces
+
+    every = list(every)
+    pieces = value_pieces(value for _, scan in every for *_rest, value in scan.pending)
+    counts: dict[str, int] = {}
+    for name, scan in every:
+        if scan.rewritten:
+            shown = WITHHELD_NAME if holds_a_piece(name, pieces) else name
+            counts[shown] = counts.get(shown, 0) + scan.rewritten
+    return counts
+
+
 def _mark_results(out_dir: Path, scan: dict) -> None:
     """Fail the run in ``results.json`` and record the scan, so a human reviews it."""
     results = out_dir / "results.json"
@@ -2831,7 +2848,7 @@ def collect_job(
         for kind, line in scan.findings
     ]
     withheld = [rel for rel, (_, scan) in uploads.items() if scan.raw is None]
-    rewritten = {name: scan.rewritten for name, scan in every if scan.rewritten}
+    rewritten = _rewritten_counts(every)
     archive_ok = has_job and not any(scan.raw is None for _, scan in job_files.values())
     archive_ok = archive_ok and not any(scan.key for _, scan in every)
     for path, scan in uploads.values():

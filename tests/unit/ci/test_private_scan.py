@@ -490,7 +490,8 @@ def test_a_short_value_cut_at_a_quote_is_recorded_and_a_quoted_one_is_not() -> N
     #2247, so ``Zq9"Xv7...`` and ``"Zq9\\"Xv7..."`` are whole, as is ``"abc"``."""
     cut_quote = private_scan.redact('password = Zq9",Xv7Wm3Kt5\n', narrow_key_names=True)
     cut_backslash = private_scan.redact('{"password": "Zq9\\"Xv7Wm3Kt5', narrow_key_names=True)
-    assert cut_quote.cut == {"Zq9"} and cut_backslash.cut == {"Zq9"}
+    # With what it was cut at (#2266 review round 2, Minor 7).
+    assert cut_quote.cut == {'Zq9"'} and cut_backslash.cut == {'Zq9\\"'}
     for text in (
         'password = Zq9"Xv7Wm3Kt5\n',  # pragma: allowlist secret
         '{"password": "Zq9\\"Xv7Wm3Kt5"}',  # pragma: allowlist secret
@@ -498,9 +499,14 @@ def test_a_short_value_cut_at_a_quote_is_recorded_and_a_quoted_one_is_not() -> N
     ):
         assert private_scan.redact(text, narrow_key_names=True).cut == set()
     rewrite = private_scan.redact_flagged_values(
-        json.dumps({"tbl_zq9_cols": 1}), "json", [(_PW, "Zq9")], cut=["Zq9"]
+        json.dumps({'tbl_zq9",xv7_cols': 1}), "json", [(_PW, "Zq9")], cut=['Zq9"']
     )
     assert rewrite.text is None and rewrite.reason == private_scan.CUT_FLAGGED
+    # The bare value without the character it was cut at is no cut copy.
+    bare = private_scan.redact_flagged_values(
+        json.dumps({"tbl_zq9_cols": 1}), "json", [(_PW, "Zq9")], cut=['Zq9"']
+    )
+    assert bare.text == json.dumps({"tbl_zq9_cols": 1})
     kept = private_scan.redact_flagged_values(json.dumps({"abc_cols": 1}), "json", [(_PW, "abc")])
     assert kept.text == json.dumps({"abc_cols": 1})
 
@@ -686,26 +692,27 @@ def test_a_prose_value_gives_no_pieces_and_is_matched_only_whole() -> None:
 
 def test_a_word_like_or_short_value_matches_only_as_a_whole_token() -> None:
     """#2266 review, Important 2: a value that does not look random (all letters, or
-    under 8 characters) is replaced only as a whole token, with no letter, digit or
-    ``_`` next to it, never inside an identifier; a number is replaced only when the
-    whole number is the value."""
-    flagged = [(_PW, "admin"), (_PW, "root"), (_PW, "2024"), (_PW, "administrator")]
+    under 8 characters) and is under 12 characters is replaced only as a whole token,
+    with no letter, digit or ``_`` next to it, never inside an identifier; a number is
+    replaced only when the whole number is the value. (A word of 12 or more, such as
+    ``administrator``, matches anywhere since review round 2, Minor 4.)"""
+    flagged = [(_PW, "admin"), (_PW, "root"), (_PW, "2024"), (_PW, "superuser")]
     text = json.dumps(
         {
             "table": "wordpress.wp_wc_admin_notes",
             "root_table": "root_table",
-            "admin_notices": "AdministratorId administrators",
+            "admin_notices": "AdministratorId superusers",
             "frequency_per_hour": 120245,
             "total_time_ms": 2024.5,
             "year": 2024,
             "who": "admin",
-            "log": "user admin, then root; the administrator.",
+            "log": "user admin, then root; the superuser.",
         }
     )
     assert json.loads(_values(text, "json", flagged) or "") == {
         "table": "wordpress.wp_wc_admin_notes",
         "root_table": "root_table",
-        "admin_notices": "AdministratorId administrators",
+        "admin_notices": "AdministratorId superusers",
         "frequency_per_hour": 120245,
         "total_time_ms": 2024.5,
         "year": _MARK,
@@ -774,7 +781,7 @@ def test_a_value_the_scan_cut_short_withholds_a_string_or_text_holding_it() -> N
     """#2266 review, Minor 6: a value the scan cut short refuses a string value or a
     plain text that holds it as a token, as it refuses a key; a word that merely
     contains it is kept."""
-    flagged, cut = [(_PW, "Zq9")], ["Zq9"]
+    flagged, cut = [(_PW, "Zq9")], ['Zq9"']
     for text, document in (
         (json.dumps({"msg": 'login with Zq9",Xv7Wm3Kt5 ok'}), "json"),
         ('login with Zq9",Xv7Wm3Kt5 ok\n', ""),
@@ -794,3 +801,106 @@ def test_one_prebuilt_matcher_serves_every_file() -> None:
     once = private_scan.redact_flagged_values(text, "json", matcher=matcher)
     assert once == private_scan.redact_flagged_values(text, "json", [(_PW, _A)])
     assert once.replaced == 2
+
+
+def test_a_long_word_like_value_matches_whole_anywhere_and_gives_no_pieces() -> None:
+    """#2266 review round 2, Minor 4: a value of 12 or more characters with no
+    whitespace (``correcthorsebatterystaple``) is matched whole anywhere, inside an
+    identifier and a key too, in any case; it gives no pieces, and a shorter word
+    (``wordpress``) stays a whole token."""
+    value = "correcthorse" + "batterystaple"  # pragma: allowlist secret
+    flagged = [(_PW, value), (_PW, "wordpress")]
+    text = json.dumps(
+        {
+            "a": f"backup_{value}_v2",
+            f"{value}_old": 1,
+            "b": "CorrectHorse" + "BatteryStaple!",
+            "c": "correcthorse battery staple, wp_wordpress_x",
+        }
+    )
+    assert json.loads(_values(text, "json", flagged) or "") == {
+        "a": f"backup_{_MARK}_v2",
+        _MARK: 1,
+        "b": f"{_MARK}!",
+        "c": "correcthorse battery staple, wp_wordpress_x",
+    }
+    assert _values(f"x{value}y\n", "", flagged) == f"x{_MARK}y\n"
+
+
+def test_a_run_random_only_by_case_is_matched_in_its_own_case() -> None:
+    """#2266 review round 2, Minor 5: a run of a flagged value that looks random only
+    because of a capital (``ordPress`` of ``WordPress2024!``) is matched in its own
+    case only, so ``wordpress`` elsewhere is kept; a run with a digit or a symbol, and
+    the whole value, still match in any case."""
+    value = "WordPress" + "2024!"  # pragma: allowlist secret
+    text = json.dumps(
+        {
+            "table": "wordpress.wp_posts",
+            "url": "https://wordpress.org",
+            "site": "The WordPress site",
+            "pw": value.lower(),
+            "piece": "x" + value[2:12] + "x",
+        }
+    )
+    assert json.loads(_values(text, "json", [(_PW, value)]) or "") == {
+        "table": "wordpress.wp_posts",
+        "url": "https://wordpress.org",
+        "site": f"The {_MARK} site",
+        "pw": _MARK,
+        "piece": f"x{_MARK}x",
+    }
+    prose = "see https://wordpress.org and wordpress.wp_posts\n"
+    assert _values(prose, "", [(_PW, value)]) == prose
+
+
+def test_an_all_digit_value_matches_only_as_a_whole_token_at_any_length() -> None:
+    """#2266 review round 2, Minor 6: an all-digit value is a whole-token value
+    whatever its length: a flagged ``123456789012`` gives no 8-digit pieces, so other
+    digit strings and timestamps that hold it are kept."""
+    value = "1234567" + "89012"
+    text = json.dumps(
+        {
+            "order": "order 9" + value,
+            "ts": value + "3",
+            "id": f"id {value} ok",
+            "n": int(value),
+            "m": int("9" + value),
+        }
+    )
+    assert json.loads(_values(text, "json", [(_PW, value)]) or "") == {
+        "order": "order 9" + value,
+        "ts": value + "3",
+        "id": f"id {_MARK} ok",
+        "n": _MARK,
+        "m": int("9" + value),
+    }
+    prose = f"order 9{value} at {value[:8]}0000\n"
+    assert _values(prose, "", [(_PW, value)]) == prose
+
+
+@pytest.mark.parametrize(
+    "line",
+    ['password = "a\\"b\n', "DB_PASSWORD=ab\\\n"],  # pragma: allowlist secret
+    ids=["quote-escape", "backslash"],
+)
+def test_a_one_or_two_letter_cut_value_withholds_only_with_the_character_it_was_cut_at(
+    line: str,
+) -> None:
+    """#2266 review round 2, Minor 7: a value the scan cut short is matched with the
+    character it was cut at (``a\\"``, ``ab\\``), so a bare ``a`` or ``ab`` in a
+    report, a sentence or SQL withholds nothing."""
+    scanned = private_scan.redact(line, narrow_key_names=True)
+    flagged = [(kind, value) for kind, *_r, value in scanned.pending]
+    assert scanned.cut
+    for text, document in (
+        (json.dumps({"summary": "a table with a key", "ab": "ab cd"}), "json"),
+        ("This is a report, ab initio.\n", ""),
+        ("SELECT a.id, ab.x FROM wp_posts a JOIN t ab\n", "markdown"),
+        (json.dumps({"q": "a or ab, a.b"}) + "\n", "jsonl"),
+    ):
+        rewrite = private_scan.redact_flagged_values(text, document, flagged, scanned.cut)
+        assert rewrite.text is not None and rewrite.reason is None, text
+    cut_copy = line.split("=", 1)[1].strip()
+    for text, document in ((json.dumps({"msg": "use " + cut_copy}), "json"), (cut_copy, "")):
+        rewrite = private_scan.redact_flagged_values(text, document, flagged, scanned.cut)
+        assert rewrite.text is None and rewrite.reason == private_scan.CUT_FLAGGED, text

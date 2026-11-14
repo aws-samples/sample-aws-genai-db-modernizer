@@ -341,6 +341,12 @@ def _shares_a_piece(name: str, pieces: set[str]) -> bool:
     )
 
 
+def holds_a_piece(name: str, pieces: set[str]) -> bool:
+    """Whether ``name`` (a file name, a path) shares a piece (``value_pieces``) with a
+    flagged value, in any case: such a name is shown as ``WITHHELD_NAME`` (#2266)."""
+    return _shares_a_piece(name, pieces)
+
+
 def _safe_name(name: str, pieces: set[str]) -> bool:
     """A name (a field, a JSON key) that can be shown: an identifier of at most 64
     characters that shares no piece (``value_pieces``) with any flagged value and is
@@ -549,10 +555,11 @@ class Redaction:
     pending: list[PendingContext] = field(default_factory=list, repr=False)
     raw_keys: dict[tuple[str, int], set[str]] = field(default_factory=dict, repr=False)
     #: Each value under ``VALUE_PIECE`` characters the scan ended at a backslash or
-    #: at a quote that does not close it (``password = Zq9",Xv7...`` gives ``Zq9``; an
-    #: embedded run, ``Zq9"Xv7...``, is part of the value since #2247): the rest of
-    #: the value is unknown, so ``redact_flagged_values`` refuses a key that holds it
-    #: (#2213). In memory only.
+    #: at a quote that does not close it, with what it was cut at (``password =
+    #: Zq9",Xv7...`` gives ``Zq9"``, ``DB_PASSWORD=ab\\`` gives ``ab\\``; an embedded
+    #: run, ``Zq9"Xv7...``, is part of the value since #2247): the rest of the value
+    #: is unknown, so ``redact_flagged_values`` refuses a key, a string or a text that
+    #: holds it (#2213, #2266). In memory only.
     cut: set[str] = field(default_factory=set, repr=False)
 
     @property
@@ -644,7 +651,7 @@ def redact(
                 value = body[span[0] : span[1]]
                 placed_all.append((kind, number, name, index.path(number, span[0]), value))
                 if len(value) < VALUE_PIECE and _cut_short(body, span):
-                    cut.add(value)
+                    cut.add(value + _cut_at(body, span))
         placed = [(kind, span) for kind, span in hits if span is not None]
         if len(placed) < len(hits) or any(kind == "Private Key" for kind, _ in hits):
             complete = False
@@ -666,6 +673,13 @@ def redact(
         keys,
         cut,
     )
+
+
+def _cut_at(body: str, span: tuple[int, int]) -> str:
+    """What the scan cut the value at ``span`` at: the escape after it (``\\"``, or a
+    lone ``\\`` at the end), or the ``"``."""
+    after = body[span[1] : span[1] + 2]
+    return after if after.startswith("\\") else after[:1]
 
 
 def _cut_short(body: str, span: tuple[int, int]) -> bool:
@@ -954,8 +968,24 @@ def _looks_random(value: str) -> bool:
     return len(value) >= RANDOM_RUN and _random_run(value)
 
 
+#: A value of this many characters or more with no whitespace is matched whole
+#: anywhere, even when it looks like a word (``correcthorsebatterystaple``, #2266).
+WHOLE_ANYWHERE = 12
+
+
+def _random_by_case_only(run: str) -> bool:
+    """A random run (``_random_run``) that is all letters: random only because of a
+    capital (``ordPress``), so it is matched in its own case only (#2266)."""
+    return all(c.isalpha() for c in run)
+
+
 def _word_char(c: str) -> bool:
     return c.isalnum() or c == "_"
+
+
+def _starts_a_token(text: str, start: int) -> bool:
+    """``text[start:]`` has no letter, digit or ``_`` right before it."""
+    return not (start > 0 and _word_char(text[start - 1]))
 
 
 def _is_token(text: str, start: int, end: int) -> bool:
@@ -972,18 +1002,25 @@ class _KeyMatcher:
     case:
 
     - ``long``: a value that looks random (``_looks_random``) and each of its runs of
-      ``RANDOM_RUN`` characters that looks random, matched anywhere (inside a key, a
-      string, an identifier).
+      ``RANDOM_RUN`` characters that looks random with a digit or a symbol, matched
+      anywhere (inside a key, a string, an identifier); and a value of
+      ``WHOLE_ANYWHERE`` or more characters with no whitespace, whole only.
+    - ``exact``: each run, and each value under ``WHOLE_ANYWHERE`` characters, that
+      looks random only because of a capital (``_random_by_case_only``: ``ordPress``
+      of ``WordPress2024!``), matched anywhere but in its own case only.
     - ``tokens``: any other value of ``VALUE_PIECE`` or more characters (a word, a
-      prose phrase, a short or all-digit value), matched only as a whole token.
+      prose phrase, an all-digit value of any length), and a value random only by
+      case in any case, matched only as a whole token.
     - ``short``: a value under ``VALUE_PIECE`` characters, matched only as a whole key
       or JSON string.
     - ``whole``: every form of every value, for a number, replaced only when it is one.
-    - ``cut``: the short values the scan cut short: a key that contains one, or a
-      string or text that holds one as a token, is refused.
+    - ``cut``: the short values the scan cut short, each with what it was cut at
+      (``Redaction.cut``): a key that contains one, or a string or text that holds one
+      with no letter, digit or ``_`` before it, is refused.
     - ``short_tokens``: the short values, as tokens, for text that cannot be parsed."""
 
     long: _Automaton
+    exact: _Automaton
     tokens: _Automaton
     short: dict[str, set[str]]
     whole: dict[str, set[str]]
@@ -993,6 +1030,7 @@ class _KeyMatcher:
     @classmethod
     def build(cls, flagged: Iterable[tuple[str, str]], cut: Iterable[str] = ()) -> _KeyMatcher:
         long: dict[str, set[str]] = {}
+        exact: dict[str, set[str]] = {}
         tokens: dict[str, set[str]] = {}
         short: dict[str, set[str]] = {}
         whole: dict[str, set[str]] = {}
@@ -1005,17 +1043,34 @@ class _KeyMatcher:
                 if len(folded) < VALUE_PIECE:
                     short.setdefault(folded, set()).add(kind)
                     continue
-                if not _looks_random(form):
+                spaced = any(c.isspace() for c in form)
+                if form.isdigit() or (not _looks_random(form) and spaced):
                     tokens.setdefault(folded, set()).add(kind)
                     continue
-                long.setdefault(folded, set()).add(kind)
+                if len(form) >= WHOLE_ANYWHERE:
+                    long.setdefault(folded, set()).add(kind)
+                elif not _looks_random(form):
+                    tokens.setdefault(folded, set()).add(kind)
+                    continue
+                elif _random_by_case_only(form):
+                    exact.setdefault(form, set()).add(kind)
+                    tokens.setdefault(folded, set()).add(kind)
+                else:
+                    long.setdefault(folded, set()).add(kind)
+                if not _looks_random(form):
+                    continue
                 for i in range(len(form) - RANDOM_RUN + 1):
                     run = form[i : i + RANDOM_RUN]
-                    if _random_run(run):
+                    if not _random_run(run):
+                        continue
+                    if _random_by_case_only(run):
+                        exact.setdefault(run, set()).add(kind)
+                    else:
                         long.setdefault(run.lower(), set()).add(kind)
         cuts = {form.lower(): {"cut"} for value in cut for form in decoded_forms(value) if form}
         return cls(
             _Automaton(long),
+            _Automaton(exact),
             _Automaton(tokens, every=True),
             short,
             whole,
@@ -1036,8 +1091,10 @@ class _KeyMatcher:
         form of it, in any case), or ``None``. A key that holds values of several kinds
         is named by the first kind in sorted order, so the answer is stable."""
         found: set[str] = set()
-        for folded in self._forms(raw_key):
+        for form in decoded_forms(raw_key):
+            folded = form.lower()
             found |= self.short.get(folded, set()) | self.long.tags(folded)
+            found |= self.exact.tags(form)
             for _s, _e, tags in self._token_hits(self.tokens, folded):
                 found |= tags
         return min(found) if found else None
@@ -1052,9 +1109,15 @@ class _KeyMatcher:
         return any(self.cut.tags(folded) for folded in self._forms(raw_key))
 
     def holds_a_cut_token(self, raw: str, document: str = "") -> bool:
-        """Whether a string or a text holds, as a token, a value the scan cut short, in
-        its raw text or with escapes undone at any level, in any case."""
-        return any(self._token_hits(self.cut, _fold(text)) for text, _l in _levels(raw, document))
+        """Whether a string or a text holds a value the scan cut short with what it was
+        cut at (``Zq9"``, ``ab\\``), with no letter, digit or ``_`` before it, in its
+        raw text or with escapes undone at any level, in any case: a bare ``a`` or
+        ``ab`` withholds nothing (#2266)."""
+        for text, _levels_back in _levels(raw, document):
+            folded = _fold(text)
+            if any(_starts_a_token(folded, m[0]) for m in self.cut.matches(folded)):
+                return True
+        return False
 
     def short_kind(self, raw: str) -> str | None:
         """The kind of the value under ``VALUE_PIECE`` characters ``raw`` is whole, in
@@ -1077,6 +1140,7 @@ class _KeyMatcher:
             folded = _fold(text)
             found = [(s, e, set(t)) for s, e, t in self._token_hits(self.tokens, folded)]
             found += self.long.spans(folded)
+            found += self.exact.spans(text)
             for start, end, tags in found:
                 hits.append((min(tags), _to_raw(levels, start, end)))
             first = first or (levels[0] if levels else None)
@@ -1101,7 +1165,7 @@ class _KeyMatcher:
         anywhere, any other value as a token."""
         for form in escape_levels(text):
             folded = _fold(form)
-            if self.long.tags(folded):
+            if self.long.tags(folded) or self.exact.tags(form):
                 return True
             if self._token_hits(self.tokens, folded) or self._token_hits(self.short_tokens, folded):
                 return True
@@ -1258,12 +1322,15 @@ def redact_flagged_values(
     What a value matches (#2266, ``_KeyMatcher``): a value that looks random
     (``_looks_random``: 8 or more characters, no whitespace, and a digit, a symbol or a
     capital after its first character), and each random run of ``RANDOM_RUN`` of its
-    characters (``Wn6Rt9Kc``, ``EXAMPLEK``), anywhere; any other value of
-    ``VALUE_PIECE`` or more characters (``admin``, ``wordpress``, ``2024``, a phrase)
-    only as a whole token, with no letter, digit or ``_`` next to it, so
-    ``wp_wc_admin_notes`` and ``root_table`` are kept; a shorter value only as a whole
-    key or JSON string. A number is replaced, by a quoted marker, only when the whole
-    number is the value. Matching is case-insensitive, in the raw text and with JSON
+    characters (``Wn6Rt9Kc``, ``EXAMPLEK``), anywhere; a run, or a value under
+    ``WHOLE_ANYWHERE`` characters, random only because of a capital (``ordPress``) in
+    its own case only; a value of ``WHOLE_ANYWHERE`` or more characters with no
+    whitespace, whole, anywhere; any other value of ``VALUE_PIECE`` or more characters
+    (``admin``, ``wordpress``, an all-digit value of any length, a phrase) only as a
+    whole token, with no letter, digit or ``_`` next to it, so ``wp_wc_admin_notes``
+    and ``root_table`` are kept; a shorter value only as a whole key or JSON string. A
+    number is replaced, by a quoted marker, only when the whole number is the value.
+    Matching is otherwise case-insensitive, in the raw text and with JSON
     escapes undone at any level, and in a Markdown or HTML file with its backslash
     escapes and character references undone too; percent-encoding and base64 are not
     undone.
@@ -1279,12 +1346,13 @@ def redact_flagged_values(
     Refused (``KeyRewrite(None, reason)``: withhold the file): a document or line this
     parser cannot read that holds a flagged value, as it is or with every JSON escape
     undone (``UNPARSED_FLAGGED``), and a key that holds, or a string or plain text that
-    holds as a token, a value the scan cut short (``CUT_FLAGGED``)."""
+    holds with no word character before it, a value the scan cut short together with
+    what it was cut at (``CUT_FLAGGED``)."""
     if matcher is None:
         flagged = list(flagged)
         if not flagged:
             return KeyRewrite(text)
-        matcher = _KeyMatcher.build(flagged, cut)
+        matcher = flagged_matcher(flagged, cut)
     if document == "json":
         return _redact_in(text, matcher)
     if document != "jsonl":
