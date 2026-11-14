@@ -105,6 +105,14 @@ CASE_DIFFERS_WHY = (
     "these routines by hand in the database the application uses, then run "
     "routines-check.sql again; until then the check reports them missing."
 )
+#: :data:`CASE_DIFFERS_WHY` for a trigger or event the triggers-enable script leaves out: the
+#: check that reports it missing is triggers-enable-check.sql.
+CASE_DIFFERS_TRIGGERS_WHY = (
+    "its database differs from a moved table's database only by case, and the collection "
+    "cannot tell whether the target folds case. Rename one side on the source, or create "
+    "these triggers and events by hand in the database the application uses, then run "
+    "triggers-enable-check.sql again; until then the check reports them missing."
+)
 _DELIMITER_LINE = re.compile(r"(?im)^\s*delimiter\b")
 _BAD_CATEGORIES = {"Cc", "Cf", "Zl", "Zp", "Cs", "Co", "Cn"}
 
@@ -342,7 +350,7 @@ def routine_schemas(
     return sorted(s for s in found if s and _safe(s) and s not in skip)
 
 
-def schema_statements(engine: str, schemas: list[str]) -> list[str]:
+def schema_statements(engine: str, schemas: list[str], *, triggers: bool = False) -> list[str]:
     if not schemas:
         return []
     if engine == "aurora_postgresql":
@@ -355,6 +363,19 @@ def schema_statements(engine: str, schemas: list[str]) -> list[str]:
             "",
         ]
     from src.tools.data_movement.dms_step import SERVER_DEFAULTS
+
+    if triggers:  # the triggers-enable script (#2273): its databases hold triggers and events
+        return [
+            "-- The databases its triggers and events live in that step 1's DDL does not create "
+            "(one the routines deploy script already created is left as it is).",
+            "-- The user that runs this script needs CREATE and EVENT on each new database: "
+            "creating a database gives its creator no privileges on it.",
+            "-- Each event runs as its DEFINER, which needs the privileges its body uses; the "
+            "script grants nothing.",
+            f"-- Each CREATE DATABASE here is like step-1.ddl.sql's. {SERVER_DEFAULTS}",
+            *(f"CREATE DATABASE IF NOT EXISTS {_mysql_ident(s)};" for s in schemas),
+            "",
+        ]
 
     # As step-1.ddl.sql creates the tables' database: no character set or collation, so a
     # routine's parameters take the same server default as the moved tables' columns.
