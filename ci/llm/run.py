@@ -2508,11 +2508,15 @@ class _Scanned:
     #: memory only.
     pending: list[Any] = field(default_factory=list, repr=False)
     raw_keys: dict[tuple[str, int], set[str]] = field(default_factory=dict, repr=False)
-    #: The file's suffix: a ``.json`` or ``.jsonl`` file gets its keys redacted
-    #: against every flagged value of the upload (``_redact_flagged_keys``, #2213).
+    #: The file's suffix: a ``.json`` or ``.jsonl`` file gets its keys and string
+    #: values redacted against every flagged value of the upload, any other file its
+    #: whole text (``_redact_flagged_values``, #2213, #2243).
     suffix: str = ""
     #: The short values the scan cut short (``Redaction.cut``). In memory only.
     cut: set[str] = field(default_factory=set, repr=False)
+    #: How many places the cross-file rewrite replaced (``_redact_flagged_values``):
+    #: the manifest lists each file it changed (#2266).
+    rewritten: int = 0
 
 
 def _still_valid(before: str, after: str, suffix: str) -> bool:
@@ -2589,6 +2593,9 @@ def _scan_file(raw: bytes, suffix: str, session: bool = False) -> _Scanned:
 
 #: The suffixes whose findings get a JSON path in their context (#2209).
 _JSON_DOCUMENTS = {".json": "json", ".jsonl": "jsonl", ".ndjson": "jsonl"}
+#: The text files whose own escaping the cross-file rewrite undoes before it matches
+#: (``private_scan.redact_flagged_values``, #2266).
+_TEXT_DOCUMENTS = {".md": "markdown", ".markdown": "markdown", ".html": "html", ".htm": "html"}
 
 
 def _job_files(job_dir: Path) -> tuple[dict[str, tuple[Path, _Scanned]], list[str]]:
@@ -2671,31 +2678,37 @@ def _recheck_names(scans: Iterable[_Scanned]) -> None:
             scan.keys, scan.context = render_context(scan.pending, scan.raw_keys, pieces)
 
 
-#: Why ``_redact_flagged_keys`` withheld a file a rewrite would break, as its manifest
+#: Why ``_redact_flagged_values`` withheld a file a rewrite would break, as its manifest
 #: finding (#2213); ``private_scan.KeyRewrite.reason`` names the others.
 REWRITE_INVALID = "key redaction would leave invalid JSON"
 
 
-def _redact_flagged_keys(scans: Iterable[_Scanned]) -> None:
-    """Replace every JSON object key, in each ``.json`` and ``.jsonl`` file kept, that
-    contains a value flagged in any file of the upload (``private_scan.redact_json_keys``,
-    #2213). Withheld instead, with the reason as a finding: a file that cannot be
-    parsed and holds a flagged value, one with a key that holds a value the scan cut
-    short (``KeyRewrite.reason``), and one the rewrite would leave invalid
+def _redact_flagged_values(scans: Iterable[_Scanned]) -> None:
+    """Replace, in every text file kept, each value flagged in any file of the upload
+    (``private_scan.redact_flagged_values``): in a ``.json`` or ``.jsonl`` file each
+    object key that holds one (#2213) and each one inside a string value, elsewhere
+    each one anywhere in the text (#2243), a Markdown or HTML file's own escaping
+    undone first; each file it changed records the count (``_Scanned.rewritten``).
+    The matcher is built once for the upload (#2266). Withheld instead, with the
+    reason as a finding: a JSON file that cannot be parsed and holds a flagged value,
+    one with a key, a string or text that holds a value the scan cut short
+    (``KeyRewrite.reason``), and one the rewrite would leave invalid
     (``REWRITE_INVALID``)."""
-    from ci.llm.private_scan import redact_json_keys
+    from ci.llm import private_scan
 
     scans = list(scans)
     flagged = sorted({(item[0], item[-1]) for scan in scans for item in scan.pending})
     cut = sorted({value for scan in scans for value in scan.cut})
     if not flagged:
         return
+    # One matcher for the whole upload (#2266): building it costs as much as the values.
+    matcher = private_scan.flagged_matcher(flagged, cut)
     for scan in scans:
-        document = _JSON_DOCUMENTS.get(scan.suffix, "")
-        if scan.raw is None or not document:
+        document = _JSON_DOCUMENTS.get(scan.suffix) or _TEXT_DOCUMENTS.get(scan.suffix, "")
+        if scan.raw is None:
             continue
         text = scan.raw.decode("utf-8")
-        rewrite = redact_json_keys(text, document, flagged, cut)
+        rewrite = private_scan.redact_flagged_values(text, document, matcher=matcher)
         redacted, reason = rewrite.text, rewrite.reason
         if (
             redacted is not None
@@ -2708,6 +2721,7 @@ def _redact_flagged_keys(scans: Iterable[_Scanned]) -> None:
             scan.findings.append((reason, None))
         elif redacted is not None:
             scan.raw = redacted.encode("utf-8")
+            scan.rewritten = rewrite.replaced
 
 
 def _mark_results(out_dir: Path, scan: dict) -> None:
@@ -2762,8 +2776,11 @@ def collect_job(
     (``results.json`` included) get every check of ``ci/llm/private_scan.py``, the
     designer's allowed example values aside. A flagged value on one line (an IP, an
     email, a token or credential value) is replaced by ``[REDACTED:<kind>]``, and so is
-    each JSON object key of a ``.json`` or ``.jsonl`` file that contains a value flagged
-    in any file (``_redact_flagged_keys``, #2213). Withheld
+    every occurrence, in every text file, of a value flagged in any file: a JSON object
+    key that holds one, one inside a JSON string value, one anywhere in a plain-text
+    file (``_redact_flagged_values``, #2213, #2243; a value that does not look random
+    only as a whole token, #2266), and the manifest's ``rewritten`` counts each file
+    that rewrite changed. Withheld
     instead (deleted, or left out of the archive): a file that holds a private key, key
     material or a cloud credential, one the redaction cannot fully clean or would leave
     invalid JSON, a JSON one that cannot be parsed and holds a flagged value, one that
@@ -2807,13 +2824,14 @@ def collect_job(
     every = [(f"{JOB_ARCHIVE}:{rel}", scan) for rel, (_, scan) in job_files.items()]
     every += [(rel, scan) for rel, (_, scan) in uploads.items()]
     _recheck_names(scan for _, scan in every)
-    _redact_flagged_keys(scan for _, scan in every)
+    _redact_flagged_values(scan for _, scan in every)
     findings: list[dict[str, Any]] = [
         _manifest_entry(name, kind, line, scan)
         for name, scan in every
         for kind, line in scan.findings
     ]
     withheld = [rel for rel, (_, scan) in uploads.items() if scan.raw is None]
+    rewritten = {name: scan.rewritten for name, scan in every if scan.rewritten}
     archive_ok = has_job and not any(scan.raw is None for _, scan in job_files.values())
     archive_ok = archive_ok and not any(scan.key for _, scan in every)
     for path, scan in uploads.values():
@@ -2845,7 +2863,12 @@ def collect_job(
     if findings:
         manifest.write_text(
             json.dumps(
-                {"archive_kept": archive_ok, "findings": findings, "withheld": sorted(withheld)},
+                {
+                    "archive_kept": archive_ok,
+                    "findings": findings,
+                    "withheld": sorted(withheld),
+                    **({"rewritten": rewritten} if rewritten else {}),
+                },
                 indent=2,
             )
             + "\n"
@@ -2857,6 +2880,7 @@ def collect_job(
                 "archive_kept": archive_ok,
                 "withheld": sorted(withheld),
                 "manifest": JOB_FINDINGS,
+                **({"rewritten": rewritten} if rewritten else {}),
             },
         )
         result.update(findings=len(findings), withheld=sorted(withheld), manifest=str(manifest))
