@@ -148,7 +148,7 @@ Return a `PEReviewResult`. Its enums accept only these values; any other spellin
 
 `CHANGES_REQUESTED` needs at least one change request, and an `APPROVED` review carries no `blocker`. Each change request has a category, a severity, `target`, `current_state`, `requested_change` and `rationale`; the review also returns `summary`, `strengths`, `pe_notes` and `routing_flags`.
 
-Cutover: the cutover is the customer's. The only sentence about it is "The cutover is your responsibility." Never say when or how to cut over, switch or decommission (no "before cutover", "after cutover", "once replication has caught up", "when lag reaches zero"), and never use "caught up", "proven" or "ready" as readiness wording. Never write "in sync": a copy that CDC keeps current from its owner is "kept current by CDC".
+Cutover: the cutover is the customer's. The only sentence about it is "The cutover is your responsibility." Decommissioning the source database is the customer's too: the only sentence about it is "Decommissioning the source database is your responsibility." Never say when, in what order or whether to cut over, switch or decommission (no "before cutover", "after cutover", "once you have completed your cutover", "once replication has caught up", "when lag reaches zero"), and never use "caught up", "proven" or "ready" as readiness wording. Never write "in sync": a copy that CDC keeps current from its owner is "kept current by CDC".
 
 ## Output Rules
 

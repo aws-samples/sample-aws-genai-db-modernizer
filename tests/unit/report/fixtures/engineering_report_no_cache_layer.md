@@ -35,7 +35,7 @@ Queries moved: 1654 of 1654 queries move to a new engine (a migration target or 
 - 1266 queries \(76.5% of queries\)
 - Moves from: the source PostgreSQL database
 - Why: The whole source database moves to Aurora PostgreSQL first, schema carried over 1:1 \(every collected table and view\): a homogeneous migration \(same engine family\). 1266 queries \(76.5% of queries\) are still assigned to Aurora PostgreSQL once every later wave in this roadmap has moved its own share away; every later wave's table count is a subset of this wave's tables, never an addition to them.
-- Gate before the next wave: Schema and data parity validated against the source database. Decommission the source database once you have completed your cutover: later waves move from Aurora PostgreSQL, not from it. The cutover is your responsibility.
+- Gate before the next wave: Schema and data parity validated against the source database. Later waves move from Aurora PostgreSQL, not from the source database. The cutover is your responsibility. Decommissioning the source database is your responsibility.
 
 ### Wave 2: Move key-value and point-lookup queries to DynamoDB
 

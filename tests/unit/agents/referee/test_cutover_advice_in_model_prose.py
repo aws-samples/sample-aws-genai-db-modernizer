@@ -134,20 +134,22 @@ def test_every_model_written_field_is_checked(
 
 
 @pytest.mark.parametrize(
-    "claim, label",
+    "claim, labels",
     [
-        ("The table is ready to switch.", "ready"),
-        ("The design is proven to work, so the move can go ahead.", "proven"),
-        ("Keep the source running until DynamoDB is in sync.", "in sync"),
-        ("Once replication has caught up, decommission the source.", "caught up"),
-        ("Retire the source when replication lag reaches zero.", "lag is zero"),
+        ("The table is ready to switch.", '"ready"'),
+        ("The design is proven to work, so the move can go ahead.", '"proven"'),
+        ("Keep the source running until DynamoDB is in sync.", '"in sync"'),
+        # #2265: the decommissioning advice is named too.
+        ("Once replication has caught up, decommission the source.", '"caught up", "decommission"'),
+        ("Retire the source when replication lag reaches zero.", '"decommission", "lag is zero"'),
+        ("Decommission the source once you have completed your cutover.", '"decommission"'),
     ],
 )
-def test_a_readiness_claim_goes_back_too(claim: str, label: str) -> None:
+def test_a_readiness_claim_goes_back_too(claim: str, labels: str) -> None:
     out, rejections = clean_schema_design_prose("dynamodb", _trade_off_design(claim))
     assert out is not None
     assert out["trade_offs"][0]["impact"] == _review("dynamodb")
-    assert rejections == [f'dynamodb trade_offs[0].impact: cutover advice ("{label}")']
+    assert rejections == [f"dynamodb trade_offs[0].impact: cutover advice ({labels})"]
 
 
 @pytest.mark.passes_on_main
@@ -219,6 +221,16 @@ def test_every_designer_skill_says_what_the_pass_does(name: str) -> None:
 
     section = skill_sections(name)["Customer-facing text"]
     assert f"{SKILL_RULE} {CUTOVER_FALLBACK_RULE}" in section
+
+
+def test_the_fallback_rule_names_decommissioning() -> None:
+    """#2265: a field that advises on decommissioning is swapped too, and the skills say so."""
+    from src.shared.cutover_wording import CUTOVER_FALLBACK_RULE
+
+    assert CUTOVER_FALLBACK_RULE == (
+        "Synthesis swaps a field that says when to cut over, that advises on decommissioning, "
+        "or that uses readiness wording, for a short deterministic sentence."
+    )
 
 
 def test_the_group_draft_agent_says_what_the_pass_does() -> None:

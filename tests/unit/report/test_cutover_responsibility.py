@@ -19,6 +19,7 @@ banned words, is ``tests/unit/docs/test_no_cutover_advice.py``; it renders ``REP
 from __future__ import annotations
 
 import copy
+import re
 from pathlib import Path
 from typing import Any
 
@@ -28,7 +29,7 @@ from src.agents.referee.synthesis_report import _build_mitigation_strategies
 from src.contracts.synthesis_output import ReportFacts
 from src.report.facts import report_facts
 from src.report.renderers import render_engineering_report_md, resolve_migration_waves
-from src.shared.cutover_message import CUTOVER_MESSAGE
+from src.shared.cutover_message import CUTOVER_MESSAGE, DECOMMISSION_MESSAGE
 from src.shared.report_facts import compute_report_facts
 from tests.executive_pdf import executive_text, normalize
 from tests.unit.agents.referee import test_migration_waves as built
@@ -42,6 +43,8 @@ from tests.unit.report.test_price_list_date import _report
 
 REPO = Path(__file__).resolve().parents[3]
 SENTENCE = "The cutover is your responsibility."
+# #2265: decommissioning the source is the customer's too, in the same plain form.
+DECOMMISSION = "Decommissioning the source database is your responsibility."
 UI_FACTS = REPO / "src/ui/src/utils/reportFacts.js"
 
 
@@ -74,6 +77,7 @@ REPORTS = {
 def test_the_words() -> None:
     """One source: ``src/shared/cutover_message.py`` (#2106), the deliverables' too."""
     assert CUTOVER_MESSAGE == SENTENCE
+    assert DECOMMISSION_MESSAGE == DECOMMISSION
 
 
 def test_the_facts_hold_the_sentence() -> None:
@@ -121,7 +125,10 @@ def test_the_engineering_reports_wave_plan_states_it_under_its_opening_and_in_wa
     assert lines.count(f"*{SENTENCE}*") == 1
     wave_1 = roadmap.split("### Wave 1", 1)[1].split("### Wave 2", 1)[0]
     gate = next(line for line in wave_1.splitlines() if line.startswith("- Gate before"))
-    assert gate.endswith(SENTENCE) and wave_1.count(SENTENCE) == 1
+    assert gate.endswith(f"{SENTENCE} {DECOMMISSION}") and wave_1.count(SENTENCE) == 1
+    # #2265: the decommissioning sentence once, in wave 1's gate only.
+    assert wave_1.count(DECOMMISSION) == 1 and roadmap.count(DECOMMISSION) == 1
+    assert "decommission" not in roadmap.replace(DECOMMISSION, "").lower()
     # Right under the suggested-path note, before the first wave.
     note = next(i for i, line in enumerate(lines) if "one suggested adoption path" in line)
     assert lines[note + 2] == f"*{SENTENCE}*"
@@ -149,6 +156,9 @@ def test_the_executive_reports_wave_plan_states_it_under_its_opening_and_in_wave
     assert intro.count(SENTENCE) == 1
     assert wave_1.count(SENTENCE) == 1
     assert later.split("WAVE 4", 1)[0].count(SENTENCE) == 0
+    # #2265: the decommissioning sentence once, in wave 1's card only.
+    assert wave_1.count(DECOMMISSION) == 1 and text.count(DECOMMISSION) == 1
+    assert "decommission" not in text.replace(DECOMMISSION, "").lower()
 
 
 @pytest.mark.passes_on_main
@@ -165,12 +175,12 @@ def test_no_wave_plan_no_sentence() -> None:
 # ---------------------------------------------------------------------------
 
 
-def test_the_legacy_wave_1_gate_gives_no_cutover_timing() -> None:
+def test_the_legacy_wave_1_gate_gives_no_cutover_or_decommission_timing() -> None:
     wave1 = resolve_migration_waves(_legacy_report())[0]
     assert wave1["gate"] == (
-        "Schema and data parity validated against the source database. Decommission the "
-        "source database once you have completed your cutover: later waves move from "
-        "Aurora MySQL, not from it. The cutover is your responsibility."
+        "Schema and data parity validated against the source database. Later waves move "
+        "from Aurora MySQL, not from the source database. The cutover is your "
+        "responsibility. Decommissioning the source database is your responsibility."
     )
 
 
@@ -196,3 +206,11 @@ def test_the_help_page_quotes_the_wave_1_gate() -> None:
     gate = built._build()[0]["gate"].split(". ", 1)[1]
     assert f'wave 1\'s gate reads "{gate}"' in page
     assert "caught up" not in page.split("## Move step 1", 1)[0]
+
+
+@pytest.mark.parametrize("name", ["docs/use-claude-code.md", "docs/understand-the-results.md"])
+def test_the_help_pages_say_nothing_about_decommissioning_but_the_sentence(name: str) -> None:
+    """#2265: no "decommission the source once you have completed your cutover"."""
+    page = re.sub(r"<!--.*?-->", "", (REPO / name).read_text(), flags=re.S)  # claim markers
+    assert DECOMMISSION in page
+    assert "decommission" not in page.replace(DECOMMISSION, "").lower()
