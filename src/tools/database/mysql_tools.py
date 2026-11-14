@@ -307,6 +307,24 @@ class MySQLRemoteCollector:
             return {}
         return {"sql_mode": str(rows[0]["sql_mode"] or "")}
 
+    def get_database_charset(self) -> dict[str, str]:
+        """The collected database's default character set and collation (#2276), as the
+        collection script reads them from ``information_schema.SCHEMATA``; empty when they
+        can't be read."""
+        try:
+            rows = self._query("""
+                SELECT DEFAULT_CHARACTER_SET_NAME AS default_character_set,
+                       DEFAULT_COLLATION_NAME AS default_collation
+                FROM information_schema.SCHEMATA
+                WHERE SCHEMA_NAME = DATABASE()
+            """)
+        except Exception as error:  # noqa: BLE001 -- not read: step 1 keeps the server defaults
+            logger.info("database collation not read (%s); step 1 keeps the server defaults", error)
+            return {}
+        if not rows:
+            return {}
+        return {k: str(v) for k, v in rows[0].items() if v not in (None, "", "NULL")}
+
     def get_database_size_gb(self) -> float:
         rows = self._query("""
             SELECT ROUND(SUM(data_length + index_length) / 1024 / 1024 / 1024, 4) AS size_gb
@@ -341,10 +359,16 @@ class MySQLRemoteCollector:
                 column_name, ordinal_position, data_type, column_type,
                 character_maximum_length AS max_length,
                 numeric_precision, numeric_scale, is_nullable,
-                column_default, column_key, extra
-            FROM information_schema.columns
-            WHERE table_schema = DATABASE()
-              AND table_name = '{table_name}'
+                column_default, column_key, extra,
+                IF(c.collation_name <=> t.table_collation, NULL, c.character_set_name)
+                    AS character_set_name,
+                IF(c.collation_name <=> t.table_collation, NULL, c.collation_name)
+                    AS collation_name
+            FROM information_schema.columns c
+            JOIN information_schema.tables t
+              ON t.table_schema = c.table_schema AND t.table_name = c.table_name
+            WHERE c.table_schema = DATABASE()
+              AND c.table_name = '{table_name}'
             ORDER BY ordinal_position
         """)  # nosec B608 — table_name from information_schema, not user input
 

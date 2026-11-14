@@ -34,11 +34,12 @@ writes three files into ``data-movement/step-1/``, from the step contract's rout
 
 There is no rollback section: nothing here disables a trigger again or drops a routine.
 
-On Aurora MySQL the script first creates, ``IF NOT EXISTS`` and as step 1's DDL does (no
-character set or collation), every database its triggers and events live in except those
-step 1's DDL creates (#2273); one ``routines-deploy.sql`` already created is left as it is.
-A database that differs from a moved table's only by case is never created, and what lives
-in it is left out (``database_case_differs``).
+On Aurora MySQL the script first creates, ``IF NOT EXISTS`` and as step 1's DDL does (the
+source's character set and collation the contract carries, #2276, else none), every database
+its triggers and events live in except those step 1's DDL creates (#2273); one
+``routines-deploy.sql`` already created is left as it is. A database that differs from a
+moved table's only by case is never created, and what lives in it is left out
+(``database_case_differs``).
 
 A trigger or event the triggers-enable script cannot act on is left out and named, by id and reason code,
 in the script's header and on the printed line: one step 1 does not carry (its contract
@@ -65,7 +66,12 @@ from typing import Any
 
 from src.contracts.routine_migration import RoutineMigrationContract
 from src.contracts.routine_sources import RoutineSource
-from src.contracts.transformation_contract import StepContract, StepRoutine, StepRoutines
+from src.contracts.transformation_contract import (
+    StepContract,
+    StepRoutine,
+    StepRoutines,
+    TargetSpec,
+)
 from src.shared.cutover_message import CUTOVER_DISCLAIMER
 from src.tools.data_movement.routine_scripts import (
     CASE_DIFFERS,
@@ -357,6 +363,7 @@ def _header(
     scripts: TriggersScripts,
     resume: bool,
     schemas: list[str],
+    target: TargetSpec | None = None,
 ) -> list[str]:
     pg = engine == "aurora_postgresql"
     what = (
@@ -414,7 +421,7 @@ def _header(
             "",
             "SET NAMES utf8mb4;",
             "",
-            *schema_statements(engine, schemas, triggers=True),
+            *schema_statements(engine, schemas, target, triggers=True),
         ]
     return lines
 
@@ -692,7 +699,9 @@ def write_triggers_scripts(
         )
 
         def chunks() -> Iterator[bytes]:
-            head = _header(engine, contract_sha, scripts, present is not None, schemas)
+            head = _header(
+                engine, contract_sha, scripts, present is not None, schemas, contract.target
+            )
             yield ("\n".join(head) + "\n").encode("utf-8")
             if pg:
                 for i, row in enumerate(keep, start=1):

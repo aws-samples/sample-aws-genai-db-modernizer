@@ -167,3 +167,89 @@ def test_the_deploy_creates_a_routine_database_the_step_tables_are_not_in(mysql_
         )  # the server default, as step-1.ddl.sql's tables get
     finally:
         _mysql(client, sock, "DROP DATABASE IF EXISTS shop_functions;")
+
+
+def _collation_job(tmp_path):
+    """A MySQL job on utf8mb4_unicode_ci (#2276): step-1.ddl.sql, and routines-deploy.sql
+    with a procedure in the tables' database and one in a database of its own, each
+    comparing its VARCHAR parameter with the moved ``shop.audit_log.msg``."""
+    from src.agents.collector.routine_sources import write_routine_sources
+    from src.contracts.transformation_contract import StepContract
+    from src.tools.data_movement.dms_step import load_step1, render_ddl
+    from src.tools.data_movement.routine_scripts import write_routine_scripts
+    from src.tools.routines.migration import routine_migration_path
+    from tests.unit.tools.data_movement.routine_fixtures import mysql_source
+    from tests.unit.tools.data_movement.test_dms_step_collations import _job as collation_job
+
+    store = collation_job(tmp_path)
+    step = tmp_path / "step"
+    step.mkdir()
+    (step / "step-1.ddl.sql").write_text(render_ddl(load_step1(store, "shop", "job1")))
+    rows, sources = [], []
+    for schema in ("shop", "shop_functions"):
+        rows.append(row(f"{schema}.find_msg", "procedure", schema=schema, name="find_msg",
+                        specific="find_msg", status="rewritten", signature="IN VARCHAR(200)"))  # fmt: skip
+        sources.append(mysql_source("find_msg", "CREATE DEFINER=`app`@`%` PROCEDURE `find_msg`(IN p VARCHAR(200))\n"
+                                    "BEGIN\n  SELECT COUNT(*) FROM shop.audit_log WHERE msg = p;\nEND",
+                                    schema=schema, collation="utf8mb4_unicode_ci",
+                                    database_collation="utf8mb4_unicode_ci"))  # fmt: skip
+    artifact = migration(rows, "mysql")
+    store.write_json(routine_migration_path("shop", "job1", 2), artifact.model_dump(mode="json"))
+    write_routine_sources(store, "shop", "job1",
+                          {"metadata": {"source_database": {"engine": "mysql", "version": "8.0.32"}}},
+                          sources)  # fmt: skip
+    contract = StepContract.model_validate(
+        store.read_json("shop/job1/transformation-contract/v2/step-1.json")
+    )
+    scripts = write_routine_scripts(store, "shop", "job1", contract_with_routines(artifact, contract=contract),
+                                    SHA, step)  # fmt: skip
+    assert scripts.in_script == 2, scripts.refused
+    return step
+
+
+def _value(client, sock, sql: str):
+    ran = _mysql(client, sock, sql, "--batch", "--skip-column-names")
+    assert ran.returncode == 0, ran.stderr.decode()
+    return ran.stdout.decode().strip()
+
+
+def test_tables_and_routines_land_on_the_source_collation_and_a_parameter_compares_with_a_column(
+    mysql_socket, tmp_path
+):
+    # The #2276 example: a source on utf8mb4_unicode_ci, a cluster on utf8mb4_0900_ai_ci.
+    client, sock = mysql_socket
+    reset = "DROP DATABASE IF EXISTS shop; DROP DATABASE IF EXISTS shop_functions;"
+    _mysql(
+        client,
+        sock,
+        reset + "CREATE USER IF NOT EXISTS 'admin'@'%'; GRANT ALL ON *.* TO 'admin'@'%';",
+    )
+    assert _value(client, sock, "SELECT @@collation_server") == "utf8mb4_0900_ai_ci"
+    step = _collation_job(tmp_path)
+    try:
+        for script in ("step-1.ddl.sql", DEPLOY_FILE):
+            ran = _mysql(client, sock, None, stdin=step / script)
+            assert ran.returncode == 0, ran.stderr.decode()
+        _mysql(client, sock, "INSERT INTO shop.audit_log (msg) VALUES ('x');")
+        assert _value(client, sock, "SELECT GROUP_CONCAT(DEFAULT_COLLATION_NAME ORDER BY SCHEMA_NAME) "
+                      "FROM information_schema.SCHEMATA WHERE SCHEMA_NAME IN ('shop', "
+                      "'shop_functions')") == "utf8mb4_unicode_ci,utf8mb4_unicode_ci"  # fmt: skip
+        assert _value(client, sock, "SELECT COLLATION_NAME FROM information_schema.COLUMNS WHERE "
+                      "TABLE_SCHEMA = 'shop' AND TABLE_NAME = 'audit_log' AND COLUMN_NAME = 'msg'"
+                      ) == "utf8mb4_unicode_ci"  # fmt: skip
+        for schema in ("shop", "shop_functions"):
+            assert _value(client, sock, f"CALL {schema}.find_msg('x')") == "1"
+        # The control: tables as step-1.ddl.sql made them before #2276 (no clause, so the
+        # server default) and a routine database on the source collation (made here, as PR
+        # #2272's round 2 deploy made it) fail the same call.
+        _mysql(client, sock, reset + "CREATE DATABASE shop_functions COLLATE utf8mb4_unicode_ci;")
+        ddl = (step / "step-1.ddl.sql").read_text()
+        old = tmp_path / "old.ddl.sql"
+        old.write_text(ddl.replace(" CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;", ";"))
+        assert _mysql(client, sock, None, stdin=old).returncode == 0
+        assert _mysql(client, sock, None, stdin=step / DEPLOY_FILE).returncode == 0
+        _mysql(client, sock, "INSERT INTO shop.audit_log (msg) VALUES ('x');")
+        mixed = _mysql(client, sock, "CALL shop_functions.find_msg('x')")
+        assert mixed.returncode != 0 and b"ERROR 1267" in mixed.stderr, mixed.stderr.decode()
+    finally:
+        _mysql(client, sock, reset)

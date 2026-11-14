@@ -14,9 +14,10 @@ from src.contracts.lineage_ops import UnsupportedOp
 from src.contracts.transformation_contract import NOT_MOVED, Finding, Rule, Severity, StepContract
 from src.shared.catalog.dms_sizing import dms_sizing
 from src.shared.contract_versioning import load_contract
-from src.tools.data_movement.dms_sizing import not_moved_columns
+from src.tools.data_movement.dms_sizing import not_moved_columns, target_engine_line
 from src.tools.data_movement.plan import JobInputs, _aurora_wave, dialect_of
 from src.tools.data_movement.validation_key import validation_problem
+from src.tools.transformation_contract.collations import database_collation, rule_collations
 from src.tools.transformation_contract.pg_enums import enum_columns
 from src.tools.transformation_contract.step1 import (
     TargetTable,
@@ -184,9 +185,14 @@ def validate_step1(contract: StepContract, inputs: JobInputs) -> StepContract:
                 findings=[finding],
             )
         )
+    # #2276: the source's collations, which the DDL and the routine scripts give Aurora MySQL.
+    line = target_engine_line(inputs.collector, contract.target.engine)
+    target = database_collation(collector, contract.target.engine, line)
+    rules = [rule_collations(r, target, tables, line) for r in rules]
     blocked = sum(1 for r in rules if r.status == "blocked")
     data = contract.model_dump(mode="json")
     data.update(
+        target=target.model_dump(mode="json"),
         rules=[r.model_dump(mode="json") for r in rules],
         blocked_rule_count=blocked,
         status="has_blocked_rules" if blocked else "valid",
