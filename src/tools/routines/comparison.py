@@ -265,6 +265,7 @@ ReasonCode = Literal[
     "no_successful_call",
     "table_not_observed",
     "harness_error",
+    "event_not_runnable",
     "transaction_control",
     "commits",
     "transaction_ended",
@@ -1400,6 +1401,10 @@ def _compare_one(routine: ComparedRoutine, shared: _Batchwide) -> RoutineCompari
         if any(r.sqlstate in _UNDEFINED_TABLE for r in results):
             return not_compared("table_not_observed", f"call {index} ({call.label}) read a table "
                                 "the setup does not have", done, succeeded)  # fmt: skip
+        if any(r.not_run for r in results):
+            why = next(r.error for r in results if r.not_run)
+            return not_compared("event_not_runnable", f"call {index} ({call.label}) has "
+                                f"nothing to run: {why}", done, succeeded)  # fmt: skip
         if any(r.error is not None and not r.sqlstate for r in results):
             return not_compared("harness_error", f"call {index} ({call.label}) failed with no "
                                 "SQLSTATE, so the failure is not the routine's", done, succeeded)  # fmt: skip

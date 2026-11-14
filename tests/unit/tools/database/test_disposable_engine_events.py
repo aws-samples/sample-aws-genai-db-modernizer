@@ -126,6 +126,7 @@ def test_an_event_the_server_dropped_on_creation_fails_only_its_own_run():
     cur.sql.clear()
     result = backend.call("NightJob", [], [], None)
     assert result.error is not None and "time had passed" in result.error
+    assert result.not_run is True  # the comparison reads this, not a missing SQLSTATE
     assert cur.sql == []  # nothing ran
 
 
@@ -141,6 +142,7 @@ def test_an_event_with_a_name_no_runner_can_carry_loads_and_fails_only_its_own_r
     cur.sql.clear()
     result = backend.call("my-ev", [], [], None)
     assert result.error is not None and "plain identifier" in result.error
+    assert result.not_run is True
     assert cur.sql == []
 
 

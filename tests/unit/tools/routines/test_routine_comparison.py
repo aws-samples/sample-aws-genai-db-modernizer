@@ -690,6 +690,24 @@ def test_an_error_with_no_sqlstate_could_not_be_compared():
     assert (r.outcome, r.reason_code) == ("could_not_compare", "harness_error")
 
 
+def test_an_event_with_no_body_to_run_says_why_instead_of_a_harness_error():
+    """#1971: the engine's own reason for a dropped event reaches the result, with a
+    reason code of its own, and the routine next to it compares as usual."""
+
+    def dropped(tables, call):
+        return de.CallResult(error="the server dropped the event when it was created (its "
+                             "time had passed), so there is no body to run", not_run=True)  # fmt: skip
+
+    pairs = [
+        _pair("ev", dropped, dropped),
+        _pair("fine", _returns(lambda n: n), _returns(lambda n: n)),
+    ]
+    gone, fine = _compare(pairs)[0].results
+    assert (gone.outcome, gone.reason_code) == ("could_not_compare", "event_not_runnable")
+    assert "time had passed" in gone.reason and "no SQLSTATE" not in gone.reason
+    assert fine.outcome == "no_differences_found"
+
+
 def test_an_original_that_does_not_load_could_not_be_compared_and_the_others_still_are():
     pairs = [_pair("broken", None, _returns(lambda n: n)),
              _pair("fine", _returns(lambda n: n), _returns(lambda n: n))]  # fmt: skip
