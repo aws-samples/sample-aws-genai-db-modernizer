@@ -4017,7 +4017,7 @@ def test_a_rewrite_that_would_break_the_json_withholds_the_file_with_a_reason(
     a = "Ys5Bn8Qf" + "Gt3Jw6Lp"  # pragma: allowlist secret
     monkeypatch.setattr(
         private_scan,
-        "redact_json_keys",
+        "redact_flagged_values",
         lambda text, *_args, **_kwargs: private_scan.KeyRewrite(text[:-1]),
     )
     out = _out_with_results(tmp_path)
@@ -4170,6 +4170,168 @@ def test_an_upper_case_json_or_ndjson_upload_gets_its_keys_redacted(
     run.collect_job(tmp_path / "artifacts", out)
     text = (out / name).read_text()
     assert json.loads(text.splitlines()[0]) == {"by_name": {"[REDACTED:password-value]": 1}}
+
+
+_MARK = "[REDACTED:password-value]"
+
+
+def test_a_value_flagged_in_one_file_is_redacted_in_another_file_s_string_values(
+    tmp_path: Path,
+) -> None:
+    """#2243: the issue's case. A value flagged in an uploaded text file is replaced
+    inside a string value of an archived file (a description), in any case, and the
+    archived file stays valid JSON."""
+    a = "Rk4Wq8Zn" + "Tb6Vm2Lx"  # pragma: allowlist secret
+    schema = json.dumps(
+        {"tables": [{"name": "wp_posts", "description": "seeded with " + a.upper() + " once"}]}
+    )
+    _collect(tmp_path, schema, {"notes.md": "password = " + a + "\n"})
+    archived = _archived_schema(tmp_path)
+    assert _no_piece_of(archived, a)
+    assert json.loads(archived) == {
+        "tables": [{"name": "wp_posts", "description": f"seeded with {_MARK} once"}]
+    }
+
+
+def test_a_value_flagged_in_the_archive_is_redacted_in_a_jsonl_upload_line(
+    tmp_path: Path,
+) -> None:
+    """#2243: a value flagged in an archived file is replaced inside the string values
+    of every line of a JSON Lines upload, double-escaped tool output included, and
+    every line stays valid JSON."""
+    a = "Jm4Hs8Lq" + "Ye1Dw5Nc"  # pragma: allowlist secret
+    escaped = "".join(f"\\u{ord(c):04x}" for c in a)
+    lines = [
+        json.dumps({"type": "assistant", "text": "I will use " + a + " now"}),
+        json.dumps({"type": "user", "content": json.dumps(json.dumps({"x": escaped}))}),
+        json.dumps({"type": "user", "content": "progress, keywords, content"}),
+    ]
+    _collect(
+        tmp_path,
+        json.dumps({"creds": {"db_password": a}}),
+        {"transcript.jsonl": "\n".join(lines) + "\n"},
+    )
+    text = (tmp_path / "out" / "transcript.jsonl").read_text(encoding="utf-8")
+    assert _no_piece_of(text, a) and escaped not in text
+    rows = [json.loads(line) for line in text.splitlines()]
+    assert rows[0]["text"] == f"I will use {_MARK} now"
+    assert json.loads(json.loads(rows[1]["content"])) == {"x": _MARK}
+    assert rows[2] == {"type": "user", "content": "progress, keywords, content"}
+
+
+def test_a_value_flagged_in_the_archive_is_redacted_in_a_markdown_upload(
+    tmp_path: Path,
+) -> None:
+    """#2243: a plain-text upload (``notes.md``) gets every occurrence of a value
+    flagged in another file replaced, in any case and JSON-escaped; ordinary words
+    beside a flagged ``wordpress`` and ``Contentful9`` are kept."""
+    a = "Uc7Pb3Xn" + "Mr5Qk9Ws"  # pragma: allowlist secret
+    escaped = "".join(f"\\u{ord(c):04x}" for c in a)
+    content = "Content" + "ful9"  # pragma: allowlist secret
+    creds = {"db_password": a, "password": content}
+    creds["admin_password"] = "wordpress"  # pragma: allowlist secret
+    schema = json.dumps({"creds": creds})
+    notes = (
+        f"Seeded with {a} and {a.lower()} ({escaped}).\n"
+        "The WordPress site keeps progress, keywords, content and contentful pages.\n"
+    )
+    _collect(tmp_path, schema, {"notes.md": notes})
+    text = (tmp_path / "out" / "notes.md").read_text(encoding="utf-8")
+    assert text == (
+        f"Seeded with {_MARK} and {_MARK} ({_MARK}).\n"
+        f"The {_MARK} site keeps progress, keywords, content and contentful pages.\n"
+    )
+
+
+def test_a_random_piece_of_a_flagged_value_is_redacted_in_a_string_value(
+    tmp_path: Path,
+) -> None:
+    """#2243: a run of 8 characters a string value shares with a value flagged in
+    another file is replaced when it looks random, as for keys; a 7-character run is
+    kept."""
+    a = "Wn6Rt9Kc" + "Bv2Xq7Pz"  # pragma: allowlist secret
+    report = {"summary": "ref " + a[4:12] + " and " + a[:7] + "_x"}
+    archived = json.loads(_collect_report(tmp_path, report, {"notes.md": "password = " + a}))
+    assert archived == {"summary": f"ref {_MARK} and " + a[:7] + "_x"}
+
+
+def test_a_prose_password_leaves_in_the_in_other_files_intact(tmp_path: Path) -> None:
+    """#2266 review, Important 1: a password the scan flags in prose (``set by the
+    customer in the console``) is redacted where it was flagged, but ``in the`` in
+    other files is no piece of it; the whole phrase, as a token, still is redacted."""
+    schema = json.dumps({"notes": ["all queries in the plan", "keys in the table"]})
+    steps = json.dumps(
+        {"step": "load in the order given", "how": "Set by the customer in the console."}
+    )
+    manifest, found = _collect(
+        tmp_path,
+        schema,
+        {"notes.md": "| password | set by the customer in the console |\n", "steps.json": steps},
+    )
+    assert ("notes.md", "password value") in found
+    assert _archived_schema(tmp_path) == schema
+    assert json.loads((tmp_path / "out" / "steps.json").read_text()) == {
+        "step": "load in the order given",
+        "how": _MARK + ".",
+    }
+    assert json.loads(manifest)["rewritten"] == {"steps.json": 1}
+
+
+def test_flagged_admin_root_and_2024_leave_identifiers_and_numbers(tmp_path: Path) -> None:
+    """#2266 review, Important 2: flagged ``admin``, ``root`` and ``2024`` are replaced
+    only as whole tokens: table names, keys and numbers that hold them are kept, so the
+    archived report still replays."""
+    notes = "admin_password: admin\nroot_password: root\npassword: 2024\n"
+    report = {
+        "tables": ["wordpress.wp_wc_admin_notes", "root_table"],
+        "admin_notices": {"AdministratorId": 1, "frequency_per_hour": 120245},
+        "total_time_ms": 20240,
+        "note": "logged in as admin",
+    }
+    archived = json.loads(_collect_report(tmp_path, report, {"notes.md": notes}))
+    findings = json.loads((tmp_path / "out" / "job.findings.json").read_text())["findings"]
+    assert len([f for f in findings if f["file"] == "notes.md"]) == 3
+    assert archived == {**report, "note": "logged in as [REDACTED:password-value]"}
+
+
+def test_the_manifest_lists_the_files_the_cross_file_rewrite_changed(tmp_path: Path) -> None:
+    """#2266 review, Minor 10: the manifest names each file another file's flagged
+    value changed, with the count of replacements, so a reviewer sees which files lost
+    text; a file the rewrite left alone is not listed."""
+    a = "Rk4Wq8Zn" + "Tb6Vm2Lx"  # pragma: allowlist secret
+    schema = json.dumps({"description": "seeded with " + a, "also": a})
+    manifest, _found = _collect(
+        tmp_path,
+        schema,
+        {"notes.md": "password = " + a + "\n", "steps.md": "uses " + a + "\n", "x.md": "ok\n"},
+    )
+    assert json.loads(manifest)["rewritten"] == {_SCHEMA: 2, "steps.md": 1}
+    results = json.loads((tmp_path / "out" / "results.json").read_text())
+    assert results["private_scan"]["rewritten"] == {_SCHEMA: 2, "steps.md": 1}
+
+
+def test_the_flagged_value_matcher_is_built_once_per_upload(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """#2266 review, Minor 5: the matcher is built once for the whole upload, not once
+    per file."""
+    from ci.llm import private_scan
+
+    built: list[int] = []
+    real = private_scan.flagged_matcher
+
+    def counting(flagged: list[tuple[str, str]], cut: list[str]) -> object:
+        built.append(1)
+        return real(flagged, cut)
+
+    monkeypatch.setattr(private_scan, "flagged_matcher", counting)
+    a = "Uc7Pb3Xn" + "Mr5Qk9Ws"  # pragma: allowlist secret
+    _collect(
+        tmp_path,
+        json.dumps({"x": a}),
+        {"notes.md": "password = " + a + "\n", "a.md": "a\n", "b.json": "{}", "c.log": "c\n"},
+    )
+    assert built == [1]
 
 
 def test_a_unicode_escaped_value_is_compared_and_measured_decoded(tmp_path: Path) -> None:

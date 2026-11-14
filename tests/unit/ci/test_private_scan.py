@@ -340,7 +340,7 @@ _PW = "password value"
 
 
 def _keys(text: str, document: str, flagged: list[tuple[str, str]]) -> str | None:
-    return private_scan.redact_json_keys(text, document, flagged).text
+    return private_scan.redact_flagged_values(text, document, flagged).text
 
 
 def _escaped(value: str) -> str:
@@ -478,7 +478,7 @@ def test_the_raw_text_check_undoes_every_json_escape(value: str, raw: str) -> No
     """#2213 review round 2, Important 2: the check on text that does not parse undoes
     every JSON escape at every level (``\\/``, ``\\"``, ``\\\\``, ``\\u`` with
     surrogate pairs) before it looks for a flagged value."""
-    rewrite = private_scan.redact_json_keys(raw, "jsonl", [(_PW, value)])
+    rewrite = private_scan.redact_flagged_values(raw, "jsonl", [(_PW, value)])
     assert rewrite.text is None and rewrite.reason == private_scan.UNPARSED_FLAGGED
 
 
@@ -497,9 +497,300 @@ def test_a_short_value_cut_at_a_quote_is_recorded_and_a_quoted_one_is_not() -> N
         '{"password": "abc"}',
     ):
         assert private_scan.redact(text, narrow_key_names=True).cut == set()
-    rewrite = private_scan.redact_json_keys(
+    rewrite = private_scan.redact_flagged_values(
         json.dumps({"tbl_zq9_cols": 1}), "json", [(_PW, "Zq9")], cut=["Zq9"]
     )
     assert rewrite.text is None and rewrite.reason == private_scan.CUT_FLAGGED
-    kept = private_scan.redact_json_keys(json.dumps({"abc_cols": 1}), "json", [(_PW, "abc")])
+    kept = private_scan.redact_flagged_values(json.dumps({"abc_cols": 1}), "json", [(_PW, "abc")])
     assert kept.text == json.dumps({"abc_cols": 1})
+
+
+def _values(text: str, document: str, flagged: list[tuple[str, str]]) -> str | None:
+    return private_scan.redact_flagged_values(text, document, flagged).text
+
+
+_MARK = "[REDACTED:password-value]"
+
+
+@pytest.mark.parametrize("document", ["json", "jsonl"])
+def test_a_flagged_value_inside_a_json_string_value_is_replaced(document: str) -> None:
+    """#2243: a value flagged anywhere in the upload is replaced inside a JSON string
+    value, in any case, wherever it sits in the string; the rest of the string and the
+    document's other members are kept, and the JSON stays valid."""
+    text = json.dumps({"note": "rotate " + _A + " and " + _A.upper() + " weekly", "n": 1})
+    out = _values(text, document, [(_PW, _A)])
+    assert out is not None
+    assert json.loads(out) == {"note": f"rotate {_MARK} and {_MARK} weekly", "n": 1}
+
+
+def test_a_flagged_value_in_every_line_of_a_jsonl_file_is_replaced() -> None:
+    """#2243: each line of a JSON Lines file gets its string values rewritten and
+    stays valid JSON; a line without the value is kept byte for byte."""
+    lines = [
+        json.dumps({"step": 1, "note": "token " + _A}),
+        '{"step": 2,   "note": "nothing here"}',
+        json.dumps({"step": 3, "items": ["x", _A.lower()]}),
+    ]
+    out = _values("\n".join(lines) + "\n", "jsonl", [(_PW, _A)])
+    assert out is not None
+    got = out.split("\n")
+    assert got[1] == lines[1] and got[3] == ""
+    assert [json.loads(line) for line in got[:3]] == [
+        {"step": 1, "note": "token " + _MARK},
+        {"step": 2, "note": "nothing here"},
+        {"step": 3, "items": ["x", _MARK]},
+    ]
+
+
+@pytest.mark.parametrize(
+    "inner",
+    [
+        lambda v: json.dumps({"password": v}),
+        lambda v: json.dumps(json.dumps({"x": _escaped(v)})),
+        lambda v: json.dumps(json.dumps({"x": "a—" + v + '"q"'})),
+    ],
+    ids=["escaped-once", "double-escaped-unicode", "double-escaped-mixed"],
+)
+def test_a_flagged_value_is_replaced_in_any_json_escaped_form(inner) -> None:
+    """#2243: a tool result that holds JSON text holds the value escaped one or more
+    levels deep (``\\\\u0057``, ``\\\\\\"``): it is replaced there too, and every
+    level stays valid JSON."""
+    text = json.dumps({"content": inner(_A)})
+    out = _values(text, "jsonl", [(_PW, _A)])
+    assert out is not None
+    assert not [f for f in private_scan.escape_levels(out) if _A.lower() in f.lower()]
+    content = json.loads(out)["content"]
+    while isinstance(content, str) and content.startswith('"'):
+        content = json.loads(content)
+    assert _MARK in content
+    json.loads(content)
+
+
+def test_a_flagged_value_in_a_plain_text_file_is_replaced() -> None:
+    """#2243: a markdown or log file (no JSON ``document``) gets every occurrence of a
+    flagged value replaced, in any case and JSON-escaped, the rest kept, also after a
+    character whose lower case is longer (``İ``)."""
+    text = f"# Notes\n\nİ: {_A} was rotated.\n`{_A.upper()}` and {_escaped(_A)}.\n"
+    assert _values(text, "", [(_PW, _A)]) == (
+        f"# Notes\n\nİ: {_MARK} was rotated.\n`{_MARK}` and {_MARK}.\n"
+    )
+
+
+def test_a_random_run_of_a_flagged_value_is_replaced_and_a_word_is_not() -> None:
+    """#2243: the key rule for pieces holds for values: a run of 8 characters a
+    string shares with a flagged value is replaced when it looks random; a shorter
+    run, or a run of a plain word, is kept (``progress``, ``keywords``, ``content``
+    beside a flagged ``wordpress`` and ``Contentful9``)."""
+    flagged = [(_PW, _A), (_PW, "wordpress"), (_PW, "Content" + "ful9")]
+    text = json.dumps(
+        {
+            "piece": "id " + _A[3:11] + " end",
+            "short": "id " + _A[:7] + " end",
+            "words": "progress, keywords, content and contentful",
+            "whole": "WordPress site",
+        }
+    )
+    assert json.loads(_values(text, "json", flagged) or "") == {
+        "piece": f"id {_MARK} end",
+        "short": "id " + _A[:7] + " end",
+        "words": "progress, keywords, content and contentful",
+        "whole": f"{_MARK} site",
+    }
+    prose = "progress, keywords, content and contentful\n"
+    assert _values(prose, "", flagged) == prose
+
+
+def test_a_short_flagged_value_is_replaced_only_as_a_whole_string() -> None:
+    """#2243: a value under 4 characters is replaced only where it is a whole JSON
+    string; inside a longer string or in plain text it is kept."""
+    flagged = [(_PW, "Qz7")]
+    text = json.dumps({"a": "Qz7", "b": "Qz7 inside", "c": "qz7"})
+    assert json.loads(_values(text, "json", flagged) or "") == {
+        "a": _MARK,
+        "b": "Qz7 inside",
+        "c": _MARK,
+    }
+    assert _values("Qz7 inside\n", "", flagged) == "Qz7 inside\n"
+
+
+def test_the_rewrite_keeps_json_valid_where_a_match_cuts_an_escape() -> None:
+    """#2243: a match that starts or ends inside a JSON escape (the raw ``u00412zq``
+    of ``\\u00412zq``) replaces the whole escape, so the string stays valid; a
+    flagged number becomes a quoted marker; an existing marker is never rewritten."""
+    value = "u0041" + "2zq"
+    text = '{"a": "x\\u00412zq y", "b": 12345678, "c": "[REDACTED:password-value]"}'
+    flagged = [(_PW, value), (_PW, "12345678"), (_PW, "pass" + "word")]
+    out = _values(text, "json", flagged)
+    assert out is not None
+    assert json.loads(out) == {"a": f"x{_MARK} y", "b": _MARK, "c": _MARK}
+
+
+@pytest.mark.passes_on_main
+def test_unparseable_json_holding_a_flagged_value_is_still_withheld() -> None:
+    """#2243 keeps #2213's rule: JSON that cannot be parsed and holds a flagged value
+    anywhere, a string value included, is withheld, not rewritten."""
+    rewrite = private_scan.redact_flagged_values(
+        '{"x": NaN, "note": "' + _A + '"}', "json", [(_PW, _A)]
+    )
+    assert rewrite.text is None and rewrite.reason == private_scan.UNPARSED_FLAGGED
+
+
+def test_the_value_rewrite_grows_linearly_with_the_text() -> None:
+    """#2243: string values and plain text are matched in one pass per escape level
+    (Aho-Corasick), random values anywhere and word-like ones as tokens (#2266), so
+    10x the text and the flagged values cost under the linear-growth
+    limit (``assert_linear``: a ratio of CPU times in one process, never a time)."""
+    from tests.unit.tools.sql._timing import assert_linear
+
+    flagged_for: dict[str, list[tuple[str, str]]] = {}
+
+    def word(i: int) -> str:
+        return "word" + "".join(chr(97 + int(d)) for d in f"{i:06d}")
+
+    def make_text(n: int) -> str:
+        values = [f"Zx{i:06d}Qw" for i in range(n // 100)]
+        words = [word(i) for i in range(n // 100)]
+        rows = [
+            json.dumps(
+                {"note": f"row {i} holds {values[i % len(values)]}, {words[i % len(words)]}"}
+            )
+            for i in range(n // 50)
+        ]
+        text = "\n".join(rows)
+        flagged_for[text] = [(_PW, v) for v in values + words]
+        return text
+
+    def rewrite(text: str) -> None:
+        out = _values(text, "jsonl", flagged_for[text])
+        assert out is not None and "Zx000000Qw" not in out and word(0) not in out
+
+    assert_linear(make_text, rewrite, sizes=(100_000, 1_000_000))
+
+
+def test_a_prose_value_gives_no_pieces_and_is_matched_only_whole() -> None:
+    """#2266 review, Important 1: a run that holds whitespace never looks random, and
+    pieces come only from a value that looks random, so a prose password (``set by
+    the customer in the console``) leaves ``in the`` elsewhere intact; the whole
+    value, as a token, is still replaced."""
+    flagged = [(_PW, "set by the customer in the console")]
+    text = json.dumps(
+        {"note": "all queries in the plan", "how": "It was set by the customer in the console."}
+    )
+    assert json.loads(_values(text, "json", flagged) or "") == {
+        "note": "all queries in the plan",
+        "how": f"It was {_MARK}.",
+    }
+    prose = "Run the steps in the order given in the console.\n"
+    assert _values(prose, "", flagged) == prose
+
+
+def test_a_word_like_or_short_value_matches_only_as_a_whole_token() -> None:
+    """#2266 review, Important 2: a value that does not look random (all letters, or
+    under 8 characters) is replaced only as a whole token, with no letter, digit or
+    ``_`` next to it, never inside an identifier; a number is replaced only when the
+    whole number is the value."""
+    flagged = [(_PW, "admin"), (_PW, "root"), (_PW, "2024"), (_PW, "administrator")]
+    text = json.dumps(
+        {
+            "table": "wordpress.wp_wc_admin_notes",
+            "root_table": "root_table",
+            "admin_notices": "AdministratorId administrators",
+            "frequency_per_hour": 120245,
+            "total_time_ms": 2024.5,
+            "year": 2024,
+            "who": "admin",
+            "log": "user admin, then root; the administrator.",
+        }
+    )
+    assert json.loads(_values(text, "json", flagged) or "") == {
+        "table": "wordpress.wp_wc_admin_notes",
+        "root_table": "root_table",
+        "admin_notices": "AdministratorId administrators",
+        "frequency_per_hour": 120245,
+        "total_time_ms": 2024.5,
+        "year": _MARK,
+        "who": _MARK,
+        "log": f"user {_MARK}, then {_MARK}; the {_MARK}.",
+    }
+    prose = "wp_wc_admin_notes root_table 120245 v2024 and admin\n"
+    assert _values(prose, "", flagged) == f"wp_wc_admin_notes root_table 120245 v2024 and {_MARK}\n"
+
+
+def test_a_random_value_and_its_random_pieces_still_redact_inside_identifiers() -> None:
+    """#2266 review: what looks like a credential is still caught everywhere: a random
+    value, or a random 8-character piece of it, inside an identifier or a word."""
+    text = json.dumps({"a": "tbl_" + _A + "_x", "b": "id" + _A[2:12] + "z"})
+    assert json.loads(_values(text, "json", [(_PW, _A)]) or "") == {
+        "a": f"tbl_{_MARK}_x",
+        "b": f"id{_MARK}z",
+    }
+
+
+_AWS_EXAMPLE = "wJalrXUtnFEMI/K7MDENG/" + "bPxRfiCYEXAMPLEKEY"  # pragma: allowlist secret
+
+
+def test_a_long_prefix_of_a_flagged_value_is_redacted_whole() -> None:
+    """#2266 review, Important 4: a string that holds the first 30 characters of a
+    flagged value (AWS's documented example key), with no whole-value match, loses
+    every one of them: each place takes the longest pattern ending there, through the
+    automaton's fail links."""
+    text = json.dumps({"note": "key " + _AWS_EXAMPLE[:30] + " end"})
+    out = _values(text, "json", [("aws secret access key", _AWS_EXAMPLE)])
+    assert json.loads(out or "") == {"note": "key [REDACTED:aws-secret-access-key] end"}
+
+
+@pytest.mark.parametrize(
+    ("document", "raw", "value", "expected"),
+    [
+        ("markdown", "| Wn6Rt9\\_Kc\\*Bv2Xq7 |\n", "Wn6Rt9_Kc*Bv2Xq7", f"| {_MARK} |\n"),
+        ("markdown", "Zq9&amp;Xv7&lt;Wm3&gt;Kt5\n", "Zq9&Xv7<Wm3>Kt5", f"{_MARK}\n"),
+        ("html", "<td>Zq9&amp;Xv7&lt;Wm3&gt;Kt5</td>\n", "Zq9&Xv7<Wm3>Kt5", f"<td>{_MARK}</td>\n"),
+        (
+            "html",
+            "<td>" + "".join(f"&#x{ord(c):x};" for c in _A) + "</td>\n",
+            _A,
+            f"<td>{_MARK}</td>\n",
+        ),
+        (
+            "html",
+            "<td>" + "".join(f"&#{ord(c)};" for c in _A) + "</td>\n",
+            _A,
+            f"<td>{_MARK}</td>\n",
+        ),
+    ],
+    ids=["md-backslash", "md-entities", "html-named", "html-hex", "html-decimal"],
+)
+def test_markdown_escapes_and_html_entities_are_undone_before_matching(
+    document: str, raw: str, value: str, expected: str
+) -> None:
+    """#2266 review, Important 3: a Markdown or HTML deliverable holds our renderers'
+    escaping (``\\_``, ``\\*``, ``&amp;``, ``&#x57;``); it is undone before matching,
+    and the whole escaped run is replaced. A JSON file's text is not read that way."""
+    assert _values(raw, document, [(_PW, value)]) == expected
+    assert _values(raw, "", [(_PW, value)]) == raw
+
+
+def test_a_value_the_scan_cut_short_withholds_a_string_or_text_holding_it() -> None:
+    """#2266 review, Minor 6: a value the scan cut short refuses a string value or a
+    plain text that holds it as a token, as it refuses a key; a word that merely
+    contains it is kept."""
+    flagged, cut = [(_PW, "Zq9")], ["Zq9"]
+    for text, document in (
+        (json.dumps({"msg": 'login with Zq9",Xv7Wm3Kt5 ok'}), "json"),
+        ('login with Zq9",Xv7Wm3Kt5 ok\n', ""),
+    ):
+        rewrite = private_scan.redact_flagged_values(text, document, flagged, cut)
+        assert rewrite.text is None and rewrite.reason == private_scan.CUT_FLAGGED
+    kept = private_scan.redact_flagged_values("xzq9y abc\n", "", flagged, cut)
+    assert kept.text == "xzq9y abc\n"
+
+
+def test_one_prebuilt_matcher_serves_every_file() -> None:
+    """#2266 review, Minor 5: the matcher is built once per upload and passed in; the
+    result is the same as building it per call, and the count of replacements is
+    reported."""
+    matcher = private_scan.flagged_matcher([(_PW, _A)])
+    text = json.dumps({"a": _A, "b": "x " + _A})
+    once = private_scan.redact_flagged_values(text, "json", matcher=matcher)
+    assert once == private_scan.redact_flagged_values(text, "json", [(_PW, _A)])
+    assert once.replaced == 2
