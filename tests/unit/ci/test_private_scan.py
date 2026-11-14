@@ -6,6 +6,7 @@
 from __future__ import annotations
 
 import gzip
+import json
 import re
 import shutil
 import subprocess  # nosec B404 -- runs detect-secrets' own hook with fixed argv
@@ -322,3 +323,176 @@ def test_the_command_line_never_prints_text_a_finding_carries(
         f"{path}: unlisted finding kind at line 0",
         f"{path}: unlisted finding kind at line 5",
     ]
+
+
+def test_a_short_flagged_value_is_redacted_as_a_whole_key_only() -> None:
+    """#2213: a flagged value under 4 characters has no piece to share, so only a key
+    that is the value whole (in any case or JSON escape) is replaced."""
+    flagged = [("password value", "Qz7")]
+    text = '{"Qz7": 1, "q\\u005a7": 2, "Qz7_orders": 3}'
+    assert _keys(text, "json", flagged) == (
+        '{"[REDACTED:password-value]": 1, "[REDACTED:password-value-2]": 2, "Qz7_orders": 3}'
+    )
+
+
+_A = "Wn6Rt9Kc" + "Bv2Xq7Pz"  # pragma: allowlist secret
+_PW = "password value"
+
+
+def _keys(text: str, document: str, flagged: list[tuple[str, str]]) -> str | None:
+    return private_scan.redact_json_keys(text, document, flagged).text
+
+
+def _escaped(value: str) -> str:
+    return "".join(f"\\u{ord(c):04x}" for c in value)
+
+
+def test_a_flagged_value_is_decoded_before_it_is_matched_to_a_key() -> None:
+    """#2213 review, Important 4: a value flagged in its ``\\u``-escaped form (as a
+    transcript holds it) still matches the plain key."""
+    text = json.dumps({_A: 1, "wp_posts": 2})
+    assert json.loads(_keys(text, "json", [(_PW, _escaped(_A))])) == {
+        "[REDACTED:password-value]": 1,
+        "wp_posts": 2,
+    }
+
+
+@pytest.mark.parametrize(
+    "raw_key",
+    [_escaped(_A), "\\\\" + "\\\\".join(_escaped(_A).split("\\")[1:]), "tbl_" + _escaped(_A)],
+    ids=["escaped", "double-escaped", "escaped-inside"],
+)
+def test_a_key_name_is_decoded_before_it_is_matched(raw_key: str) -> None:
+    """#2213 review, Important 4: a key is matched in its raw text and in every
+    decoded form of it, so a ``\\u``-escaped or double-escaped key is redacted."""
+    text = '{"' + raw_key + '": 1, "wp_posts": 2}'
+    json.loads(text)
+    assert json.loads(_keys(text, "json", [(_PW, _A)])) == {
+        "[REDACTED:password-value]": 1,
+        "wp_posts": 2,
+    }
+
+
+def test_an_existing_marker_key_is_never_reused() -> None:
+    """#2213 review, Important 4: a kept key that is already a marker is taken, so a
+    flagged key next to it gets the next number and no member is lost."""
+    text = '{"[REDACTED:password-value]": 1, "' + _A + '": 2, "[REDACTED:password-value-2]": 3}'
+    assert json.loads(_keys(text, "json", [(_PW, _A)])) == {
+        "[REDACTED:password-value]": 1,
+        "[REDACTED:password-value-3]": 2,
+        "[REDACTED:password-value-2]": 3,
+    }
+
+
+def test_a_key_holding_values_of_two_kinds_is_named_by_the_first_kind() -> None:
+    """#2213 review, Important 4: the kind is the first in sorted order, whatever the
+    order the values were flagged in."""
+    email = "dba@" + "acme-retail.com"
+    text = json.dumps({_A + "_" + email: 1})
+    flagged = [(_PW, _A), ("email", email)]
+    for order in (flagged, flagged[::-1]):
+        assert _keys(text, "json", order) == '{"[REDACTED:email]": 1}'
+
+
+def test_a_document_that_cannot_be_parsed_is_refused_only_with_a_flagged_value() -> None:
+    """#2213 review, Critical 1: ``None`` (withhold) for an unparsable document or
+    line that holds a flagged value, as it is or ``\\u``-escaped; kept otherwise."""
+    flagged = [(_PW, _A)]
+    assert _keys('{"x": NaN, "' + _A + '": 1}', "json", flagged) is None
+    assert _keys('{"' + _escaped(_A) + '": ', "jsonl", flagged) is None
+    assert _keys('{"x": NaN}', "json", flagged) == '{"x": NaN}'
+
+
+def test_the_key_rewrite_grows_linearly_with_the_keys() -> None:
+    """#2213 review, Important 3: 20,000 flagged keys in one object cost under the
+    repository's linear-growth limit over 2,000 (``assert_linear``: a ratio of the
+    best CPU times in one process, never a time); a quadratic rewrite is about 100x."""
+    from tests.unit.tools.sql._timing import assert_linear
+
+    flagged_for: dict[str, list[tuple[str, str]]] = {}
+
+    def make_text(n: int) -> str:
+        values = [f"Zx{i:06d}Qw" for i in range(n)]
+        text = json.dumps({v: i for i, v in enumerate(values)})
+        flagged_for[text] = [(_PW, v) for v in values]
+        return text
+
+    def rewrite(text: str) -> None:
+        out = _keys(text, "json", flagged_for[text])
+        assert out is not None and len(json.loads(out)) == len(flagged_for[text])
+
+    assert_linear(make_text, rewrite, sizes=(2_000, 20_000))
+
+
+def test_a_long_random_run_of_a_flagged_value_is_redacted_and_a_word_run_is_not() -> None:
+    """#2213 review round 2, Important 1: a key that shares a run of 8 characters with
+    a flagged value is redacted when the run looks random (a digit, a symbol, or a
+    capital after its first character), in any case; a run of a plain word is kept."""
+    flagged = [(_PW, _A), (_PW, "Content" + "ful9"), (_PW, "wordpress")]
+    text = json.dumps(
+        {
+            _A[:12]: 1,
+            "tbl_" + _A[2:10].lower() + "_cols": 2,
+            "contentful": 3,
+            "progress": 4,
+            "keywords": 5,
+            _A[:7] + "_x": 6,
+        }
+    )
+    assert json.loads(_keys(text, "json", flagged)) == {
+        "[REDACTED:password-value]": 1,
+        "[REDACTED:password-value-2]": 2,
+        "contentful": 3,
+        "progress": 4,
+        "keywords": 5,
+        _A[:7] + "_x": 6,
+    }
+
+
+def test_only_the_key_s_raw_form_can_hold_the_value() -> None:
+    """#2213 review round 2, Minor 4: a key is matched in its raw text and in every
+    decoded form, not only the most decoded one: the name ``\\u00412zq`` holds the
+    flagged ``u00412zq``, which its decoded form ``A2zq`` does not."""
+    text = json.dumps({"\\u00412zq": 1, "wp_posts": 2})
+    assert json.loads(_keys(text, "json", [(_PW, "u0041" + "2zq")])) == {
+        "[REDACTED:password-value]": 1,
+        "wp_posts": 2,
+    }
+
+
+@pytest.mark.parametrize(
+    ("value", "raw"),
+    [
+        ("Zq9/Xv7" + "Wm3Kt5", '{"x": NaN, "Zq9\\/Xv7Wm3Kt5": 1}'),
+        ('Zq9"Xv7' + "Wm3Kt5", json.dumps(json.dumps({'Zq9"Xv7Wm3Kt5': 1}))[:-4]),
+        ("Zq9\\Xv7" + "Wm3Kt5", '{"x": NaN, "Zq9\\\\Xv7Wm3Kt5": 1}'),
+        ("Ab9\U0001f600Cd7" + "Ef", '{"x": NaN, "Ab9\\ud83d\\ude00Cd7Ef": 1}'),
+        (
+            "Zq9/Xv7" + "Wm3Kt5",
+            json.dumps(json.dumps({"Zq9/Xv7Wm3Kt5": 1})).replace("/", "\\\\/")[:-4],
+        ),
+    ],
+    ids=["slash", "quote-double-escaped", "backslash", "surrogate-pair", "slash-double-escaped"],
+)
+def test_the_raw_text_check_undoes_every_json_escape(value: str, raw: str) -> None:
+    """#2213 review round 2, Important 2: the check on text that does not parse undoes
+    every JSON escape at every level (``\\/``, ``\\"``, ``\\\\``, ``\\u`` with
+    surrogate pairs) before it looks for a flagged value."""
+    rewrite = private_scan.redact_json_keys(raw, "jsonl", [(_PW, value)])
+    assert rewrite.text is None and rewrite.reason == private_scan.UNPARSED_FLAGGED
+
+
+def test_a_short_value_cut_at_a_quote_is_recorded_and_a_quoted_one_is_not() -> None:
+    """#2213 review round 2, Important 1: the scan records a value under 4 characters
+    it ended at a ``"`` or ``\\`` that does not close it (``Zq9"Xv7...``), since the
+    rest of it is unknown; a quoted JSON value (``"abc"``) is whole."""
+    cut_quote = private_scan.redact('password = Zq9"Xv7Wm3Kt5\n', narrow_key_names=True)
+    cut_backslash = private_scan.redact('{"password": "Zq9\\"Xv7Wm3Kt5"}', narrow_key_names=True)
+    whole = private_scan.redact('{"password": "abc"}', narrow_key_names=True)
+    assert cut_quote.cut == {"Zq9"} and cut_backslash.cut == {"Zq9"} and whole.cut == set()
+    rewrite = private_scan.redact_json_keys(
+        json.dumps({"tbl_zq9_cols": 1}), "json", [(_PW, "Zq9")], cut=["Zq9"]
+    )
+    assert rewrite.text is None and rewrite.reason == private_scan.CUT_FLAGGED
+    kept = private_scan.redact_json_keys(json.dumps({"abc_cols": 1}), "json", [(_PW, "abc")])
+    assert kept.text == json.dumps({"abc_cols": 1})

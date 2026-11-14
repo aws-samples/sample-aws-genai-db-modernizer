@@ -42,7 +42,9 @@ the field name right before the value, its JSON path (``document``) and its shap
 
 ``redact`` replaces each flagged value with that marker, outermost span first, so a
 JSON file stays valid JSON, and a whole private-key block (BEGIN through END) with one
-marker. ``key_material`` also finds a key's BEGIN or END line, two or more key body
+marker. ``redact_json_keys`` then replaces each JSON object key that contains a value
+flagged anywhere in the upload, numbering keys of one object that would collide, and
+refuses a file it cannot parse that holds one (#2213). ``key_material`` also finds a key's BEGIN or END line, two or more key body
 lines in a row without their header (a key split across files or transcript lines,
 under a Read tool, ``grep -n``, list, table, timestamp or escape prefix) and a single
 base64 run of 200 or more characters. Any finding
@@ -357,10 +359,18 @@ JsonPath = tuple["str | int", ...]
 _scanstring: Callable[[str, int], tuple[str, int]] = vars(json.decoder)["scanstring"]
 
 
-def _json_scalars(text: str) -> list[tuple[int, int, JsonPath]] | None:
+#: One object key of a JSON document: its string's span (quotes included), its decoded
+#: name and the offset of its object's ``{``.
+JsonKey = tuple[int, int, str, int]
+
+
+def _json_scalars(
+    text: str, keys: list[JsonKey] | None = None
+) -> list[tuple[int, int, JsonPath]] | None:
     """Every scalar of the JSON document ``text`` (strings, numbers, literals, and
     object keys) as ``(start, end, path)``, in order; a key's path ends in the key
-    itself. ``None`` when ``text`` is no JSON document."""
+    itself. ``keys``, when given, also gets every object key (``JsonKey``). ``None``
+    when ``text`` is no JSON document."""
     out: list[tuple[int, int, JsonPath]] = []
 
     def ws(i: int) -> int:
@@ -371,6 +381,7 @@ def _json_scalars(text: str) -> list[tuple[int, int, JsonPath]] | None:
         i = ws(i)
         c = text[i : i + 1]
         if c == "{":
+            opening = i
             i = ws(i + 1)
             if text[i : i + 1] == "}":
                 return i + 1
@@ -379,6 +390,8 @@ def _json_scalars(text: str) -> list[tuple[int, int, JsonPath]] | None:
                     raise ValueError("key")
                 name, end = _scanstring(text, i + 1)
                 out.append((i, end, (*path, name)))
+                if keys is not None:
+                    keys.append((i, end, name, opening))
                 i = ws(end)
                 if text[i : i + 1] != ":":
                     raise ValueError("colon")
@@ -532,6 +545,11 @@ class Redaction:
     #: values (``render_context``). In memory only: it holds the values.
     pending: list[PendingContext] = field(default_factory=list, repr=False)
     raw_keys: dict[tuple[str, int], set[str]] = field(default_factory=dict, repr=False)
+    #: Each value under ``VALUE_PIECE`` characters the scan ended at a backslash or
+    #: at a quote that does not close it (``password = Zq9"Xv7...`` gives ``Zq9``): the rest of
+    #: the value is unknown, so ``redact_json_keys`` refuses a key that holds it
+    #: (#2213). In memory only.
+    cut: set[str] = field(default_factory=set, repr=False)
 
     @property
     def redactable(self) -> bool:
@@ -598,6 +616,7 @@ def redact(
     # Each placed finding (``PendingContext``); the names are checked against every
     # flagged value once the scan is done.
     placed_all: list[PendingContext] = []
+    cut: set[str] = set()
     for number, line, body, hits, table in _scan_lines(
         unblocked, key_names, emails, narrow_key_names
     ):
@@ -620,6 +639,8 @@ def redact(
                 )
                 value = body[span[0] : span[1]]
                 placed_all.append((kind, number, name, index.path(number, span[0]), value))
+                if len(value) < VALUE_PIECE and _cut_short(body, span):
+                    cut.add(value)
         placed = [(kind, span) for kind, span in hits if span is not None]
         if len(placed) < len(hits) or any(kind == "Private Key" for kind, _ in hits):
             complete = False
@@ -639,7 +660,294 @@ def redact(
         context,
         placed_all,
         keys,
+        cut,
     )
+
+
+def _cut_short(body: str, span: tuple[int, int]) -> bool:
+    """The value at ``span`` ends at a ``\\`` (an escape inside it), or at a ``"`` that
+    does not close a quote opened right before it: the scan cut it short."""
+    after = body[span[1] : span[1] + 1]
+    before = body[span[0] - 1 : span[0]] if span[0] else ""
+    return after == "\\" or (after == '"' and before not in ('"', "'"))
+
+
+class _Automaton:
+    """Every pattern a text contains, found in one pass over it (Aho-Corasick): the
+    rewrite checks thousands of keys against thousands of flagged values in time
+    linear in their total length (#2213)."""
+
+    def __init__(self, patterns: dict[str, set[str]]) -> None:
+        self._goto: list[dict[str, int]] = [{}]
+        self._fail: list[int] = [0]
+        self._out: list[set[str]] = [set()]
+        for pattern, tags in patterns.items():
+            node = 0
+            for char in pattern:
+                nxt = self._goto[node].get(char)
+                if nxt is None:
+                    nxt = len(self._goto)
+                    self._goto[node][char] = nxt
+                    self._goto.append({})
+                    self._fail.append(0)
+                    self._out.append(set())
+                node = nxt
+            self._out[node] |= tags
+        queue = list(self._goto[0].values())
+        for node in queue:
+            for char, nxt in self._goto[node].items():
+                queue.append(nxt)
+                back = self._fail[node]
+                while back and char not in self._goto[back]:
+                    back = self._fail[back]
+                target = self._goto[back].get(char, 0)
+                self._fail[nxt] = target if target != nxt else 0
+                self._out[nxt] |= self._out[self._fail[nxt]]
+
+    def tags(self, text: str) -> set[str]:
+        """The tags of every pattern ``text`` contains."""
+        found: set[str] = set()
+        node = 0
+        for char in text:
+            while node and char not in self._goto[node]:
+                node = self._fail[node]
+            node = self._goto[node].get(char, 0)
+            if self._out[node]:
+                found |= self._out[node]
+        return found
+
+
+# One JSON escape: a surrogate pair, a ``\\u`` escape or a one-character escape.
+_JSON_ESCAPE_RE = re.compile(
+    r"\\(?:u([dD][89abAB][0-9a-fA-F]{2})\\u([dD][c-fC-F][0-9a-fA-F]{2})"
+    r"|u([0-9a-fA-F]{4})|([\"\\/bfnrt]))"
+)
+_ONE_CHAR_ESCAPES = {
+    '"': '"',
+    "\\": "\\",
+    "/": "/",
+    "b": "\b",
+    "f": "\f",
+    "n": "\n",
+    "r": "\r",
+    "t": "\t",
+}
+#: How many escape levels the raw-text check undoes (a transcript nests tool output).
+ESCAPE_LEVELS = 6
+
+
+def _unescape_once(text: str) -> str:
+    """``text`` with one level of JSON escapes undone (a quote, a backslash, a slash,
+    ``b f n r t``, ``u`` escapes and surrogate pairs); an unknown escape is kept."""
+
+    def one(m: re.Match[str]) -> str:
+        if m.group(1):
+            high, low = int(m.group(1), 16), int(m.group(2), 16)
+            return chr(0x10000 + ((high - 0xD800) << 10) + (low - 0xDC00))
+        if m.group(3):
+            return chr(int(m.group(3), 16))
+        return _ONE_CHAR_ESCAPES[m.group(4)]
+
+    return _JSON_ESCAPE_RE.sub(one, text)
+
+
+def escape_levels(text: str) -> list[str]:
+    """``text`` and each form of it with one more level of JSON escapes undone, up to
+    ``ESCAPE_LEVELS``, until nothing changes."""
+    forms = [text]
+    for _level in range(ESCAPE_LEVELS):
+        if "\\" not in forms[-1]:
+            break
+        undone = _unescape_once(forms[-1])
+        if undone == forms[-1]:
+            break
+        forms.append(undone)
+    return forms
+
+
+#: A run of this many characters a key shares with a flagged value is redacted when
+#: it looks random (``_random_run``), #2213.
+RANDOM_RUN = 8
+
+
+def _random_run(run: str) -> bool:
+    """A run that looks random rather than like a word: a digit, a symbol or a space,
+    or a capital after its first character."""
+    return any(not c.isalpha() for c in run) or any(c.isupper() for c in run[1:])
+
+
+@dataclass
+class _KeyMatcher:
+    """The flagged values, prebuilt once for ``redact_json_keys``. ``long``: each
+    decoded form, case-folded, of a value of ``VALUE_PIECE`` or more characters, and
+    each of its runs of ``RANDOM_RUN`` characters that looks random; a key that
+    contains one is redacted. ``short``: a shorter value, matched only as a whole key.
+    ``cut``: the short values the scan cut short; a key that contains one is refused.
+    ``anywhere``: every pattern, for text that cannot be parsed."""
+
+    long: _Automaton
+    short: dict[str, set[str]]
+    cut: _Automaton
+    anywhere: _Automaton
+
+    @classmethod
+    def build(cls, flagged: Iterable[tuple[str, str]], cut: Iterable[str] = ()) -> _KeyMatcher:
+        long: dict[str, set[str]] = {}
+        short: dict[str, set[str]] = {}
+        for kind, value in set(flagged):
+            for form in decoded_forms(value):
+                folded = form.lower()
+                if not folded:
+                    continue
+                target = long if len(folded) >= VALUE_PIECE else short
+                target.setdefault(folded, set()).add(kind)
+                for i in range(len(form) - RANDOM_RUN + 1):
+                    run = form[i : i + RANDOM_RUN]
+                    if _random_run(run):
+                        long.setdefault(run.lower(), set()).add(kind)
+        anywhere = {**long}
+        for folded, kinds in short.items():
+            anywhere.setdefault(folded, set()).update(kinds)
+        cuts = {form.lower(): {"cut"} for value in cut for form in decoded_forms(value) if form}
+        return cls(_Automaton(long), short, _Automaton(cuts), _Automaton(anywhere))
+
+    @staticmethod
+    def _forms(raw_key: str) -> list[str]:
+        return [form.lower() for form in decoded_forms(raw_key)]
+
+    def kind_of(self, raw_key: str) -> str | None:
+        """The kind of the flagged value the key holds (in its raw text or any decoded
+        form of it, in any case), or ``None``. A key that holds values of several kinds
+        is named by the first kind in sorted order, so the answer is stable."""
+        found: set[str] = set()
+        for folded in self._forms(raw_key):
+            found |= self.short.get(folded, set()) | self.long.tags(folded)
+        return min(found) if found else None
+
+    def holds_a_cut_value(self, raw_key: str) -> bool:
+        """Whether the key holds a value the scan cut short, in any form and case."""
+        return any(self.cut.tags(folded) for folded in self._forms(raw_key))
+
+    def in_raw_text(self, text: str) -> bool:
+        """Whether ``text`` holds a flagged value anywhere, in any case, as it is or
+        with every JSON escape undone at every level (``escape_levels``)."""
+        return any(self.anywhere.tags(form.lower()) for form in escape_levels(text))
+
+
+#: Why ``redact_json_keys`` refused a file (#2213): the text its manifest finding names.
+UNPARSED_FLAGGED = "flagged value in JSON that cannot be parsed"
+CUT_FLAGGED = "key holds a flagged value cut short"
+
+
+@dataclass
+class KeyRewrite:
+    """``redact_json_keys``'s result: the rewritten text, or ``None`` and the reason
+    (``UNPARSED_FLAGGED``, ``CUT_FLAGGED``) when the file must be withheld."""
+
+    text: str | None
+    reason: str | None = None
+
+
+def jsonl_lines(text: str) -> list[str]:
+    """The lines of a JSON Lines file: split at ``\\n`` only, so a raw U+2028 inside a
+    string is no break. The one rule the key rewrite and the validity check share."""
+    return text.split("\n")
+
+
+def _redact_keys_in(document: str, matcher: _KeyMatcher) -> KeyRewrite:
+    """``document`` with each key that holds a flagged value replaced. Refused when it
+    is no JSON this parser reads (a ``NaN``, nesting past its depth, a cut line, a
+    byte-order mark) and holds a flagged value, or when a key holds a value the scan
+    cut short: it must not ship."""
+    keys: list[JsonKey] = []
+    if _json_scalars(document, keys) is None:
+        if matcher.in_raw_text(document):
+            return KeyRewrite(None, UNPARSED_FLAGGED)
+        return KeyRewrite(document)
+    if any(matcher.holds_a_cut_value(document[key[0] + 1 : key[1] - 1]) for key in keys):
+        return KeyRewrite(None, CUT_FLAGGED)
+    by_object: dict[int, list[JsonKey]] = {}
+    for key in keys:
+        by_object.setdefault(key[3], []).append(key)
+    edits: list[tuple[int, int, str]] = []
+    for members in by_object.values():
+        names = [name for _s, _e, name, _o in members]
+        counts: dict[str, int] = {}
+        for name in names:
+            counts[name] = counts.get(name, 0) + 1
+        bases: list[str | None] = []
+        for start, end, name, _opening in members:
+            kind = matcher.kind_of(document[start + 1 : end - 1])
+            marker = REDACTION_RE.search(name)
+            if kind is not None:
+                bases.append(redaction_marker(kind))
+            elif marker and counts[name] > 1:
+                # Two values this file's own scan redacted inside keys of one object
+                # left the same marker twice: each gets its own.
+                bases.append(marker.group(0))
+            else:
+                bases.append(None)
+        # A kept key, an existing marker among them, is never reused.
+        taken = {name for name, base in zip(names, bases, strict=True) if base is None}
+        numbers: dict[str, int] = {}
+        for (start, end, _name, _opening), base in zip(members, bases, strict=True):
+            if base is None:
+                continue
+            number = numbers.get(base, 1)
+            marker_text = base if number == 1 else f"{base[:-1]}-{number}]"
+            while marker_text in taken:
+                number += 1
+                marker_text = f"{base[:-1]}-{number}]"
+            numbers[base] = number + 1
+            taken.add(marker_text)
+            edits.append((start, end, '"' + marker_text + '"'))
+    if not edits:
+        return KeyRewrite(document)
+    parts: list[str] = []
+    cursor = 0
+    for start, end, replacement in sorted(edits):
+        parts += [document[cursor:start], replacement]
+        cursor = end
+    parts.append(document[cursor:])
+    return KeyRewrite("".join(parts))
+
+
+def redact_json_keys(
+    text: str, document: str, flagged: Iterable[tuple[str, str]], cut: Iterable[str] = ()
+) -> KeyRewrite:
+    """``text`` (a JSON document, ``document="json"``, or JSON Lines, ``"jsonl"``,
+    lines as ``jsonl_lines``) with each object key that holds a flagged value replaced
+    (#2213). ``flagged`` is every ``(kind, value)`` the scan flagged anywhere in the
+    upload, so a value redacted in one file is redacted where another file uses it as
+    a key; ``cut`` the short values it cut short (``Redaction.cut``).
+
+    A key becomes the value's ``redaction_marker`` when, in its raw text or any decoded
+    form and in any case, it contains a flagged value whole (a value under
+    ``VALUE_PIECE`` characters only when it is the whole key), or shares with one a run
+    of ``RANDOM_RUN`` characters that looks random (``_random_run``: ``Wn6Rt9Kc``,
+    ``EXAMPLEK``). A key that shares only a word, or fewer characters, is kept
+    (``progress`` beside ``wordpress``); the manifest's names keep the stricter
+    ``VALUE_PIECE`` rule (``_safe_name``). Keys of one object that would end up alike,
+    this file's own in-key markers included, are numbered in document order
+    (``[REDACTED:<kind>-2]``), so the JSON stays valid and loses no member.
+
+    Refused (``KeyRewrite(None, reason)``: withhold the file): a document or line this
+    parser cannot read that holds a flagged value, as it is or with every JSON escape
+    undone (``UNPARSED_FLAGGED``), and a key that holds a value the scan cut short
+    (``CUT_FLAGGED``)."""
+    flagged = list(flagged)
+    if document not in ("json", "jsonl") or not flagged:
+        return KeyRewrite(text)
+    matcher = _KeyMatcher.build(flagged, cut)
+    if document == "json":
+        return _redact_keys_in(text, matcher)
+    lines: list[str] = []
+    for line in jsonl_lines(text):
+        rewrite = _redact_keys_in(line, matcher)
+        if rewrite.text is None:
+            return rewrite
+        lines.append(rewrite.text)
+    return KeyRewrite("\n".join(lines))
 
 
 # A hex id of 16 or more characters (a query id, a hash) can hold a run of 12 digits.
