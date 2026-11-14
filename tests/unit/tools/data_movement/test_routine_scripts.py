@@ -471,8 +471,8 @@ def test_a_mysql_routine_database_that_differs_from_the_tables_only_by_case_is_r
                                ("procedure", "shop.p1", "depends_on_refused")]  # fmt: skip
     text = (tmp_path / "step" / DEPLOY_FILE).read_text()
     assert "`Shop`" not in text and _schema_lines(text, "CREATE DATABASE") == []
+    from src.tools.data_movement.routine_scripts import CASE_DIFFERS_WHY
+
     md = " ".join((tmp_path / "step" / INSTRUCTIONS_FILE).read_text().split())
-    assert ("Left out because their database differs from a moved table's database only by "
-            "case: 1 (`database_case_differs`)") in md  # fmt: skip
-    assert "cannot tell whether the target folds case" in md
-    assert "Rename one side on the source, or create these routines by hand" in md
+    # The same words as the command output's `why`, from one constant.
+    assert f"- Left out as `database_case_differs`: 1. For each, {CASE_DIFFERS_WHY}" in md

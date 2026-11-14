@@ -70,7 +70,7 @@ __all__ = [
     "RoutineScriptError",
     "RoutineScripts",
     "block_of",
-    "case_differs",
+    "case_differs_keys",
     "check_names",
     "read_migration",
     "render_check_script",
@@ -311,13 +311,23 @@ def _case_clash(schema: str | None, step_schemas: set[str], engine: str) -> bool
     return schema.lower() in {s.lower() for s in step_schemas}
 
 
-def case_differs(row: StepRoutine, contract: StepContract, target_database: str | None) -> bool:
-    """Whether ``row`` is left out as :data:`CASE_DIFFERS`: its MySQL database differs from
-    a moved table's database only by case (``run_dms_step.py routines-check`` names why)."""
+def case_differs_keys(
+    contract: StepContract, migration: RoutineMigrationContract, target_database: str | None
+) -> set[tuple[str, str]]:
+    """The carried routines the deploy leaves out for a case-only database clash: each one
+    refused as :data:`CASE_DIFFERS`, and each that names one of those (directly or not, so
+    refused as ``depends_on_refused``) and clears with the same fix. ``run_dms_step.py``
+    gives each :data:`CASE_DIFFERS_WHY`."""
     engine = contract.target.engine
-    return _case_clash(
-        _target_schema(row, engine, target_database), _step_schemas(contract), engine
-    )
+    step_schemas = _step_schemas(contract)
+    deps = _dependencies(migration)
+    out: set[tuple[str, str]] = set()
+    for row in _routine_order(require_section(contract)):  # deploy order: dependencies first
+        key = (row.kind, row.routine_id)
+        clash = _case_clash(_target_schema(row, engine, target_database), step_schemas, engine)
+        if clash or any(d in out for d in deps.get(key, ())):
+            out.add(key)
+    return out
 
 
 def _routine_schemas(
@@ -624,13 +634,7 @@ def _instructions(
         )
     clashes = sum(1 for _, _, code in scripts.refused if code == CASE_DIFFERS)
     if clashes:
-        lines.append(
-            "- Left out because their database differs from a moved table's database only by "
-            f"case: {clashes} (`{CASE_DIFFERS}`). The collection cannot tell whether the target "
-            "folds case. Rename one side on the source, or create these routines by hand in the "
-            "database the application uses, then run `routines-check.sql` again; until then the "
-            "check reports them missing."
-        )
+        lines.append(f"- Left out as `{CASE_DIFFERS}`: {clashes}. For each, {CASE_DIFFERS_WHY}")
     if scripts.refused:
         lines.append(
             f"- Left out of the script: {len(scripts.refused)} (`run_dms_step.py routines` "
