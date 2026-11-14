@@ -337,7 +337,7 @@ def test_a_wave_gains_its_stages_with_the_pilot_named() -> None:
     assert stages["4a"][4].startswith("CDC from Aurora MySQL to DynamoDB")
     assert stages["4c"][1:4] == ["ownership with a CDC copy back to an earlier engine", "2", "5"]
     # The units, each owning its tables and reading its copies, the pilot named.
-    assert "| Stage | Unit | Queries | Owns | Reads a copy of | CDC copy back to |" in lines
+    assert "| Stage | Pilot | Queries | Owns | Reads a copy of | CDC copy back to |" in lines
     units = [r for r in rows if len(r) == 6]
     assert ["4a", "Pilot", "1", "-", "`app.products`", "-"] in units
     assert ["4b", "-", "2", "`app.sessions`", "-", "-"] in units
@@ -359,9 +359,11 @@ def test_wave_one_gains_the_relational_step_s_table_classes() -> None:
     assert "  - 1 table stays on Aurora MySQL, read by no other engine" in text
     assert "  - 1 table stays on Aurora MySQL and is read as a CDC copy by another engine" in text
     assert "  - 1 table is read by no collected query" in text
-    # The tables a later step owns are left out until #2237: that count disagrees with
-    # the headline "tables migrate".
-    assert "later step" not in text
+    # The tables a later step owns get a count-free line (#2246): their count is the
+    # paths' moving-table count, which trailgear's headline "tables migrate" disagrees
+    # with, and three classes of four would let a reader recover it by subtraction.
+    assert "  - The other tables move in a later step." in text
+    assert "owned by a later step" not in text
     # The whole-database unit owns the schema the wave already lists: no unit table.
     assert "Units of each stage" not in text
 
@@ -522,3 +524,16 @@ def test_a_report_priced_before_per_path_sizing_states_only_the_full_target_s_co
     # The basis that note states is not the one the section prints by.
     assert adoption["cost_basis_note"] not in section
     assert "Only the full target's cost is stated" in section
+
+
+@pytest.mark.passes_on_main  # main prints no such line at all; the guard is the negative case
+def test_no_tables_for_a_later_step_prints_no_later_step_line() -> None:
+    """#2246: the count-free line is stated only when a later step owns a table."""
+    facts = copy.deepcopy(_facts())
+    for step in facts["slice_plan"]["plan_steps"]:
+        classes = step.get("table_classes")
+        if classes:
+            classes["leaves"], classes["leaves_count"] = [], 0
+    text = "\n".join(wave_stages_md(facts, 1, _SaidOnce()))
+    assert "- Table classes:" in text
+    assert "move in a later step" not in text
