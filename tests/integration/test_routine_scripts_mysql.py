@@ -144,7 +144,8 @@ def test_the_deploy_creates_a_routine_database_the_step_tables_are_not_in(mysql_
                 signature="IN INT", specific="tally")]  # fmt: skip
     artifact = migration(rows, "mysql")
     sources = [mysql_source("tally", "CREATE DEFINER=`app`@`%` PROCEDURE `tally`(IN p INT)\n"
-                            "BEGIN\n  SELECT p;\nEND", schema="shop_functions")]  # fmt: skip
+                            "BEGIN\n  SELECT p;\nEND", schema="shop_functions",
+                            database_collation="utf8mb4_unicode_ci")]  # fmt: skip
     store = _job(tmp_path, artifact, sources, "mysql")
     contract = contract_with_routines(artifact)
     assert _write(tmp_path, store, contract).in_script == 1
@@ -158,5 +159,8 @@ def test_the_deploy_creates_a_routine_database_the_step_tables_are_not_in(mysql_
         result = read_check(step / CHECK_OUTPUT, contract, job_id="job1", database_name="shop",
                             contract_sha=SHA, target_database=None)  # fmt: skip
         assert (result.status, result.confirmed, result.mismatches) == ("pass", 1, [])
+        made = _mysql(client, sock, "SELECT DEFAULT_COLLATION_NAME FROM information_schema.SCHEMATA "
+                      "WHERE SCHEMA_NAME = 'shop_functions'", "--batch", "--skip-column-names")  # fmt: skip
+        assert made.stdout.decode().strip() == "utf8mb4_unicode_ci"  # as the collection records
     finally:
         _mysql(client, sock, "DROP DATABASE IF EXISTS shop_functions;")
