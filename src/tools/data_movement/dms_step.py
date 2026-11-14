@@ -61,6 +61,7 @@ from src.tools.data_movement.collations import NOT_CARRIED as COLLATION_NOT_CARR
 from src.tools.data_movement.collations import SERVER_DEFAULTS as SERVER_DEFAULTS
 from src.tools.data_movement.collations import (
     alter_comment,
+    check_comment_name,
     column_options,
     database_options,
     database_sentence,
@@ -1378,6 +1379,11 @@ def _dms_user_lines(engine: str, line: str | None, database: str, schema: str) -
     """The DMS user and its grants, commented out: the DMS guide's target prerequisites. On
     the 8.4 line the user names mysql_native_password (the DMS guide's Aurora MySQL 8.4 note:
     a new user otherwise gets caching_sha2_password)."""
+    try:  # the grants are comment lines: a name that would end one is refused
+        check_comment_name(database)
+        check_comment_name(schema)
+    except ValueError as e:
+        raise DmsStepError(str(e)) from e
     if engine == "aurora_mysql":
         db = database.replace("`", "``")
         auth = "IDENTIFIED WITH mysql_native_password BY" if line == "8.4" else "IDENTIFIED BY"
@@ -1795,9 +1801,9 @@ def render_ddl(inputs: Step1Inputs) -> str:
         target = inputs.contract.target
         options = database_options(target.collation, target.engine_line)
         alter = "".join(
-            f"{line}\n" for line in alter_comment(f"`{db}`", target.collation, target.engine_line)
+            f"{line}\n" for line in alter_comment(database, target.collation, target.engine_line)
         )
-        out += f"\n{alter}CREATE DATABASE IF NOT EXISTS `{db}`{options};\nUSE `{db}`;\n"
+        out += f"\nCREATE DATABASE IF NOT EXISTS `{db}`{options};\n{alter}USE `{db}`;\n"
     out += _enum_type_block(inputs)
     out += "\n" + inputs.ddl.strip() + "\n"
     replication = _replication(inputs)

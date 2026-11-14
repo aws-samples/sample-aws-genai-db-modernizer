@@ -104,12 +104,48 @@ _EDIT = {
 }
 
 
+#: MariaDB's UCA 14.0 language collations and the MySQL 0900 one for the same language.
+_LANGUAGES = {
+    "croatian": "hr", "czech": "cs", "danish": "da", "esperanto": "eo", "estonian": "et",
+    "german2": "de_pb", "hungarian": "hu", "icelandic": "is", "latvian": "lv",
+    "lithuanian": "lt", "polish": "pl", "roman": "la", "romanian": "ro", "russian": "ru",
+    "slovak": "sk", "slovenian": "sl", "spanish": "es", "spanish2": "es_trad",
+    "swedish": "sv", "turkish": "tr", "vietnamese": "vi",
+}  # fmt: skip
+
+
 def closest(collation: str, line: str | None) -> str | None:
-    """The collation Aurora MySQL offers that is closest to a utf8mb4 one it does not:
-    MariaDB's ``_nopad`` variants without it, its ``uca1400`` (UCA 14.0) ones as the
-    ``0900`` (UCA 9.0) ones; None when there is none."""
-    name = collation.lower().replace("_nopad", "").replace("uca1400", "0900")
+    """The collation Aurora MySQL offers that is closest to a utf8mb4 one it does not, or
+    None: MariaDB's ``nopad_bin`` as ``0900_bin`` (both NO PAD), its other ``_nopad``
+    variants without it, its ``uca1400`` (UCA 14.0) ones as the ``0900`` (UCA 9.0) ones, a
+    language one as that language's ``0900`` one (:data:`_LANGUAGES`)."""
+    name = collation.lower()
+    if name == "utf8mb4_nopad_bin":
+        name = "utf8mb4_0900_bin"
+    name = name.replace("_nopad", "")
+    parts = name.split("_")
+    if len(parts) >= 3 and parts[1] == "uca1400":
+        rest = parts[2:]
+        if rest[0] in _LANGUAGES:
+            rest = [_LANGUAGES[rest[0]], *rest[1:]]
+            name = "_".join(["utf8mb4", rest[0], "0900", *rest[1:]])
+        else:
+            name = "_".join(["utf8mb4", "0900", *rest])
     return name if name != collation.lower() and name in aurora_collations(line) else None
+
+
+def _no_pad(collation: str) -> bool:
+    """A NO PAD collation (trailing spaces count): MySQL's 0900 ones, MariaDB's nopad ones."""
+    return "_0900_" in collation or "nopad" in collation
+
+
+def _pad_note(source: str, near: str) -> str:
+    """What changes with ``near`` when it pads differently from ``source``; empty if not."""
+    if _no_pad(source) == _no_pad(near):
+        return ""
+    if _no_pad(near):
+        return f" (with it, trailing spaces count in comparisons and unique keys, as they do not with {source})"
+    return f" (with it, trailing spaces stop counting in comparisons and unique keys, as they count with {source})"
 
 
 def carry(
@@ -143,7 +179,7 @@ def carry(
                           f"{_where(line)}, {instead}. {edit}")  # fmt: skip
         if character_set_of(lowered) == "utf8mb4":
             near = closest(lowered, line)
-            pick = (f"{near} is the closest one it offers" if near
+            pick = (f"{near} is the closest one it offers{_pad_note(lowered, near)}" if near
                     else "choose a utf8mb4 collation it offers, such as utf8mb4_0900_ai_ci")  # fmt: skip
             return None, (f"Aurora MySQL offers no collation named {collation}; {pick}. Step 1 does "
                           f"not choose for you, {instead}. {edit}")  # fmt: skip
@@ -209,8 +245,8 @@ def is_text_type(aurora_type: str) -> bool:
 #: of #2282): CREATE DATABASE IF NOT EXISTS leaves its collation as it is.
 EXISTING = (
     "A database that already exists keeps its own collation: CREATE DATABASE IF NOT EXISTS "
-    "does not change it. If it holds nothing else yet, run the ALTER DATABASE above its "
-    "CREATE DATABASE first."
+    "does not change it. If it holds nothing else yet, uncomment the ALTER DATABASE right "
+    "after its CREATE DATABASE; it runs on a new database too."
 )
 
 
@@ -227,12 +263,22 @@ def database_sentence(
             f"or column that differs on the source keeps its own. {EXISTING}")  # fmt: skip
 
 
-def alter_comment(
-    quoted_name: str, value: CharacterSet | None, line: str | None = None
-) -> list[str]:
+def alter_comment(name: str, value: CharacterSet | None, line: str | None = None) -> list[str]:
     """The commented ``ALTER DATABASE`` for an existing database (:data:`EXISTING`), placed
-    above its ``CREATE DATABASE``; none with nothing carried. ``quoted_name``: the name as
-    the statement quotes it."""
+    right after its ``CREATE DATABASE`` (above it, uncommented in place, it would fail on a
+    new cluster); none with nothing carried. A ``name`` with a control or separator
+    character, which would end the comment line, is refused."""
     if value is None:
         return []
-    return [f"-- ALTER DATABASE {quoted_name}{database_options(value, line)};"]
+    check_comment_name(name)
+    return [f"-- ALTER DATABASE `{name.replace('`', '``')}`{database_options(value, line)};"]
+
+
+def check_comment_name(name: str) -> str:
+    """``name`` as it may be written into a ``--`` comment line: the routine scripts' rule
+    (not empty, no control or separator character); a ValueError otherwise."""
+    from src.tools.data_movement.routine_scripts import _safe
+
+    if not _safe(name):
+        raise ValueError(f"{name!r} is not a name a script comment can hold")
+    return name

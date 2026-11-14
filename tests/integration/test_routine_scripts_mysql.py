@@ -273,18 +273,25 @@ def test_a_database_that_already_exists_lands_on_the_source_collation_with_the_a
     )
     step = _collation_job(tmp_path)
     ddl = (step / "step-1.ddl.sql").read_text()
-    (alter,) = re.findall(r"^-- (ALTER DATABASE `shop` [^\n]*;)$", ddl, re.M)
+    assert len(re.findall(r"^-- ALTER DATABASE `shop` [^\n]*;$", ddl, re.M)) == 1
+    uncommented = tmp_path / "uncommented"
+    uncommented.mkdir()
+    for script in ("step-1.ddl.sql", DEPLOY_FILE):  # each ALTER uncommented where it stands
+        text = (step / script).read_text()
+        (uncommented / script).write_text(re.sub(r"^-- (ALTER DATABASE )", r"\1", text, flags=re.M))
     try:
-        for first in ("", alter):
-            _mysql(client, sock, reset + "CREATE DATABASE shop;" + first)
+        # As written, a `shop` made beforehand; then uncommented in place, with `shop` made
+        # beforehand and on a fresh cluster (where an ALTER above its CREATE would fail, 3503).
+        for folder, before in ((step, True), (uncommented, True), (uncommented, False)):
+            _mysql(client, sock, reset + ("CREATE DATABASE shop;" if before else ""))
             for script in ("step-1.ddl.sql", DEPLOY_FILE):
-                ran = _mysql(client, sock, None, stdin=step / script)
+                ran = _mysql(client, sock, None, stdin=folder / script)
                 assert ran.returncode == 0, ran.stderr.decode()
             _mysql(client, sock, "INSERT INTO shop.audit_log (msg) VALUES ('x');")
             called = _mysql(
                 client, sock, "CALL shop_functions.find_msg('x')", "--batch", "--skip-column-names"
             )
-            if not first:
+            if folder is step:
                 assert (
                     called.returncode != 0 and b"ERROR 1267" in called.stderr
                 ), called.stderr.decode()

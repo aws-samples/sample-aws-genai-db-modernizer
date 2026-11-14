@@ -389,8 +389,8 @@ def schema_statements(
         text
         for s in schemas
         for text in (
-            *alter_comment(_mysql_ident(s), value, line),
             f"CREATE DATABASE IF NOT EXISTS {_mysql_ident(s)}{database_options(value, line)};",
+            *alter_comment(s, value, line),
         )
     ]
     if triggers:  # the triggers-enable script (#2273): its databases hold triggers and events

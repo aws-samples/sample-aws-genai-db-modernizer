@@ -572,7 +572,10 @@ def test_the_databases_the_triggers_enable_script_creates_get_the_carried_collat
     (clause,) = {line.split("`shop`", 1)[1] for line in _lines(ddl, "CREATE DATABASE")}
     assert " COLLATE utf8mb4_unicode_ci" in clause
     assert _lines(text, "CREATE DATABASE") == [f"CREATE DATABASE IF NOT EXISTS `jobs`{clause}"]
-    assert f"-- ALTER DATABASE `jobs`{clause}" in text  # for a database that already exists
+    # For a database that already exists, right after its CREATE DATABASE.
+    assert (
+        f"CREATE DATABASE IF NOT EXISTS `jobs`{clause}\n-- ALTER DATABASE `jobs`{clause}\n" in text
+    )
     flat = " ".join(line[3:].strip() for line in text.splitlines() if line.startswith("-- "))
     assert "It creates the database with CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci" in flat
 
