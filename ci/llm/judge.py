@@ -786,9 +786,9 @@ def truncate_sections(
     return rendered, info
 
 
-# Facts lists never cut: dropping an engine, a table it serves, a cost line or
-# an eliminated engine would make the facts assert something false by
-# omission.
+# Facts lists never cut: dropping an engine, a table it serves, a cost line,
+# an eliminated engine or an adoption path the reports show (#1136) would make
+# the facts assert something false by omission.
 FACTS_UNCUT_LISTS: frozenset[str] = frozenset(
     {
         "engines",
@@ -798,6 +798,9 @@ FACTS_UNCUT_LISTS: frozenset[str] = frozenset(
         "eliminated_engines",
         "tco.cost_breakdown",
         "reality_check.moves",
+        "adoption.paths_shown",
+        "adoption.paths",
+        "adoption.paths[].engines",
     }
 )
 # Facts lists cut first, before any other list is touched.
