@@ -238,13 +238,13 @@ On a no, with nothing to offer, or when the Poll after a resume or a retry ends 
 uv run python scripts/run_dms_step.py routines --job-id {job_id} --db {db}
 ```
 
-`"status": "nothing_to_deploy"`: say so in one line (list `not_carried_routines`, each with its `reasons`, if any) and go to the Gate. `"status": "ready"`: show `carried`, `in_script`, `deferred` (Aurora MySQL triggers and events, left to the triggers-enable script), every entry of `not_carried_routines` and `refused_routines` with its reasons, and the `label` verbatim; point the customer at `routines.md` in `files`. The customer runs `routines-deploy.sql`, then `routines-check.sql`, saving its output as `routines-check.tsv` next to them, as that file says. Ask them to say when the check output is there; under `--auto`, never wait: go to the Gate (its routines check stays `pending`). Then run (no AWS call):
+`"status": "nothing_to_deploy"`: say so in one line (list `not_carried_routines`, each with its `reasons`, if any) and go to the Gate. `"status": "ready"`: show `carried`, `in_script`, `deferred` (Aurora MySQL triggers and events, left to the triggers-enable script), every entry of `not_carried_routines` and `refused_routines` with its reasons (and its `why` verbatim, when it has one), and the `label` verbatim; point the customer at `routines.md` in `files`. The customer runs `routines-deploy.sql`, then `routines-check.sql`, saving its output as `routines-check.tsv` next to them, as that file says. Ask them to say when the check output is there; under `--auto`, never wait: go to the Gate (its routines check stays `pending`). Then run (no AWS call):
 
 ```bash
 uv run python scripts/run_dms_step.py routines-check --job-id {job_id} --db {db}
 ```
 
-Show its `status` (`pass` or `fail`), `confirmed` of `carried`, every entry of `mismatches` (each `routine_id` with its `problem`) and of `not_carried_routines`, and the `label`. `"status": "no_output"`: the file is not at `expected` yet; ask again. An error line (a refused file) names what is wrong: tell the customer to run `routines-check.sql` again. Then go to the Gate.
+Show its `status` (`pass` or `fail`), `confirmed` of `carried`, every entry of `mismatches` (each `routine_id` with its `problem`, and its `why` verbatim when it has one) and of `not_carried_routines`, and the `label`. `"status": "no_output"`: the file is not at `expected` yet; ask again. An error line (a refused file) names what is wrong: tell the customer to run `routines-check.sql` again. Then go to the Gate.
 
 **Triggers enable.** The triggers-enable scripts turn on the triggers and events step 1 left off. They are the customer's to run; `/move` never runs them and never waits for them (no AWS call, no database connection):
 

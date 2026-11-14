@@ -13,9 +13,10 @@ three files into ``data-movement/step-1/``:
   ``DEFINER``). It first creates, ``IF NOT EXISTS``, each schema (on Aurora MySQL, each
   database) its routines land in that step 1's own DDL does not create (#2148): never
   PostgreSQL's ``public`` nor the schema of a table the step moves. A MySQL database gets
-  the database collation its routines record, and nothing is granted on what it creates;
-  a MySQL database that differs from the moved tables' only by case is refused (by its
-  routines' ids, ``database_case_differs``). On Aurora PostgreSQL the
+  no character set or collation, as ``step-1.ddl.sql`` gives the tables' database, and
+  nothing is granted on what it creates; a MySQL database that differs from the moved
+  tables' only by case is refused (by its routines' ids, ``database_case_differs``, with
+  :data:`CASE_DIFFERS_WHY`). On Aurora PostgreSQL the
   script runs in one transaction with ``check_function_bodies`` on, and each trigger is
   disabled in that transaction, so no replicated change ever meets it enabled. On Aurora MySQL each routine runs under its
   own ``sql_mode`` and connection collation, as ``mysqldump`` does; MySQL triggers and
@@ -56,6 +57,8 @@ from src.contracts.transformation_contract import StepContract, StepRoutine, Ste
 from src.shared.cutover_message import CUTOVER_DISCLAIMER
 
 __all__ = [
+    "CASE_DIFFERS",
+    "CASE_DIFFERS_WHY",
     "CHECK_FILE",
     "CHECK_OUTPUT",
     "DEPLOY_FILE",
@@ -67,6 +70,7 @@ __all__ = [
     "RoutineScriptError",
     "RoutineScripts",
     "block_of",
+    "case_differs",
     "check_names",
     "read_migration",
     "render_check_script",
@@ -92,6 +96,15 @@ PG_LOCK_TIMEOUT = "500ms"
 _SQL_MODE = re.compile(r"^[A-Z_]+(,[A-Z_]+)*$")
 _COLLATION = re.compile(r"^[A-Za-z0-9_]{1,64}$")
 _DELIMITERS = (";;", "$$", "//", "!!", "%%")
+#: The refusal of a MySQL routine whose database differs from a moved table's only by case.
+CASE_DIFFERS = "database_case_differs"
+#: What :data:`CASE_DIFFERS` means and what to do, for the command output and ``routines.md``.
+CASE_DIFFERS_WHY = (
+    "its database differs from a moved table's database only by case, and the collection "
+    "cannot tell whether the target folds case. Rename one side on the source, or create "
+    "these routines by hand in the database the application uses, then run "
+    "routines-check.sql again; until then the check reports them missing."
+)
 _DELIMITER_LINE = re.compile(r"(?im)^\s*delimiter\b")
 _BAD_CATEGORIES = {"Cc", "Cf", "Zl", "Zp", "Cs", "Co", "Cn"}
 
@@ -298,56 +311,28 @@ def _case_clash(schema: str | None, step_schemas: set[str], engine: str) -> bool
     return schema.lower() in {s.lower() for s in step_schemas}
 
 
-@dataclass(frozen=True)
-class _NewSchema:
-    """A schema (MySQL database) the deploy script creates before its routines (#2148)."""
-
-    name: str
-    collation: str | None = None  # MySQL: the database collation every routine records
-    note: str | None = None  # MySQL: why the server default applies instead
-
-
-_NO_COLLATION = "the collection records no database collation"
-_MIXED_COLLATION = "its routines do not all record the same database collation"
+def case_differs(row: StepRoutine, contract: StepContract, target_database: str | None) -> bool:
+    """Whether ``row`` is left out as :data:`CASE_DIFFERS`: its MySQL database differs from
+    a moved table's database only by case (``run_dms_step.py routines-check`` names why)."""
+    engine = contract.target.engine
+    return _case_clash(
+        _target_schema(row, engine, target_database), _step_schemas(contract), engine
+    )
 
 
 def _routine_schemas(
-    rows: Iterable[StepRoutine],
-    engine: str,
-    target_database: str | None,
-    step_schemas: set[str],
-    collations: dict[tuple[str, str], str | None],
-) -> list[_NewSchema]:
+    rows: Iterable[StepRoutine], engine: str, target_database: str | None, step_schemas: set[str]
+) -> list[str]:
     """The schemas (MySQL databases) the deploy script creates before its routines (#2148):
     each one ``rows`` land in, except PostgreSQL's ``public`` (every database has it) and a
     schema step 1's DDL creates (:func:`_step_schemas`). Names compare exactly, as the target
-    compares them. On MySQL each gets the database collation its routines record
-    (``collations``, by routine) when they all record the same allowed one. Sorted."""
+    compares them. Sorted."""
     skip = step_schemas | ({"public"} if engine == "aurora_postgresql" else set())
-    found: dict[str, set[str | None]] = {}
-    for r in rows:
-        schema = _target_schema(r, engine, target_database)
-        if schema and _safe(schema) and schema not in skip:
-            value = collations.get((r.kind, r.routine_id))
-            found.setdefault(schema, set()).add(
-                value if value and _COLLATION.match(value) else None
-            )
-    out = []
-    for name in sorted(found):
-        if engine == "aurora_postgresql":
-            out.append(_NewSchema(name))
-            continue
-        values = found[name]
-        if len(values) > 1:
-            out.append(_NewSchema(name, note=_MIXED_COLLATION))
-        elif values == {None}:
-            out.append(_NewSchema(name, note=_NO_COLLATION))
-        else:
-            out.append(_NewSchema(name, collation=next(iter(values))))
-    return out
+    found = {_target_schema(r, engine, target_database) for r in rows}
+    return sorted(s for s in found if s and _safe(s) and s not in skip)
 
 
-def _schema_statements(engine: str, schemas: list[_NewSchema]) -> list[str]:
+def _schema_statements(engine: str, schemas: list[str]) -> list[str]:
     if not schemas:
         return []
     if engine == "aurora_postgresql":
@@ -356,26 +341,22 @@ def _schema_statements(engine: str, schemas: list[_NewSchema]) -> list[str]:
             "runs this script needs CREATE on the database).",
             "-- Each is owned by the user that runs this script, and the script grants nothing: "
             "USAGE on each schema for the application user is yours to add.",
-            *(f"CREATE SCHEMA IF NOT EXISTS {_pg_ident(s.name)};" for s in schemas),
+            *(f"CREATE SCHEMA IF NOT EXISTS {_pg_ident(s)};" for s in schemas),
             "",
         ]
-    lines = [
+    from src.tools.data_movement.dms_step import SERVER_DEFAULTS
+
+    # As step-1.ddl.sql creates the tables' database: no character set or collation, so a
+    # routine's parameters take the same server default as the moved tables' columns.
+    return [
         "-- The databases the routines live in that step 1's DDL does not create (the user that "
         "runs this script needs CREATE on them).",
         "-- Each is created by the user that runs this script, and the script grants nothing: "
         "EXECUTE on each database for the application user is yours to add.",
+        f"-- Each CREATE DATABASE here is like step-1.ddl.sql's. {SERVER_DEFAULTS}",
+        *(f"CREATE DATABASE IF NOT EXISTS {_mysql_ident(s)};" for s in schemas),
+        "",
     ]
-    for s in schemas:
-        made = f"CREATE DATABASE IF NOT EXISTS {_mysql_ident(s.name)}"
-        if s.collation:
-            lines.append(f"{made} COLLATE {s.collation};")
-            continue
-        lines += [
-            f"-- `{_comment(s.name)}`: {s.note}, so the server default applies; check it "
-            "against the source's.",
-            f"{made};",
-        ]
-    return [*lines, ""]
 
 
 def _deploy_header(
@@ -383,7 +364,7 @@ def _deploy_header(
     section: StepRoutines,
     in_script: int,
     contract_sha: str,
-    schemas: list[_NewSchema] | None = None,
+    schemas: list[str] | None = None,
 ) -> str:
     made = _schema_statements(engine, schemas or [])
     lines = [
@@ -641,6 +622,15 @@ def _instructions(
             "names them). Each is created by the user that runs it, and the script grants "
             "nothing: `EXECUTE` on each database for the application user is yours to add."
         )
+    clashes = sum(1 for _, _, code in scripts.refused if code == CASE_DIFFERS)
+    if clashes:
+        lines.append(
+            "- Left out because their database differs from a moved table's database only by "
+            f"case: {clashes} (`{CASE_DIFFERS}`). The collection cannot tell whether the target "
+            "folds case. Rename one side on the source, or create these routines by hand in the "
+            "database the application uses, then run `routines-check.sql` again; until then the "
+            "check reports them missing."
+        )
     if scripts.refused:
         lines.append(
             f"- Left out of the script: {len(scripts.refused)} (`run_dms_step.py routines` "
@@ -858,15 +848,13 @@ def write_routine_scripts(
     user = target_user or migration.target_user
     step_dir.mkdir(parents=True, exist_ok=True)
     step_schemas = _step_schemas(contract)
-    collations: dict[RoutineKey, str | None] = {}
     write_block = block_of(engine, migration, user, target_database)
 
     def block(
         row: StepRoutine, source: RoutineSource, position: int, total: int
     ) -> tuple[str | None, str | None]:
         if _case_clash(_target_schema(row, engine, target_database), step_schemas, engine):
-            return None, "database_case_differs"
-        collations[(row.kind, row.routine_id)] = source.session.database_collation
+            return None, CASE_DIFFERS
         return write_block(row, source, position, total)
 
     with tempfile.TemporaryFile(dir=step_dir) as spool:
@@ -875,7 +863,7 @@ def write_routine_scripts(
         )  # fmt: skip
         in_script = len(spans)
         in_rows = [r for r in carried if (r.kind, r.routine_id) in spans]
-        schemas = _routine_schemas(in_rows, engine, target_database, step_schemas, collations)
+        schemas = _routine_schemas(in_rows, engine, target_database, step_schemas)
 
         def deploy_chunks() -> Iterator[bytes]:
             header = _deploy_header(engine, section, in_script, contract_sha, schemas)

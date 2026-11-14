@@ -10,6 +10,8 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
+import pytest
+
 from src.agents.collector.routine_sources import write_routine_sources
 from src.storage.local_store import LocalArtifactStore
 from src.tools.routines.migration import routine_migration_path
@@ -28,7 +30,9 @@ from tests.unit.tools.data_movement.routine_fixtures import (
 STEP = Path("shop") / "job1" / "data-movement" / "step-1"
 
 
-def _job(tmp_path: Path, rows=None) -> str:
+def _job(
+    tmp_path: Path, rows=None, *, schema: str = "shop", target_database: str | None = "shop"
+) -> str:
     rows = rows if rows is not None else [
         row("shop.place_order", "procedure", schema="shop", status="rewritten", signature="IN int",
             specific="place_order")]  # fmt: skip
@@ -38,12 +42,14 @@ def _job(tmp_path: Path, rows=None) -> str:
     store.write_json(routine_migration_path("shop", "job1", 2), artifact.model_dump(mode="json"))
     write_routine_sources(store, "shop", "job1", {"metadata": {"source_database": {"engine": "mysql"}}},
                           [mysql_source("place_order", "CREATE DEFINER=`app`@`%` PROCEDURE "
-                                        f"`place_order`(IN p INT)\nBEGIN SELECT '{SENTINEL}'; END")])  # fmt: skip
+                                        f"`place_order`(IN p INT)\nBEGIN SELECT '{SENTINEL}'; END",
+                                        schema=schema)])  # fmt: skip
     store.write_bytes("shop/job1/transformation-contract/v2/step-1.json", canonical_json(contract))
     store.write_json(f"{STEP}/plan.json", make_plan(contract).model_dump(mode="json"))
-    (tmp_path / STEP / "inputs.json").write_text(
-        json.dumps({**base.INPUTS, "target_database_name": "shop"})
-    )
+    inputs = {k: v for k, v in base.INPUTS.items() if k != "target_database_name"}
+    if target_database:
+        inputs["target_database_name"] = target_database
+    (tmp_path / STEP / "inputs.json").write_text(json.dumps(inputs))
     return contract_sha256(contract)
 
 
@@ -113,3 +119,38 @@ def test_a_refused_output_removes_the_earlier_result(tmp_path, capsys):
     code, line = base._run(tmp_path, "routines-check", capsys=capsys)
     assert code == 1 and "refused" in line["message"] and "someone_elses" not in line["message"]
     assert not (tmp_path / STEP / "routines-check.json").exists()
+
+
+def test_a_case_only_database_clash_says_why_in_the_routines_and_check_output(tmp_path, capsys):
+    # The routine's database `Shop` differs from the moved tables' `shop` only by case.
+    rows = [row("Shop.place_order", "procedure", schema="Shop", status="rewritten",
+                signature="IN int", specific="place_order")]  # fmt: skip
+    sha = _job(tmp_path, rows, schema="Shop", target_database=None)
+    cred = StubbedCredMgr()
+    _loaded(cred, 100)
+    code, line = base._run(tmp_path, "routines", clients=base._clients(cred), capsys=capsys)
+    assert code == 0, line
+    (refused,) = line["refused_routines"]
+    assert (refused["routine_id"], refused["reason"]) == (
+        "Shop.place_order",
+        "database_case_differs",
+    )
+    assert "only by case" in refused["why"] and "create these routines by hand" in refused["why"]
+    header = ["modernizer-routines-check", "1", "aurora_mysql", sha, "", "", ""]
+    end = ["modernizer-routines-check-end", "", "", "", "", "", ""]
+    (tmp_path / STEP / "routines-check.tsv").write_text(
+        "\n".join("\t".join(x) for x in [header, end]) + "\n")  # fmt: skip
+    code, line = base._run(tmp_path, "routines-check", capsys=capsys)
+    assert (code, line["status"]) == (0, "fail")
+    (missing,) = line["mismatches"]
+    assert (missing["routine_id"], missing["problem"]) == ("Shop.place_order", "missing")
+    assert missing["why"] == refused["why"]
+
+
+@pytest.mark.passes_on_main
+def test_a_missing_routine_with_no_case_clash_has_no_why(tmp_path, capsys):
+    sha = _job(tmp_path)
+    (tmp_path / STEP / "routines-check.tsv").write_text(_output(sha, []))
+    code, line = base._run(tmp_path, "routines-check", capsys=capsys)
+    assert (code, line["status"], line["mismatches"][0]["problem"]) == (0, "fail", "missing")
+    assert "why" not in line["mismatches"][0]

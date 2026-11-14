@@ -159,8 +159,11 @@ def test_the_deploy_creates_a_routine_database_the_step_tables_are_not_in(mysql_
         result = read_check(step / CHECK_OUTPUT, contract, job_id="job1", database_name="shop",
                             contract_sha=SHA, target_database=None)  # fmt: skip
         assert (result.status, result.confirmed, result.mismatches) == ("pass", 1, [])
-        made = _mysql(client, sock, "SELECT DEFAULT_COLLATION_NAME FROM information_schema.SCHEMATA "
-                      "WHERE SCHEMA_NAME = 'shop_functions'", "--batch", "--skip-column-names")  # fmt: skip
-        assert made.stdout.decode().strip() == "utf8mb4_unicode_ci"  # as the collection records
+        made = _mysql(client, sock, "SELECT DEFAULT_COLLATION_NAME = @@collation_server FROM "
+                      "information_schema.SCHEMATA WHERE SCHEMA_NAME = 'shop_functions'",
+                      "--batch", "--skip-column-names")  # fmt: skip
+        assert (
+            made.stdout.decode().strip() == "1"
+        )  # the server default, as step-1.ddl.sql's tables get
     finally:
         _mysql(client, sock, "DROP DATABASE IF EXISTS shop_functions;")

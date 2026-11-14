@@ -7,6 +7,7 @@ events left out), the read-only check script, and where a routine's text may go.
 
 from __future__ import annotations
 
+import re
 from pathlib import Path
 
 import pytest
@@ -14,6 +15,7 @@ import pytest
 from src.agents.collector.routine_sources import write_routine_sources
 from src.contracts.transformation_contract import NOT_MOVED, Finding
 from src.storage.local_store import LocalArtifactStore
+from src.tools.data_movement.dms_step import render_ddl
 from src.tools.data_movement.routine_scripts import (
     CHECK_FILE,
     DEPLOY_FILE,
@@ -22,7 +24,7 @@ from src.tools.data_movement.routine_scripts import (
     write_routine_scripts,
 )
 from src.tools.routines.migration import routine_migration_path
-from tests.unit.tools.data_movement.dms_step_fixtures import make_contract
+from tests.unit.tools.data_movement.dms_step_fixtures import make_contract, make_step1_inputs
 from tests.unit.tools.data_movement.routine_fixtures import (
     SENTINEL,
     contract_with_routines,
@@ -408,25 +410,28 @@ def test_a_mysql_target_database_the_tables_are_not_in_is_created(tmp_path):
                          "CREATE DATABASE") == []  # fmt: skip
 
 
-def test_a_routine_database_gets_the_collation_the_collection_records(tmp_path):
-    text = _mysql_schemas_case(
-        tmp_path, ["shop_functions", "reports", "mixed", "mixed", "odd"],
-        collations={0: "utf8mb4_unicode_ci", 2: "latin1_swedish_ci", 3: "utf8mb4_bin",
-                    4: "utf8mb4' OR '1"},
-    )  # fmt: skip
-    assert _schema_lines(text, "CREATE DATABASE") == [
-        "CREATE DATABASE IF NOT EXISTS `mixed`;",
-        "CREATE DATABASE IF NOT EXISTS `odd`;",
-        "CREATE DATABASE IF NOT EXISTS `reports`;",
-        "CREATE DATABASE IF NOT EXISTS `shop_functions` COLLATE utf8mb4_unicode_ci;",
-    ]
-    default = "so the server default applies; check it against the source's."
-    assert f"-- `reports`: the collection records no database collation, {default}" in text
-    assert f"-- `odd`: the collection records no database collation, {default}" in text
-    assert (
-        f"-- `mixed`: its routines do not all record the same database collation, {default}" in text
-    )
-    assert "OR '1" not in text
+def _flat_comments(text: str) -> str:
+    """A script's ``--`` comment text as one line, so a wrapped sentence reads whole."""
+    return " ".join(line[3:].strip() for line in text.splitlines() if line.startswith("-- "))
+
+
+def _database_clauses(text: str) -> set[str]:
+    """What follows the name in each ``CREATE DATABASE IF NOT EXISTS`` (its options)."""
+    return set(re.findall(r"^CREATE DATABASE IF NOT EXISTS `(?:[^`]|``)+`(.*);$", text, re.M))
+
+
+def test_a_routine_database_is_created_as_the_step_ddl_creates_the_tables_database(tmp_path):
+    # step-1.ddl.sql creates the tables' database with no character set or collation, so the
+    # tables take the server default; a routine database must take the same, or a routine
+    # comparing a parameter with a moved column fails with an illegal mix of collations.
+    text = _mysql_schemas_case(tmp_path, ["shop_functions"],
+                               collations={0: "utf8mb4_unicode_ci"})  # fmt: skip
+    ddl = render_ddl(make_step1_inputs("aurora_mysql"))
+    assert _database_clauses(text) == _database_clauses(ddl) == {""}
+    assert "COLLATE" not in text and "CHARACTER SET" not in text
+    found = re.search(r"It sets no character set or collation: .*? before you run it\.",
+                      _flat_comments(ddl))  # fmt: skip
+    assert found and found.group(0) in _flat_comments(text)
 
 
 @pytest.mark.parametrize("engine", ["postgresql", "mysql"])
@@ -466,3 +471,8 @@ def test_a_mysql_routine_database_that_differs_from_the_tables_only_by_case_is_r
                                ("procedure", "shop.p1", "depends_on_refused")]  # fmt: skip
     text = (tmp_path / "step" / DEPLOY_FILE).read_text()
     assert "`Shop`" not in text and _schema_lines(text, "CREATE DATABASE") == []
+    md = " ".join((tmp_path / "step" / INSTRUCTIONS_FILE).read_text().split())
+    assert ("Left out because their database differs from a moved table's database only by "
+            "case: 1 (`database_case_differs`)") in md  # fmt: skip
+    assert "cannot tell whether the target folds case" in md
+    assert "Rename one side on the source, or create these routines by hand" in md
