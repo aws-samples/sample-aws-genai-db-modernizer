@@ -26,7 +26,10 @@ both from shapes only:
   The disposable engine runs with ``--event-scheduler=OFF`` and never turns it on: the
   engine runs the event's own statement once, on demand (``disposable_engine.call``), so
   a run never waits for a schedule or fires between other calls. A disabled event is run
-  too: its body is carried logic, whatever its status.
+  too: its body is carried logic, whatever its status. The run happens in the caller's
+  session, not in the scheduler's own thread, so the comparison's frozen ``TIMESTAMP``,
+  ``RAND`` seed and session variables apply to it, and the event's stored ``TIME_ZONE``
+  does not.
 - **Rows.** ``generate_related_rows`` (the ADR-033 generator,
   :mod:`src.tools.synthetic_data.generator`) seeds every table the routines touch, plus
   the tables their foreign keys reference: types, primary keys, unique indexes, foreign
@@ -68,7 +71,8 @@ function (it runs through its trigger), a routine with a ``VARIADIC`` argument, 
 PostgreSQL routine with a parameter whose type no cast can name (an uncast call could
 reach another overload, so none is sent), a trigger
 on a view (``INSTEAD OF``), a ``TRUNCATE`` trigger, and a trigger on a table the
-collection lacks, and a MySQL event on PostgreSQL (#1971). Setup tables are created
+collection lacks, a MySQL event on PostgreSQL and one whose name is not a plain
+identifier (#1971). Setup tables are created
 without a schema, so a routine body that names another schema (#1970) does not find
 them.
 
@@ -209,19 +213,23 @@ class EventSpec(BaseModel):
     """A MySQL event's metadata, as ``information_schema.events`` gives it (#1971):
     ``EVENT_TYPE`` (``schedule``: ``ONE TIME`` or ``RECURRING``), ``INTERVAL_VALUE`` and
     ``INTERVAL_FIELD`` of a recurring event, and ``STATUS`` (``ENABLED``, ``DISABLED`` or
-    ``SLAVESIDE_DISABLED``). The tables it touches go in the routine's ``tables``."""
+    ``REPLICA_SIDE_DISABLED``, which older servers spell ``SLAVESIDE_DISABLED``: read as
+    the first). The schedule's dates are not taken: a one-time event whose time has passed
+    is dropped by the server as it is created, and the engine says so on that event's run. The tables it touches go in the routine's ``tables``.
+    """
 
     model_config = _HIDDEN
 
     schedule: Literal["ONE TIME", "RECURRING"]
     interval_value: int | None = Field(None, ge=1)
     interval_field: Literal[_INTERVALS] | None = None  # type: ignore[valid-type]
-    status: Literal["ENABLED", "DISABLED", "SLAVESIDE_DISABLED"] = "ENABLED"
+    status: Literal["ENABLED", "DISABLED", "REPLICA_SIDE_DISABLED"] = "ENABLED"
 
     @field_validator("schedule", "interval_field", "status", mode="before")
     @classmethod
     def _upper(cls, value: object) -> object:
-        return " ".join(value.upper().split()) if isinstance(value, str) else value
+        text = " ".join(value.upper().split()) if isinstance(value, str) else value
+        return "REPLICA_SIDE_DISABLED" if text == "SLAVESIDE_DISABLED" else text
 
     @model_validator(mode="after")
     def _interval_iff_recurring(self) -> EventSpec:
@@ -552,6 +560,8 @@ def _cast(param: RoutineParameter) -> str | None:
 def _skip_reason(routine: RoutineProofInput, dialect: Dialect) -> str | None:
     if routine.kind == "event" and dialect != "mysql":
         return "a MySQL event is generated for MySQL only"
+    if routine.kind == "event" and not all(_IDENT.match(p) for p in routine.name.split(".")):
+        return "the event's name is not a plain identifier, so it is not run"
     if routine.kind == "function" and (routine.returns or "").strip().lower() in _NO_CALL_RETURNS:
         return "a trigger function runs through its trigger, not by a call"
     if any(p.mode == "VARIADIC" for p in routine.parameters):
@@ -1105,8 +1115,12 @@ def run_call(handle: de.EngineHandle, call: ProofCall) -> de.CallResult:
     if call.kind == "event":
         if handle.engine != "mysql":
             raise ValueError("an event runs on MySQL only")
-        if call.args or call.modes or call.casts:
+        if call.args:
             raise ValueError("an event run takes no argument")
+        if call.modes:
+            raise ValueError("an event run takes no argument mode")
+        if call.casts:
+            raise ValueError("an event run takes no argument cast")
         de.event_runner_name(call.name)  # the name is checked before the engine sees it
         return de.call(handle, de.SourceRoutine(call.name, "event", ""), [], [], None)
     casts = _checked_casts(handle, call)

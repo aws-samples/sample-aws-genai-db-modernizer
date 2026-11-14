@@ -404,11 +404,18 @@ _MY_NAME_MAX = 64
 
 def event_runner_name(event: str) -> str:
     """The name of the procedure the MySQL backend makes from an event's own body (#1971):
-    ``__proof_event_`` and a hash of the event's plain name (any schema part dropped), so
+    ``__proof_event_`` and a hash of the event's plain name (any schema part dropped, case
+    folded: MySQL does not tell ``NightJob`` from ``nightjob``), so
     it is deterministic, within MySQL's 64-character limit and never the event's text."""
-    name = _parts(event)[-1]
+    name = _parts(event)[-1].casefold()  # event names are case-insensitive
     digest = hashlib.sha256(name.encode()).hexdigest()[:20]
     return f"{_EVENT_RUNNER}{digest}"
+
+
+def _event_key(name: str) -> str:
+    """How the MySQL backend remembers an event it cannot run: the last part of its name,
+    case folded, whatever characters it has."""
+    return name.split(".")[-1].casefold()
 
 
 def _call_sql(
@@ -1501,6 +1508,8 @@ class _MySQLBackend(_Backend):
     def __init__(self, server: _MySQLServer) -> None:
         self._mc = server._mc
         self._kinds: dict[str, str] = {}
+        #: events with no body to run (their key from ``_event_key``) and why
+        self._no_run: dict[str, str] = {}
         self._server = server
         self.pid: int | None = server.pid
         self.socket_path = server.socket_path
@@ -1531,17 +1540,29 @@ class _MySQLBackend(_Backend):
     def _make_event_runner(self, cur, event: str) -> None:  # type: ignore[no-untyped-def]
         """Make a procedure with the event's own statement as its body, read back from the
         server, so one run of the event is a ``CALL`` while the scheduler stays off. Made
-        here, at load, because DDL commits the transaction a call runs in."""
-        name = _parts(event)[-1]
+        here, at load, because DDL commits the transaction a call runs in. An event that
+        cannot be run (a name no runner can be named after, or one the server dropped when
+        it was created because its time had passed) is remembered with why, and its run
+        answers with that error: it fails its own calls, never the load (#1971)."""
+        key = _event_key(event)
+        try:
+            name = _parts(event)[-1]
+        except ValueError:
+            self._no_run[key] = "the event's name is not a plain identifier, so it is not run"
+            return
         _execute(
             cur,
             "SELECT EVENT_DEFINITION FROM information_schema.EVENTS "
-            "WHERE EVENT_SCHEMA = DATABASE() AND EVENT_NAME = %s",
-            [name],
+            "WHERE EVENT_SCHEMA = DATABASE() AND LOWER(EVENT_NAME) = %s",
+            [name.casefold()],
         )
         found = cur.fetchall()
         if not found or not found[0][0]:
-            raise EngineError(f"no event {name!r} to run once")
+            self._no_run[key] = (
+                "the server dropped the event when it was created (its time had passed), "
+                "so there is no body to run"
+            )
+            return
         runner = _quote(event_runner_name(name), "`")
         _execute(cur, f"DROP PROCEDURE IF EXISTS {runner}")
         # nosec B608 - a hashed, quoted name; the body is the event's own text
@@ -1551,8 +1572,10 @@ class _MySQLBackend(_Backend):
         # MySQL has no overloads, so a cast is never needed and is not written.
         name, kind = _routine_kind(self._kinds, routine)
         if kind == "event":
-            if args or modes:
+            if args or modes or casts:
                 raise ValueError("an event run takes no argument")
+            if (why := self._no_run.get(_event_key(name))) is not None:
+                return CallResult(error=why)
             name, kind = event_runner_name(name), "procedure"
         modes = list(modes or ["IN"] * len(args))
         if len(modes) != len(args):
