@@ -175,7 +175,7 @@ class TestASavedPlaceholderGroup:
     def test_the_filter_drops_placeholder_keys_only(self) -> None:
         from src.agents.referee.write_groups import real_write_groups
 
-        assert real_write_groups(LEGACY["write_groups"]) == {"db.a": ["w3", "w4"]}
+        assert real_write_groups(LEGACY["write_groups"]) == {"db.a": ["w3", "w4"]}  # type: ignore[arg-type]
         assert real_write_groups(None) == {}
 
     def test_its_placement_units_ignore_the_placeholder(self) -> None:

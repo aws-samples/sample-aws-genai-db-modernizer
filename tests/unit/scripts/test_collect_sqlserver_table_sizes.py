@@ -119,7 +119,7 @@ def _code(text: str) -> str:
 
 def _for_sqlite(node: exp.Expression) -> exp.Expression:
     if isinstance(node, exp.Cast) and node.to.this == exp.DataType.Type.DECIMAL:
-        return exp.func("ROUND", node.this, exp.Literal.number(int(node.to.expressions[1].name)))
+        return exp.func("ROUND", node.this, exp.Literal.number(int(node.to.expressions[1].name)))  # type: ignore[return-value]
     if isinstance(node, exp.Escape):
         return exp.true()
     if isinstance(node, exp.Anonymous) and node.name.upper() == "DB_ID":

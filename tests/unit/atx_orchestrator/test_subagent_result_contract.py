@@ -42,7 +42,7 @@ class TestSDKContract:
 
     def test_sdk_extractor_accepts_our_result(self) -> None:
         """The call that used to raise must now return the summary text."""
-        text = extract_text_from_strands_agent_response(_SubagentResult(_summary_line(SUMMARY)))
+        text = extract_text_from_strands_agent_response(_SubagentResult(_summary_line(SUMMARY)))  # type: ignore[arg-type]
         assert "job_id=v2-e2e-03" in text
         assert "top_engine=aurora_postgresql" in text
 
@@ -58,7 +58,7 @@ class TestSDKContract:
         be re-examined rather than assumed still necessary.
         """
         with pytest.raises(AttributeError, match="no attribute 'message'"):
-            extract_text_from_strands_agent_response(json.dumps({"response": SUMMARY}))
+            extract_text_from_strands_agent_response(json.dumps({"response": SUMMARY}))  # type: ignore[arg-type]
 
 
 class TestSummaryLine:

@@ -67,7 +67,7 @@ def _offline_expression() -> exp.Expression:
     )
     assert body is not None
     (item,) = [i for i in _select_items(body.group(1)) if i.endswith("AS database_size_gb")]
-    return sqlglot.parse_one(f"SELECT {item}", read="tsql").expressions[0]
+    return sqlglot.parse_one(f"SELECT {item}", read="tsql").expressions[0]  # type: ignore[no-any-return]
 
 
 def _live_expression() -> exp.Expression:
@@ -82,7 +82,7 @@ def _live_expression() -> exp.Expression:
     collector._query = query  # type: ignore[method-assign]
     collector.get_database_size_gb()
     (sql,) = seen
-    return sqlglot.parse_one(sql, read="tsql").expressions[0]
+    return sqlglot.parse_one(sql, read="tsql").expressions[0]  # type: ignore[no-any-return]
 
 
 def _evaluate(node: exp.Expression, pages: int) -> float:

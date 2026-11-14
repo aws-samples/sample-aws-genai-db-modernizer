@@ -202,7 +202,7 @@ def test_a_saved_design_always_carries_its_topic() -> None:
 
 def _collect(schema: dict[str, Any], engine: str = "dynamodb") -> list[dict[str, Any]]:
     data = SimpleNamespace(engines={engine: SimpleNamespace(schema_design=schema)})
-    return _collect_trade_offs(data)
+    return _collect_trade_offs(data)  # type: ignore[no-any-return]
 
 
 NEW = current_version(DynamoDBModelOutputContract)
@@ -332,9 +332,9 @@ def _old_and_new_reports() -> tuple[dict[str, Any], dict[str, Any]]:
     new = {
         "contract_version": current_version(SynthesisOutputContract),
         "trade_offs": [
-            {**old["trade_offs"][0], "topic": "other", "note_kind": None},
-            {**old["trade_offs"][1], "topic": "other", "note_kind": "review"},
-            {**old["trade_offs"][2], "topic": "other", "note_kind": "warning"},
+            {**old["trade_offs"][0], "topic": "other", "note_kind": None},  # type: ignore[dict-item]
+            {**old["trade_offs"][1], "topic": "other", "note_kind": "review"},  # type: ignore[dict-item]
+            {**old["trade_offs"][2], "topic": "other", "note_kind": "warning"},  # type: ignore[dict-item]
         ],
     }
     return old, new
@@ -517,7 +517,7 @@ def test_the_bedrock_designer_clears_a_note_kind_the_model_sent(structured: bool
     runner = SimpleNamespace(
         target_type="dynamodb", output_model=_Design, designer=lambda p: result
     )
-    out = SchemaDesignRunner._invoke_designer(runner, "prompt")  # type: ignore[arg-type]
+    out: Any = SchemaDesignRunner._invoke_designer(runner, "prompt")  # type: ignore[arg-type]
     assert [(t.description, t.note_kind) for t in out.trade_offs] == [("Use a GSI.", None)]
     # The pipeline's own note appended afterwards keeps its kind.
     SchemaDesignRunner._append_trade_offs(runner, out, ["[PE note] Check it."])  # type: ignore[arg-type]

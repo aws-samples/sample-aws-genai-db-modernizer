@@ -81,7 +81,7 @@ Pre-commit hooks run automatically on every commit to ensure code quality:
 - **Black** - format Python code
 - **isort** - sort imports
 - **Ruff** - lint Python code
-- **mypy** - type checking
+- **mypy** - type checking: `uv run mypy` in the project environment, the same command as `ci/lint.sh`, with its paths and rules in `[tool.mypy]` in `pyproject.toml`
 - **Security scan** - `ci/security.sh` on the staged files: semgrep with the rules `ci/security.toml` pins, gitleaks and Bandit (the same script the CI `security` job and `./ci/pre_merge.sh` run) <!-- claim: tests/unit/ci/test_security_parity.py::test_the_precommit_security_hook_runs_the_script_on_every_staged_file, tests/unit/ci/test_security_parity.py::test_the_github_security_job_runs_the_script_on_the_whole_tree, tests/unit/ci/test_security_parity.py::test_pre_merge_runs_the_script_quick_on_the_branch_and_full_otherwise -->
 - **detect-secrets** - secrets, against `.secrets.baseline` <!-- claim: tests/unit/ci/test_security_parity.py::test_detect_secrets_stays_a_separate_precommit_hook -->
 - **markdownlint** - lint Markdown files

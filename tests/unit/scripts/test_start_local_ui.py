@@ -858,7 +858,7 @@ def test_servers_running_with_the_other_setting_are_restarted(
     _all_processes_match(monkeypatch)
     _stamp_build()
     killed: list[dict[str, int]] = []
-    monkeypatch.setattr(start_local_ui, "kill_pids", lambda pids: killed.append(dict(pids)) or {})
+    monkeypatch.setattr(start_local_ui, "kill_pids", lambda pids: killed.append(dict(pids)) or {})  # type: ignore[func-returns-value]
     flags = _fresh_start(monkeypatch)
 
     result, code = start_local_ui.run_start(

@@ -297,7 +297,7 @@ def _session_result(
 
 def _one_hour_write(tokens: int) -> dict[str, Any]:
     usage = _u(0, 1, cw=tokens)
-    usage["cache_creation"] = {"ephemeral_5m_input_tokens": 0, "ephemeral_1h_input_tokens": tokens}
+    usage["cache_creation"] = {"ephemeral_5m_input_tokens": 0, "ephemeral_1h_input_tokens": tokens}  # type: ignore[assignment]
     return usage
 
 

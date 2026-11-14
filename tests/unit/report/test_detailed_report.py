@@ -599,7 +599,7 @@ def _v4_record(**ddb: Any) -> dict[str, Any]:
         "aurora_postgresql": {"cost": 55, "base": 74},
         "dynamodb": {"pattern": 100, "cost": 90, "base": 96, "penalty": 20, "fit": 76, **ddb},
     }
-    return record
+    return record  # type: ignore[no-any-return]
 
 
 def _v4_detail(tmp_path: Path, record: dict[str, Any], ladder: list | None = None):

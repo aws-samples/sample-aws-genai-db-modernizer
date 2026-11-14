@@ -135,7 +135,7 @@ def test_strands_accepts_a_delta_with_null_lists_on_the_first_try() -> None:
     use = {"toolUseId": "t1", "name": tool.tool_name, "input": json.loads(json.dumps(answer))}
 
     async def run() -> list[Any]:
-        return [e async for e in tool.stream(use, {}, structured_output_context=context)]
+        return [e async for e in tool.stream(use, {}, structured_output_context=context)]  # type: ignore[arg-type]
 
     result = asyncio.run(run())[-1].tool_result
     assert result["status"] == "success", result

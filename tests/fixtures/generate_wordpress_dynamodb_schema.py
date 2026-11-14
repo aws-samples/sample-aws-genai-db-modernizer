@@ -198,7 +198,7 @@ def build() -> DynamoDBModelOutputContract:
         table_definitions=table_defs,
         hot_partition_analysis=hot,
         trade_offs=[
-            TradeOff(
+            TradeOff(  # type: ignore[list-item]
                 description="Single-entity table per WordPress entity",
                 impact="Matches WordPress key lookups; extra tables vs. an item collection.",
             )

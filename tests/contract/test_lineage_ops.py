@@ -5,6 +5,8 @@
 
 from __future__ import annotations
 
+from typing import Any
+
 import pytest
 from pydantic import TypeAdapter, ValidationError
 
@@ -17,7 +19,7 @@ from src.contracts.lineage_ops import (
     reads_own_row,
 )
 
-OP = TypeAdapter(LineageOp)
+OP: TypeAdapter[Any] = TypeAdapter(LineageOp)
 
 
 def test_each_op_parses_to_its_model():

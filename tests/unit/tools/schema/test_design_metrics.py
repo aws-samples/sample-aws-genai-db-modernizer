@@ -739,7 +739,7 @@ def _runner(outputs: list[_Out]):
         target_type="dynamodb",
         output_model=_Out,
         model=MagicMock(),
-        designer_agent=designer,
+        designer_agent=designer,  # type: ignore[arg-type]
         output_check_fn=lambda out: (
             [] if out.rps == 15.0 else [f"design_rps {out.rps:g} disagrees"]
         ),
