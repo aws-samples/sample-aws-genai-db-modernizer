@@ -132,3 +132,31 @@ def test_the_scripts_deploy_and_confirm_on_mysql_with_triggers_left_to_the_trigg
            "FOR EACH ROW SET NEW.id = NEW.id")  # fmt: skip
     assert {m.routine_id: m.problem for m in check().mismatches} == {
         "shop.orders_bi": "present_before_triggers_enable"}  # fmt: skip
+
+
+def test_the_deploy_creates_a_routine_database_the_step_tables_are_not_in(mysql_socket, tmp_path):
+    from tests.unit.tools.data_movement.routine_fixtures import mysql_source
+
+    client, sock = mysql_socket
+    _mysql(client, sock, "CREATE USER IF NOT EXISTS 'admin'@'%'; GRANT ALL ON *.* TO 'admin'@'%';"
+           "DROP DATABASE IF EXISTS shop_functions;")  # fmt: skip
+    rows = [row("shop_functions.tally", "procedure", schema="shop_functions", status="rewritten",
+                signature="IN INT", specific="tally")]  # fmt: skip
+    artifact = migration(rows, "mysql")
+    sources = [mysql_source("tally", "CREATE DEFINER=`app`@`%` PROCEDURE `tally`(IN p INT)\n"
+                            "BEGIN\n  SELECT p;\nEND", schema="shop_functions")]  # fmt: skip
+    store = _job(tmp_path, artifact, sources, "mysql")
+    contract = contract_with_routines(artifact)
+    assert _write(tmp_path, store, contract).in_script == 1
+    step = tmp_path / "step"
+    try:
+        deployed = _mysql(client, sock, None, stdin=step / DEPLOY_FILE)
+        assert deployed.returncode == 0, deployed.stderr.decode()
+        ran = _mysql(client, sock, None, "--batch", "--skip-column-names", stdin=step / CHECK_FILE)
+        assert ran.returncode == 0, ran.stderr.decode()
+        (step / CHECK_OUTPUT).write_bytes(ran.stdout)
+        result = read_check(step / CHECK_OUTPUT, contract, job_id="job1", database_name="shop",
+                            contract_sha=SHA, target_database=None)  # fmt: skip
+        assert (result.status, result.confirmed, result.mismatches) == ("pass", 1, [])
+    finally:
+        _mysql(client, sock, "DROP DATABASE IF EXISTS shop_functions;")

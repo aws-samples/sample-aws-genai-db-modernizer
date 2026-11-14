@@ -142,3 +142,33 @@ def test_the_check_script_is_read_only(server, tmp_path):
     (tmp_path / "tampered.sql").write_text(tampered)
     ran = _psql(server, "-f", str(tmp_path / "tampered.sql"), "-o", str(tmp_path / "out.tsv"))
     assert ran.returncode != 0 and "read-only transaction" in ran.stderr
+
+
+def test_the_deploy_creates_a_missing_routine_schema_and_runs_again_unchanged(server, tmp_path):
+    # Discourse's routines live in discourse_functions, a schema the step 1 DDL never
+    # creates (#2148): the deploy creates it first, and a second run changes nothing.
+    server.psql("\\set ON_ERROR_STOP on\nCREATE SCHEMA discourse_functions;\n"
+                "CREATE FUNCTION discourse_functions.bump(p integer) RETURNS integer LANGUAGE sql "
+                "AS $$ SELECT p + 1 $$;")  # fmt: skip
+    text = server.psql("\\set QUIET on\n\\pset format unaligned\n\\pset tuples_only on\n"
+                       "SELECT pg_get_functiondef('discourse_functions.bump(integer)'::regprocedure);")  # fmt: skip
+    server.psql("DROP SCHEMA discourse_functions CASCADE;")
+    rows = [row("discourse_functions.bump(integer)", schema="discourse_functions", name="bump",
+                specific="bump_1", signature="integer")]  # fmt: skip
+    artifact = migration(rows)
+    store = _job(tmp_path, artifact,
+                 [pg_source("bump_1", text.strip(), schema="discourse_functions")])  # fmt: skip
+    contract = contract_with_routines(artifact)
+    assert _write(tmp_path, store, contract).in_script == 1
+    step = tmp_path / "step"
+    try:
+        for _ in range(2):
+            deployed = _psql(server, "-f", str(step / DEPLOY_FILE))
+            assert deployed.returncode == 0, deployed.stderr
+        ran = _psql(server, "-f", str(step / CHECK_FILE), "-o", str(step / CHECK_OUTPUT))
+        assert ran.returncode == 0, ran.stderr
+        result = read_check(step / CHECK_OUTPUT, contract, job_id="job1", database_name="shop",
+                            contract_sha=SHA, target_database=None)  # fmt: skip
+        assert (result.status, result.confirmed, result.mismatches) == ("pass", 1, [])
+    finally:
+        server.psql("DROP SCHEMA IF EXISTS discourse_functions CASCADE;")

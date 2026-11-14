@@ -122,9 +122,10 @@ def mysql_source(
     *,
     sql_mode: str = "STRICT_TRANS_TABLES",
     collation: str | None = "utf8mb4_0900_ai_ci",
+    schema: str = "shop",
 ) -> RoutineSource:
     return RoutineSource.model_validate({
-        "kind": kind, "routine_id": name, "schema_name": "shop", "specific_name": name,
+        "kind": kind, "routine_id": name, "schema_name": schema, "specific_name": name,
         "create_statement": text, "origin": "show_create",
         "session": RoutineSession(sql_mode=sql_mode, character_set_client="utf8mb4",
                                   collation_connection=collation),
