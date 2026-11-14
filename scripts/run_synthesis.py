@@ -49,13 +49,19 @@ def _error(message: str, code: int = 1) -> None:
 
 def _failed(exc: Exception) -> None:
     """Print the phase's ``failed`` status line for a refusal and exit 1, recording it
-    against the job as :func:`_error` does."""
-    _output({"status": "failed", "phase": _PHASE, "error": type(exc).__name__, "message": str(exc)})
+    against the job as :func:`_error` does. A file that failed its safety check is told in
+    its public message and the field's position, never its path or content (#2199)."""
+    from src.shared.contract_versioning import UnsafeArtifactError
+
+    message = str(exc)
+    if isinstance(exc, UnsafeArtifactError):
+        message = f"{exc.public_message} (field: {exc.where})"
+    _output({"status": "failed", "phase": _PHASE, "error": type(exc).__name__, "message": message})
     if _JOB:
         from scripts._job_status import write_failure_marker
 
         write_failure_marker(
-            _JOB["store"], _JOB["db"], _JOB["job_id"], _PHASE, type(exc).__name__, str(exc)
+            _JOB["store"], _JOB["db"], _JOB["job_id"], _PHASE, type(exc).__name__, message
         )
     sys.exit(1)
 
@@ -265,15 +271,16 @@ def main() -> None:
 
     from src.agents.referee.move_ledger import UnreadableMove
     from src.agents.referee.synthesis_data import MissingSchemaDesigns
+    from src.shared.contract_versioning import UnsafeArtifactError
 
     try:
         if args.finalize:
             run_finalize(store, args.job_id, args.db, version)
         else:
             run_standard(store, args.job_id, args.db, version, args.llm_mode)
-    except (UnreadableMove, MissingSchemaDesigns) as exc:
-        # A refusal by design (#2154): one status line, no traceback. Both messages name
-        # only ids, versions, positions and field names.
+    except (UnreadableMove, MissingSchemaDesigns, UnsafeArtifactError) as exc:
+        # A refusal by design (#2154, #2199): one status line, no traceback. Each message
+        # names only ids, versions, positions and field names.
         _failed(exc)
 
 

@@ -24,6 +24,7 @@ import logging
 import os
 import tempfile
 from datetime import UTC, datetime
+from typing import Any
 
 from src.agents.interaction import read_answers, read_partial_output
 from src.agents.prompt_framing import with_untrusted_notice
@@ -236,6 +237,147 @@ def record_design_skip(
     return key
 
 
+REFUSED_SUFFIX = ".refused"
+
+
+def set_aside_refused_design(
+    store: ArtifactStore,
+    database_name: str,
+    job_id: str,
+    target_type: str,
+    assignment_version: int,
+) -> str | None:
+    """Move the engine's saved design aside when its read refuses it (#2199), so a rerun of
+    the schema design (the next step the refusal names) replaces it instead of failing on
+    it. The refused file is kept: copied to :data:`REFUSED_SUFFIX` in the same folder
+    (``.refused.2`` and on for another content; an identical earlier copy is reused), which
+    no reader loads, and removed only once the copy is written. A store that can copy but
+    not delete (S3 without delete rights) keeps the copy and the original; one that cannot
+    copy raw content (AWS Transform's) keeps only the original. Either way this run
+    overwrites the original, its content being untrusted anyway, and the log says which
+    happened. Logs the path and the refused field's position, never the content. Never
+    fails the run. Returns the new key when the original was moved, else ``None``."""
+    from src.shared.contract_versioning import ContractVersionError
+
+    folder = f"{database_name}/{job_id}/schema-{target_type}"
+    key = (
+        f"{folder}/v{assignment_version}/schema_output.json"
+        if assignment_version > 0
+        else f"{folder}/schema_output.json"
+    )
+    try:
+        if not store.exists(key):
+            return None
+        try:
+            store.read_json(key)
+            return None
+        except ContractVersionError as exc:
+            where = getattr(exc, "where", None) or "contract_version"
+        except (OSError, ValueError):
+            return None
+    except Exception:  # noqa: BLE001 -- setting aside is best effort; the run goes on
+        logger.warning("Schema design: could not check the saved design %s", key)
+        return None
+    try:
+        aside, moved = _copy_aside(store, key)
+    except _DeleteFailed as failed:  # the copy is written; the original stays
+        logger.warning(
+            "Schema design: could not set aside the refused saved design %s (field: %s); "
+            "copied it to %s, and the original stays until this run replaces it",
+            key,
+            where,
+            failed.aside,
+        )
+        return None
+    except Exception:  # noqa: BLE001 -- a read or write that raises (AccessDenied, ...)
+        logger.warning(
+            "Schema design: could not set aside the refused saved design %s (field: %s); "
+            "it stays until this run replaces it",
+            key,
+            where,
+        )
+        return None
+    if moved:
+        logger.warning(
+            "Schema design: set aside the refused saved design %s as %s (field: %s); "
+            "this run replaces it",
+            key,
+            aside,
+            where,
+        )
+        return aside
+    if aside is not None:
+        logger.warning(
+            "Schema design: copied the refused saved design %s to %s (field: %s); the "
+            "original stays until this run replaces it",
+            key,
+            aside,
+            where,
+        )
+        return None
+    logger.warning(
+        "Schema design: the refused saved design %s (field: %s) stays until this run "
+        "replaces it; this store cannot copy it",
+        key,
+        where,
+    )
+    return None
+
+
+def _copy_aside(store: ArtifactStore, key: str) -> tuple[str | None, bool]:
+    """Copy ``key``'s raw content (bytes, else text) next to it under a free ``.refused``
+    name, reusing an identical earlier copy, then remove the original. Returns the copy's
+    key (``None`` when the store cannot read or write raw content) and whether the
+    original is gone: a store that keeps the base class's delete, or whose delete does not
+    take effect, keeps both."""
+    try:
+        content = store.read_bytes(key)
+        write: Any = store.write_bytes
+    except NotImplementedError:
+        read_text = getattr(store, "read_text", None)
+        write = getattr(store, "write_text", None)
+        if read_text is None or write is None:
+            return None, False
+        try:
+            content = read_text(key)
+        except NotImplementedError:
+            return None, False
+    aside, n = f"{key}{REFUSED_SUFFIX}", 1
+    while store.exists(aside) and not _same_content(store, aside, content):
+        n += 1
+        aside = f"{key}{REFUSED_SUFFIX}.{n}"
+    if not store.exists(aside):  # else an earlier run's copy of this very file
+        try:
+            write(aside, content)
+        except NotImplementedError:
+            return None, False
+    if type(store).delete is ArtifactStore.delete:
+        return aside, False  # the default deletes nothing
+    try:
+        deleted = store.delete(key)
+    except Exception as exc:  # noqa: BLE001 -- refused (AccessDenied, ...): name the copy
+        raise _DeleteFailed(aside) from exc
+    return aside, bool(deleted) and not store.exists(key)
+
+
+class _DeleteFailed(Exception):
+    """The refused design's copy is written (``aside``) but deleting the original raised."""
+
+    def __init__(self, aside: str) -> None:
+        super().__init__(aside)
+        self.aside = aside
+
+
+def _same_content(store: ArtifactStore, key: str, content: bytes | str) -> bool:
+    try:
+        stored: bytes | str = (
+            store.read_bytes(key) if isinstance(content, bytes) else store.read_text(key)  # type: ignore[attr-defined]
+        )
+    except (NotImplementedError, OSError, AttributeError):
+        return False
+    return stored == content
+
+
 def clear_design_skip(
     store: ArtifactStore,
     database_name: str,
@@ -250,6 +392,7 @@ def clear_design_skip(
     and the external request -- so a design that never writes anything leaves the record
     and the engine still reports as skipped. A design is never removed. Returns whether
     a record was removed."""
+    from src.shared.contract_versioning import ContractVersionError
     from src.shared.design_records import skip_reason
 
     if assignment_version <= 0:
@@ -259,6 +402,10 @@ def clear_design_skip(
         return False
     try:
         record = store.read_json(key)
+    except ContractVersionError:
+        # A refused design is no skip record; the design that starts replaces it, and
+        # every caller sets it aside first (#2199).
+        return False
     except (OSError, ValueError):
         return False
     if skip_reason(record) is None or (isinstance(record, dict) and record.get("excluded_queries")):
@@ -275,7 +422,9 @@ def _skip_without_model(
     assignment_version: int,
 ) -> ScopeReport:
     """No model, no design: the engine's skip record says why (#2154), so synthesis
-    reports it as not designed instead of failing on a missing design."""
+    reports it as not designed instead of failing on a missing design. A refused saved
+    design is set aside first, so the record does not overwrite it (#2199)."""
+    set_aside_refused_design(store, database_name, job_id, target_type, assignment_version)
     say(f"[schema-design/{target_type}] {SCHEMA_DESIGN_SKIPPED_NONE_MODE}")
     record_design_skip(
         store,
@@ -966,6 +1115,9 @@ def run_schema_design(
         require_valid_guardrail_config()
     if llm_mode == "none":
         return _skip_without_model(store, database_name, job_id, target_type, assignment_version)
+    # A design with a model replaces a saved one its read refuses (#2199): set it aside
+    # first, so nothing below fails on it and the refused copy is kept.
+    set_aside_refused_design(store, database_name, job_id, target_type, assignment_version)
     # --- External LLM mode: write prepared input and return early ---
     if llm_mode == "external":
         # The request on disk is design work in progress: the engine is no longer
@@ -1154,6 +1306,7 @@ def run_schema_split(
 
     start_time = time.time()
     say(f"[schema-split/{target_type}] Starting for {database_name}")
+    set_aside_refused_design(store, database_name, job_id, target_type, assignment_version)
     clear_design_skip(store, database_name, job_id, target_type, assignment_version)
 
     # Read collector output

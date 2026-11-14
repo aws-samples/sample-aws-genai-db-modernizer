@@ -88,38 +88,81 @@ class ContractVersionError(Exception):
         )
 
 
+# A design outside an Aurora engine's folder that carries Aurora content: in another
+# engine's folder, or in an Aurora folder that names no Aurora engine (#2199).
+FOREIGN_AURORA = "Aurora DDL content"
+UNNAMED_AURORA = "unnamed Aurora engine"
+
+
 class UnsafeArtifactError(ContractVersionError):
     """A stored contract whose content fails a check every read of it makes (#2155).
 
-    A saved Aurora design whose column type is not on the DDL type allowlist is one.
-    A subclass of :class:`ContractVersionError` so every handler of a refused stored
-    artifact refuses this one the same way (the API's 409, a FAILED job, a script's
-    exit), never as "not available". ``str(exc)`` names the artifact and the field's
-    position, with at most 40 characters of the stored value; :attr:`public_message`
-    names neither.
+    A saved Aurora design whose column type is not on the DDL type allowlist is one, and
+    so is one whose DDL script, index or foreign key does not rebuild from checked parts
+    (#2199). A subclass of :class:`ContractVersionError` so every handler of a refused
+    stored artifact refuses this one the same way (the API's 409, a FAILED job, a
+    script's exit), never as "not available". ``str(exc)`` names the artifact and the
+    field's position, with at most 40 characters of a refused column type and nothing of
+    any other stored string; :attr:`public_message` names neither.
     """
 
     def __init__(
-        self, *, artifact: str, contract: str, where: str, value: object, engine_name: str
+        self,
+        *,
+        artifact: str,
+        contract: str,
+        where: str,
+        value: object,
+        engine_name: str,
+        kind: str = "column type",
     ) -> None:
-        Exception.__init__(
-            self,
-            f"{artifact}: stored {contract} cannot be read: {where} {_shown(value)} "
-            f"is not an allowed {engine_name} column type",
-        )
+        if kind == "column type":
+            detail = f"{where} {_shown(value)} is not an allowed {engine_name} column type"
+        elif kind == FOREIGN_AURORA:
+            detail = f"it carries Aurora DDL content, which a {engine_name} design does not"
+        elif kind == UNNAMED_AURORA:
+            detail = f"{where} names no Aurora engine, so its DDL cannot be checked"
+        else:
+            detail = (
+                f"{where} is not {_article(kind)} {kind} the {engine_name} DDL generator writes"
+            )
+        Exception.__init__(self, f"{artifact}: stored {contract} cannot be read: {detail}")
         self.artifact = artifact
         self.contract = contract
         self.stored = value
         self.expected = ""
         self.where = where
         self.engine_name = engine_name
+        self.kind = kind
 
     @property
     def public_message(self) -> str:
+        """What is wrong and what to do, with no path and no stored text (#2199)."""
+        if self.kind == FOREIGN_AURORA:
+            return (
+                f"This assessment's saved {self.engine_name} design carries Aurora DDL content "
+                f"(a DDL script, SQL statements or Aurora column types), which a "
+                f"{self.engine_name} design does not have, so it was not loaded. Rerun the "
+                f"{self.engine_name} schema design."
+            )
+        if self.kind == UNNAMED_AURORA:
+            return (
+                "This assessment's saved Aurora design does not say whether it is for Aurora "
+                "MySQL or Aurora PostgreSQL, so its DDL could not be checked and it was not "
+                "loaded. Rerun the Aurora MySQL or Aurora PostgreSQL schema design."
+            )
+        if self.kind == "column type":
+            what = "a column type that is not an allowed SQL type"
+        else:
+            what = f"{_article(self.kind)} {self.kind} the tool does not write"
         return (
-            f"This assessment's saved {self.engine_name} design has a column type that "
-            "is not an allowed SQL type, so it was not loaded."
+            f"This assessment's saved {self.engine_name} design failed its safety check: it "
+            f"has {what}, so it was not loaded. Rerun the {self.engine_name} schema design."
         )
+
+
+def _article(noun: str) -> str:
+    return "an" if noun[:1].lower() in "aeiou" else "a"
 
 
 def _shown(value: object) -> str:
@@ -775,9 +818,119 @@ def check_artifact[T](path: str, data: T) -> T:
     if not isinstance(data, Mapping):
         return data
     model = contract_for_payload(path, data)
+    data = _aurora_content_on_read(path, data, model)  # type: ignore[assignment]
     if model is None:
         return data
     return read_contract_payload(data, model, artifact=path)  # type: ignore[return-value]
+
+
+_ANY_SCHEMA_OUTPUT = re.compile(r"(?:^|/)schema-([^/]+)/(?:v\d+/)?schema_output\.json$")
+
+
+def _filled(value: object) -> bool:
+    """Whether a stored field holds anything, in any shape (``None``, ``""``, ``[]`` and
+    ``{}`` hold nothing; a whitespace-only string holds something)."""
+    return value not in (None, "", [], {})
+
+
+def _ddl_fields(payload: Mapping[str, Any]) -> list[object]:
+    """Every field an Aurora reader takes as DDL: the script, the statement lists at the top
+    level and on each table, and each column's Aurora type."""
+    fields = [payload.get(k) for k in ("generated_ddl", "indexes", "foreign_keys")]
+    tables = payload.get("table_definitions")
+    for table in tables if isinstance(tables, list) else []:
+        if not isinstance(table, Mapping):
+            continue
+        fields += [table.get("indexes"), table.get("foreign_keys")]
+        columns = table.get("columns")
+        for column in columns if isinstance(columns, list) else []:
+            if isinstance(column, Mapping):
+                fields.append(column.get("aurora_type"))
+    return fields
+
+
+def _aurora_only_fields(payload: Mapping[str, Any]) -> bool:
+    """Whether a design in another engine's folder fills a field only an Aurora design has
+    (#2199 round 5): ``generated_ddl``, a column's ``aurora_type``, or a ``target_engine``
+    naming an Aurora engine. No other engine's design contract declares the first two
+    (``test_no_other_engines_contract_has_an_aurora_only_field``), so this is an allowlist:
+    the other fields, ``indexes`` and ``foreign_keys`` included, are that engine's own and
+    are never read as Aurora DDL there. No text is scanned."""
+    if _filled(payload.get("generated_ddl")):
+        return True
+    engine = payload.get("target_engine")
+    if isinstance(engine, str) and _is_aurora_family(engine):
+        return True
+    tables = payload.get("table_definitions")
+    for table in tables if isinstance(tables, list) else []:
+        columns = table.get("columns") if isinstance(table, Mapping) else None
+        for column in columns if isinstance(columns, list) else []:
+            if isinstance(column, Mapping) and _filled(column.get("aurora_type")):
+                return True
+    return False
+
+
+def _is_aurora_family(name: str) -> bool:
+    """Whether an engine or folder name is an Aurora engine's, in any case: the prefix every
+    Aurora engine id shares (the legacy ``schema-aurora/`` folder is that prefix)."""
+    from src.contracts.aurora_design_delta import ENGINE_TYPE_RULES
+
+    return any(name.lower().startswith(e.split("_", 1)[0]) for e in ENGINE_TYPE_RULES)
+
+
+def _aurora_content_on_read(
+    path: str, payload: Mapping[str, Any], model: type[BaseModel] | None
+) -> Mapping[str, Any]:
+    """A schema design whose folder is not an Aurora engine's own (#2199), decided by the
+    folder and the fields, never by scanning text (round 5):
+
+    - an Aurora-family folder in any case (the legacy ``schema-aurora/``,
+      ``schema-Aurora_MySQL/``), which the UI renders as Aurora: whenever any DDL field
+      (:func:`_ddl_fields`) holds something, in any shape, the file runs the full rebuild
+      check for the engine its ``target_engine`` names, and is refused when it names none;
+    - another engine's folder: refused when it fills a field only an Aurora design has
+      (:func:`_aurora_only_fields`); everything else is that engine's own design."""
+    found = _ANY_SCHEMA_OUTPUT.search(path)
+    if found is None:
+        return payload
+    if model is not None and (
+        f"{model.__module__}:{model.__qualname__}" in _aurora_targets()
+        or f"{model.__module__}:{model.__qualname__}" == _SKIPPED_SCHEMA_OUTPUT
+    ):
+        return payload  # the engine's own folder, or a placeholder: its own read check
+    from src.contracts.aurora_design_delta import ENGINE_TYPE_RULES
+    from src.shared.engine_names import display_engine
+
+    folder = found.group(1).lower()
+    aurora = _is_aurora_family(folder)
+    if aurora and not any(_filled(f) for f in _ddl_fields(payload)):
+        return payload
+    if not aurora and not _aurora_only_fields(payload):
+        return payload
+    engine = payload.get("target_engine")
+    if aurora and isinstance(engine, str) and engine in ENGINE_TYPE_RULES:
+        return _aurora_design_on_read(engine)(payload, path)
+    raise UnsafeArtifactError(
+        artifact=path,
+        contract=f"{found.group(1)} schema design",
+        where="target_engine",
+        value=None,
+        engine_name=display_engine(folder),
+        kind=UNNAMED_AURORA if aurora else FOREIGN_AURORA,
+    )
+
+
+@cache
+def _aurora_targets() -> frozenset[str]:
+    """``"module:Class"`` of each Aurora engine's design contract."""
+    from src.contracts.aurora_design_delta import ENGINE_TYPE_RULES
+
+    return frozenset(
+        target
+        for pattern, target in _schema_output_targets()
+        for engine in ENGINE_TYPE_RULES
+        if pattern == _SCHEMA_OUTPUT.format(engine=re.escape(engine))
+    )
 
 
 def read_contract_payload(
@@ -816,28 +969,59 @@ _ReadTransform = Callable[[Mapping[str, Any], str], Mapping[str, Any]]
 
 def _aurora_design_on_read(engine: str) -> _ReadTransform:
     """A saved ``engine`` design as every read returns it (#2155): each column type run
-    through the DDL type allowlist generation runs (``check_design_column_types``), so a
-    type edited into the file is refused (:class:`UnsafeArtifactError`), never read."""
+    through the DDL type allowlist generation runs (``check_design_column_types``), then
+    each index, foreign key and the ``generated_ddl`` script rebuilt from those checked
+    parts (``check_design_ddl``, #2199), so a type or statement edited into the file is
+    refused (:class:`UnsafeArtifactError`), never read."""
 
     def on_read(payload: Mapping[str, Any], artifact: str) -> Mapping[str, Any]:
         from src.contracts.aurora_design_delta import (
-            SavedDesignTypeError,
+            SavedDesignError,
             check_design_column_types,
         )
         from src.shared.engine_names import display_engine
+        from src.tools.schema.aurora_common.saved_design import check_design_ddl
 
         try:
-            return check_design_column_types(payload, engine)
-        except SavedDesignTypeError as exc:
+            return check_design_ddl(check_design_column_types(payload, engine), engine)
+        except SavedDesignError as exc:
             raise UnsafeArtifactError(
                 artifact=artifact,
                 contract=f"{engine} schema design",
                 where=exc.where,
                 value=exc.value,
                 engine_name=display_engine(engine),
+                kind=exc.kind,
             ) from None
 
     return on_read
+
+
+_SKIPPED_SCHEMA_OUTPUT = "src.contracts.skipped_placeholders:SkippedSchemaOutput"
+_ENGINE_OF_PATH = re.compile(r"(?:^|/)schema-([^/]+)/")
+
+
+def _skipped_design_on_read(payload: Mapping[str, Any], artifact: str) -> Mapping[str, Any]:
+    """A skipped schema design as every read returns it (#2199): one that carries table
+    definitions or SQL text (``check_skipped_design``) is refused, since nothing else reads a
+    placeholder's design fields and the UI would show them."""
+    from src.contracts.aurora_design_delta import SavedDesignError
+    from src.shared.engine_names import display_engine
+    from src.tools.schema.aurora_common.saved_design import check_skipped_design
+
+    try:
+        return check_skipped_design(payload)
+    except SavedDesignError as exc:
+        found = _ENGINE_OF_PATH.search(artifact)
+        engine = found.group(1) if found else str(payload.get("target_type") or "schema")
+        raise UnsafeArtifactError(
+            artifact=artifact,
+            contract=f"{engine} skipped schema design",
+            where=exc.where,
+            value=None,
+            engine_name=display_engine(engine),
+            kind=exc.kind,
+        ) from None
 
 
 # Applied to every read of the contract, whatever its version, after the version check
@@ -845,7 +1029,7 @@ def _aurora_design_on_read(engine: str) -> _ReadTransform:
 # from before #1625 can hold literal values in its query text, and none may reach an
 # output; one from before #1636 can hold a 0 for an unknown row count, and none may read
 # as an empty table. A saved Aurora design's column types reach DDL, so each passes the
-# same type allowlist generation runs (#2155).
+# same type allowlist generation runs (#2155), and its DDL strings are rebuilt from them (#2199).
 @cache
 def _read_transforms() -> dict[str, _ReadTransform]:
     """``"module:Class"`` -> its transform: the collector output's, and each design
@@ -859,4 +1043,5 @@ def _read_transforms() -> dict[str, _ReadTransform]:
         for engine in ENGINE_TYPE_RULES:
             if pattern == _SCHEMA_OUTPUT.format(engine=re.escape(engine)):
                 transforms[target] = _aurora_design_on_read(engine)
+    transforms[_SKIPPED_SCHEMA_OUTPUT] = _skipped_design_on_read
     return transforms

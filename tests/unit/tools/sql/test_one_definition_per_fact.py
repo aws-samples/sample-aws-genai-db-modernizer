@@ -131,6 +131,7 @@ OTHER_SQL_MODULES: dict[str, str] = {
     ),
     "src/graph/schema.py": "the graph store's own DDL, not a workload query",
     "src/tools/schema/aurora_common/delta_merge.py": "the generated Aurora DDL",
+    "src/tools/schema/aurora_common/saved_design.py": "a saved design's generated Aurora DDL",
     "src/report/executive_report.py": (
         "the executive report keeps quoted SQL out of what it prints (#1020); it reads no "
         "query fact"

@@ -481,7 +481,11 @@ def _read_design_trace(
 def _read_artifact(  # type: ignore[type-arg]
     store: ArtifactStore, path: str, required: bool = False, missing_level: int = logging.WARNING
 ) -> dict:
-    """Read a JSON artifact via ArtifactStore. Returns empty dict on failure."""
+    """Read a JSON artifact via ArtifactStore. Returns empty dict on failure, except for a
+    stored file that fails its safety check (:class:`UnsafeArtifactError`, #2199): that one
+    is no missing file, so it stops synthesis with its own message and next step."""
+    from src.shared.contract_versioning import UnsafeArtifactError
+
     try:
         if not store.exists(path):
             if required:
@@ -491,7 +495,7 @@ def _read_artifact(  # type: ignore[type-arg]
         data: dict = store.read_json(path)  # type: ignore[type-arg]
         say(f"[synthesis] Read {path}")
         return data
-    except RuntimeError:
+    except (RuntimeError, UnsafeArtifactError):
         raise
     except Exception as e:
         if required:
