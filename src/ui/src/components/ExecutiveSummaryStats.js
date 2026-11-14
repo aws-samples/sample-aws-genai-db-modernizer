@@ -121,7 +121,7 @@ const ExecutiveSummaryStats = memo(({
           </Box>
         )}
       </div>
-      <div data-tile="target-engines">
+      <div data-tile="target-engines" id="target-engines">
         <Box variant="awsui-key-label">{t('analysis-results.executive-summary.target-engines')}</Box>
         {targetEngines}
         {Array.isArray(engineScope) && engineScope.length > 0 && (

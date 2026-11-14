@@ -7,12 +7,19 @@ import Header from "@cloudscape-design/components/header";
 import Box from "@cloudscape-design/components/box";
 import SpaceBetween from "@cloudscape-design/components/space-between";
 import ExpandableSection from "@cloudscape-design/components/expandable-section";
+import Badge from "@cloudscape-design/components/badge";
 import EngineBadge from "./EngineBadge";
+import AdoptionPathPanel from "./AdoptionPathPanel";
+import WaveStages from "./WaveStages";
 import {
   heterogeneousNote, migrationWaves, waveCount, waveGaps, waveHeadline, waveMovesNothing, waveReadiness,
   waveTitle,
 } from "../utils/migrationWaves";
 import { cutoverResponsibilityOf } from "../utils/reportFacts";
+import {
+  adoptionOf, defaultPathId, findPath, oneStepPointerOf, pathLabel, pathLeavesWaveOut, pathStopsInWave,
+  selectorPaths, slicePlanOf, wavePhase,
+} from "../utils/adoptionPaths";
 
 /**
  * "Migration roadmap" (#957): report.json's migration waves, the same ones the
@@ -39,8 +46,16 @@ import { cutoverResponsibilityOf } from "../utils/reportFacts";
  * The plan states once that the cutover is the customer's (facts.cutover_responsibility,
  * #2107), as both reports do.
  *
+ * #1132: above the wave cards, the adoption paths (AdoptionPathPanel): a selector, the
+ * selected path's tiles and the one-step option; each card states its steps and stages
+ * (WaveStages). The full target is selected when the page opens, so the default view is
+ * today's; an earlier path greys out the waves and stages it leaves out. The selection is
+ * this component's own state: it changes what is shown and is never sent anywhere. A
+ * report without facts.adoption shows no selector and greys nothing.
+ *
  * Callers pass `t` (the page's own `useTranslation` function), like
- * QueryRoutingTable.
+ * QueryRoutingTable, and may pass `schemaSectionId`, the target schemas' section the
+ * one-step option links to.
  */
 
 const INLINE_TOGGLE_STYLE = {
@@ -127,10 +142,22 @@ function GateText({ wave, t }) {
   );
 }
 
-const MigrationWavePlan = memo(({ synthesis, t }) => {
+// A wave the selected path leaves out: marked by a dashed rule and a full-contrast
+// badge, never faded (WCAG AA contrast, review of #2249).
+const LEFT_OUT_STYLE = { borderLeft: '3px dashed currentColor', paddingLeft: '12px' };
+
+const MigrationWavePlan = memo(({ synthesis, t, schemaSectionId }) => {
+  const [chosenPathId, setChosenPathId] = useState(null);
+  const [showAllPaths, setShowAllPaths] = useState(false);
   const waves = migrationWaves(synthesis);
   if (waves.length === 0) return null;
   const count = waveCount(synthesis);
+  const adoption = adoptionOf(synthesis);
+  const plan = slicePlanOf(synthesis);
+  const selected = adoption ? findPath(adoption, chosenPathId || defaultPathId(adoption)) : null;
+  // Nothing is greyed for the default path (the full target, today's view).
+  const greying = selected && selected.path_id !== defaultPathId(adoption) ? selected : null;
+  const selectedLabel = selected ? pathLabel(t, selected, defaultPathId(adoption)) : '';
   return (
     <div id="migration-roadmap-section">
       <Container
@@ -138,15 +165,36 @@ const MigrationWavePlan = memo(({ synthesis, t }) => {
           <Header
             variant="h2"
             counter={count === null ? undefined : t('analysis-results.waves.counter', { count })}
-            description={t('analysis-results.waves.suggested-path', {
-              section: t('analysis-results.executive-summary.title'),
-            })}
+            description={adoption && adoption.one_step
+              ? t('analysis-results.waves.suggested-path-adoption')
+              : t('analysis-results.waves.suggested-path', {
+                section: t('analysis-results.executive-summary.title'),
+              })}
           >
             {t('analysis-results.waves.title')}
           </Header>
         )}
       >
         <SpaceBetween size="l">
+          {adoption && selected && (
+            <AdoptionPathPanel
+              adoption={adoption}
+              plan={plan}
+              selected={selected}
+              onSelect={setChosenPathId}
+              showAll={showAllPaths}
+              onShowAll={(next) => {
+                setShowAllPaths(next);
+                // "Show fewer" hides a path picked under "Show all": back to the default.
+                if (!next && selected && !selectorPaths(adoption, false).some(p => p.path_id === selected.path_id)) {
+                  setChosenPathId(null);
+                }
+              }}
+              pointer={oneStepPointerOf(synthesis)}
+              schemaSectionId={schemaSectionId}
+              t={t}
+            />
+          )}
           <Box>
             <span data-figure="cutover-responsibility">{cutoverResponsibilityOf(synthesis)}</span>
           </Box>
@@ -155,8 +203,16 @@ const MigrationWavePlan = memo(({ synthesis, t }) => {
               <span data-figure="wave-readiness-rule">{t('analysis-results.waves.readiness-rule')}</span>
             </Box>
           )}
-          {waves.map((wave) => (
-            <div key={wave.wave} data-wave={wave.wave}>
+          {waves.map((wave) => {
+            const phase = wavePhase(plan, wave.wave);
+            const leftOut = pathLeavesWaveOut(greying, phase);
+            return (
+            <div
+              key={wave.wave}
+              data-wave={wave.wave}
+              data-left-out={leftOut ? 'true' : undefined}
+              style={leftOut ? LEFT_OUT_STYLE : undefined}
+            >
               <SpaceBetween size="xs">
                 <Box variant="h3">
                   {t('analysis-results.waves.wave-title', { wave: wave.wave, title: waveTitle(wave) })}
@@ -168,6 +224,29 @@ const MigrationWavePlan = memo(({ synthesis, t }) => {
                 </SpaceBetween>
                 {!waveMovesNothing(synthesis, wave) && (
                   <div data-figure="wave-stats">{waveHeadline(t, synthesis, wave)}</div>
+                )}
+                {leftOut && (
+                  <div>
+                    <span data-figure="wave-left-out-badge">
+                      <Badge color="grey">{t('analysis-results.adoption.stage-left-out')}</Badge>
+                    </span>
+                  </div>
+                )}
+                {leftOut && (
+                  <Box>
+                    <span data-figure="wave-left-out">
+                      {t('analysis-results.adoption.wave-left-out', { path: selectedLabel })}
+                    </span>
+                  </Box>
+                )}
+                {pathStopsInWave(greying, phase) && (
+                  <Box>
+                    <span data-figure="wave-path-stops">
+                      {t('analysis-results.adoption.wave-stops-inside', {
+                        path: selectedLabel, step: greying.stops_after_step,
+                      })}
+                    </span>
+                  </Box>
                 )}
                 {wave.rationale && <Box color="text-body-secondary">{wave.rationale}</Box>}
                 {wave.gate && (
@@ -202,6 +281,7 @@ const MigrationWavePlan = memo(({ synthesis, t }) => {
                     </ul>
                   </div>
                 )}
+                {phase && <WaveStages plan={plan} wave={wave.wave} path={greying} t={t} />}
                 {!waveMovesNothing(synthesis, wave) && (wave.tables || []).length > 0 && (
                   <ExpandableSection headerText={t('analysis-results.waves.tables')} variant="footer">
                     <Box fontSize="body-s"><span data-figure="wave-tables">{wave.tables.join(', ')}</span></Box>
@@ -209,7 +289,8 @@ const MigrationWavePlan = memo(({ synthesis, t }) => {
                 )}
               </SpaceBetween>
             </div>
-          ))}
+            );
+          })}
         </SpaceBetween>
       </Container>
     </div>

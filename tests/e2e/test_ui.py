@@ -646,6 +646,198 @@ def test_results_page_shows_the_reports_wave_plan(
         assert ev == {"console": [], "pageerror": [], "failed": []}, (r.db, ev)
 
 
+def _adoption_tiles(path: dict, adoption: dict) -> dict[str, str | None]:
+    """The four tiles of a path as the results page must state them (#1132): read from
+    ``facts.adoption.paths[]``, an earlier path's cost only with per-path sizing, and no
+    difference from the relational move only when it has no cost."""
+    from src.shared.engine_names import display_engine
+
+    per_path = adoption["cost_basis"] == "per_path_sizing"
+    stated = per_path or path["path_id"] == "full_target"
+    difference = None
+    delta = path["cost_delta_vs_relational_usd"]
+    if (
+        adoption.get("relational_monthly_cost_usd") is not None
+        and path["path_id"] != "relational_only"
+        and stated
+    ):
+        difference = (
+            "the same as the relational move only"
+            if delta == 0
+            else f"${abs(delta):,.2f} {'less' if delta < 0 else 'more'} than the relational move only"
+        )
+    return {
+        "engines": ", ".join(display_engine(e) for e in path["engines"]),
+        "queries": f"{path['queries_moved']:,}",
+        "cost": (
+            f"${path['monthly_cost_usd']:,.2f}" if stated else "Stated for the full target only"
+        ),
+        "difference": difference,
+        "risks": f"{path['critical_high_risks']:,}",
+    }
+
+
+def _choose_path(panel: Locator, path_id: str) -> None:
+    panel.locator(f'[role=group] [data-path="{path_id}"] button').click()
+
+
+def _shown_tiles(panel: Locator) -> dict[str, str | None]:
+    cost = panel.locator("[data-figure=path-cost]")
+    difference = panel.locator("[data-figure=path-cost-difference]")
+    shown_difference = difference.inner_text().strip() if difference.count() else None
+    cost_text = cost.inner_text().strip()
+    if shown_difference:
+        cost_text = cost_text.replace(shown_difference, "").strip()
+    return {
+        "engines": panel.locator("[data-figure=path-engines]").inner_text().strip(),
+        "queries": panel.locator("[data-figure=path-queries-moved]").inner_text().strip(),
+        "cost": cost_text,
+        "difference": shown_difference,
+        "risks": panel.locator("[data-figure=path-risks]").inner_text().strip(),
+    }
+
+
+def test_results_page_shows_the_adoption_paths_stages_and_one_step_option(
+    page: Page, ui: str, all_runs: list[PipelineResult]
+) -> None:
+    """#1132: above the roadmap's wave cards, a path selector opens on the full target
+    (the default, so the roadmap reads as before), each tile reads as report.json's
+    ``facts.adoption.paths[]``, and the selected path's steps and cost lines are the
+    engineering report's. Choosing an earlier path greys out the waves and stages it
+    leaves out and sends nothing to the API; each wave states its stages as
+    ``facts.slice_plan.wave_phases`` and the engineering report do; the one-step option
+    states the report's one-step lines. A report without adoption paths shows none."""
+    from tests.e2e.deliverable_figures import md_plain
+
+    writes: list[str] = []
+
+    def on_request(req: playwright.sync_api.Request) -> None:
+        if req.method not in ("GET", "HEAD", "OPTIONS"):
+            writes.append(f"{req.method} {req.url}")
+
+    page.on("request", on_request)
+    checked = 0
+    for r in all_runs:
+        report = json.loads((r.artifact_root / r.report["report"]).read_text())
+        adoption = (report.get("facts") or {}).get("adoption") or {}
+        plan = (report.get("facts") or {}).get("slice_plan") or {}
+        ev = _watch(page)
+        writes.clear()
+        page.goto(f"{ui}/analysis/results/{r.job_id}")
+        _loaded(page, r)
+        section = page.locator("#migration-roadmap-section")
+        panel = section.locator("[data-figure=adoption-paths]")
+        if not adoption.get("paths"):
+            assert panel.count() == 0, r.db
+            continue
+        md = md_plain(r.deliverable("engineering-report.md").read_text(encoding="utf-8"))
+        assignment = r.job_dir() / "assignment" / f"v{report['assignment_summary']['version']}"
+        before = {p.name: p.read_bytes() for p in assignment.iterdir() if p.is_file()}
+        paths = {p["path_id"]: p for p in adoption["paths"]}
+        summary = adoption["summary_path_ids"]
+        chips = panel.locator("[role=group] [data-path]")
+
+        assert [c.get_attribute("data-path") for c in chips.all()] == summary, r.db
+        selected = panel.locator("[data-figure=selected-path]")
+        # The full target opens selected, and nothing is greyed: the roadmap as before.
+        assert selected.get_attribute("data-path") == adoption["default_path_id"], r.db
+        assert section.locator("[data-left-out]").count() == 0, r.db
+        assert panel.locator("[data-figure=adoption-path-count]").inner_text() == (
+            f"({adoption['path_count']} paths)"
+        ), r.db
+        assert f"## Adoption paths ({adoption['path_count']})" in md, r.db
+        text = panel.inner_text()
+        assert "tables migrat" not in text.lower(), r.db
+        for path_id in summary:
+            _choose_path(panel, path_id)
+            expect(selected).to_have_attribute("data-path", path_id)
+            path = paths[path_id]
+            want = _adoption_tiles(path, adoption)
+            assert _shown_tiles(selected) == want, (r.db, path_id)
+            # The same steps line and cost line as the path's block in the engineering
+            # report.
+            steps = selected.locator("[data-figure=path-steps]").inner_text().strip()
+            assert f"- {steps}\n" in md, (r.db, path_id, steps)
+            cost_line = f"- Monthly cost: {want['cost']}"
+            if want["difference"]:
+                cost_line += f", {want['difference']}"
+            if str(want["cost"]).startswith("$"):
+                assert f"{cost_line}\n" in md, (r.db, path_id, cost_line)
+            # Waves and stages the path leaves out are greyed; the others are not.
+            stop = path["stops_after_step"]
+            for phase in plan.get("wave_phases") or []:
+                card = section.locator(f'[data-wave="{phase["phase_wave"]}"]')
+                out = all(n > stop for n in phase["step_numbers"])
+                default = path_id == adoption["default_path_id"]
+                assert (card.get_attribute("data-left-out") == "true") == (out and not default), (
+                    r.db,
+                    path_id,
+                    phase["phase_wave"],
+                )
+        # The capped selector's "Show all" lists every offered path.
+        show_all = panel.locator("[data-figure=adoption-show-all] button")
+        if len(summary) < adoption["path_count"]:
+            show_all.click()
+            assert [c.get_attribute("data-path") for c in chips.all()] == list(paths), r.db
+        else:
+            assert show_all.count() == 0, r.db
+        # Each wave states its steps and stages as the engineering report does; open,
+        # the stages are the plan's, in run order.
+        _choose_path(panel, "full_target")
+        for phase in plan.get("wave_phases") or []:
+            card = section.locator(f'[data-wave="{phase["phase_wave"]}"]')
+            line = card.locator("[data-figure=wave-stages-line]").inner_text().strip()
+            numbers = phase["step_numbers"]
+            span = (
+                f"Step {numbers[0]}"
+                if len(numbers) == 1
+                else f"Steps {numbers[0]} to {numbers[-1]}"
+            )
+            n = phase["stage_count"]
+            stages = f"{n} {'stage' if n == 1 else 'stages'}"
+            assert line == f"{span}: {stages}", (r.db, line)
+            assert f"- {span} ({stages}):" in md, (r.db, span)
+            card.locator('[data-disclosure="wave-stage-list"]').click()
+            shown = card.locator("[data-stage]")
+            assert [s.get_attribute("data-stage") for s in shown.all()] == phase["stage_labels"]
+        # The one-step option: the engineering report's lines and checks.
+        one = adoption["one_step"]
+        option = panel.locator("[data-figure=one-step-option]")
+        option.get_by_text("Show the one-step option").click()
+        for name in ("one-step-in-place", "one-step-gate", "one-step-streams"):
+            hook = option.locator(f"[data-figure={name}]")
+            if hook.count():
+                assert f"- {hook.inner_text().strip()}\n" in md, (r.db, name)
+        verdict = option.locator("[data-figure=one-step-verdict]").inner_text().strip()
+        assert verdict in md, r.db
+        rows = option.locator("[data-figure=one-step-check]")
+        assert rows.count() == len(one["one_step_checks"]), r.db
+        for row in rows.all():
+            cells = [c.strip() for c in row.locator("td").all_inner_texts()]
+            assert "| " + " | ".join(cells) + " |" in md, (r.db, cells)
+        assert "cutover" not in option.inner_text().lower(), r.db
+        # The one-step link names what the engineering report names, and lands on it.
+        adopt = option.locator("[data-figure=one-step-adopt]").inner_text().strip()
+        adopt = " ".join(adopt.split())
+        if "the target schemas below" in adopt:
+            # A completed design: the report points at its "Target schemas by engine",
+            # the page at its own design section; both say "the target schemas".
+            assert "adopt the target schemas in " in md, (r.db, adopt)
+        else:
+            assert f"{adopt}\n" in md, (r.db, adopt)
+        href = option.locator("[data-figure=one-step-adopt] a").get_attribute("href") or ""
+        assert href.startswith("#") and page.locator(href).count() == 1, (r.db, href)
+        # Choosing a path changed only what is shown.
+        assert writes == [], (r.db, writes)
+        after = {p.name: p.read_bytes() for p in assignment.iterdir() if p.is_file()}
+        assert after == before, r.db
+        assert ev == {"console": [], "pageerror": [], "failed": []}, (r.db, ev)
+        checked += 1
+    # Both deterministic samples offer paths; an external (model-run) job written before
+    # them offers none, and then the page shows none.
+    assert checked or any(r.external for r in all_runs), "no sample offers an adoption path"
+
+
 def test_results_page_states_each_tables_source_of_truth_and_replicas(
     page: Page, ui: str, all_runs: list[PipelineResult]
 ) -> None:
@@ -1347,6 +1539,45 @@ def test_results_page_has_no_moderate_or_worse_accessibility_violations(
             if v.get("impact") in BLOCKING_IMPACTS
         }
         assert blocking == [], (r.job_id, r.db, blocking, where)
+
+
+def test_results_page_has_no_accessibility_violations_with_an_earlier_path_picked(
+    page: Page, ui: str, all_runs: list[PipelineResult]
+) -> None:
+    """Review of #2249: with an earlier adoption path picked, the roadmap marks the waves
+    and stages it leaves out without fading their text below WCAG AA contrast. Each job
+    that offers paths is scanned with its first earlier summary path picked and every
+    section open (the waves' stage lists and their units included)."""
+    from axe_playwright_python.sync_playwright import Axe
+
+    scanned = 0
+    for r in all_runs:
+        report = json.loads((r.artifact_root / r.report["report"]).read_text())
+        adoption = (report.get("facts") or {}).get("adoption") or {}
+        earlier = [p for p in adoption.get("summary_path_ids") or [] if p != "full_target"]
+        if not earlier:
+            continue
+        _open_results(page, ui, r)
+        panel = page.locator("#migration-roadmap-section [data-figure=adoption-paths]")
+        _choose_path(panel, earlier[0])
+        expect(panel.locator("[data-figure=selected-path]")).to_have_attribute(
+            "data-path", earlier[0]
+        )
+        _expand_every_section(page)
+        section = page.locator("#migration-roadmap-section")
+        # The stage lists are open, and the earlier path leaves something out.
+        assert section.locator("[data-stage]").count() > 0, r.db
+        assert section.locator("[data-left-out]").count() > 0, r.db
+        violations = Axe().run(page).response["violations"]
+        blocking = [v["id"] for v in violations if v.get("impact") in BLOCKING_IMPACTS]
+        where = {
+            v["id"]: [n.get("target") for n in v.get("nodes", [])][:5]
+            for v in violations
+            if v.get("impact") in BLOCKING_IMPACTS
+        }
+        assert blocking == [], (r.job_id, r.db, earlier[0], blocking, where)
+        scanned += 1
+    assert scanned or any(r.external for r in all_runs), "no job offers an earlier path"
 
 
 def _designed_runs(all_runs: list[PipelineResult]) -> list[PipelineResult]:
