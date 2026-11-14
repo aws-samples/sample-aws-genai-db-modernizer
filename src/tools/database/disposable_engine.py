@@ -1569,8 +1569,8 @@ class _MySQLBackend(_Backend):
             return
         runner = _quote(event_runner_name(name), "`")
         _execute(cur, f"DROP PROCEDURE IF EXISTS {runner}")
-        # nosec B608 - a hashed, quoted name; the body is the event's own text
-        _execute(cur, f"CREATE PROCEDURE {runner}() {found[0][0]}")  # nosec B608
+        # a hashed, quoted name; the body is the event's own text, as the server holds it
+        _execute(cur, f"CREATE PROCEDURE {runner}() {found[0][0]}")  # nosec B608 -- see above
 
     def call(self, routine, args, modes=None, casts=None):  # type: ignore[no-untyped-def]
         # MySQL has no overloads, so a cast is never needed and is not written.
