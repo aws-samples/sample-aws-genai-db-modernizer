@@ -37,6 +37,11 @@ from tests.unit.tools.data_movement.routine_fixtures import (
 
 UNICODE = "CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci"
 SERVER_DEFAULTS = "It sets no character set or collation: the cluster's server defaults apply."
+EXISTING = ("A database that already exists keeps its own collation: CREATE DATABASE IF NOT EXISTS "
+            "does not change it. If it holds nothing else yet, run the ALTER DATABASE above its "
+            "CREATE DATABASE first.")  # fmt: skip
+EDIT_DATABASE = ("edit the CREATE DATABASE statements in step-1.ddl.sql, routines-deploy.sql and "
+                 "triggers-enable.sql together before you run them.")  # fmt: skip
 
 
 def _job(
@@ -104,6 +109,33 @@ def _deploy(tmp_path: Path, store: LocalArtifactStore, schema: str = "shop_funct
     return (step / DEPLOY_FILE).read_text()
 
 
+def _triggers(tmp_path: Path, store: LocalArtifactStore, schema: str = "jobs") -> str:
+    """``triggers-enable.sql`` for one deferred event in ``schema``, from the job's own contract."""
+    from src.agents.collector.routine_sources import write_routine_sources
+    from src.contracts.transformation_contract import StepContract
+    from src.tools.data_movement.triggers_scripts import TRIGGERS_FILE, write_triggers_scripts
+    from src.tools.routines.migration import routine_migration_path
+
+    rows = [row(f"{schema}.ev0", "event", schema=schema, name="ev0", specific="ev0",
+                status="rewritten")]  # fmt: skip
+    artifact = migration(rows, "mysql")
+    store.write_json(routine_migration_path("shop", "job1", 2), artifact.model_dump(mode="json"))
+    sources = [mysql_source("ev0", "CREATE DEFINER=`app`@`%` EVENT `ev0` ON SCHEDULE EVERY 1 DAY "
+                            "STARTS '2036-01-01 00:00:00' DISABLE DO SELECT 1", kind="event",
+                            schema=schema)]  # fmt: skip
+    write_routine_sources(store, "shop", "job1",
+                          {"metadata": {"source_database": {"engine": "mysql", "version": "8.0.32"}}}, sources)  # fmt: skip
+    contract = StepContract.model_validate(_contract(store))
+    write_triggers_scripts(store, "shop", "job1", contract_with_routines(artifact, contract=contract),
+                           "a" * 64, tmp_path / "step")  # fmt: skip
+    return (tmp_path / "step" / TRIGGERS_FILE).read_text()
+
+
+def _statements(text: str) -> str:
+    """A script without its ``--`` comment lines."""
+    return "\n".join(line for line in text.splitlines() if not line.startswith("--"))
+
+
 def _database_clauses(text: str) -> set[str]:
     return set(re.findall(r"^CREATE DATABASE IF NOT EXISTS `(?:[^`]|``)+`(.*);$", text, re.M))
 
@@ -113,10 +145,16 @@ def test_the_ddl_creates_the_tables_database_on_the_source_collation(tmp_path):
     assert f"CREATE DATABASE IF NOT EXISTS `shop` {UNICODE};\nUSE `shop`;" in ddl
     flat = _flat(ddl)
     assert SERVER_DEFAULTS not in flat
-    assert ("It gives the database the source's character set and collation (utf8mb4, "
-            "utf8mb4_unicode_ci)") in flat  # fmt: skip
+    # Only when the database does not exist yet: one that does keeps its own (review of #2282).
+    assert ("It creates the database with CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci, the "
+            "source's, when it does not exist yet") in flat  # fmt: skip
+    assert EXISTING in flat
+    assert (
+        f"-- ALTER DATABASE `shop` {UNICODE};\nCREATE DATABASE IF NOT EXISTS `shop` {UNICODE};"
+        in ddl
+    )
     # The tables take the database's: no table or column clause of their own.
-    assert "DEFAULT CHARSET" not in ddl and ddl.count("COLLATE") == 1
+    assert "DEFAULT CHARSET" not in ddl and _statements(ddl).count("COLLATE") == 1
     assert _contract(_job(tmp_path / "again"))["target"]["collation"] == {
         "character_set": "utf8mb4", "collation": "utf8mb4_unicode_ci"}  # fmt: skip
 
@@ -124,9 +162,16 @@ def test_the_ddl_creates_the_tables_database_on_the_source_collation(tmp_path):
 def test_the_routine_databases_get_the_ddls_clause_from_the_same_contract(tmp_path):
     store = _job(tmp_path)
     ddl, deploy = _ddl(store), _deploy(tmp_path, store)
-    assert _database_clauses(deploy) == _database_clauses(ddl) == {f" {UNICODE}"}
-    sentence = re.search(r"It gives the database .*? keeps its own\.", _flat(ddl))
-    assert sentence and sentence.group(0) in _flat(deploy)
+    triggers = _triggers(tmp_path / "t", store)
+    clauses = _database_clauses(ddl)
+    assert clauses == {f" {UNICODE}"}
+    assert _database_clauses(deploy) == _database_clauses(triggers) == clauses
+    sentence = re.search(r"It creates the database .*? keeps its own\.", _flat(ddl))
+    assert sentence and sentence.group(0) in _flat(deploy) and sentence.group(0) in _flat(triggers)
+    # Each script names the ALTER DATABASE for each database it creates.
+    for text, name in ((ddl, "shop"), (deploy, "shop_functions"), (triggers, "jobs")):
+        assert EXISTING in _flat(text)
+        assert f"-- ALTER DATABASE `{name}` {UNICODE};" in text
 
 
 def test_a_table_and_a_column_that_differ_on_the_source_keep_their_own(tmp_path):
@@ -145,7 +190,7 @@ def test_a_table_and_a_column_that_differ_on_the_source_keep_their_own(tmp_path)
 
 def test_a_non_text_column_never_gets_a_collation(tmp_path):
     ddl = _ddl(_job(tmp_path, columns={("orders", "id"): ("utf8mb4", "utf8mb4_bin")}))
-    assert "`id` BIGINT CHARACTER SET" not in ddl and ddl.count("COLLATE") == 1
+    assert "`id` BIGINT CHARACTER SET" not in ddl and _statements(ddl).count("COLLATE") == 1
 
 
 @pytest.mark.parametrize(
@@ -153,9 +198,22 @@ def test_a_non_text_column_never_gets_a_collation(tmp_path):
     [
         ("utf8mb3_general_ci", "utf8mb3", "utf8mb3, MySQL's deprecated 3-byte utf8"),
         ("utf8_general_ci", "utf8", "utf8mb3, MySQL's deprecated 3-byte utf8"),
+        # MariaDB's: utf8mb4 collations Aurora MySQL does not have, with the closest it does.
         (
             "utf8mb4_uca1400_ai_ci",
             "utf8mb4",
+            "Aurora MySQL offers no collation named "
+            "utf8mb4_uca1400_ai_ci; utf8mb4_0900_ai_ci is the closest one it offers",
+        ),
+        (
+            "utf8mb4_unicode_520_nopad_ci",
+            "utf8mb4",
+            "Aurora MySQL offers no collation named "
+            "utf8mb4_unicode_520_nopad_ci; utf8mb4_unicode_520_ci is the closest one it offers",
+        ),
+        (
+            "latin2_general_ci",
+            "latin2",
             "is not a utf8mb4, latin1 or ascii collation step 1 carries",
         ),
         ("utf8mb4_bg_0900_ai_ci", "utf8mb4", "is not on every Aurora MySQL release for MySQL 8.0"),
@@ -177,12 +235,12 @@ def test_a_database_collation_the_target_does_not_offer_keeps_the_server_default
     assert _database_clauses(deploy) == _database_clauses(ddl) == {""}
     flat = _flat(ddl)
     assert SERVER_DEFAULTS in flat and said in flat
-    assert (
-        "set it by hand before the DMS full load, the same way for the tables and for the routines"
-        in flat
-    )
+    # What the database gets instead, and which statements to edit for another collation.
+    assert "so the database gets the cluster's server default instead" in flat
+    assert EDIT_DATABASE in flat
+    assert "ALTER DATABASE" not in ddl and "ALTER DATABASE" not in deploy
     assert "DROP DATABASE" not in ddl and "DROP DATABASE" not in deploy
-    assert said in _flat(deploy)
+    assert said in _flat(deploy) and EDIT_DATABASE in _flat(deploy)
 
 
 def test_a_collation_newer_than_aurora_mysql_3_is_carried_on_the_8_4_line(tmp_path):
@@ -201,8 +259,13 @@ def test_a_table_or_column_collation_the_target_does_not_offer_falls_back_with_a
     flat = _flat(ddl)
     assert "Collations not carried:" in flat
     assert "shop.customers: The table is on utf8mb3_general_ci" in flat
-    assert "so the table gets its database's utf8mb4_unicode_ci" in flat
-    assert "shop.audit_log.msg: The column is on utf8mb4_uca1400_ai_ci" in flat
+    assert "so the table gets its database's utf8mb4_unicode_ci instead" in flat
+    assert "edit that table's CREATE TABLE in step-1.ddl.sql" in flat
+    assert (
+        "shop.audit_log.msg: Aurora MySQL offers no collation named utf8mb4_uca1400_ai_ci" in flat
+    )
+    assert "so the column gets its table's utf8mb4_unicode_ci instead" in flat
+    assert "edit that column's definition in step-1.ddl.sql" in flat
     findings = {(f["table_id"], f.get("column")): f["severity"] for r in _contract(store)["rules"]
                 for f in r["findings"] if f["code"] == "collation_not_carried"}  # fmt: skip
     assert findings == {("shop.customers", None): "warning", ("shop.audit_log", "msg"): "warning"}
@@ -220,13 +283,26 @@ def test_a_collection_with_no_database_collation_keeps_todays_ddl_and_contract_b
     assert "collation" not in raw
 
 
-def test_a_contract_edited_to_a_collation_step_1_does_not_carry_is_refused(tmp_path):
+@pytest.mark.parametrize(
+    # utf8mb4_bg_0900_ai_ci exists on the 8.4 line but not on every version 3 release: the
+    # writers check the contract's value against the target line's list (review of #2282).
+    # A line the catalog does not list reads as the oldest.
+    ("edited", "line"),
+    [
+        ("utf8mb4_made_up_ci", None),
+        ("utf8mb4_bg_0900_ai_ci", None),
+        ("utf8mb4_bg_0900_ai_ci", "9.9"),
+    ],
+)
+def test_a_contract_edited_to_a_collation_step_1_does_not_carry_is_refused(tmp_path, edited, line):
     from src.tools.data_movement.plan import write_plans as again
     from src.tools.transformation_contract.hashing import canonical_json, contract_sha256
 
     store = _job(tmp_path)
     data = _contract(store)
-    data["target"]["collation"] = {"character_set": "utf8mb4", "collation": "utf8mb4_made_up_ci"}
+    data["target"]["collation"] = {"character_set": "utf8mb4", "collation": edited}
+    if line:
+        data["target"]["engine_line"] = line
     base = "shop/job1/transformation-contract/v2"
     from src.contracts.transformation_contract import StepContract
 
@@ -234,6 +310,8 @@ def test_a_contract_edited_to_a_collation_step_1_does_not_carry_is_refused(tmp_p
     store.write_bytes(f"{base}/step-1.json", canonical_json(contract))
     store.write_bytes(f"{base}/step-1.sha256", (contract_sha256(contract) + "\n").encode())
     again(store, "shop", "job1")
-    assert "utf8mb4_made_up_ci" in json.dumps(_contract(store))
-    with pytest.raises((DmsStepError, ValueError), match="utf8mb4_made_up_ci"):
+    assert edited in json.dumps(_contract(store))
+    with pytest.raises((DmsStepError, ValueError), match=edited):
         _ddl(store)
+    with pytest.raises((DmsStepError, ValueError), match=edited):
+        _deploy(tmp_path, store)

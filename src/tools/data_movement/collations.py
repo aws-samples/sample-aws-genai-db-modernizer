@@ -78,13 +78,12 @@ def _oldest() -> str:
 
 def aurora_collations(line: str | None) -> frozenset[str]:
     """The collations step 1 carries into the Aurora MySQL ``line`` (the plan's
-    ``target_engine_line``): those every release of it offers. An unknown line reads as
-    the oldest."""
-    return _AURORA_3 if line in (None, _oldest()) else _NEWER
+    ``target_engine_line``): those every release of it offers. None, or a line the catalog
+    does not list, reads as the oldest."""
+    from src.shared.catalog.gaps import aurora_version_lines
 
-
-def _every_line() -> frozenset[str]:
-    return _NEWER
+    lines = aurora_version_lines()["aurora_mysql"].lines
+    return _NEWER if line in lines and line != lines[0] else _AURORA_3
 
 
 def character_set_of(collation: str) -> str:
@@ -96,6 +95,23 @@ def _where(line: str | None) -> str:
     return f"Aurora MySQL release for MySQL {line or _oldest()}"
 
 
+#: Where to choose another collation for each kind of object, by hand.
+_EDIT = {
+    "the database": "the CREATE DATABASE statements in step-1.ddl.sql, routines-deploy.sql and "
+    "triggers-enable.sql together",
+    "the table": "that table's CREATE TABLE in step-1.ddl.sql",
+    "the column": "that column's definition in step-1.ddl.sql",
+}
+
+
+def closest(collation: str, line: str | None) -> str | None:
+    """The collation Aurora MySQL offers that is closest to a utf8mb4 one it does not:
+    MariaDB's ``_nopad`` variants without it, its ``uca1400`` (UCA 14.0) ones as the
+    ``0900`` (UCA 9.0) ones; None when there is none."""
+    name = collation.lower().replace("_nopad", "").replace("uca1400", "0900")
+    return name if name != collation.lower() and name in aurora_collations(line) else None
+
+
 def carry(
     collation: str | None, character_set: str | None, line: str | None, what: str, fallback: str
 ) -> tuple[CharacterSet | None, str | None]:
@@ -105,66 +121,77 @@ def carry(
     "the table", "the column") and ``fallback`` what it gets instead."""
     if not collation:
         return None, None
+    them = "them" if what == "the database" else "it"
+    edit = f"To use another collation, edit {_EDIT[what]} before you run {them}."
+    instead = f"so {what} gets {fallback} instead"
     if not _PLAIN.fullmatch(collation):
-        named = "a collation name that is not a plain identifier"
-    else:
-        named = collation
+        return (
+            None,
+            f"The collection records a collation name that is not a plain identifier for {what}, {instead}. {edit}",
+        )
     lowered = collation.lower()
-    keep = (f"so {what} gets {fallback}. To keep the source's, set it by hand before the DMS "
-            "full load, the same way for the tables and for the routines.")  # fmt: skip
-    if named != collation:
-        return None, f"The collection records {named} for {what}, {keep}"
     if lowered.startswith(("utf8_", "utf8mb3_")) or (character_set or "").lower() in (
         "utf8",
         "utf8mb3",
     ):
-        return None, (f"{what.capitalize()} is on {collation} (utf8mb3, MySQL's deprecated 3-byte "
-                      f"utf8), which step 1 does not create new objects in, {keep}")  # fmt: skip
+        return None, (f"{what.capitalize()} is on {collation} (utf8mb3, MySQL's deprecated 3-byte utf8), "
+                      f"which step 1 does not create new objects in, {instead}, which compares text "
+                      f"differently from {collation}. {edit}")  # fmt: skip
     if lowered not in aurora_collations(line):
-        later = lowered in _every_line()
-        why = (f"is not on every {_where(line)}" if later
-               else "is not a utf8mb4, latin1 or ascii collation step 1 carries to Aurora MySQL")  # fmt: skip
-        return None, f"{what.capitalize()} is on {collation}, which {why}, {keep}"
+        if lowered in _NEWER:
+            return None, (f"{what.capitalize()} is on {collation}, which is not on every "
+                          f"{_where(line)}, {instead}. {edit}")  # fmt: skip
+        if character_set_of(lowered) == "utf8mb4":
+            near = closest(lowered, line)
+            pick = (f"{near} is the closest one it offers" if near
+                    else "choose a utf8mb4 collation it offers, such as utf8mb4_0900_ai_ci")  # fmt: skip
+            return None, (f"Aurora MySQL offers no collation named {collation}; {pick}. Step 1 does "
+                          f"not choose for you, {instead}. {edit}")  # fmt: skip
+        return None, (f"{what.capitalize()} is on {collation}, which is not a utf8mb4, latin1 or ascii "
+                      f"collation step 1 carries to Aurora MySQL, {instead}. {edit}")  # fmt: skip
     charset = character_set_of(lowered)
     if character_set and character_set.lower() != charset:
         recorded = character_set if _PLAIN.fullmatch(character_set) else "another character set"
         return None, (f"The collection records {what} as {recorded} with {collation}, "
-                      f"which is a {charset} collation, {keep}")  # fmt: skip
+                      f"which is a {charset} collation, {instead}. {edit}")  # fmt: skip
     return CharacterSet(character_set=charset, collation=lowered), None
 
 
-def _checked(value: CharacterSet) -> CharacterSet:
-    """A carried value as it may be written: one of :func:`aurora_collations`, never text
-    from elsewhere (a contract edited by hand)."""
+def _checked(value: CharacterSet, line: str | None) -> CharacterSet:
+    """A carried value as it may be written: one of :func:`aurora_collations` for the
+    target's ``line``, never text from elsewhere (a contract edited by hand)."""
     if (
-        value.collation not in _every_line()
+        value.collation not in aurora_collations(line)
         or character_set_of(value.collation) != value.character_set
     ):
-        raise ValueError(f"{value.collation!r} is not a collation step 1 carries to Aurora MySQL")
+        raise ValueError(
+            f"{value.collation!r} is not a collation step 1 carries to the {_where(line)}"
+        )
     return value
 
 
-def database_options(value: CharacterSet | None) -> str:
-    """What follows the name in a ``CREATE DATABASE``: empty with nothing carried."""
+def database_options(value: CharacterSet | None, line: str | None = None) -> str:
+    """What follows the name in a ``CREATE DATABASE`` (and an ``ALTER DATABASE``): empty
+    with nothing carried. The one place a database's clause is written and checked."""
     if value is None:
         return ""
-    v = _checked(value)
+    v = _checked(value, line)
     return f" CHARACTER SET {v.character_set} COLLATE {v.collation}"
 
 
-def table_options(value: CharacterSet | None) -> str:
+def table_options(value: CharacterSet | None, line: str | None = None) -> str:
     """What follows a ``CREATE TABLE``'s closing parenthesis: empty with nothing carried."""
     if value is None:
         return ""
-    v = _checked(value)
+    v = _checked(value, line)
     return f" DEFAULT CHARSET={v.character_set} COLLATE={v.collation}"
 
 
-def column_options(value: CharacterSet | None) -> str:
+def column_options(value: CharacterSet | None, line: str | None = None) -> str:
     """What follows a column's type: empty with nothing carried."""
     if value is None:
         return ""
-    v = _checked(value)
+    v = _checked(value, line)
     return f" CHARACTER SET {v.character_set} COLLATE {v.collation}"
 
 
@@ -178,12 +205,34 @@ def is_text_type(aurora_type: str) -> bool:
     return re.split(r"[\s(]", aurora_type.strip(), maxsplit=1)[0].lower() in TEXT_TYPES
 
 
-def database_sentence(value: CharacterSet | None, note: str | None = None) -> str:
+#: What step-1.ddl.sql and the routine scripts say of a database that already exists (review
+#: of #2282): CREATE DATABASE IF NOT EXISTS leaves its collation as it is.
+EXISTING = (
+    "A database that already exists keeps its own collation: CREATE DATABASE IF NOT EXISTS "
+    "does not change it. If it holds nothing else yet, run the ALTER DATABASE above its "
+    "CREATE DATABASE first."
+)
+
+
+def database_sentence(
+    value: CharacterSet | None, line: str | None = None, note: str | None = None
+) -> str:
     """The one sentence step-1.ddl.sql and the routine scripts give of a database's
     character set and collation (and, when the source's is not carried, why)."""
     if value is None:
         return SERVER_DEFAULTS + (f" {note}" if note else "")
-    v = _checked(value)
-    return (f"It gives the database the source's character set and collation ({v.character_set}, "
-            f"{v.collation}), so the tables, the routines and their parameters compare text as the "
-            "source does; a table or column that differs on the source keeps its own.")  # fmt: skip
+    options = database_options(value, line).strip()
+    return (f"It creates the database with {options}, the source's, when it does not exist yet, so "
+            "the tables, the routines and their parameters compare text as the source does; a table "
+            f"or column that differs on the source keeps its own. {EXISTING}")  # fmt: skip
+
+
+def alter_comment(
+    quoted_name: str, value: CharacterSet | None, line: str | None = None
+) -> list[str]:
+    """The commented ``ALTER DATABASE`` for an existing database (:data:`EXISTING`), placed
+    above its ``CREATE DATABASE``; none with nothing carried. ``quoted_name``: the name as
+    the statement quotes it."""
+    if value is None:
+        return []
+    return [f"-- ALTER DATABASE {quoted_name}{database_options(value, line)};"]

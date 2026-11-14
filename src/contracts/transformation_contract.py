@@ -108,6 +108,16 @@ class TargetSpec(BaseModel):
         exclude_if=lambda value: value is None,
         description="Why the source database's collation is not carried, and what to do",
     )
+    engine_line: str | None = Field(
+        None,
+        exclude_if=lambda value: value is None,
+        max_length=16,
+        description=(
+            "Aurora MySQL: the Aurora major line the carried collations were checked against "
+            "(the plan's target_engine_line); the scripts check them against its list again "
+            "(#2276). None: the oldest line"
+        ),
+    )
 
 
 class FieldRule(BaseModel):
