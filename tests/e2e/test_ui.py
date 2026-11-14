@@ -800,6 +800,16 @@ def test_results_page_shows_the_adoption_paths_stages_and_one_step_option(
             card.locator('[data-disclosure="wave-stage-list"]').click()
             shown = card.locator("[data-stage]")
             assert [s.get_attribute("data-stage") for s in shown.all()] == phase["stage_labels"]
+            # #1699: open, each step's why sentence is report.json's, word for word, and
+            # the engineering report's; its figures are headed by the facts' labels.
+            by_number = {s["step_number"]: s for s in plan.get("plan_steps") or []}
+            whys = [w.inner_text().strip() for w in card.locator("[data-figure=step-why]").all()]
+            assert whys == [by_number[n]["why"] for n in numbers], (r.db, phase["phase_wave"])
+            for sentence in whys:
+                assert f"  - {sentence}" in md.splitlines(), (r.db, sentence)
+            labels = plan.get("metric_labels") or {}
+            for heading in card.locator("[data-figure=step-metrics] th[title]").all():
+                assert heading.get_attribute("title") in labels.values(), (r.db, heading)
         # The one-step option: the engineering report's lines and checks.
         one = adoption["one_step"]
         option = panel.locator("[data-figure=one-step-option]")

@@ -28,10 +28,12 @@ from pydantic import ValidationError
 
 from src.agents.referee.write_groups import assignment_placement_groups
 from src.contracts.synthesis_output import ReportFacts, SlicePlanFacts
+from src.report import escaping, executive_report
 from src.shared.cache_engines import CACHE_ENGINES
 from src.shared.step_explanations import METRIC_LABELS, step_ties, step_why
 from src.tools.validation.customer_text_guard import scan_json
 from tests.e2e.pipeline import REPO, PipelineResult, _env
+from tests.executive_pdf import normalize, section_texts
 from tests.unit.shared.test_step_explanations import (
     customer_text_findings,
     numbers_not_in_the_facts,
@@ -107,6 +109,21 @@ def test_each_step_says_why_it_sits_where_it_does(run: PipelineResult) -> None:
         held = sorted({r for st in step["step_stages"] for r in st["holding_risk_ids"]})
         # "holds back" for one risk, "hold back" for several.
         assert all(r in sentence for r in held) and (" back " in sentence) == bool(held)
+
+
+def test_each_step_s_sentence_reads_the_same_in_both_reports(run: PipelineResult) -> None:
+    """#1699, PR B: the engineering report's roadmap and the executive report's wave
+    panels state each step's why sentence as report.json stores it (the results page is
+    checked against the same field in ``tests/e2e/test_ui.py``)."""
+    plan = _plan(_report(run))
+    md = run.deliverable("engineering-report.md").read_text(encoding="utf-8")
+    waves = normalize(
+        section_texts(run.deliverable(executive_report.FILENAME), run.db)[executive_report.H_WAVES]
+    )
+    for step in plan["plan_steps"]:
+        sentence = step["why"]
+        assert f"  - {escaping.md_text(sentence)}" in md.splitlines(), (run.db, sentence)
+        assert f"{executive_report.L_WHY}: {normalize(sentence)}" in waves, (run.db, sentence)
 
 
 def test_every_moving_query_is_in_one_unit_and_no_group_is_split(run: PipelineResult) -> None:

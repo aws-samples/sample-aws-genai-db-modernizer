@@ -273,9 +273,67 @@ export function stageUnits(plan, stage) {
     ));
 }
 
+// ---- Why each step sits where it does (#1699) ----
+
+// The order metrics a step and a unit show, by their contract fields: the order of the
+// columns only. Their names are facts.slice_plan.metric_labels, never a copy here.
+export const STEP_METRIC_FIELDS = [
+  'gravity', 'hub_score', 'replica_table_count', 'write_site_count', 'transactions_split',
+  'value_call_share_percent', 'value_monthly_cost_usd',
+];
+export const UNIT_METRIC_FIELDS = ['gravity', 'hub_score', 'blast_radius'];
+
+// The plain name the facts give a metric, or '' when they give none: the page then leaves
+// the metric out rather than name it in words of its own.
+export function metricLabel(plan, field) {
+  const labels = plan && plan.metric_labels;
+  return (labels && typeof labels === 'object' && labels[field]) ? String(labels[field]) : '';
+}
+
+export function capitalized(text) {
+  return text ? text.charAt(0).toUpperCase() + text.slice(1) : '';
+}
+
+// A slice step's metric as stored, its cut cost's parts included, or null.
+export function stepMetric(step, field) {
+  const metrics = step && step.metrics;
+  if (!metrics || typeof metrics !== 'object') return null;
+  if (field in metrics) return metrics[field] ?? null;
+  const cut = metrics.cut_cost;
+  return (cut && typeof cut === 'object' && cut[field] != null) ? cut[field] : null;
+}
+
+// A metric's stored value, formatted as the reports format it.
+export function metricValueText(field, value) {
+  if (value === null || value === undefined) return '-';
+  if (field === 'value_call_share_percent') return `${value}%`;
+  if (field === 'value_monthly_cost_usd') return formatUsd(value);
+  return String(value);
+}
+
+// The wave's steps, in order, as its phase names them.
+export function waveSteps(plan, wave) {
+  const phase = wavePhase(plan, wave);
+  return ((phase && phase.step_numbers) || []).map(n => planStep(plan, n)).filter(Boolean);
+}
+
+// The step figures a table of steps shows: each metric the facts name that one of them
+// states (a column of nothing but '-' is left out).
+export function stepMetricColumns(plan, steps) {
+  return STEP_METRIC_FIELDS.filter(f => metricLabel(plan, f) && steps.some(s => stepMetric(s, f) !== null));
+}
+
+// A unit's metrics as "<label>: <value>" parts, each named by the facts.
+function unitMetricParts(plan, unit) {
+  const metrics = (unit && unit.metrics) || {};
+  return UNIT_METRIC_FIELDS
+    .filter(f => metricLabel(plan, f) && metrics[f] !== null && metrics[f] !== undefined)
+    .map(f => `${metricLabel(plan, f)}: ${metricValueText(f, metrics[f])}`);
+}
+
 // One unit as a line: the pilot named, its queries, the tables it owns, the copies it
 // reads and where a CDC copy of its tables goes back to. Never its key (an engine id).
-export function unitText(t, unit) {
+export function unitText(t, unit, plan) {
   const parts = [t('analysis-results.adoption.unit-queries', { count: unit.query_count || 0 })];
   const owned = (unit.owned_tables || []).map(String);
   if (owned.length) parts.push(t('analysis-results.adoption.unit-owns', { tables: owned.join(', ') }));
@@ -286,6 +344,7 @@ export function unitText(t, unit) {
     { engine: displayEngine(r.engine), count: r.read_count || 0 },
   ));
   if (back.length) parts.push(t('analysis-results.adoption.unit-back', { engines: back.join(', ') }));
+  parts.push(...unitMetricParts(plan, unit));
   const text = parts.join('; ');
   return unit.pilot ? t('analysis-results.adoption.unit-pilot', { text }) : text;
 }
