@@ -35,10 +35,13 @@ rule                       severity  raised when
                                      for an assignment written before write groups, the wave's
                                      ``kept_in_sync`` and ``shared_in_wave`` tables)
                            LOW       the wave's only copies are of tables no captured query
-                                     writes: a one-time copy, both ways (a table the wave reads
-                                     from another owner, ``facts.waves[].kept_in_sync``, and one
-                                     the wave owns that another engine reads); with CDC copies
-                                     too, the risk states the total the two counts add up to
+                                     writes, both ways (a table the wave reads from another
+                                     owner, ``facts.waves[].kept_in_sync``, and one the wave
+                                     owns that another engine reads): CDC keeps them current
+                                     too (the data-movement plan feeds each from a hub topic,
+                                     #2238), but only a write outside the captured workload
+                                     changes them; with CDC pairs too, the risk states the
+                                     total the two counts add up to
 ``routing.close_calls``    MEDIUM    a query in the wave moved to its engine by less than
                                      ``CLOSE_CALL_MARGIN`` points over the runner-up
                            LOW       every such query stays on the source-compatible engine
@@ -307,7 +310,9 @@ class _WaveSync:
     split_writers: set[str]
     pairs: dict[tuple[str, str], tuple[set[str], set[str]]]  # (source, replica) -> tables, reads
     kept: set[str]  # kept in sync by CDC from an owner outside the wave (older assignments)
-    copy_once: set[str]  # read on an engine that does not own it, written by no captured query
+    # read on an engine that does not own it, written by no captured query: a CDC copy too
+    # (#2238), which only a write outside the captured workload changes
+    copy_once: set[str]
     queries: set[str]
     split_queries: set[str] = field(default_factory=set)  # the split tables' writes
 
@@ -408,8 +413,8 @@ def _sync_risks_from_lines(
     """The sync risks from the tables' owner lines (#1642): each wave's tables read off
     their owner are ``non_owner_read_tables_by_wave``'s, the computation the facts
     layer's ``also_read_table_count`` adds up, so the risk and the count never disagree.
-    A written table is a CDC copy from its owner to each reader, one written by no
-    captured query a one-time copy; a table with no single writer keeps its own
+    A written table is a CDC copy from its owner to each reader, and so is one written by
+    no captured query, counted apart (#2238); a table with no single writer keeps its own
     sentence (two-way sync), as before. The evidence is the readers' queries."""
     by_wave: dict[int, _WaveSync] = {}
 
@@ -499,7 +504,7 @@ def _owned_copies_read_elsewhere(
 ) -> None:
     """The other direction of a wave's copies: the tables its own engines own that a
     query on another engine reads, written by no captured query (``skip`` is every
-    written table), go to the later of the two engines' waves as a one-time copy, the
+    written table), go to the later of the two engines' waves as an unwritten copy, the
     rule the CDC pairs follow, with the reads as evidence. Without this the risk counted
     only the copies the wave reads (the discourse judge's "81 tables" plus "37 more"
     against the gate's 70 dual-read and 64 kept-in-sync tables)."""
@@ -539,7 +544,7 @@ def _wave_sync_risk(
         )
         steps.append(f"give {_these(k, 'table', 'tables')} one writer")
     synced = set().union(*(t for t, _ in s.pairs.values())) if s.pairs else set()
-    # One-time copies are only the tables no CDC pair already carries.
+    # The unwritten tables' copies are only the tables no CDC pair already carries.
     once = s.copy_once - synced - s.split
     both = bool(s.pairs) and bool(once)
     if s.pairs:
@@ -579,21 +584,28 @@ def _wave_sync_risk(
         )
         steps.append("set up CDC for the tables owned outside the wave")
     if once:
+        # The data-movement plan feeds these from the hub as it does the written ones
+        # (#2238): CDC keeps the copies current, and nothing captured changes them.
         k = len(once)
+        cdc = (
+            "CDC keeps its copy current{too}, and the copy changes only when something "
+            "outside the captured workload writes the table."
+            if k == 1
+            else "CDC keeps their copies current{too}, and a copy changes only when something "
+            "outside the captured workload writes its table."
+        )
         if both:
             other = "The other table is" if k == 1 else f"The other {k} tables are"
-            sentences.append(
-                f"{other} written by no captured query, so a one-time copy serves {_them(k)}."
-            )
+            sentences.append(f"{other} written by no captured query; " + cdc.format(too=" too"))
         else:
             sentences.append(
                 f"{_n(k, 'more table is', 'more tables are')} read on an engine that does not "
-                f"own {_them(k)} and written by no captured query, so a one-time copy serves "
-                f"{_them(k)}."
+                f"own {_them(k)} and written by no captured query; "
+                + cdc.format(too=" too" if s.pairs or s.split or s.kept else "")
             )
         steps.append(
-            "copy the read-only tables once and confirm nothing outside the captured workload "
-            "writes them"
+            f"set up CDC for the {'table' if k == 1 else 'tables'} no captured query writes, "
+            f"and check whether anything outside the captured workload writes {_them(k)}"
         )
     if s.split:
         severity = "HIGH"

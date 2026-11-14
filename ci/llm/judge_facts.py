@@ -315,7 +315,7 @@ COUNT_LABELS = {
     "query_groups": "groups of queries that read tables together",
     "in_scope_access_patterns": "designed target reads, designed engines only",
     "tables_also_read_by_a_non_owner": (
-        "mapped tables an engine reads without owning them, from a CDC or one-time copy"
+        "mapped tables an engine reads without owning them, from a copy CDC keeps current"
     ),
 }
 

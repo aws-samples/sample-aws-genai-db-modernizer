@@ -113,7 +113,7 @@ def add_sample_routines(collection: Path, name: str) -> Path:
 
 # The wordpress collection bundled before #1955 (107 statements, no shop writes). Its
 # shapes are ones the refreshed sample lacks: a table no query writes that two engines
-# read, a table kept in sync from Aurora MySQL, and a sync risk with one-time copies; the
+# read, a table kept in sync from Aurora MySQL, and a sync risk with unwritten copies; the
 # e2e tests that check those cases run a job on it.
 PRE_1955_WORDPRESS = REPO / "tests" / "fixtures" / "wordpress_pre_1955" / "wordpress.zip"
 

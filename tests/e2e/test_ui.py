@@ -1172,6 +1172,36 @@ def test_results_page_shows_the_same_risks_as_report_json(
         assert ev == {"console": [], "pageerror": [], "failed": []}, (r.db, ev)
 
 
+def test_results_page_states_the_sync_risks_cdc_copy_of_unwritten_tables(
+    page: Page, ui: str, all_runs: list[PipelineResult]
+) -> None:
+    """#2238: a sync risk whose tables include ones no captured query writes says CDC
+    keeps their copies current, as report.json and both reports do, and the results page
+    shows that sentence and never "a one-time copy"."""
+    checked = 0
+    for r in all_runs:
+        report = json.loads((r.artifact_root / r.report["report"]).read_text())
+        sync = [
+            x
+            for x in report["risk_assessment"]["risks"]
+            if x.get("rule") == "sync.wave" and "written by no captured query" in x["description"]
+        ]
+        if not sync:
+            continue
+        page.goto(f"{ui}/analysis/results/{r.job_id}")
+        page.locator("#migration-roadmap-section").wait_for(timeout=READY_MS)
+        for risk in sync:
+            page.get_by_role("tab", name=re.compile(rf"^{risk['severity']} \(")).click()
+            sentence = re.search(
+                r"CDC keeps (?:its copy|their copies) current", risk["description"]
+            )
+            assert sentence, (r.db, risk["description"])
+            assert page.get_by_text(sentence.group(0)).count() >= 1, (r.db, risk["risk_id"])
+            assert page.get_by_text("one-time copy").count() == 0, (r.db, risk["risk_id"])
+            checked += 1
+    assert checked, "no sample's sync risk names an unwritten table"
+
+
 def test_ui_shows_only_the_product_name(
     page: Page, ui: str, all_runs: list[PipelineResult]
 ) -> None:

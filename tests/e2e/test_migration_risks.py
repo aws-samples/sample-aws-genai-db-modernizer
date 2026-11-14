@@ -180,6 +180,80 @@ def test_each_sync_risk_states_its_own_evidence_counts(run: PipelineResult) -> N
             assert int(total.group(2)) == len(r["affected_tables"]), (run.db, r["risk_id"])
 
 
+# The sync risk's sentence for the tables no captured query writes (#2238), as each of
+# its two forms ends.
+_UNWRITTEN_CDC = (
+    "CDC keeps its copy current",
+    "CDC keeps their copies current",
+)
+_UNWRITTEN_STEP = "set up CDC for the table"
+
+
+def test_an_unwritten_table_a_later_step_reads_is_a_cdc_copy(run: PipelineResult) -> None:
+    """#2238: a table no captured query writes that a later step's targets read is a
+    replica target fed from a Debezium hub topic in the data-movement plan, as the wave
+    plan says ("kept current by CDC"). The sync risk says the same, never "a one-time
+    copy", keeps the severity of its CDC pairs (LOW only when it has none), and the
+    engineering report, the executive PDF and ``assessment-data.json`` state its words."""
+    from src.storage.local_store import LocalArtifactStore
+    from src.tools.data_movement.plan import build_step_plans, load_inputs
+
+    report = _report(run)
+    written = {str(r["table"]) for r in report.get("table_sources") or []}
+    sync = [r for r in _new(report) if r["rule"] == "sync.wave"]
+    unwritten = {r["risk_id"]: set(r["affected_tables"]) - written for r in sync}
+    assert any(unwritten.values()), run.db  # every sample has some since #2166
+    inputs = load_inputs(LocalArtifactStore(base_dir=str(run.artifact_root)), run.db, run.job_id)
+    plans, hub = build_step_plans(inputs, prices=None)
+    assert hub is not None
+    topic_of = {t.topic: t.table for t in hub.topics}
+    # Every replica target table a Debezium step reads: from a hub topic, or listed as
+    # one the hub cannot carry yet (no key, a view), which a written table can be too.
+    fed: set[str] = set()
+    for plan in plans:
+        if plan.cdc.tool != "debezium":
+            continue
+        topics = {topic_of[t] for t in plan.hub_topics if t in topic_of}
+        gaps = {u.table for u in plan.unsupported if u.kind in {"no_key", "view", "unknown_table"}}
+        for target in plan.targets:
+            if target.role in {"replica", "cache"}:
+                assert set(target.tables) <= topics | gaps, (run.db, plan.step)
+                fed |= set(target.tables)
+    md = run.deliverable("engineering-report.md").read_text(encoding="utf-8")
+    pdf = norm(" ".join(pdf_page_texts(str(run.deliverable("executive-report.pdf")))))
+    data = json.loads(run.deliverable("assessment-data.json").read_text())
+    stored = {r["risk_id"]: r for r in data["risk_assessment"]["risks"]}
+    for r in sync:
+        text = f"{r['description']} {r['mitigation']}"
+        assert "one-time" not in text and " once" not in text, (run.db, r["risk_id"])
+        if not unwritten[r["risk_id"]]:
+            continue
+        assert unwritten[r["risk_id"]] <= fed, sorted(unwritten[r["risk_id"]] - fed)[:5]
+        cdc = next(s for s in _UNWRITTEN_CDC if s in r["description"])
+        assert _UNWRITTEN_STEP in r["mitigation"], r["mitigation"]
+        pairs = "that CDC keeps current from" in r["description"]
+        if "no single source of truth" in r["description"]:
+            assert r["severity"] == "HIGH", r["risk_id"]
+        else:
+            assert r["severity"] == ("MEDIUM" if pairs else "LOW"), r["risk_id"]
+        _, body = risk_engine_and_body(r["description"])
+        assert md_text(body) in md and md_text(r["mitigation"]) in md, r["risk_id"]
+        assert norm(cdc) in pdf and norm(_UNWRITTEN_STEP) in pdf, r["risk_id"]
+        assert stored[r["risk_id"]]["description"] == r["description"]
+        assert stored[r["risk_id"]]["mitigation"] == r["mitigation"]
+    # The same counts on discourse as its wave plan (#2166, #2237): wave 3 reads 134
+    # tables nothing writes, all from Aurora PostgreSQL through the hub.
+    if run.db == "discourse":
+        (risk,) = sync
+        assert risk["wave"] == 3 and risk["severity"] == "MEDIUM"
+        assert risk["description"].endswith(
+            "The other 134 tables are written by no captured query; CDC keeps their copies "
+            "current too, and a copy changes only when something outside the captured "
+            "workload writes its table."
+        ), risk["description"]
+        assert _sync_figures(risk["description"])[2] == 134
+
+
 # One engine pair of a close-call risk: "Aurora MySQL keeps 14 close calls and 5 ties over
 # DynamoDB" (#1410).
 _PAIR = re.compile(
@@ -244,10 +318,10 @@ def test_the_sync_risk_counts_every_table_read_off_its_owner(
     """Both directions of a migrating engine's copies (the discourse judge read "81"
     plus "37 more" tables against the gate's 70 dual-read and 64 kept-in-sync ones): a
     table a migrating engine owns that another engine reads, or one it reads that another
-    engine owns, is in its wave's sync risk, as a CDC copy or a one-time copy, and the
+    engine owns, is in its wave's sync risk, as a CDC pair's copy or an unwritten table's, and the
     risk's own total is the tables it lists. Run on the bundled sample's designed job and
     on the same job on the collection bundled before #1955 (``designed_pre_1955``), whose
-    risk has CDC copies and one-time copies."""
+    risk has both (#2238: CDC keeps both kinds current)."""
     report = _report(request.getfixturevalue(job_name))
     sync = [r for r in _new(report) if r["rule"] == "sync.wave"]
     synced = {t for r in sync for t in r["affected_tables"]}
@@ -259,10 +333,10 @@ def test_the_sync_risk_counts_every_table_read_off_its_owner(
         if line["also_read_by"] and (migrating & {line["owner"], *line["also_read_by"]})
     }
     assert read_off_owner and read_off_owner <= synced, sorted(read_off_owner - synced)
-    # A risk with CDC copies and one-time copies states their total, and the total is the
+    # A risk with CDC pairs and unwritten tables states their total, and the total is the
     # tables it lists. Both jobs have both: on the refreshed sample every mapped table's
     # writes are on DynamoDB but one, and #2166 keeps that one, wp_wc_tax_rate_classes,
-    # which no query writes, on Aurora MySQL, so DynamoDB reads it as a one-time copy.
+    # which no query writes, on Aurora MySQL, so DynamoDB reads it as an unwritten copy.
     totals = [
         (
             r,
@@ -459,7 +533,7 @@ def _close_call_figures(text: str) -> tuple[int, int]:
 
 
 def _sync_figures(text: str) -> tuple[int, int, int]:
-    """(reads on a CDC copy, CDC-copied tables, one-time copies) in a sync risk, worded
+    """(reads on a CDC copy, CDC-copied tables, unwritten tables) in a sync risk, worded
     any way it has been ("52 reads run on a copy of 13 tables", "52 of them read a copy
     of 13 tables")."""
     cdc = re.search(
