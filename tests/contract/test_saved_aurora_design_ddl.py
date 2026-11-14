@@ -825,3 +825,99 @@ def test_the_canonical_folder_wins_a_version_tie(reverse: bool) -> None:
     [served] = LocalS3Service(store).read_all_schema_designs(DB, JOB)
     assert served["target_type"] == "aurora_mysql"
     assert served["artifact_path"] == f"{DB}/{JOB}/schema-aurora_mysql/v1/schema_output.json"
+
+
+# --- Round 4: statements at any depth count; descriptive text does not ---------------
+
+_NESTED = {
+    "a nested list": [["DROP TABLE users;"]],
+    "a dict entry": [{"name": "ix", "sql": "DROP TABLE users;"}],
+}
+_FOREIGN_FOLDERS = ["schema-aurora", "schema-Aurora_MySQL", "schema-dynamodb"]
+
+
+def _place(design: dict, where: str, field: str, value: object) -> None:
+    if where == "top level":
+        design[field] = value
+    else:
+        design["table_definitions"][0][field] = value
+
+
+@pytest.mark.parametrize("where", ["top level", "on a table"])
+@pytest.mark.parametrize("field", ["indexes", "foreign_keys"])
+@pytest.mark.parametrize("value", list(_NESTED.values()), ids=list(_NESTED))
+@pytest.mark.parametrize("folder", _FOREIGN_FOLDERS)
+def test_a_statement_nested_in_a_list_or_dict_is_refused(
+    tmp_path: Path, folder: str, value: object, field: str, where: str
+) -> None:
+    design = _dynamodb()
+    _place(design, where, field, copy.deepcopy(value))
+    store, key = _at(tmp_path, folder, design, True)
+    with pytest.raises(ContractVersionError) as caught:
+        store.read_json(key)
+    assert type(caught.value).__name__ == "UnsafeArtifactError"
+    assert "DROP" not in str(caught.value) and "DROP" not in caught.value.public_message
+
+
+_DESCRIPTIVE = {
+    "an index with its keys": ("indexes", "GSI1 on (pk, sk)"),
+    "an index with its key names": ("indexes", "GSI1: PK=user_id, SK=created_at"),
+    "a reference": ("foreign_keys", "orders.user_id references users.id"),
+}
+
+
+@pytest.mark.passes_on_main
+@pytest.mark.parametrize("where", ["top level", "on a table"])
+@pytest.mark.parametrize("case", list(_DESCRIPTIVE.values()), ids=list(_DESCRIPTIVE))
+@pytest.mark.parametrize("folder", ["schema-dynamodb", "schema-aurora"])
+def test_descriptive_text_in_a_dynamodb_design_loads(
+    tmp_path: Path, folder: str, case: tuple[str, str], where: str
+) -> None:
+    field, text = case
+    design = _dynamodb()
+    _place(design, where, field, [text])
+    store, key = _at(tmp_path, folder, design, True)
+    assert store.read_json(key) == design
+
+
+_STATEMENTS = {
+    "lowercase": "create index ix on t (a)",
+    "a leading comment": "-- note\nDROP TABLE users",
+    "a leading block comment": "/* x */ DROP TABLE users",
+    "leading whitespace": "\n   DROP TABLE users",
+    "WITH": "WITH x AS (SELECT 1) DELETE FROM users",
+    "ALTER": "ALTER TABLE users DROP COLUMN id",
+    "GRANT": "GRANT ALL ON users TO public",
+    "a later statement": "ix_name; DROP TABLE users",
+}
+
+
+@pytest.mark.parametrize("where", ["top level", "on a table"])
+@pytest.mark.parametrize("text", list(_STATEMENTS.values()), ids=list(_STATEMENTS))
+@pytest.mark.parametrize("folder", _FOREIGN_FOLDERS)
+def test_a_statement_in_any_form_is_refused(
+    tmp_path: Path, folder: str, text: str, where: str
+) -> None:
+    design = _dynamodb()
+    _place(design, where, "indexes", [text])
+    store, key = _at(tmp_path, folder, design, True)
+    with pytest.raises(ContractVersionError) as caught:
+        store.read_json(key)
+    assert "DROP" not in str(caught.value) and "GRANT" not in str(caught.value)
+
+
+@pytest.mark.passes_on_main
+@pytest.mark.parametrize(
+    "path",
+    sorted(
+        p
+        for p in RUNS.glob("*/job/schema-*/**/schema_output.json*")
+        if not p.parent.name.startswith("schema-aurora")
+    ),
+    ids=lambda p: str(p.relative_to(RUNS)),
+)
+def test_every_committed_non_aurora_design_loads(tmp_path: Path, path: Path) -> None:
+    design = _load(path)
+    folder = next(part for part in path.parts if part.startswith("schema-"))
+    store, key = _at(tmp_path, folder, design, True)
+    assert store.read_json(key) == design

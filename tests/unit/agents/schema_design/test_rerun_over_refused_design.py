@@ -174,23 +174,41 @@ def _loaded(store: _MemoryStore, tmp_path: Path) -> bytes:
     return store.files[KEY]
 
 
-@pytest.mark.parametrize("store_type", [_S3Like, _AtxLike, _DeleteDoesNothing])
-def test_a_store_that_cannot_set_aside_keeps_no_copy_and_claims_none(
+class _DeleteRaises(_MemoryStore):
+    """A delete that is refused (S3's AccessDenied)."""
+
+    def delete(self, path: str) -> bool:
+        raise PermissionError("AccessDenied")
+
+
+_KEPT = {
+    _S3Like: ("copied the refused saved design", True),
+    _DeleteDoesNothing: ("copied the refused saved design", True),
+    _DeleteRaises: ("could not set aside the refused saved design", True),
+    _AtxLike: ("this store cannot copy it", False),
+}
+
+
+@pytest.mark.parametrize("store_type", list(_KEPT), ids=lambda t: t.__name__)
+def test_a_store_that_cannot_move_the_file_keeps_one_copy_at_most_and_claims_no_move(
     tmp_path: Path, caplog: pytest.LogCaptureFixture, store_type: type[_MemoryStore]
 ) -> None:
+    """Round 4: where the store can write a copy (S3) it keeps one, reused on every rerun;
+    the original stays for the rerun to overwrite, and no log line says it was set aside."""
     store = store_type()
     refused = _loaded(store, tmp_path)
+    wording, copied = _KEPT[store_type]
     with caplog.at_level(logging.WARNING, logger=handler.__name__):
         for _ in range(3):
             assert handler.set_aside_refused_design(store, DB, JOB, ENGINE, VERSION) is None
     assert store.files[KEY] == refused
     copies = [k for k in store.files if ".refused" in k]
-    # A delete that reports success but leaves the file can leave one copy, never more.
-    assert copies == ([f"{KEY}.refused"] if store_type is _DeleteDoesNothing else [])
+    assert copies == ([f"{KEY}.refused"] if copied else [])
     assert all(store.files[k] == refused for k in copies)
     lines = [r.getMessage() for r in caplog.records if KEY in r.getMessage()]
-    assert lines and all("stays until this run replaces it" in line for line in lines)
-    assert all("set aside" not in line and "DROP" not in line for line in lines)
+    assert len(lines) == 3 and all(wording in line for line in lines)
+    assert all(not line.startswith("Schema design: set aside") for line in lines)
+    assert all("DROP" not in line for line in lines)
 
 
 @pytest.mark.passes_on_main
