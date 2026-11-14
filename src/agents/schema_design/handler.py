@@ -250,12 +250,13 @@ def set_aside_refused_design(
     """Move the engine's saved design aside when its read refuses it (#2199), so a rerun of
     the schema design (the next step the refusal names) replaces it instead of failing on
     it. The refused file is kept: copied to :data:`REFUSED_SUFFIX` in the same folder
-    (``.refused.2`` and on if one is already there), which no reader loads, and removed
-    only once the copy is written. A store that cannot copy its content or delete the
-    original (AWS Transform's, S3 without delete rights) keeps the refused file where it
-    is: this run overwrites it, its content being untrusted anyway, and nothing claims it
-    was kept. Logs the path and the refused field's position, never the content. Never
-    fails the run. Returns the new key, or ``None`` when nothing was moved."""
+    (``.refused.2`` and on for another content; an identical earlier copy is reused), which
+    no reader loads, and removed only once the copy is written. A store that can copy but
+    not delete (S3 without delete rights) keeps the copy and the original; one that cannot
+    copy raw content (AWS Transform's) keeps only the original. Either way this run
+    overwrites the original, its content being untrusted anyway, and the log says which
+    happened. Logs the path and the refused field's position, never the content. Never
+    fails the run. Returns the new key when the original was moved, else ``None``."""
     from src.shared.contract_versioning import ContractVersionError
 
     folder = f"{database_name}/{job_id}/schema-{target_type}"
@@ -274,34 +275,52 @@ def set_aside_refused_design(
             where = getattr(exc, "where", None) or "contract_version"
         except (OSError, ValueError):
             return None
-        aside = _copy_aside(store, key)
     except Exception:  # noqa: BLE001 -- setting aside is best effort; the run goes on
         logger.warning("Schema design: could not check the saved design %s", key)
         return None
-    if aside is None:
+    try:
+        aside, moved = _copy_aside(store, key)
+    except Exception:  # noqa: BLE001 -- a delete or write that raises (AccessDenied, ...)
         logger.warning(
-            "Schema design: the refused saved design %s (field: %s) stays until this run "
-            "replaces it; this store cannot set it aside",
+            "Schema design: could not set aside the refused saved design %s (field: %s); "
+            "it stays until this run replaces it",
             key,
             where,
         )
         return None
+    if moved:
+        logger.warning(
+            "Schema design: set aside the refused saved design %s as %s (field: %s); "
+            "this run replaces it",
+            key,
+            aside,
+            where,
+        )
+        return aside
+    if aside is not None:
+        logger.warning(
+            "Schema design: copied the refused saved design %s to %s (field: %s); the "
+            "original stays until this run replaces it",
+            key,
+            aside,
+            where,
+        )
+        return None
     logger.warning(
-        "Schema design: set aside the refused saved design %s as %s (field: %s); "
-        "this run replaces it",
+        "Schema design: the refused saved design %s (field: %s) stays until this run "
+        "replaces it; this store cannot copy it",
         key,
-        aside,
         where,
     )
-    return aside
+    return None
 
 
-def _copy_aside(store: ArtifactStore, key: str) -> str | None:
-    """Copy ``key``'s raw content next to it under a free ``.refused`` name and remove the
-    original. ``None`` (and no copy left) when the store cannot read or write the raw
-    content (bytes, else text) or its delete does not take effect."""
-    if type(store).delete is ArtifactStore.delete:
-        return None  # the default deletes nothing: the original would stay
+def _copy_aside(store: ArtifactStore, key: str) -> tuple[str | None, bool]:
+    """Copy ``key``'s raw content (bytes, else text) next to it under a free ``.refused``
+    name, reusing an identical earlier copy, then remove the original. Returns the copy's
+    key (``None`` when the store cannot read or write raw content) and whether the
+    original is gone: a store that keeps the base class's delete, or whose delete does not
+    take effect, keeps both."""
     try:
         content = store.read_bytes(key)
         write: Any = store.write_bytes
@@ -309,28 +328,23 @@ def _copy_aside(store: ArtifactStore, key: str) -> str | None:
         read_text = getattr(store, "read_text", None)
         write = getattr(store, "write_text", None)
         if read_text is None or write is None:
-            return None
+            return None, False
         try:
             content = read_text(key)
         except NotImplementedError:
-            return None
-    aside, n, kept = f"{key}{REFUSED_SUFFIX}", 1, False
-    while store.exists(aside):
-        if _same_content(store, aside, content):
-            kept = True  # an earlier run's copy of this very file: no second copy
-            break
+            return None, False
+    aside, n = f"{key}{REFUSED_SUFFIX}", 1
+    while store.exists(aside) and not _same_content(store, aside, content):
         n += 1
         aside = f"{key}{REFUSED_SUFFIX}.{n}"
-    if not kept:
+    if not store.exists(aside):  # else an earlier run's copy of this very file
         try:
             write(aside, content)
         except NotImplementedError:
-            return None
-    if store.delete(key) and not store.exists(key):
-        return aside
-    if not kept:
-        store.delete(aside)  # the original stays: keep no copy that claims otherwise
-    return None
+            return None, False
+    if type(store).delete is ArtifactStore.delete:
+        return aside, False  # the default deletes nothing
+    return aside, bool(store.delete(key)) and not store.exists(key)
 
 
 def _same_content(store: ArtifactStore, key: str, content: bytes | str) -> bool:

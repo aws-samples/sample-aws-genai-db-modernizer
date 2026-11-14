@@ -827,39 +827,59 @@ def check_artifact[T](path: str, data: T) -> T:
 _ANY_SCHEMA_OUTPUT = re.compile(r"(?:^|/)schema-([^/]+)/(?:v\d+/)?schema_output\.json$")
 
 
-# A plain name (a DynamoDB index name, a column): no SQL statement fits in one.
-_PLAIN_NAME = re.compile(r"[A-Za-z0-9_.\-]{1,255}")
+# A SQL statement: one of these keywords first, once leading whitespace and comments are
+# trimmed. Descriptive text ("GSI1 on (pk, sk)", "orders.user_id references users.id")
+# starts with none of them.
+_STATEMENT_START = re.compile(
+    r"(?:CREATE|ALTER|DROP|GRANT|REVOKE|INSERT|UPDATE|DELETE|WITH|TRUNCATE|SELECT|MERGE"
+    r"|REPLACE|RENAME|CALL|EXEC|EXECUTE|COPY|LOCK|SET|DECLARE|LOAD|PREPARE|COMMENT)\b",
+    re.IGNORECASE,
+)
+_LEADING_COMMENTS = re.compile(r"(?:\s+|--[^\n]*(?:\n|$)|#[^\n]*(?:\n|$)|/\*.*?\*/)*", re.DOTALL)
 
 
-def _statements(value: object) -> bool:
-    """Whether ``value`` is a list holding a SQL statement: a string a plain name is not."""
-    return isinstance(value, list) and any(
-        isinstance(v, str) and not _PLAIN_NAME.fullmatch(v) for v in value
-    )
+def _is_statement(text: str) -> bool:
+    """Whether ``text`` holds a SQL statement: it starts with a statement keyword once
+    whitespace and comments are trimmed, or one of its ``;``-separated parts does."""
+    for part in text.split(";"):
+        rest = part[_LEADING_COMMENTS.match(part).end() :]  # type: ignore[union-attr]
+        if _STATEMENT_START.match(rest):
+            return True
+    return False
+
+
+def _holds_statement(value: object) -> bool:
+    """Whether a statement is anywhere in ``value``: a string, or one inside nested lists
+    and dict values at any depth."""
+    stack = [value]
+    while stack:
+        item = stack.pop()
+        if isinstance(item, str):
+            if _is_statement(item):
+                return True
+        elif isinstance(item, Mapping):
+            stack.extend(item.values())
+        elif isinstance(item, (list, tuple)):
+            stack.extend(item)
+    return False
 
 
 def _aurora_shaped(payload: Mapping[str, Any]) -> bool:
-    """Whether a schema design carries Aurora content (#2199): a non-empty DDL script, a
-    statement list (``indexes`` / ``foreign_keys`` holding SQL, at the top level or on a
-    table), or an Aurora column type in a column position. A key alone never counts: an
-    empty, null or name-only value (``"foreign_keys": []``, ``"indexes": ["GSI1"]``,
-    ``"generated_ddl": null``) is no Aurora content."""
-    ddl = payload.get("generated_ddl")
-    if ddl not in (None, "") and not (isinstance(ddl, str) and not ddl.strip()):
-        return True
-    if _statements(payload.get("indexes")) or _statements(payload.get("foreign_keys")):
-        return True
+    """Whether a schema design carries Aurora content (#2199): a SQL statement anywhere in
+    ``generated_ddl``, ``indexes`` or ``foreign_keys`` (at the top level or on a table, in
+    nested lists or dict values too), or an Aurora column type in a column position. A key
+    alone, an empty or null value and descriptive text are no Aurora content."""
+    fields = [payload.get(k) for k in ("generated_ddl", "indexes", "foreign_keys")]
     tables = payload.get("table_definitions")
     for table in tables if isinstance(tables, list) else []:
         if not isinstance(table, Mapping):
             continue
-        if _statements(table.get("indexes")) or _statements(table.get("foreign_keys")):
-            return True
+        fields += [table.get("indexes"), table.get("foreign_keys")]
         columns = table.get("columns")
         for column in columns if isinstance(columns, list) else []:
             if isinstance(column, Mapping) and column.get("aurora_type") not in (None, ""):
                 return True
-    return False
+    return any(_holds_statement(f) for f in fields)
 
 
 def _aurora_content_on_read(
