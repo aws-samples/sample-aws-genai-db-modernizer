@@ -214,3 +214,63 @@ def test_the_facts_layer_states_the_plan_only_with_its_inputs() -> None:
         report, job.inputs(), engine_costs=job.COSTS, risks_by_engine={"dynamodb": 0}
     )
     assert plan == _plan()
+
+
+def _gap_risk(design_ran: bool, severity: str = "HIGH") -> dict[str, Any]:
+    """The coverage-gap risk synthesis writes for DynamoDB's q12, as ``report`` stores it."""
+    from src.agents.referee.synthesis_report import _coverage_gap_risk
+
+    risk = _coverage_gap_risk(
+        "RISK-009",
+        "dynamodb",
+        {"q12": severity},
+        {"q12": "SELECT * FROM app.sessions"},
+        {"q12": {"app.sessions"}},
+        design_ran,
+    )
+    return {**risk, "status": "open"}
+
+
+def _plan_from_report_risks(risks: list[dict[str, Any]]) -> dict[str, Any]:
+    from src.shared.adoption_facts import holding_risks
+
+    report = {**job.REPORT, "risk_assessment": {"risks": risks}}
+    plan = build_slice_plan(report, job.waves(), job.inputs(), job.COSTS, {}, holding_risks(report))
+    assert plan is not None
+    return plan
+
+
+def _stage_labels(plan: dict[str, Any]) -> dict[str, dict[str, Any]]:
+    return {
+        st["label"]: st
+        for step in plan["plan_steps"]
+        for st in step["step_stages"]
+        if step.get("engine") == "dynamodb" or "dynamodb" in step.get("engines", [])
+    }
+
+
+@pytest.mark.passes_on_main  # guards behaviour #2163 already has
+def test_a_schema_design_gap_holds_its_unit_when_schema_design_ran() -> None:
+    # Open question 5 (#1129): the gap is a real risk only against a design that ran.
+    plan = _plan_from_report_risks([_gap_risk(design_ran=True)])
+    held = [st for st in _stage_labels(plan).values() if st["kind"] == "risk_held"]
+    assert [st["unit_keys"] for st in held] == [["dynamodb:app.sessions"]]
+    assert held[0]["label"].endswith("d")
+    assert held[0]["holding_risk_ids"] == ["RISK-009"]
+
+
+@pytest.mark.passes_on_main  # guards behaviour #2163 already has
+def test_a_run_with_no_schema_design_leaves_stage_d_empty() -> None:
+    # No design ran: the gap risk is LOW ("Not checked"), so it holds no unit.
+    risk = _gap_risk(design_ran=False)
+    assert risk["severity"] == "LOW" and "Not checked" in risk["description"]
+    plan = _plan_from_report_risks([risk])
+    assert not [st for st in _stage_labels(plan).values() if st["kind"] == "risk_held"]
+    assert not [st for st in _stage_labels(plan).values() if st["label"].endswith("d")]
+    assert all(
+        "RISK-009" not in st["holding_risk_ids"]
+        for step in plan["plan_steps"]
+        for st in step["step_stages"]
+    )
+    # The same unit lands in its self-contained stage, as with no risk at all.
+    assert plan == _plan_from_report_risks([])

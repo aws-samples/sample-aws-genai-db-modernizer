@@ -1227,3 +1227,23 @@ def test_the_empty_structures_validate() -> None:
     check_adoption_against_plan(adoption, plan)
     with pytest.raises(ValidationError, match="slice_basis is set exactly"):
         SlicePlanFacts(step_basis="slices")
+
+
+@pytest.mark.passes_on_main  # guards history #1130 already wrote
+def test_the_slice_plan_minor_has_its_version_history_entry() -> None:
+    """The one MINOR the slice plan added (#1129) is in the Version History, and the
+    history runs on to the version the model writes, with no gap."""
+    import re
+
+    from src.contracts import synthesis_output
+    from src.contracts.synthesis_output import SynthesisOutputContract
+    from src.shared.contract_versioning import current_version
+
+    doc = synthesis_output.__doc__ or ""
+    entries = re.findall(r"^- (\d+)\.(\d+) \(([^)]*)\)", doc, re.MULTILINE)
+    versions = [(int(a), int(b)) for a, b, _ in entries]
+    assert versions == sorted(versions)
+    assert f"{versions[-1][0]}.{versions[-1][1]}" == current_version(SynthesisOutputContract)
+    chunks = re.split(r"^(?=- \d+\.\d+ \()", doc, flags=re.MULTILINE)
+    (slice_entry,) = [c for c in chunks if "#1129" in c]
+    assert "facts.slice_plan" in slice_entry and "Backward" in slice_entry
