@@ -324,6 +324,12 @@ DDL_WRITERS = {
     # step-1.ddl.sql around the generator's DDL: the step 1 tests below (schema, table and
     # database names are plain identifiers, checked when step 1 reads its inputs).
     "src/tools/data_movement/dms_step.py",
+    # The commented ALTER DATABASE for a database that already exists (#2276): the name
+    # passes check_comment_name (the routine scripts' _safe rule) and is quoted with
+    # backticks doubled, and the clause comes only from the collation allowlist
+    # (database_options); tests/unit/tools/data_movement/test_dms_step_collations.py:
+    # the comment-name and edited-contract tests.
+    "src/tools/data_movement/collations.py",
     # CREATE/DROP PUBLICATION on a live source: names pass an identifier allowlist first
     # (InitialLoadError), tests/unit/tools/data_movement/test_initial_load.py.
     "src/tools/data_movement/initial_load.py",
