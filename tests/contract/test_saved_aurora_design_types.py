@@ -234,7 +234,7 @@ def test_aurora_column_types_in_another_engines_folder_are_checked(tmp_path: Pat
     when it names none (the #2155 version of this test read them unchecked)."""
     other = {"contract_version": "1.0", "table_definitions": [{"columns": [{"aurora_type": "x;"}]}]}
     store, key = _store(tmp_path, "dynamodb", other)
-    with pytest.raises(ContractVersionError, match="target_engine"):
+    with pytest.raises(ContractVersionError, match="Aurora DDL content"):
         store.read_json(key)
     store, key = _store(tmp_path, "dynamodb", {**other, "target_engine": "aurora_mysql"})
     with pytest.raises(ContractVersionError, match="aurora_type"):

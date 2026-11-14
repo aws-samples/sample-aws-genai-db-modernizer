@@ -713,3 +713,115 @@ def test_a_comment_for_an_index_the_table_creates_is_refused(tmp_path: Path) -> 
         if str(note.get("recommendation")).startswith("Index not created"):
             note["source_object"] = "accounts.ix_text"
     _refused(tmp_path, "aurora_mysql", design, "generated_ddl", "DROP")
+
+
+# --- Only real Aurora content counts, and the refusal fits the folder's engine ---------
+
+DYNAMODB = RUNS / "wordpress-both/job/schema-dynamodb/v2/schema_output.json"
+
+
+def _dynamodb(edit: Callable[[dict], None] | None = None) -> dict:
+    design = _load(DYNAMODB)
+    if edit is not None:
+        edit(design)
+    return design
+
+
+def _fk_list(design: dict) -> None:
+    design["table_definitions"][0]["foreign_keys"] = []
+
+
+def _gsi_names(design: dict) -> None:
+    design["indexes"] = ["GSI1"]
+
+
+def _null_ddl(design: dict) -> None:
+    design["generated_ddl"] = None
+
+
+@pytest.mark.passes_on_main
+@pytest.mark.parametrize(
+    "edit",
+    [None, _fk_list, _gsi_names, _null_ddl],
+    ids=["as committed", "empty foreign_keys", "index names", "null generated_ddl"],
+)
+def test_a_dynamodb_design_with_no_aurora_content_loads(tmp_path: Path, edit) -> None:
+    """Round 3: a key alone is no Aurora content; an empty, null or name-only value
+    loads, in the DynamoDB folder and in the legacy Aurora one."""
+    design = _dynamodb(edit)
+    for folder in ("schema-dynamodb", "schema-aurora"):
+        store, key = _at(tmp_path, folder, design, True)
+        assert store.read_json(key) == design
+
+
+def _ddl_only(design: dict) -> None:
+    design["generated_ddl"] = "DROP TABLE users;"
+
+
+def _table_fk_statement(design: dict) -> None:
+    design["table_definitions"][0]["foreign_keys"] = [
+        "ALTER TABLE t ADD CONSTRAINT f FOREIGN KEY (a) REFERENCES u (b); DROP TABLE u;"
+    ]
+
+
+@pytest.mark.parametrize(
+    "edit", [_ddl_only, _table_fk_statement], ids=["a DDL script", "a table FK statement"]
+)
+def test_aurora_content_in_a_dynamodb_design_is_refused_as_dynamodb(
+    tmp_path: Path, edit: Callable[[dict], None]
+) -> None:
+    """Each signal alone (no Aurora column types) is enough, and the message names the
+    folder's engine and its own next step."""
+    store, key = _at(tmp_path, "schema-dynamodb", _dynamodb(edit), True)
+    with pytest.raises(ContractVersionError) as caught:
+        store.read_json(key)
+    assert caught.value.public_message == (
+        "This assessment's saved DynamoDB design carries Aurora DDL content (a DDL script, "
+        "SQL statements or Aurora column types), which a DynamoDB design does not have, so "
+        "it was not loaded. Rerun the DynamoDB schema design."
+    )
+    assert "DROP" not in str(caught.value)
+
+
+def test_a_legacy_aurora_design_with_only_a_script_is_refused(tmp_path: Path) -> None:
+    """The ``generated_ddl`` signal alone: no table definitions, no Aurora column types."""
+    design = {"target_engine": "aurora_mysql", "generated_ddl": "DROP TABLE `users`;"}
+    store, key = _at(tmp_path, "schema-aurora", design, False)
+    with pytest.raises(ContractVersionError, match="generated_ddl"):
+        store.read_json(key)
+
+
+def test_a_legacy_aurora_design_naming_no_engine_says_which_reruns_fit(tmp_path: Path) -> None:
+    saved = _load(WORDPRESS)
+    del saved["target_engine"]
+    store, key = _at(tmp_path, "schema-aurora", saved, True)
+    with pytest.raises(ContractVersionError) as caught:
+        store.read_json(key)
+    assert caught.value.public_message == (
+        "This assessment's saved Aurora design does not say whether it is for Aurora MySQL or "
+        "Aurora PostgreSQL, so its DDL could not be checked and it was not loaded. Rerun the "
+        "Aurora MySQL or Aurora PostgreSQL schema design."
+    )
+
+
+@pytest.mark.parametrize("reverse", [False, True], ids=["listed first", "listed last"])
+def test_the_canonical_folder_wins_a_version_tie(reverse: bool) -> None:
+    """On a case-sensitive store, ``schema-aurora_mysql/v1`` and ``schema-Aurora_MySQL/v1``
+    both list under ``aurora_mysql``; the canonical one is served, in either order."""
+    from src.api.services.local_s3 import LocalS3Service
+    from tests.unit.agents.schema_design.test_rerun_over_refused_design import _MemoryStore
+
+    class _Ordered(_MemoryStore):
+        def list_prefix(self, prefix: str) -> list[str]:
+            keys = super().list_prefix(prefix)
+            return list(reversed(keys)) if reverse else keys
+
+    store = _Ordered()
+    store.base_dir = Path("/nonexistent")  # type: ignore[attr-defined]  # read only by other routes
+    canonical, variant = _load(WORDPRESS), _load(WORDPRESS)
+    variant["migration_strategy"] = "translate"
+    for folder, design in (("schema-aurora_mysql", canonical), ("schema-Aurora_MySQL", variant)):
+        store.write_json(f"{DB}/{JOB}/{folder}/v1/schema_output.json", design)
+    [served] = LocalS3Service(store).read_all_schema_designs(DB, JOB)
+    assert served["target_type"] == "aurora_mysql"
+    assert served["artifact_path"] == f"{DB}/{JOB}/schema-aurora_mysql/v1/schema_output.json"

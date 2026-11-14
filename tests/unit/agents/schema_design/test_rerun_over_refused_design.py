@@ -22,6 +22,8 @@ from pathlib import Path
 import pytest
 
 from src.agents.schema_design import handler
+from src.shared.contract_versioning import check_artifact
+from src.storage.artifact_store import ArtifactStore
 from src.storage.local_store import LocalArtifactStore
 
 REPO = Path(__file__).resolve().parents[4]
@@ -107,3 +109,158 @@ def test_a_design_that_reads_is_left_where_it_is(tmp_path: Path) -> None:
     assert handler.clear_design_skip(store, DB, JOB, ENGINE, VERSION) is False
     assert (tmp_path / KEY).read_bytes() == before
     assert not (tmp_path / f"{KEY}.refused").exists()
+
+
+# --- Stores that cannot copy bytes or delete (S3, AWS Transform) -----------------------
+
+
+class _MemoryStore(ArtifactStore):
+    """A case-sensitive in-memory store with the local store's methods (it deletes)."""
+
+    def __init__(self) -> None:
+        self.files: dict[str, bytes] = {}
+
+    def read_json(self, path: str) -> dict:
+        if path not in self.files:
+            raise FileNotFoundError(path)
+        return check_artifact(path, json.loads(self.files[path]))  # type: ignore[no-any-return]
+
+    def write_json(self, path: str, data: dict) -> None:
+        self.files[path] = json.dumps(data).encode("utf-8")
+
+    def read_bytes(self, path: str) -> bytes:
+        return self.files[path]
+
+    def write_bytes(self, path: str, data: bytes) -> None:
+        self.files[path] = data
+
+    def exists(self, path: str) -> bool:
+        return path in self.files
+
+    def list_prefix(self, prefix: str) -> list[str]:
+        return sorted(k for k in self.files if k.startswith(prefix))
+
+    def delete(self, path: str) -> bool:
+        return self.files.pop(path, None) is not None
+
+
+class _S3Like(_MemoryStore):
+    """S3's method set: raw bytes, and the base class's delete, which deletes nothing."""
+
+    delete = ArtifactStore.delete  # type: ignore[assignment]
+
+
+class _AtxLike(_S3Like):
+    """AWS Transform's method set: JSON only, no raw bytes, no delete."""
+
+    def read_bytes(self, path: str) -> bytes:
+        raise NotImplementedError("JSON only")
+
+    def write_bytes(self, path: str, data: bytes) -> None:
+        raise NotImplementedError("JSON only")
+
+
+class _DeleteDoesNothing(_MemoryStore):
+    """A delete that reports success and leaves the file."""
+
+    def delete(self, path: str) -> bool:
+        return True
+
+
+def _loaded(store: _MemoryStore, tmp_path: Path) -> bytes:
+    _job(tmp_path)
+    for path in (tmp_path / DB / JOB).rglob("*.json"):
+        store.files[str(path.relative_to(tmp_path))] = path.read_bytes()
+    return store.files[KEY]
+
+
+@pytest.mark.parametrize("store_type", [_S3Like, _AtxLike, _DeleteDoesNothing])
+def test_a_store_that_cannot_set_aside_keeps_no_copy_and_claims_none(
+    tmp_path: Path, caplog: pytest.LogCaptureFixture, store_type: type[_MemoryStore]
+) -> None:
+    store = store_type()
+    refused = _loaded(store, tmp_path)
+    with caplog.at_level(logging.WARNING, logger=handler.__name__):
+        for _ in range(3):
+            assert handler.set_aside_refused_design(store, DB, JOB, ENGINE, VERSION) is None
+    assert store.files[KEY] == refused
+    copies = [k for k in store.files if ".refused" in k]
+    # A delete that reports success but leaves the file can leave one copy, never more.
+    assert copies == ([f"{KEY}.refused"] if store_type is _DeleteDoesNothing else [])
+    assert all(store.files[k] == refused for k in copies)
+    lines = [r.getMessage() for r in caplog.records if KEY in r.getMessage()]
+    assert lines and all("stays until this run replaces it" in line for line in lines)
+    assert all("set aside" not in line and "DROP" not in line for line in lines)
+
+
+@pytest.mark.passes_on_main
+@pytest.mark.parametrize("store_type", [_S3Like, _AtxLike])
+def test_a_rerun_on_a_store_that_cannot_set_aside_replaces_the_refused_design(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, store_type: type[_MemoryStore]
+) -> None:
+    store = store_type()
+    _loaded(store, tmp_path)
+    clean = json.loads((RUN / f"schema-{ENGINE}/v{VERSION}/schema_output.json").read_text())
+    handler.run_schema_design(JOB, DB, ENGINE, store, VERSION, llm_mode="external")
+    assert store.exists(f"{DB}/{JOB}/schema-{ENGINE}/v{VERSION}/llm_input.json")
+    monkeypatch.setattr(handler, "require_valid_guardrail_config", lambda: None)
+    monkeypatch.setattr(
+        handler, "_dispatch_schema_agent", lambda *a, **k: (json.dumps(clean), None)
+    )
+    handler.run_schema_design(JOB, DB, ENGINE, store, VERSION, llm_mode="bedrock")
+    assert store.read_json(KEY)["table_definitions"][0]["indexes"][0] != INJECTED
+
+
+def test_a_run_without_a_model_sets_the_refused_design_aside_before_its_skip_record(
+    tmp_path: Path,
+) -> None:
+    store, refused, _ = _job(tmp_path)
+    handler.run_schema_design(JOB, DB, ENGINE, store, VERSION, llm_mode="none")
+    _kept(tmp_path, refused)
+    assert store.read_json(KEY)["status"] == "skipped"
+
+
+class _TextOnly(_MemoryStore):
+    """A store that deletes and reads and writes text, but has no raw bytes."""
+
+    def read_bytes(self, path: str) -> bytes:
+        raise NotImplementedError("text only")
+
+    def write_bytes(self, path: str, data: bytes) -> None:
+        raise NotImplementedError("text only")
+
+    def read_text(self, path: str) -> str:
+        return self.files[path].decode("utf-8")
+
+    def write_text(self, path: str, content: str) -> None:
+        self.files[path] = content.encode("utf-8")
+
+
+class _NoRawRead(_TextOnly):
+    read_text = None  # type: ignore[assignment]
+
+
+def test_a_store_with_only_text_sets_aside_through_text(tmp_path: Path) -> None:
+    store = _TextOnly()
+    refused = _loaded(store, tmp_path)
+    assert handler.set_aside_refused_design(store, DB, JOB, ENGINE, VERSION) == f"{KEY}.refused"
+    assert store.files[f"{KEY}.refused"] == refused and KEY not in store.files
+
+
+def test_a_store_with_no_raw_read_keeps_the_file_and_moves_nothing(tmp_path: Path) -> None:
+    store = _NoRawRead()
+    refused = _loaded(store, tmp_path)
+    assert handler.set_aside_refused_design(store, DB, JOB, ENGINE, VERSION) is None
+    assert store.files[KEY] == refused
+    assert not [k for k in store.files if ".refused" in k]
+
+
+class _Broken(_MemoryStore):
+    def exists(self, path: str) -> bool:
+        raise RuntimeError("store unavailable")
+
+
+def test_setting_aside_never_fails_the_run(tmp_path: Path) -> None:
+    store = _Broken()
+    _loaded(store, tmp_path)
+    assert handler.set_aside_refused_design(store, DB, JOB, ENGINE, VERSION) is None

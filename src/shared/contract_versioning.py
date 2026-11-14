@@ -88,6 +88,12 @@ class ContractVersionError(Exception):
         )
 
 
+# A design outside an Aurora engine's folder that carries Aurora content: in another
+# engine's folder, or in an Aurora folder that names no Aurora engine (#2199).
+FOREIGN_AURORA = "Aurora DDL content"
+UNNAMED_AURORA = "unnamed Aurora engine"
+
+
 class UnsafeArtifactError(ContractVersionError):
     """A stored contract whose content fails a check every read of it makes (#2155).
 
@@ -112,6 +118,10 @@ class UnsafeArtifactError(ContractVersionError):
     ) -> None:
         if kind == "column type":
             detail = f"{where} {_shown(value)} is not an allowed {engine_name} column type"
+        elif kind == FOREIGN_AURORA:
+            detail = f"it carries Aurora DDL content, which a {engine_name} design does not"
+        elif kind == UNNAMED_AURORA:
+            detail = f"{where} names no Aurora engine, so its DDL cannot be checked"
         else:
             detail = (
                 f"{where} is not {_article(kind)} {kind} the {engine_name} DDL generator writes"
@@ -128,6 +138,19 @@ class UnsafeArtifactError(ContractVersionError):
     @property
     def public_message(self) -> str:
         """What is wrong and what to do, with no path and no stored text (#2199)."""
+        if self.kind == FOREIGN_AURORA:
+            return (
+                f"This assessment's saved {self.engine_name} design carries Aurora DDL content "
+                f"(a DDL script, SQL statements or Aurora column types), which a "
+                f"{self.engine_name} design does not have, so it was not loaded. Rerun the "
+                f"{self.engine_name} schema design."
+            )
+        if self.kind == UNNAMED_AURORA:
+            return (
+                "This assessment's saved Aurora design does not say whether it is for Aurora "
+                "MySQL or Aurora PostgreSQL, so its DDL could not be checked and it was not "
+                "loaded. Rerun the Aurora MySQL or Aurora PostgreSQL schema design."
+            )
         if self.kind == "column type":
             what = "a column type that is not an allowed SQL type"
         else:
@@ -804,29 +827,38 @@ def check_artifact[T](path: str, data: T) -> T:
 _ANY_SCHEMA_OUTPUT = re.compile(r"(?:^|/)schema-([^/]+)/(?:v\d+/)?schema_output\.json$")
 
 
+# A plain name (a DynamoDB index name, a column): no SQL statement fits in one.
+_PLAIN_NAME = re.compile(r"[A-Za-z0-9_.\-]{1,255}")
+
+
+def _statements(value: object) -> bool:
+    """Whether ``value`` is a list holding a SQL statement: a string a plain name is not."""
+    return isinstance(value, list) and any(
+        isinstance(v, str) and not _PLAIN_NAME.fullmatch(v) for v in value
+    )
+
+
 def _aurora_shaped(payload: Mapping[str, Any]) -> bool:
-    """Whether a schema design carries what only an Aurora design carries: a DDL script,
-    statement lists, or table definitions with Aurora column types (#2199)."""
-    if any(key in payload for key in ("generated_ddl", "foreign_keys")):
+    """Whether a schema design carries Aurora content (#2199): a non-empty DDL script, a
+    statement list (``indexes`` / ``foreign_keys`` holding SQL, at the top level or on a
+    table), or an Aurora column type in a column position. A key alone never counts: an
+    empty, null or name-only value (``"foreign_keys": []``, ``"indexes": ["GSI1"]``,
+    ``"generated_ddl": null``) is no Aurora content."""
+    ddl = payload.get("generated_ddl")
+    if ddl not in (None, "") and not (isinstance(ddl, str) and not ddl.strip()):
         return True
-    top = payload.get("indexes")
-    if isinstance(top, list) and any(isinstance(i, str) for i in top):
+    if _statements(payload.get("indexes")) or _statements(payload.get("foreign_keys")):
         return True
     tables = payload.get("table_definitions")
     for table in tables if isinstance(tables, list) else []:
         if not isinstance(table, Mapping):
             continue
-        columns = table.get("columns")
-        indexes = table.get("indexes")
-        if (
-            "foreign_keys" in table
-            or (isinstance(indexes, list) and any(isinstance(i, str) for i in indexes))
-            or (
-                isinstance(columns, list)
-                and any(isinstance(c, Mapping) and "aurora_type" in c for c in columns)
-            )
-        ):
+        if _statements(table.get("indexes")) or _statements(table.get("foreign_keys")):
             return True
+        columns = table.get("columns")
+        for column in columns if isinstance(columns, list) else []:
+            if isinstance(column, Mapping) and column.get("aurora_type") not in (None, ""):
+                return True
     return False
 
 
@@ -855,13 +887,16 @@ def _aurora_content_on_read(
     engine = payload.get("target_engine")
     if isinstance(engine, str) and engine in ENGINE_TYPE_RULES:
         return _aurora_design_on_read(engine)(payload, path)
+    folder = found.group(1).lower()
+    # The family prefix every Aurora engine id shares (the legacy folder is that prefix).
+    aurora = any(folder.startswith(e.split("_", 1)[0]) for e in ENGINE_TYPE_RULES)
     raise UnsafeArtifactError(
         artifact=path,
         contract=f"{found.group(1)} schema design",
         where="target_engine",
         value=None,
-        engine_name=display_engine(found.group(1)),
-        kind="DDL script",
+        engine_name=display_engine(folder),
+        kind=UNNAMED_AURORA if aurora else FOREIGN_AURORA,
     )
 
 
