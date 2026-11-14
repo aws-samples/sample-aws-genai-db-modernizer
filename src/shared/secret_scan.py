@@ -235,6 +235,76 @@ _PAIR_RES = (
     # | key | value |
     re.compile(rf"\|\s*{_KEY_NAME}\s*\|\s*(?P<u>[^|\s][^|]*?)\s*(?=\|)", re.I),
 )
+# A quote or backslash run inside an unquoted ``key=value`` / ``key: value`` value
+# (``Zq9"Xv7``, ``Zq9\Xv7``) and the piece after it. A run followed by whitespace, a
+# backtick, ``,;:)]}`` or the end closes an enclosing string instead
+# (``conn("password=...")``, ``{"a":"password=...","b":1}``), so it ends the value (#2247).
+# So does a run ending in a JSON escape of a line break (``\n``, ``\r``, ``\u000a``,
+# ``\u000d``, at any escape level): a ``.env`` file read into a transcript keeps the
+# settings after the value.
+_EMBEDDED_RUN_RE = re.compile(
+    r"(?![\\\"']*\\(?:[nr]|u000[aAdD]))[\\\"']+(?=[^\s\"'`\\,;:)\]}])[^\s\"'`\\]+"
+)
+# Every quote with the backslashes right before it.
+_QUOTE_RUN_RE = re.compile(r"\\*[\"']")
+# After a quote that closes an enclosing string: a JSON member or element ends.
+_STRING_CLOSE_RE = re.compile(r"\s*(?:[,:}\]]|$)")
+
+
+def _unquoted_end(line: str, end: int) -> int:
+    """Where the unquoted value the pair rule ended at ``end`` really ends: past each
+    embedded quote or backslash run (``_EMBEDDED_RUN_RE``)."""
+    while (run := _EMBEDDED_RUN_RE.match(line, end)) is not None:
+        end = run.end()
+    return end
+
+
+def _closes_a_lower_level(backslashes: int, level: int) -> bool:
+    """A quote after ``backslashes`` backslashes is unescaped at an escape level below
+    ``level``: at level ``j`` (``2**j - 1`` backslashes) the run is ``2**j - 1`` modulo
+    ``2**(j + 1)`` (level 0: an even run, ``\\\\"`` included)."""
+    j = 0
+    while 2**j - 1 < level:
+        if backslashes % 2 ** (j + 1) == 2**j - 1:
+            return True
+        j += 1
+    return False
+
+
+def _quoted_end(line: str, m: re.Match[str]) -> int:
+    """Where the quoted value of ``m`` really ends: before its own closing quote, the
+    opening quote's character at the opening's escape level. At level ``n`` (``n``
+    backslashes before the quote) that is a quote after ``k`` backslashes with
+    ``k % (2n + 2) == n``: at level 0 an even run (``"Zq9\\"Xv7"`` holds ``\\"``), at
+    level 1 (a JSON string inside a JSON string) one, five, ... A quote of the other
+    kind is part of the value, and so is SQL's doubled ``''``. Where no quote closes it
+    before a quote that closes an enclosing string (one of the other kind, or of its
+    own kind at a lower escape level, followed by ``,``, ``:``, ``}``, ``]`` or the end
+    of the line), the value ends where the pair rule ended it: it never runs past
+    the JSON string around it (#2259 review)."""
+    opener = m.group("qv")
+    level, quote = len(opener) - 1, opener[-1]
+    pos = m.start("v")
+    while (run := _QUOTE_RUN_RE.search(line, pos)) is not None:
+        backslashes, char = run.end() - run.start() - 1, line[run.end() - 1]
+        if char == quote:
+            if (
+                level == 0
+                and quote == "'"
+                and not backslashes
+                and line[run.end() : run.end() + 1] == "'"
+            ):
+                pos = run.end() + 1
+                continue
+            if backslashes % (2 * level + 2) == level:
+                return run.end() - 1 - level
+        encloses = char != quote or _closes_a_lower_level(backslashes, level)
+        if encloses and _STRING_CLOSE_RE.match(line, run.end()):
+            break
+        pos = run.end()
+    return m.end("v")
+
+
 # A word every credential key name holds (each ``_PASSWORD_WORDS`` word holds ``pass``,
 # ``pwd``, ``secret`` or ``contrase``; each ``_KEY_WORDS`` word ends in ``key``), with the
 # same flags: a line without one has no pair, so the pair patterns are not run on it.
@@ -442,7 +512,15 @@ def _pair_matches(
                     continue
             if not value or _allowed_value(value):
                 continue
-            found.setdefault(m.span(group), (_pair_kind(m), m.group("key")))
+            # The value up to its first quote or backslash decides the finding, as
+            # before; the span then runs to the value's real end, so neither the
+            # redaction nor the recorded value stops at that character (#2247).
+            start, end = m.span(group)
+            if group == "v":
+                end = _quoted_end(line, m)
+            elif rx is _PAIR_RES[1]:
+                end = _unquoted_end(line, end)
+            found.setdefault((start, end), (_pair_kind(m), m.group("key")))
     return [(kind, span, key) for span, (kind, key) in found.items()]
 
 

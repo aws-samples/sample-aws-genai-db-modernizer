@@ -4083,12 +4083,14 @@ def test_pieces_of_a_key_shaped_secret_are_redacted_as_keys(tmp_path: Path) -> N
     assert not [piece for piece in (shape[:13], shape[:20], shape[22:]) if piece in text]
 
 
-@pytest.mark.parametrize("cut", ['"', "\\"], ids=["quote", "backslash"])
+@pytest.mark.passes_on_main
+@pytest.mark.parametrize("cut", ['",', "\\,"], ids=["quote", "backslash"])
 def test_a_json_file_keyed_by_a_password_the_scan_cut_short_is_withheld(
     tmp_path: Path, cut: str
 ) -> None:
     """#2213 review round 2, Important 1: the scan records only ``Zq9`` of
-    ``Zq9"Xv7Wm3Kt5``; the rest of the value is unknown, so a JSON file with a key
+    ``Zq9",Xv7Wm3Kt5`` (a quote run before ``,`` may close an enclosing string, so it
+    ends the value, #2247); the rest of the value is unknown, so a JSON file with a key
     that holds the recorded part is withheld rather than guessed at."""
     from ci.llm import private_scan
 
@@ -4099,6 +4101,31 @@ def test_a_json_file_keyed_by_a_password_the_scan_cut_short_is_withheld(
     assert "archive" not in result and result["refused"] >= 1
     manifest = json.loads((tmp_path / "out" / "job.findings.json").read_text())
     assert {"file": _SCHEMA, "line": None, "type": private_scan.CUT_FLAGGED} in manifest["findings"]
+
+
+@pytest.mark.parametrize(
+    "inside", ['"', "'", "\\", "\"'\\"], ids=["quote", "apostrophe", "backslash", "mixed"]
+)
+def test_a_password_with_an_embedded_quote_is_recorded_whole_and_its_key_redacted(
+    tmp_path: Path, inside: str
+) -> None:
+    """#2247: the scan records the whole of ``Zq9"Xv7Wm3Kt5``, not ``Zq9``, so the notes
+    are redacted whole, and a JSON key that holds the value is redacted rather than the
+    file withheld; the manifest names the finding, never the value."""
+    from ci.llm import private_scan
+
+    password = "Zq9" + inside + "Xv7Wm3Kt5"  # pragma: allowlist secret
+    result, uploaded = _schema_finding(tmp_path, json.dumps({"by_name": {password: 1}}), password)
+    assert "Xv7Wm3Kt5" not in uploaded and "Zq9" not in uploaded
+    assert "password = [REDACTED:password-value]" in uploaded
+    manifest_text = (tmp_path / "out" / "job.findings.json").read_text()
+    manifest = json.loads(manifest_text)
+    assert private_scan.CUT_FLAGGED not in {f["type"] for f in manifest["findings"]}
+    (notes,) = [f for f in manifest["findings"] if f["file"] == "notes.md"]
+    assert notes["type"] == "password value" and notes["key"] == "password"
+    # The recorded value is the whole value: its shape is 13 characters long.
+    assert [entry["length"] for entry in notes["context"]] == [len(password)]
+    assert "Xv7Wm3Kt5" not in manifest_text and "archive" in result
 
 
 @pytest.mark.parametrize("where", ["schema", "transcript"])

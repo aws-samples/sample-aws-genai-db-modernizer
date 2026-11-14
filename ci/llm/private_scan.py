@@ -546,7 +546,8 @@ class Redaction:
     pending: list[PendingContext] = field(default_factory=list, repr=False)
     raw_keys: dict[tuple[str, int], set[str]] = field(default_factory=dict, repr=False)
     #: Each value under ``VALUE_PIECE`` characters the scan ended at a backslash or
-    #: at a quote that does not close it (``password = Zq9"Xv7...`` gives ``Zq9``): the rest of
+    #: at a quote that does not close it (``password = Zq9",Xv7...`` gives ``Zq9``; an
+    #: embedded run, ``Zq9"Xv7...``, is part of the value since #2247): the rest of
     #: the value is unknown, so ``redact_json_keys`` refuses a key that holds it
     #: (#2213). In memory only.
     cut: set[str] = field(default_factory=set, repr=False)
