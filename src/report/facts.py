@@ -50,6 +50,7 @@ from src.shared.report_facts import (
     wave_readiness_rows,
 )
 from src.shared.routine_facts import needs_routine_words, with_routine_words
+from src.shared.step_explanations import needs_step_explanations, with_step_explanations
 
 from .waves import resolve_migration_waves
 
@@ -302,6 +303,11 @@ def report_facts(report: dict[str, Any]) -> dict[str, Any]:
                 missing["slice_plan"] = plan
             if "adoption" not in facts:
                 missing["adoption"] = adoption_facts(report, plan)
+        stored_plan = missing.get("slice_plan", facts.get("slice_plan"))
+        if isinstance(stored_plan, dict) and needs_step_explanations(stored_plan):
+            # A plan stored before #1699: each step's why sentence and the metrics' plain
+            # names, from the same function synthesis calls, over the stored figures.
+            missing["slice_plan"] = with_step_explanations(stored_plan)
         return {**facts, **missing} if missing else facts
     # #1992: a report with no facts block was written before the wave readiness check,
     # and states none: its designs carry no review counts to check.
