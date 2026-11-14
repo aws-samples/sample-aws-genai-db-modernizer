@@ -2506,12 +2506,21 @@ class _Scanned:
     #: memory only.
     pending: list[Any] = field(default_factory=list, repr=False)
     raw_keys: dict[tuple[str, int], set[str]] = field(default_factory=dict, repr=False)
+    #: The file's suffix: a ``.json`` or ``.jsonl`` file gets its keys redacted
+    #: against every flagged value of the upload (``_redact_flagged_keys``, #2213).
+    suffix: str = ""
+    #: The short values the scan cut short (``Redaction.cut``). In memory only.
+    cut: set[str] = field(default_factory=set, repr=False)
 
 
 def _still_valid(before: str, after: str, suffix: str) -> bool:
     """A redaction kept a JSON file (or every line of a JSON Lines file) parsable."""
-    pairs = list(zip(before.splitlines(), after.splitlines(), strict=False))
-    texts = pairs if suffix == ".jsonl" else [(before, after)] if suffix == ".json" else []
+    from ci.llm.private_scan import jsonl_lines
+
+    # The key rewrite's own line rule: a raw U+2028 inside a string is no break.
+    pairs = list(zip(jsonl_lines(before), jsonl_lines(after), strict=False))
+    document = _JSON_DOCUMENTS.get(suffix.lower(), "")
+    texts = pairs if document == "jsonl" else [(before, after)] if document == "json" else []
     for old, new in texts:
         try:
             json.loads(old)
@@ -2537,17 +2546,18 @@ def _scan_file(raw: bytes, suffix: str, session: bool = False) -> _Scanned:
     redaction would leave it invalid JSON."""
     from ci.llm.private_scan import REDACTABLE_KINDS, redact
 
+    suffix = suffix.lower()
     try:
         text = raw.decode("utf-8")
     except UnicodeDecodeError:
         cut = raw.rfind(b"\n") + 1
         try:
-            if suffix != ".jsonl" or not cut:
+            if _JSON_DOCUMENTS.get(suffix) != "jsonl" or not cut:
                 raise
             raw = raw[:cut]
             text = raw.decode("utf-8")
         except UnicodeDecodeError:
-            return _Scanned(None, [("not valid UTF-8", None)])
+            return _Scanned(None, [("not valid UTF-8", None)], suffix=suffix)
     # Model-written text: prose under a token or API key name is no finding (#2179).
     result = redact(
         text,
@@ -2558,7 +2568,7 @@ def _scan_file(raw: bytes, suffix: str, session: bool = False) -> _Scanned:
         document=_JSON_DOCUMENTS.get(suffix, ""),
     )
     if not result.findings:
-        return _Scanned(raw, [])
+        return _Scanned(raw, [], suffix=suffix)
     findings: list[tuple[str, int | None]] = list(result.findings)
     key = any(kind not in REDACTABLE_KINDS for kind, _ in result.findings)
     keep = result.redactable and _still_valid(text, result.text, suffix)
@@ -2570,11 +2580,13 @@ def _scan_file(raw: bytes, suffix: str, session: bool = False) -> _Scanned:
         result.context,
         result.pending,
         result.raw_keys,
+        suffix,
+        result.cut,
     )
 
 
 #: The suffixes whose findings get a JSON path in their context (#2209).
-_JSON_DOCUMENTS = {".json": "json", ".jsonl": "jsonl"}
+_JSON_DOCUMENTS = {".json": "json", ".jsonl": "jsonl", ".ndjson": "jsonl"}
 
 
 def _job_files(job_dir: Path) -> tuple[dict[str, tuple[Path, _Scanned]], list[str]]:
@@ -2657,6 +2669,45 @@ def _recheck_names(scans: Iterable[_Scanned]) -> None:
             scan.keys, scan.context = render_context(scan.pending, scan.raw_keys, pieces)
 
 
+#: Why ``_redact_flagged_keys`` withheld a file a rewrite would break, as its manifest
+#: finding (#2213); ``private_scan.KeyRewrite.reason`` names the others.
+REWRITE_INVALID = "key redaction would leave invalid JSON"
+
+
+def _redact_flagged_keys(scans: Iterable[_Scanned]) -> None:
+    """Replace every JSON object key, in each ``.json`` and ``.jsonl`` file kept, that
+    contains a value flagged in any file of the upload (``private_scan.redact_json_keys``,
+    #2213). Withheld instead, with the reason as a finding: a file that cannot be
+    parsed and holds a flagged value, one with a key that holds a value the scan cut
+    short (``KeyRewrite.reason``), and one the rewrite would leave invalid
+    (``REWRITE_INVALID``)."""
+    from ci.llm.private_scan import redact_json_keys
+
+    scans = list(scans)
+    flagged = sorted({(item[0], item[-1]) for scan in scans for item in scan.pending})
+    cut = sorted({value for scan in scans for value in scan.cut})
+    if not flagged:
+        return
+    for scan in scans:
+        document = _JSON_DOCUMENTS.get(scan.suffix, "")
+        if scan.raw is None or not document:
+            continue
+        text = scan.raw.decode("utf-8")
+        rewrite = redact_json_keys(text, document, flagged, cut)
+        redacted, reason = rewrite.text, rewrite.reason
+        if (
+            redacted is not None
+            and redacted != text
+            and not _still_valid(text, redacted, scan.suffix)
+        ):
+            reason = REWRITE_INVALID
+        if reason is not None:
+            scan.raw = None
+            scan.findings.append((reason, None))
+        elif redacted is not None:
+            scan.raw = redacted.encode("utf-8")
+
+
 def _mark_results(out_dir: Path, scan: dict) -> None:
     """Fail the run in ``results.json`` and record the scan, so a human reviews it."""
     results = out_dir / "results.json"
@@ -2707,10 +2758,13 @@ def collect_job(
     archive. The allowlisted job files and every other text file under ``out_dir``
     (``results.json`` included) get every check of ``ci/llm/private_scan.py``, the
     designer's allowed example values aside. A flagged value on one line (an IP, an
-    email, a token or credential value) is replaced by ``[REDACTED:<kind>]``. Withheld
+    email, a token or credential value) is replaced by ``[REDACTED:<kind>]``, and so is
+    each JSON object key of a ``.json`` or ``.jsonl`` file that contains a value flagged
+    in any file (``_redact_flagged_keys``, #2213). Withheld
     instead (deleted, or left out of the archive): a file that holds a private key, key
     material or a cloud credential, one the redaction cannot fully clean or would leave
-    invalid JSON, one that is not UTF-8, and, on a run with any finding, every binary
+    invalid JSON, a JSON one that cannot be parsed and holds a flagged value, one that
+    is not UTF-8, and, on a run with any finding, every binary
     upload (``BINARY_SUFFIXES``). The archive is written only when no archived file is
     withheld and no file anywhere holds a key or a cloud credential.
 
@@ -2750,6 +2804,7 @@ def collect_job(
     every = [(f"{JOB_ARCHIVE}:{rel}", scan) for rel, (_, scan) in job_files.items()]
     every += [(rel, scan) for rel, (_, scan) in uploads.items()]
     _recheck_names(scan for _, scan in every)
+    _redact_flagged_keys(scan for _, scan in every)
     findings: list[dict[str, Any]] = [
         _manifest_entry(name, kind, line, scan)
         for name, scan in every

@@ -3777,6 +3777,374 @@ def test_a_value_flagged_in_one_file_never_names_a_path_in_another(tmp_path: Pat
     assert not [p for p in _pieces(a) | _pieces(b) if p in manifest]
 
 
+def _archived_schema(tmp_path: Path) -> str:
+    return _archive_text(
+        str(tmp_path / "out" / "job.tar.gz"),
+        "wordpress/job1/schema-aurora_mysql/v2/schema_output.json",
+    )
+
+
+def _no_piece_of(text: str, *values: str) -> bool:
+    folded = text.lower()
+    return not [p for v in values for p in _pieces(v.lower()) if p in folded]
+
+
+def test_a_flagged_value_used_as_a_key_in_schema_output_is_redacted(tmp_path: Path) -> None:
+    """#2213: a value flagged on one line of a file is replaced where it is a JSON key
+    on another line, as the whole key or inside a longer one, and the file stays
+    valid JSON."""
+    a = "Wn6Rt9Kc" + "Bv2Xq7Pz"  # pragma: allowlist secret
+    doc = {
+        "by_name": {a: {"columns": 3}},
+        "by_prefix": {"tbl_" + a.lower() + "_x": 1},
+        "creds": {"db_password": a},
+    }
+    _collect(tmp_path, json.dumps(doc, indent=2))
+    archived = _archived_schema(tmp_path)
+    assert a.lower() not in archived.lower()
+    assert json.loads(archived) == {
+        "by_name": {"[REDACTED:password-value]": {"columns": 3}},
+        "by_prefix": {"[REDACTED:password-value]": 1},
+        "creds": {"db_password": "[REDACTED:password-value]"},
+    }
+
+
+def test_a_flagged_value_used_as_a_key_in_a_jsonl_line_is_redacted(tmp_path: Path) -> None:
+    """#2213: every line of a JSON Lines upload gets its keys checked, and each line
+    stays valid JSON."""
+    a = "Jm4Hs8Lq" + "Ye1Dw5Nc"  # pragma: allowlist secret
+    lines = [
+        json.dumps({"step": 1, "password": a}),
+        json.dumps({"step": 2, "tables": {a: {"rows": 5}}}),
+        json.dumps({"step": 3, "tables": {"wp_posts": {"rows": 7}}}),
+    ]
+    _collect(tmp_path, "{}", {"steps.jsonl": "\n".join(lines) + "\n"})
+    text = (tmp_path / "out" / "steps.jsonl").read_text(encoding="utf-8")
+    assert _no_piece_of(text, a)
+    assert [json.loads(line) for line in text.splitlines()] == [
+        {"step": 1, "password": "[REDACTED:password-value]"},
+        {"step": 2, "tables": {"[REDACTED:password-value]": {"rows": 5}}},
+        {"step": 3, "tables": {"wp_posts": {"rows": 7}}},
+    ]
+
+
+def test_a_value_flagged_in_one_file_is_redacted_as_a_key_in_the_archive(
+    tmp_path: Path,
+) -> None:
+    """#2213: the issue's case. A value flagged in an uploaded text file never ships
+    as a JSON key of an archived file; the manifest already withheld it (#2211)."""
+    a = "Rk4Wq8Zn" + "Tb6Vm2Lx"  # pragma: allowlist secret
+    b = "Hd3Jf7Kp" + "Qs9Uw1Ye"  # pragma: allowlist secret
+    manifest, _found = _collect(
+        tmp_path,
+        json.dumps({"by_name": {a: {"db_password": b}}}, indent=2),
+        {"notes.md": "password = " + a + "\n"},
+    )
+    archived = _archived_schema(tmp_path)
+    assert _no_piece_of(archived, a, b) and _no_piece_of(manifest, a, b)
+    assert json.loads(archived) == {
+        "by_name": {"[REDACTED:password-value]": {"db_password": "[REDACTED:password-value]"}}
+    }
+
+
+@pytest.mark.parametrize("where", ["other-file", "same-line"])
+def test_two_flagged_keys_of_one_object_get_distinct_stable_placeholders(
+    tmp_path: Path, where: str
+) -> None:
+    """#2213: two keys of one object that redact to the same marker each get their own
+    (``[REDACTED:<kind>]``, then ``-2``, ``-3`` in document order), so no key is lost to
+    a duplicate; the result is the same on every run."""
+    if where == "other-file":
+        a = "Gx5Tm1Rw" + "Kp8Zc3Vb"  # pragma: allowlist secret
+        b = "Nq2Ld6Hy" + "Fs4Wj9Mt"  # pragma: allowlist secret
+        schema = json.dumps({"by_name": {a: 1, "wp_posts": 2, b: 3}})
+        uploads = {"notes.md": "password = " + a + "\ndb_password = " + b + "\n"}
+        marker = "[REDACTED:password-value"
+    else:
+        a, b = "8.8.8.8", "8.8.4.4"
+        schema = json.dumps({"by_name": {a: 1, "wp_posts": 2, b: 3}})
+        uploads = {}
+        marker = "[REDACTED:public-ip-ipv4"
+    expected = {"by_name": {marker + "]": 1, "wp_posts": 2, marker + "-2]": 3}}
+    outputs = []
+    for attempt in ("first", "second"):
+        root = tmp_path / attempt
+        root.mkdir()
+        _collect(root, schema, uploads)
+        outputs.append(_archived_schema(root))
+    assert outputs[0] == outputs[1]
+    assert a not in outputs[0] and b not in outputs[0]
+    assert json.loads(outputs[0]) == expected
+
+
+def test_only_a_key_holding_a_flagged_value_changes(tmp_path: Path) -> None:
+    """#2213: a key that does not hold a flagged value is kept as it is, one sharing
+    a few characters with it included."""
+    a = "Uc7Pb3Xn" + "Mr5Qk9Ws"  # pragma: allowlist secret
+    schema = json.dumps(
+        {"by_name": {a: 1, "Uc7_orders": 2, "wp_posts": 3}, "creds": {"password": a}}
+    )
+    _collect(tmp_path, schema)
+    assert json.loads(_archived_schema(tmp_path)) == {
+        "by_name": {"[REDACTED:password-value]": 1, "Uc7_orders": 2, "wp_posts": 3},
+        "creds": {"password": "[REDACTED:password-value]"},
+    }
+
+
+def _collect_report(tmp_path: Path, report: dict, uploads: dict[str, str]) -> str:
+    """``collect_job`` with ``report`` as ``synthesis/v2/report.json``; the archived
+    report's text."""
+    job = _job_tree(tmp_path / "artifacts")
+    (job / "synthesis" / "v2" / "report.json").write_text(json.dumps(report), encoding="utf-8")
+    out = _out_with_results(tmp_path)
+    for name, text in uploads.items():
+        (out / name).write_text(text, encoding="utf-8")
+    run.collect_job(tmp_path / "artifacts", out, db="wordpress", job="job1")
+    return _archive_text(str(out / "job.tar.gz"), "wordpress/job1/synthesis/v2/report.json")
+
+
+@pytest.mark.parametrize(
+    ("upload", "value", "kind", "ordinary"),
+    [
+        (
+            "DB_PASSWORD: wordpress\n",
+            "wordpress",
+            "password-value",
+            ["progress", "keywords", "password_reset_flow", "press_releases"],
+        ),
+        # report.json's own email rule already redacts this key on main: the case
+        # guards against over-redaction only.
+        pytest.param(
+            "contact dba@" + "acme-retail.com\n",
+            "dba@" + "acme-retail.com",
+            "email",
+            ["retail_orders", "acme_orders"],
+            marks=pytest.mark.passes_on_main,
+        ),
+        (
+            "password = Content" + "ful9\n",  # pragma: allowlist secret
+            "Content" + "ful9",
+            "password-value",
+            ["content", "message", "contentful"],
+        ),
+    ],
+    ids=["wordpress", "email", "contentful"],
+)
+def test_ordinary_keys_are_kept_and_a_key_holding_the_whole_value_is_not(
+    tmp_path: Path, upload: str, value: str, kind: str, ordinary: list[str]
+) -> None:
+    """#2213 review, Important 2: a key is redacted only when it holds a flagged value
+    whole; ordinary schema keys that share a few characters with it are kept."""
+    report = {"sections": {name: 1 for name in ordinary}, "by_name": {value.upper(): 2}}
+    archived = json.loads(_collect_report(tmp_path, report, {"notes.md": upload}))
+    assert archived == {
+        "sections": {name: 1 for name in ordinary},
+        "by_name": {f"[REDACTED:{kind}]": 2},
+    }
+
+
+def _schema_finding(tmp_path: Path, schema_text: str, a: str) -> tuple[dict, str]:
+    out = _out_with_results(tmp_path)
+    (out / "notes.md").write_text("password = " + a + "\n")
+    job = _job_tree(tmp_path / "artifacts")
+    (job / "schema-aurora_mysql" / "v2" / "schema_output.json").write_text(
+        schema_text, encoding="utf-8"
+    )
+    result = run.collect_job(tmp_path / "artifacts", out, db="wordpress", job="job1")
+    return result, _every_upload(out)
+
+
+@pytest.mark.parametrize("shape", ["nan", "minus-infinity", "deep", "bom"])
+def test_a_json_file_that_cannot_be_parsed_and_holds_a_flagged_value_is_withheld(
+    tmp_path: Path, shape: str
+) -> None:
+    """#2213 review, Critical 1: the key rewrite fails closed. A JSON file its parser
+    cannot read (a ``NaN``, ``-Infinity``, nesting past its depth, a byte-order mark)
+    that holds a flagged value is withheld, so the archive is too, and the manifest
+    gives the reason."""
+    from ci.llm import private_scan
+
+    a = "Tq8Mz3Wd" + "Hv6Nr1Kc"  # pragma: allowlist secret
+    texts = {
+        "nan": '{"x": NaN, "' + a + '": 1}',
+        "minus-infinity": '{"x": -Infinity, "by_name": {"' + a + '": 1}}',
+        "deep": "[" * 2000 + '{"' + a + '": 1}' + "]" * 2000,
+        "bom": "\ufeff" + json.dumps({a: 1}),
+    }
+    if shape != "bom":
+        json.loads(texts[shape])  # the standard library reads it: it would ship
+    result, uploaded = _schema_finding(tmp_path, texts[shape], a)
+    assert "archive" not in result and result["refused"] >= 1
+    assert a.lower() not in uploaded.lower()
+    manifest = json.loads((tmp_path / "out" / "job.findings.json").read_text())
+    assert {"file": _SCHEMA, "line": None, "type": private_scan.UNPARSED_FLAGGED} in manifest[
+        "findings"
+    ]
+
+
+def test_a_json_file_that_cannot_be_parsed_without_a_flagged_value_is_kept(
+    tmp_path: Path,
+) -> None:
+    """#2213 review, Critical 1: only a file that holds a flagged value is withheld; a
+    cut JSON Lines line with none is kept as it is."""
+    from ci.llm import private_scan
+
+    a = "Lw2Pk7Xs" + "Dc4Rm9Vb"  # pragma: allowlist secret
+    cut_flagged = json.dumps({"step": 1}) + '\n{"truncated": {"' + a + '": '
+    cut_clean = json.dumps({"step": 1}) + '\n{"truncated": {"wp_posts": '
+    out = _out_with_results(tmp_path)
+    (out / "notes.md").write_text("password = " + a + "\n")
+    (out / "flagged.jsonl").write_text(cut_flagged)
+    (out / "clean.jsonl").write_text(cut_clean)
+    result = run.collect_job(tmp_path / "artifacts", out)
+    assert not (out / "flagged.jsonl").exists() and "flagged.jsonl" in result["withheld"]
+    assert (out / "clean.jsonl").read_text() == cut_clean
+    manifest = json.loads((out / "job.findings.json").read_text())
+    assert {
+        "file": "flagged.jsonl",
+        "line": None,
+        "type": private_scan.UNPARSED_FLAGGED,
+    } in manifest["findings"]
+
+
+def test_a_rewrite_that_would_break_the_json_withholds_the_file_with_a_reason(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """#2213 review, Important 4: the validity check after the key rewrite withholds
+    the file, and the manifest says why."""
+    from ci.llm import private_scan
+
+    a = "Ys5Bn8Qf" + "Gt3Jw6Lp"  # pragma: allowlist secret
+    monkeypatch.setattr(
+        private_scan,
+        "redact_json_keys",
+        lambda text, *_args, **_kwargs: private_scan.KeyRewrite(text[:-1]),
+    )
+    out = _out_with_results(tmp_path)
+    (out / "notes.md").write_text("password = " + a + "\n")
+    (out / "steps.json").write_text(json.dumps({"by_name": {a: 1}}))
+    result = run.collect_job(tmp_path / "artifacts", out)
+    assert not (out / "steps.json").exists() and "steps.json" in result["withheld"]
+    manifest = json.loads((out / "job.findings.json").read_text())
+    assert {"file": "steps.json", "line": None, "type": run.REWRITE_INVALID} in manifest["findings"]
+
+
+def test_a_raw_line_separator_inside_a_jsonl_string_is_no_line_break(tmp_path: Path) -> None:
+    """#2213 review, Minor 6: the key rewrite and the validity check split JSON Lines
+    the same way (at ``\\n`` only), so a raw U+2028 inside a string keeps its line
+    whole and the file is kept, its key redacted."""
+    a = "Fm9Cx2Hz" + "Rk7Tb4Ns"  # pragma: allowlist secret
+    line = '{"note": "a\u2028b", "by_name": {"' + a + '": 1}}'
+    out = _out_with_results(tmp_path)
+    (out / "notes.md").write_text("password = " + a + "\n")
+    (out / "steps.jsonl").write_text(line + "\n", encoding="utf-8")
+    run.collect_job(tmp_path / "artifacts", out)
+    text = (out / "steps.jsonl").read_text(encoding="utf-8")
+    assert json.loads(text.split("\n")[0]) == {
+        "note": "a\u2028b",
+        "by_name": {"[REDACTED:password-value]": 1},
+    }
+
+
+def test_a_long_random_piece_of_a_flagged_value_is_redacted_as_a_key(tmp_path: Path) -> None:
+    """#2213 review round 2, Important 1: 12 of a 16-character password, as a key or
+    inside one, is redacted in the archive, as the manifest withholds it."""
+    a = "Wn6Rt9Kc" + "Bv2Xq7Pz"  # pragma: allowlist secret
+    schema = json.dumps(
+        {"by_name": {a[:12]: {"columns": 1}, "tbl_" + a[2:12].lower() + "_cols": 2}}, indent=2
+    )
+    manifest, _found = _collect(tmp_path, schema, {"notes.md": "password = " + a + "\n"})
+    archived = _archived_schema(tmp_path)
+    assert _no_piece_of(archived, a) and _no_piece_of(manifest, a)
+    assert json.loads(archived) == {
+        "by_name": {"[REDACTED:password-value]": {"columns": 1}, "[REDACTED:password-value-2]": 2}
+    }
+
+
+def test_pieces_of_a_key_shaped_secret_are_redacted_as_keys(tmp_path: Path) -> None:
+    """#2213 review round 2, Important 1: the part of a 40-character key-shaped secret
+    before its first ``/``, its first 20 characters and its tail are each redacted
+    as keys (a synthetic shape); an ordinary key next to them is kept."""
+    shape = "Hq7LmXVtnPEKW/" + "R9QZbYx/" + "sNdoUTWCFAKEKEYZQ1"  # pragma: allowlist secret
+    out = _out_with_results(tmp_path)
+    (out / "notes.md").write_text("password = " + shape + "\n")
+    keys = {shape[:13]: 1, shape[:20]: 2, shape[22:]: 3, "fake_keys": 4}
+    (out / "steps.json").write_text(json.dumps({"by_name": keys}))
+    run.collect_job(tmp_path / "artifacts", out)
+    text = (out / "steps.json").read_text()
+    assert json.loads(text) == {
+        "by_name": {
+            "[REDACTED:bare-secret-key]": 1,
+            "[REDACTED:bare-secret-key-2]": 2,
+            "[REDACTED:bare-secret-key-3]": 3,
+            "fake_keys": 4,
+        }
+    }
+    assert not [piece for piece in (shape[:13], shape[:20], shape[22:]) if piece in text]
+
+
+@pytest.mark.parametrize("cut", ['"', "\\"], ids=["quote", "backslash"])
+def test_a_json_file_keyed_by_a_password_the_scan_cut_short_is_withheld(
+    tmp_path: Path, cut: str
+) -> None:
+    """#2213 review round 2, Important 1: the scan records only ``Zq9`` of
+    ``Zq9"Xv7Wm3Kt5``; the rest of the value is unknown, so a JSON file with a key
+    that holds the recorded part is withheld rather than guessed at."""
+    from ci.llm import private_scan
+
+    password = "Zq9" + cut + "Xv7Wm3Kt5"  # pragma: allowlist secret
+    result, _uploaded = _schema_finding(
+        tmp_path, json.dumps({"by_name": {password: 1}}), "Zq9" + cut + "Xv7Wm3Kt5"
+    )
+    assert "archive" not in result and result["refused"] >= 1
+    manifest = json.loads((tmp_path / "out" / "job.findings.json").read_text())
+    assert {"file": _SCHEMA, "line": None, "type": private_scan.CUT_FLAGGED} in manifest["findings"]
+
+
+@pytest.mark.parametrize("where", ["schema", "transcript"])
+def test_unparsable_json_keyed_by_an_escaped_slash_password_is_withheld(
+    tmp_path: Path, where: str
+) -> None:
+    """#2213 review round 2, Important 2: a ``NaN`` schema, or a cut transcript line,
+    keyed by a password whose ``/`` it writes as ``\\/`` is withheld."""
+    from ci.llm import private_scan
+
+    password = "Zq9/Xv7" + "Wm3Kt5"  # pragma: allowlist secret
+    key = password.replace("/", "\\/")
+    if where == "schema":
+        result, uploaded = _schema_finding(tmp_path, '{"x": NaN, "' + key + '": 1}', password)
+        assert "archive" not in result and result["refused"] >= 1
+        withheld = _SCHEMA
+    else:
+        out = _out_with_results(tmp_path)
+        (out / "notes.md").write_text("password = " + password + "\n")
+        (out / "transcript.jsonl").write_text('{"type": "user"}\n{"message": {"' + key + '": ')
+        result = run.collect_job(tmp_path / "artifacts", out)
+        assert "transcript.jsonl" in result["withheld"]
+        uploaded = _every_upload(out)
+        withheld = "transcript.jsonl"
+    assert key not in uploaded
+    manifest = json.loads((tmp_path / "out" / "job.findings.json").read_text())
+    assert {"file": withheld, "line": None, "type": private_scan.UNPARSED_FLAGGED} in manifest[
+        "findings"
+    ]
+
+
+@pytest.mark.parametrize("name", ["steps.JSON", "steps.ndjson"])
+def test_an_upper_case_json_or_ndjson_upload_gets_its_keys_redacted(
+    tmp_path: Path, name: str
+) -> None:
+    """#2213 review round 2, Minor 1: the suffix is read in lower case, and
+    ``.ndjson`` is JSON Lines."""
+    a = "Pd6Vk1Nx" + "Ht8Qb3Js"  # pragma: allowlist secret
+    out = _out_with_results(tmp_path)
+    (out / "notes.md").write_text("password = " + a + "\n")
+    (out / name).write_text(json.dumps({"by_name": {a: 1}}) + "\n")
+    run.collect_job(tmp_path / "artifacts", out)
+    text = (out / name).read_text()
+    assert json.loads(text.splitlines()[0]) == {"by_name": {"[REDACTED:password-value]": 1}}
+
+
 def test_a_unicode_escaped_value_is_compared_and_measured_decoded(tmp_path: Path) -> None:
     """#2211 review, Important 3: a ``\\u``-escaped value is decoded before the piece
     check and the shape, so its decoded form in a key is withheld and its length is
