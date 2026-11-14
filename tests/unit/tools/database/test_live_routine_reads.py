@@ -28,13 +28,19 @@ def _collector(cls, *answers: list[dict]):
     return collector, seen
 
 
-def test_postgresql_reads_public_routines_and_triggers_with_their_create():
+def test_postgresql_reads_every_user_schema_routines_and_triggers_with_their_create():
     collector, seen = _collector(PostgreSQLRemoteCollector)
     collector.collect_procedures()
     collector.collect_triggers()
-    assert "FROM pg_proc pr" in seen[0] and "n.nspname = 'public'" in seen[0]
+    assert (
+        "FROM pg_proc pr" in seen[0]
+        and "n.nspname NOT IN ('pg_catalog', 'information_schema')" in seen[0]
+    )
     assert "CASE WHEN 1 = 1 THEN pg_get_functiondef(pr.oid) END AS definition" in seen[0]
-    assert "FROM pg_trigger t" in seen[1] and "n.nspname = 'public'" in seen[1]
+    assert (
+        "FROM pg_trigger t" in seen[1]
+        and "n.nspname NOT IN ('pg_catalog', 'information_schema')" in seen[1]
+    )
     assert "CASE WHEN 1 = 1 THEN pg_get_triggerdef(t.oid) END AS definition" in seen[1]
 
 

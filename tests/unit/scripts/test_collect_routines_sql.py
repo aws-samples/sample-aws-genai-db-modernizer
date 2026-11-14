@@ -149,7 +149,7 @@ def test_postgresql_function_counts_and_their_status():
 
 
 def test_the_live_postgresql_collector_reads_what_the_script_reads():
-    """The live reads are the script's sections 8 and 9 for schema public (#1652)."""
+    """The live reads are the script's sections 8 and 9, every user schema (#1652, #2268)."""
     from src.tools.database.postgres_tools import _PROCEDURES_SQL, _TRIGGERS_SQL
 
     def body(name: str) -> str:
@@ -161,15 +161,8 @@ def test_the_live_postgresql_collector_reads_what_the_script_reads():
         sql = re.sub(r"ORDER BY[^\n]*\s*$", "", sql.strip())
         return re.sub(r"\s+", " ", sql).strip()
 
-    script_procs = norm(body("procedures_data")).replace(
-        "AND n.nspname NOT IN ('pg_catalog', 'information_schema') "
-        "AND n.nspname NOT LIKE 'pg_toast%' AND n.nspname NOT LIKE 'pg_temp%' "
-        "AND pr.proname NOT LIKE 'pg_%'",
-        "AND n.nspname = 'public'",
-    )
-    script_trigs = norm(body("triggers_data")).replace(
-        "AND n.nspname NOT IN ('pg_catalog', 'information_schema')", "AND n.nspname = 'public'"
-    )
+    script_procs = norm(body("procedures_data"))
+    script_trigs = norm(body("triggers_data"))
     assert norm(_PROCEDURES_SQL) == script_procs
     assert norm(_TRIGGERS_SQL) == script_trigs
 

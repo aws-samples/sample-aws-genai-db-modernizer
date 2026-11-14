@@ -45,7 +45,7 @@ _SAMPLE_KEY = "s.userid::text || '/' || s.queryid::text || '/' || " + (
 
 
 # #1652: the offline script's sections 8 and 9 (``scripts/collect-postgresql.sql``),
-# for schema public as every live read here; ``{flag}`` is 1 or 0
+# for every user schema; ``{flag}`` is 1 or 0
 # (``include_routine_bodies``). ``tests/unit/scripts/test_collect_postgresql_routines_sql.py``
 # keeps the two the same.
 _PROCEDURES_SQL = """
@@ -89,7 +89,10 @@ _PROCEDURES_SQL = """
     JOIN pg_namespace n ON n.oid = pr.pronamespace
     JOIN pg_language l ON l.oid = pr.prolang
     WHERE pr.prokind IN ('f', 'p')
-      AND n.nspname = 'public'
+      AND n.nspname NOT IN ('pg_catalog', 'information_schema')
+      AND n.nspname NOT LIKE 'pg_toast%'
+      AND n.nspname NOT LIKE 'pg_temp%'
+      AND pr.proname NOT LIKE 'pg_%'
       AND NOT EXISTS (
         SELECT 1 FROM pg_depend x
         WHERE x.classid = 'pg_proc'::regclass AND x.objid = pr.oid
@@ -130,7 +133,9 @@ _TRIGGERS_SQL = """
       -- a partition's clone of its parent's trigger is the parent's trigger: one row
       -- (tgparentid is PostgreSQL 13+; on 12 the clones are internal)
       AND coalesce(to_jsonb(t) ->> 'tgparentid', '0') = '0'
-      AND n.nspname = 'public'
+      AND n.nspname NOT IN ('pg_catalog', 'information_schema')
+      AND n.nspname NOT LIKE 'pg_toast%'
+      AND n.nspname NOT LIKE 'pg_temp%'
     ORDER BY c.relname, t.tgname
 """
 
@@ -429,7 +434,7 @@ class PostgreSQLRemoteCollector:
         """)
 
     def collect_procedures(self, include_bodies: bool = True) -> list[dict]:
-        """Every function and procedure in schema public with its whole CREATE (#1652),
+        """Every function and procedure in every user schema with its whole CREATE (#1652),
         from pg_proc so a routine whose EXECUTE the user lacks is still listed;
         ``include_bodies=False`` reads names and sizes only."""
         flag = 1 if include_bodies else 0
@@ -464,7 +469,7 @@ class PostgreSQLRemoteCollector:
         return rows
 
     def collect_triggers(self, include_bodies: bool = True) -> list[dict]:
-        """Every trigger in schema public, one row each with every event (#1651), its
+        """Every trigger in every user schema, one row each with every event (#1651), its
         orientation, state and function, and its whole CREATE (#1652), from pg_trigger:
         information_schema.triggers hides them from a read-only user."""
         flag = 1 if include_bodies else 0
@@ -486,7 +491,6 @@ class PostgreSQLRemoteCollector:
                    'FUNCTION' AS object_type, calls AS execution_count,
                    round(total_time::numeric, 3) AS total_time_ms
             FROM pg_stat_user_functions
-            WHERE schemaname = 'public'
         """)
         setting = self._query("SELECT current_setting('track_functions') AS track_functions")
         if setting and str(setting[0].get("track_functions") or "") == "none":

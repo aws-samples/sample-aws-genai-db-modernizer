@@ -187,7 +187,7 @@ def test_the_offline_script_matches_information_schema_for_the_owner(server):
 
 
 @_ROLES
-def test_the_live_collector_gives_every_public_trigger_to_any_role(server, role):
+def test_the_live_collector_gives_every_user_schema_trigger_to_any_role(server, role):
     class Live(PostgreSQLRemoteCollector):
         def _query(self, sql):
             return _run(server, sql.strip().rstrip(";"), role)
@@ -195,11 +195,11 @@ def test_the_live_collector_gives_every_public_trigger_to_any_role(server, role)
     rows = Live.__new__(Live).collect_triggers()
     triggers = live_build(rows) or []
 
-    assert sorted((t.table_id, t.trigger_name, t.timing.value, [e.value for e in t.events])
-                  for t in triggers) == sorted(
-        (table, name, timing, events)
+    # #2268: the schema `other` is read too, its trigger kept apart by its schema
+    assert sorted((t.schema_name, t.table_id, t.trigger_name, t.timing.value,
+                   [e.value for e in t.events]) for t in triggers) == sorted(
+        (schema, table, name, timing, events)
         for (schema, table, name), (timing, events) in _EXPECTED.items()
-        if schema == "public"
     )  # fmt: skip
 
 
