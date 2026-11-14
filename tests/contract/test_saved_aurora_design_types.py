@@ -229,13 +229,13 @@ def test_a_skipped_placeholder_and_another_engines_design_are_not_checked(tmp_pa
 
 
 def test_aurora_column_types_in_another_engines_folder_are_checked(tmp_path: Path) -> None:
-    """#2199 round 2: content decides, never the folder. Aurora column types in another
-    engine's folder run the Aurora check for the engine the file names, or are refused
-    when it names none (the #2155 version of this test read them unchecked)."""
+    """#2199: Aurora column types in another engine's folder are refused, whatever engine
+    the file names (round 5: that folder allows no Aurora-only field; the #2155 version of
+    this test read them unchecked)."""
     other = {"contract_version": "1.0", "table_definitions": [{"columns": [{"aurora_type": "x;"}]}]}
     store, key = _store(tmp_path, "dynamodb", other)
     with pytest.raises(ContractVersionError, match="Aurora DDL content"):
         store.read_json(key)
     store, key = _store(tmp_path, "dynamodb", {**other, "target_engine": "aurora_mysql"})
-    with pytest.raises(ContractVersionError, match="aurora_type"):
+    with pytest.raises(ContractVersionError, match="Aurora DDL content"):
         store.read_json(key)

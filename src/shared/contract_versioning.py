@@ -827,48 +827,15 @@ def check_artifact[T](path: str, data: T) -> T:
 _ANY_SCHEMA_OUTPUT = re.compile(r"(?:^|/)schema-([^/]+)/(?:v\d+/)?schema_output\.json$")
 
 
-# A SQL statement: one of these keywords first, once leading whitespace and comments are
-# trimmed. Descriptive text ("GSI1 on (pk, sk)", "orders.user_id references users.id")
-# starts with none of them.
-_STATEMENT_START = re.compile(
-    r"(?:CREATE|ALTER|DROP|GRANT|REVOKE|INSERT|UPDATE|DELETE|WITH|TRUNCATE|SELECT|MERGE"
-    r"|REPLACE|RENAME|CALL|EXEC|EXECUTE|COPY|LOCK|SET|DECLARE|LOAD|PREPARE|COMMENT)\b",
-    re.IGNORECASE,
-)
-_LEADING_COMMENTS = re.compile(r"(?:\s+|--[^\n]*(?:\n|$)|#[^\n]*(?:\n|$)|/\*.*?\*/)*", re.DOTALL)
+def _filled(value: object) -> bool:
+    """Whether a stored field holds anything, in any shape (``None``, ``""``, ``[]`` and
+    ``{}`` hold nothing; a whitespace-only string holds something)."""
+    return value not in (None, "", [], {})
 
 
-def _is_statement(text: str) -> bool:
-    """Whether ``text`` holds a SQL statement: it starts with a statement keyword once
-    whitespace and comments are trimmed, or one of its ``;``-separated parts does."""
-    for part in text.split(";"):
-        rest = part[_LEADING_COMMENTS.match(part).end() :]  # type: ignore[union-attr]
-        if _STATEMENT_START.match(rest):
-            return True
-    return False
-
-
-def _holds_statement(value: object) -> bool:
-    """Whether a statement is anywhere in ``value``: a string, or one inside nested lists
-    and dict values at any depth."""
-    stack = [value]
-    while stack:
-        item = stack.pop()
-        if isinstance(item, str):
-            if _is_statement(item):
-                return True
-        elif isinstance(item, Mapping):
-            stack.extend(item.values())
-        elif isinstance(item, (list, tuple)):
-            stack.extend(item)
-    return False
-
-
-def _aurora_shaped(payload: Mapping[str, Any]) -> bool:
-    """Whether a schema design carries Aurora content (#2199): a SQL statement anywhere in
-    ``generated_ddl``, ``indexes`` or ``foreign_keys`` (at the top level or on a table, in
-    nested lists or dict values too), or an Aurora column type in a column position. A key
-    alone, an empty or null value and descriptive text are no Aurora content."""
+def _ddl_fields(payload: Mapping[str, Any]) -> list[object]:
+    """Every field an Aurora reader takes as DDL: the script, the statement lists at the top
+    level and on each table, and each column's Aurora type."""
     fields = [payload.get(k) for k in ("generated_ddl", "indexes", "foreign_keys")]
     tables = payload.get("table_definitions")
     for table in tables if isinstance(tables, list) else []:
@@ -877,20 +844,52 @@ def _aurora_shaped(payload: Mapping[str, Any]) -> bool:
         fields += [table.get("indexes"), table.get("foreign_keys")]
         columns = table.get("columns")
         for column in columns if isinstance(columns, list) else []:
-            if isinstance(column, Mapping) and column.get("aurora_type") not in (None, ""):
+            if isinstance(column, Mapping):
+                fields.append(column.get("aurora_type"))
+    return fields
+
+
+def _aurora_only_fields(payload: Mapping[str, Any]) -> bool:
+    """Whether a design in another engine's folder fills a field only an Aurora design has
+    (#2199 round 5): ``generated_ddl``, a column's ``aurora_type``, or a ``target_engine``
+    naming an Aurora engine. No other engine's design contract declares the first two
+    (``test_no_other_engines_contract_has_an_aurora_only_field``), so this is an allowlist:
+    the other fields, ``indexes`` and ``foreign_keys`` included, are that engine's own and
+    are never read as Aurora DDL there. No text is scanned."""
+    if _filled(payload.get("generated_ddl")):
+        return True
+    engine = payload.get("target_engine")
+    if isinstance(engine, str) and _is_aurora_family(engine):
+        return True
+    tables = payload.get("table_definitions")
+    for table in tables if isinstance(tables, list) else []:
+        columns = table.get("columns") if isinstance(table, Mapping) else None
+        for column in columns if isinstance(columns, list) else []:
+            if isinstance(column, Mapping) and _filled(column.get("aurora_type")):
                 return True
-    return any(_holds_statement(f) for f in fields)
+    return False
+
+
+def _is_aurora_family(name: str) -> bool:
+    """Whether an engine or folder name is an Aurora engine's, in any case: the prefix every
+    Aurora engine id shares (the legacy ``schema-aurora/`` folder is that prefix)."""
+    from src.contracts.aurora_design_delta import ENGINE_TYPE_RULES
+
+    return any(name.lower().startswith(e.split("_", 1)[0]) for e in ENGINE_TYPE_RULES)
 
 
 def _aurora_content_on_read(
     path: str, payload: Mapping[str, Any], model: type[BaseModel] | None
 ) -> Mapping[str, Any]:
-    """A schema design whose folder is not an Aurora engine's own (#2199 review): the
-    legacy ``schema-aurora/``, a case variant such as ``schema-Aurora_MySQL/``, or another
-    engine's. When it carries Aurora content (:func:`_aurora_shaped`), it runs the same
-    rebuild check as a design in the engine's own folder, with the engine the file names
-    in ``target_engine``; one that names no Aurora engine is refused. Content decides,
-    never the path, so no folder lets a DDL script through unchecked."""
+    """A schema design whose folder is not an Aurora engine's own (#2199), decided by the
+    folder and the fields, never by scanning text (round 5):
+
+    - an Aurora-family folder in any case (the legacy ``schema-aurora/``,
+      ``schema-Aurora_MySQL/``), which the UI renders as Aurora: whenever any DDL field
+      (:func:`_ddl_fields`) holds something, in any shape, the file runs the full rebuild
+      check for the engine its ``target_engine`` names, and is refused when it names none;
+    - another engine's folder: refused when it fills a field only an Aurora design has
+      (:func:`_aurora_only_fields`); everything else is that engine's own design."""
     found = _ANY_SCHEMA_OUTPUT.search(path)
     if found is None:
         return payload
@@ -899,17 +898,18 @@ def _aurora_content_on_read(
         or f"{model.__module__}:{model.__qualname__}" == _SKIPPED_SCHEMA_OUTPUT
     ):
         return payload  # the engine's own folder, or a placeholder: its own read check
-    if not _aurora_shaped(payload):
-        return payload
     from src.contracts.aurora_design_delta import ENGINE_TYPE_RULES
     from src.shared.engine_names import display_engine
 
-    engine = payload.get("target_engine")
-    if isinstance(engine, str) and engine in ENGINE_TYPE_RULES:
-        return _aurora_design_on_read(engine)(payload, path)
     folder = found.group(1).lower()
-    # The family prefix every Aurora engine id shares (the legacy folder is that prefix).
-    aurora = any(folder.startswith(e.split("_", 1)[0]) for e in ENGINE_TYPE_RULES)
+    aurora = _is_aurora_family(folder)
+    if aurora and not any(_filled(f) for f in _ddl_fields(payload)):
+        return payload
+    if not aurora and not _aurora_only_fields(payload):
+        return payload
+    engine = payload.get("target_engine")
+    if aurora and isinstance(engine, str) and engine in ENGINE_TYPE_RULES:
+        return _aurora_design_on_read(engine)(payload, path)
     raise UnsafeArtifactError(
         artifact=path,
         contract=f"{found.group(1)} schema design",

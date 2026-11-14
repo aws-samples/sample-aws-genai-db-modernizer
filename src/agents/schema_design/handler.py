@@ -280,7 +280,16 @@ def set_aside_refused_design(
         return None
     try:
         aside, moved = _copy_aside(store, key)
-    except Exception:  # noqa: BLE001 -- a delete or write that raises (AccessDenied, ...)
+    except _DeleteFailed as failed:  # the copy is written; the original stays
+        logger.warning(
+            "Schema design: could not set aside the refused saved design %s (field: %s); "
+            "copied it to %s, and the original stays until this run replaces it",
+            key,
+            where,
+            failed.aside,
+        )
+        return None
+    except Exception:  # noqa: BLE001 -- a read or write that raises (AccessDenied, ...)
         logger.warning(
             "Schema design: could not set aside the refused saved design %s (field: %s); "
             "it stays until this run replaces it",
@@ -344,7 +353,19 @@ def _copy_aside(store: ArtifactStore, key: str) -> tuple[str | None, bool]:
             return None, False
     if type(store).delete is ArtifactStore.delete:
         return aside, False  # the default deletes nothing
-    return aside, bool(store.delete(key)) and not store.exists(key)
+    try:
+        deleted = store.delete(key)
+    except Exception as exc:  # noqa: BLE001 -- refused (AccessDenied, ...): name the copy
+        raise _DeleteFailed(aside) from exc
+    return aside, bool(deleted) and not store.exists(key)
+
+
+class _DeleteFailed(Exception):
+    """The refused design's copy is written (``aside``) but deleting the original raised."""
+
+    def __init__(self, aside: str) -> None:
+        super().__init__(aside)
+        self.aside = aside
 
 
 def _same_content(store: ArtifactStore, key: str, content: bytes | str) -> bool:
