@@ -74,6 +74,7 @@ from src.tools.data_movement.routine_scripts import (
     CheckScript,
     RoutineScriptError,
     _comment,
+    _dependencies,
     _pg_ident,
     _table_name,
     _target_schema,
@@ -179,6 +180,8 @@ class TriggersScripts:
     events_replica_disabled: int = 0  # MySQL events created DISABLE ON REPLICA: they never run
     already_there: int = 0  # --resume: routines the check output shows on the target
     excluded: list[tuple[str, str, str]] = field(default_factory=list)  # kind, id, reason
+    # kind, id of each left out for a case-only database clash, or for calling one that was
+    case_differs: list[tuple[str, str]] = field(default_factory=list)
     files: dict[str, str] = field(default_factory=dict)
 
 
@@ -500,10 +503,11 @@ def _instructions(engine: str, scripts: TriggersScripts, output: str, created: i
             "runs as its DEFINER, which needs the privileges its body uses. The script grants "
             "nothing."
         )
-    clashes = sum(1 for _, _, code in scripts.excluded if code == CASE_DIFFERS)
+    clashes = sum(1 for k, i, _ in scripts.excluded if (k, i) in scripts.case_differs)
     if clashes:
         lines.append(
-            f"- Left out as `{CASE_DIFFERS}`: {clashes}. For each, {CASE_DIFFERS_TRIGGERS_WHY}"
+            f"- Left out as `{CASE_DIFFERS}`, or for calling a routine that was: {clashes}. "
+            f"For each, {CASE_DIFFERS_TRIGGERS_WHY}"
         )
     if not pg:
         lines.append(
@@ -651,6 +655,15 @@ def write_triggers_scripts(
             positions=positions,
         )  # fmt: skip
         keep = [r for r in ordered if (r.kind, r.routine_id) not in refused]
+        # Left out for a case-only clash, or for calling a routine that was: one fix clears both.
+        deps = _dependencies(migration)
+        clashed: set[tuple[str, str]] = set()
+        for r in rows:
+            key = (r.kind, r.routine_id)
+            if refused.get(key) == CASE_DIFFERS or (
+                refused.get(key) == "depends_on_refused" and deps.get(key, set()) & clashed
+            ):
+                clashed.add(key)
         excluded += [(r.kind, r.routine_id, refused[(r.kind, r.routine_id)]) for r in ordered
                      if (r.kind, r.routine_id) in refused]  # fmt: skip
         there = [r for r in keep if present and output_key(r, engine, target_database) in present]
@@ -673,6 +686,9 @@ def write_triggers_scripts(
             events_replica_disabled=sum(1 for r in keep if state(r) == "REPLICA_SIDE_DISABLED"),
             already_there=len(there),
             excluded=sorted(excluded),
+            case_differs=sorted(
+                k for k in clashed if k in {(r.kind, r.routine_id) for r in ordered}
+            ),
         )
 
         def chunks() -> Iterator[bytes]:

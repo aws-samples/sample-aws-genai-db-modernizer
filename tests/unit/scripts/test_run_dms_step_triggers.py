@@ -222,12 +222,8 @@ def test_a_case_only_database_clash_says_why_in_the_triggers_scripts_output(tmp_
     assert (
         "triggers-enable-check.sql" in left_out["why"] and "routines-check" not in left_out["why"]
     )
-    text = (
-        (tmp_path / STEP / "triggers.md").read_text()
-        if (tmp_path / STEP / "triggers.md").exists()
-        else ""
-    )
-    assert "routines-check.sql" not in text
+    text = " ".join((tmp_path / STEP / "triggers.md").read_text().split())
+    assert CASE_DIFFERS_TRIGGERS_WHY in text and "routines-check.sql" not in text
 
 
 @pytest.mark.passes_on_main
@@ -235,3 +231,25 @@ def test_an_excluded_trigger_with_no_case_clash_has_no_why(tmp_path, capsys):
     _job(tmp_path, _rows())
     code, line = base._run(tmp_path, "triggers-scripts", capsys=capsys)
     assert code == 0 and all("why" not in r for r in line["excluded_routines"])
+
+
+def test_a_trigger_left_out_for_calling_a_case_clash_procedure_says_why_too(tmp_path, capsys):
+    from src.tools.data_movement.routine_scripts import CASE_DIFFERS_TRIGGERS_WHY
+    from tests.unit.tools.data_movement.routine_fixtures import dep_routine, mysql_source
+
+    rows = [row("Shop.p0", "procedure", schema="Shop", status="rewritten", signature="IN int",
+                specific="p0"),
+            row("shop.orders_bi", "trigger", schema="shop", table="shop.orders",
+                specific="orders.orders_bi", status="rewritten",
+                dependencies=[dep_routine("procedure", "Shop.p0")])]  # fmt: skip
+    _job(tmp_path, rows, schema="Shop", target_database=None,
+         extra=[mysql_source("p0", "CREATE DEFINER=`app`@`%` PROCEDURE `p0`(IN p INT)\nBEGIN\n"
+                             "  SELECT p;\nEND", schema="Shop"),
+                mysql_source("orders.orders_bi", "CREATE DEFINER=`app`@`%` TRIGGER `orders_bi` "
+                             "BEFORE INSERT ON `orders` FOR EACH ROW CALL `Shop`.p0(1)",
+                             kind="trigger")])  # fmt: skip
+    code, line = base._run(tmp_path, "triggers-scripts", capsys=capsys)
+    assert code == 0, line
+    (left_out,) = line["excluded_routines"]
+    assert (left_out["routine_id"], left_out["reason"]) == ("shop.orders_bi", "depends_on_refused")
+    assert left_out["why"] == CASE_DIFFERS_TRIGGERS_WHY
