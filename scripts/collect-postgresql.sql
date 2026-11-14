@@ -456,6 +456,8 @@ triggers_data AS (
       -- (tgparentid is PostgreSQL 13+; on 12 the clones are internal)
       AND coalesce(to_jsonb(t) ->> 'tgparentid', '0') = '0'
       AND n.nspname NOT IN ('pg_catalog', 'information_schema')
+      AND n.nspname NOT LIKE 'pg_toast%'
+      AND n.nspname NOT LIKE 'pg_temp%'
   ) tr
 ),
 
