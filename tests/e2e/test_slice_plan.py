@@ -29,8 +29,10 @@ from pydantic import ValidationError
 from src.agents.referee.write_groups import assignment_placement_groups
 from src.contracts.synthesis_output import ReportFacts, SlicePlanFacts
 from src.shared.cache_engines import CACHE_ENGINES
+from src.shared.step_explanations import METRIC_LABELS, step_why
 from src.tools.validation.customer_text_guard import scan_json
 from tests.e2e.pipeline import REPO, PipelineResult, _env
+from tests.unit.shared.test_step_explanations import customer_text_findings
 
 MOVING = {"owner", "replica_reads", "read_model"}
 
@@ -69,6 +71,25 @@ def test_the_slice_plan_passes_every_contract_validator(run: PipelineResult) -> 
     assert plan["step_basis"] == ("slices" if homogeneous else "engine_waves"), run.db
     first = plan["plan_steps"][0]
     assert first["kind"] == "relational_step" and first["table_classes"] is not None
+
+
+def test_each_step_says_why_it_sits_where_it_does(run: PipelineResult) -> None:
+    """#1699: every step's sentence is its template filled with the plan's own figures,
+    and passes the customer-text guard; the metrics carry their plain names."""
+    plan = _plan(_report(run))
+    assert plan["metric_labels"] == METRIC_LABELS, run.db
+    for step in plan["plan_steps"]:
+        sentence = step["why"]
+        assert sentence == step_why(plan, step), (run.db, step["step_number"])
+        assert customer_text_findings(sentence) == [], (run.db, sentence)
+        assert sentence.startswith(f"Step {step['step_number']} "), sentence
+        assert f"{step['query_count']:,} quer" in sentence or step["kind"] == "cache", sentence
+        if step["metrics"] is not None:
+            cut = step["metrics"]["cut_cost"]
+            assert f"{cut['replica_table_count']:,} table" in sentence, sentence
+            assert f"{cut['write_site_count']:,} write statement" in sentence, sentence
+        held = sorted({r for st in step["step_stages"] for r in st["holding_risk_ids"]})
+        assert all(r in sentence for r in held) and ("holds back" in sentence) == bool(held)
 
 
 def test_every_moving_query_is_in_one_unit_and_no_group_is_split(run: PipelineResult) -> None:

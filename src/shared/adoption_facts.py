@@ -56,6 +56,7 @@ from src.contracts.synthesis_output import (
     summary_path_ids,
 )
 from src.shared.slice_plan import build_slice_plan
+from src.shared.step_explanations import with_step_explanations
 
 if TYPE_CHECKING:
     from src.shared.move_units import SliceInputs
@@ -97,7 +98,9 @@ def slice_plan_facts(
     ``waves`` defaults to ``report["migration_waves"]``; ``engine_costs`` and
     ``risks_by_engine`` default to the stored facts' (``facts.engines``' costs and
     ``critical_high_risks_by_engine``)."""
-    empty = SlicePlanFacts(step_basis="engine_waves").model_dump(mode="json")
+    empty = with_step_explanations(
+        SlicePlanFacts(step_basis="engine_waves").model_dump(mode="json")
+    )
     if inputs is None:
         return empty
     facts = report.get("facts") or {}

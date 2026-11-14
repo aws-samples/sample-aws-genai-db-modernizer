@@ -3992,6 +3992,16 @@ class SliceStep(BaseModel):
     table_classes: RelationalTableClasses | None = Field(
         None, description="The relational step only"
     )
+    why: str | None = Field(
+        None,
+        description=(
+            "Why the step sits where it does, in one sentence from a fixed template filled "
+            "with the plan's own figures: what it moves, what it shares with other steps, "
+            "what it needs copied across, what holds it (#1699, "
+            "``step_explanations.step_why``); None in a plan stored before it, which the "
+            "reader fills"
+        ),
+    )
 
     @model_validator(mode="after")
     def _consistent(self) -> "SliceStep":
@@ -4114,10 +4124,21 @@ class SlicePlanFacts(BaseModel):
         default_factory=dict,
         description="Each step engine's open critical and high risks, the ones the paths sum",
     )
+    metric_labels: dict[str, str] = Field(
+        default_factory=dict,
+        description=(
+            "The plain name of each order metric, by its UnitMetrics, SliceMetrics or "
+            "CutCost field: the one set of words every deliverable uses for them (#1699, "
+            "``step_explanations.METRIC_LABELS``); empty in a plan stored before it"
+        ),
+    )
 
     @model_validator(mode="after")
     def _consistent(self) -> "SlicePlanFacts":
         _count_matches(self.step_count, self.plan_steps, "step_count")
+        metrics = {*UnitMetrics.model_fields, *SliceMetrics.model_fields, *CutCost.model_fields}
+        if self.metric_labels and set(self.metric_labels) != metrics:
+            raise ValueError("metric_labels names each order metric, and only them")
         if [s.step_number for s in self.plan_steps] != list(range(1, len(self.plan_steps) + 1)):
             raise ValueError("steps are numbered 1, 2, ... in order")
         if (self.slice_basis is None) == (self.step_basis == "slices"):

@@ -20,6 +20,8 @@ model (ADR-033 Decision 1, ``SlicePlanFacts``):
   b, c, d; inside a stage units run by blast radius, then call share (highest first),
   then key. A step with more than one unit names its first unit the pilot.
 - **Gates** are filled templates, with their table lists as ``stage_gate_parts``.
+- **Why** each step sits where it does is one filled template per step, with the order
+  metrics' plain names (``step_explanations``, #1699).
 
 ``build_slice_plan`` returns None when no plan can be stated (no waves, no queries, an
 engine with no cost, or engine waves that cannot be one step each); the caller then
@@ -61,6 +63,7 @@ from src.shared.move_units import (
     build_units,
     kept_whole_groups,
 )
+from src.shared.step_explanations import with_step_explanations
 
 __all__ = ["build_slice_plan", "stage_kind", "unit_order_key"]
 
@@ -539,7 +542,7 @@ def build_slice_plan(
     plan["wave_phases"] = [
         p.model_dump(mode="json") for p in phase_facts([SliceStep.model_validate(s) for s in steps])
     ]
-    return SlicePlanFacts.model_validate(plan).model_dump(mode="json")
+    return SlicePlanFacts.model_validate(with_step_explanations(plan)).model_dump(mode="json")
 
 
 def _group_dict(g: KeptWhole) -> dict[str, Any]:
