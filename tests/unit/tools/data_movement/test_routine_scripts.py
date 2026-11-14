@@ -12,6 +12,7 @@ from pathlib import Path
 import pytest
 
 from src.agents.collector.routine_sources import write_routine_sources
+from src.contracts.transformation_contract import NOT_MOVED, Finding
 from src.storage.local_store import LocalArtifactStore
 from src.tools.data_movement.routine_scripts import (
     CHECK_FILE,
@@ -257,7 +258,7 @@ def test_a_postgresql_routine_with_a_text_rewrite_is_refused_not_deployed_withou
 _SCHEMA_FN = "CREATE OR REPLACE FUNCTION {schema}.{name}(p integer)\n RETURNS integer\n LANGUAGE sql\nAS $function$SELECT p$function$\n"
 
 
-def _pg_schemas_case(tmp_path, schemas: list[str]):
+def _pg_schemas_case(tmp_path, schemas: list[str], contract=None):
     """One function per schema in ``schemas``, in that deploy order."""
     rows, sources = [], []
     for i, schema in enumerate(schemas):
@@ -269,7 +270,7 @@ def _pg_schemas_case(tmp_path, schemas: list[str]):
                                  schema=schema))  # fmt: skip
     artifact = migration(rows)
     store = _job(tmp_path, artifact, sources)
-    scripts = _write(tmp_path, store, contract_with_routines(artifact))
+    scripts = _write(tmp_path, store, contract_with_routines(artifact, contract=contract))
     assert scripts.in_script == len(schemas) and scripts.refused == []
     return (tmp_path / "step" / DEPLOY_FILE).read_text()
 
@@ -289,9 +290,61 @@ def test_the_postgresql_deploy_creates_the_routines_schema_in_its_transaction_fi
     assert begin < lock < schema < path < create < text.rindex("COMMIT;")
 
 
+def _contract_in(
+    engine: str, moved: str, *, blocked: str | None = None, not_moved: str | None = None
+):
+    """make_contract's three tables with orders moved in ``moved``, customers blocked in
+    ``blocked`` and audit_log not moved (#1918) in ``not_moved``; each else moved in ``moved``."""
+    rules = []
+    for r in make_contract(engine).rules:
+        name = r.target_table
+        schema = {"customers": blocked, "audit_log": not_moved}.get(name) or moved
+        table_id = f"{schema}.{name}"
+        update: dict = {"source_table": table_id}
+        if name == "customers" and blocked:
+            update |= {
+                "status": "blocked",
+                "findings": [
+                    Finding(
+                        code="unknown_table", severity="error", message="blocked", table_id=table_id
+                    )
+                ],
+            }
+        if name == "audit_log" and not_moved:
+            update |= {
+                "moves_rows": False,
+                "findings": [
+                    Finding(
+                        code=NOT_MOVED,
+                        severity="warning",
+                        message="not moved",
+                        table_id=table_id,
+                        column="msg",
+                    )
+                ],
+            }
+        rules.append(r.model_copy(update=update))
+    return make_contract(engine).model_copy(update={"rules": rules})
+
+
 @pytest.mark.passes_on_main
-def test_a_routine_in_public_adds_no_schema_statement(tmp_path):
-    assert _schema_lines(_pg_schemas_case(tmp_path, ["public"])) == []
+def test_public_is_never_created_even_when_the_moved_tables_are_elsewhere(tmp_path):
+    # The moved tables are in shop, so only the public skip keeps public out.
+    contract = _contract_in("aurora_postgresql", "shop")
+    assert _schema_lines(_pg_schemas_case(tmp_path, ["public", "shop"], contract)) == []
+
+
+def test_a_schema_holding_only_a_not_moved_table_is_created(tmp_path):
+    # step-1.ddl.sql creates only the moved tables' schema (#1918): reporting is not it.
+    contract = _contract_in("aurora_postgresql", "public", not_moved="reporting")
+    text = _pg_schemas_case(tmp_path, ["reporting"], contract)
+    assert _schema_lines(text) == ['CREATE SCHEMA IF NOT EXISTS "reporting";']
+
+
+def test_a_schema_holding_only_a_blocked_table_is_created(tmp_path):
+    contract = _contract_in("aurora_postgresql", "public", blocked="reporting")
+    text = _pg_schemas_case(tmp_path, ["reporting"], contract)
+    assert _schema_lines(text) == ['CREATE SCHEMA IF NOT EXISTS "reporting";']
 
 
 def test_each_routine_schema_is_created_once_and_public_and_the_tables_schema_never(tmp_path):
@@ -320,14 +373,15 @@ def test_a_schema_only_a_refused_routine_uses_is_not_created(tmp_path):
     assert _schema_lines((tmp_path / "step" / DEPLOY_FILE).read_text()) == []
 
 
-def _mysql_schemas_case(tmp_path, schemas: list[str], **kw):
+def _mysql_schemas_case(tmp_path, schemas: list[str], collations=None, **kw):
     rows, sources = [], []
     for i, schema in enumerate(schemas):
         name = f"p{i}"
         rows.append(row(f"{schema}.{name}", "procedure", schema=schema, name=name, specific=name,
                         status="rewritten", signature="IN int"))  # fmt: skip
         sources.append(mysql_source(name, f"CREATE DEFINER=`app`@`%` PROCEDURE `{name}`(IN p INT)\n"
-                                    "BEGIN\n  SELECT p;\nEND", schema=schema))  # fmt: skip
+                                    "BEGIN\n  SELECT p;\nEND", schema=schema,
+                                    database_collation=(collations or {}).get(i)))  # fmt: skip
     artifact = migration(rows, "mysql")
     store = _job(tmp_path, artifact, sources, "mysql")
     scripts = _write(tmp_path, store, contract_with_routines(artifact), **kw)
@@ -336,11 +390,9 @@ def _mysql_schemas_case(tmp_path, schemas: list[str], **kw):
 
 
 def test_the_mysql_deploy_creates_each_routine_database_the_tables_are_not_in(tmp_path):
-    # make_contract's MySQL tables are in shop, which the step 1 DDL creates. Database names
-    # compare exactly: with lower_case_table_names=0 (Linux), Shop is not shop.
-    text = _mysql_schemas_case(tmp_path, ["shop", "shop_functions", "Shop", "odd`db"])
+    # make_contract's MySQL tables are in shop, which the step 1 DDL creates.
+    text = _mysql_schemas_case(tmp_path, ["shop", "shop_functions", "odd`db"])
     assert _schema_lines(text, "CREATE DATABASE") == [
-        "CREATE DATABASE IF NOT EXISTS `Shop`;",
         "CREATE DATABASE IF NOT EXISTS `odd``db`;",
         "CREATE DATABASE IF NOT EXISTS `shop_functions`;",
     ]
@@ -354,3 +406,63 @@ def test_a_mysql_target_database_the_tables_are_not_in_is_created(tmp_path):
     assert _schema_lines(text, "CREATE DATABASE") == ["CREATE DATABASE IF NOT EXISTS `shop_new`;"]
     assert _schema_lines(_mysql_schemas_case(tmp_path, ["shop"], target_database="shop"),
                          "CREATE DATABASE") == []  # fmt: skip
+
+
+def test_a_routine_database_gets_the_collation_the_collection_records(tmp_path):
+    text = _mysql_schemas_case(
+        tmp_path, ["shop_functions", "reports", "mixed", "mixed", "odd"],
+        collations={0: "utf8mb4_unicode_ci", 2: "latin1_swedish_ci", 3: "utf8mb4_bin",
+                    4: "utf8mb4' OR '1"},
+    )  # fmt: skip
+    assert _schema_lines(text, "CREATE DATABASE") == [
+        "CREATE DATABASE IF NOT EXISTS `mixed`;",
+        "CREATE DATABASE IF NOT EXISTS `odd`;",
+        "CREATE DATABASE IF NOT EXISTS `reports`;",
+        "CREATE DATABASE IF NOT EXISTS `shop_functions` COLLATE utf8mb4_unicode_ci;",
+    ]
+    default = "so the server default applies; check it against the source's."
+    assert f"-- `reports`: the collection records no database collation, {default}" in text
+    assert f"-- `odd`: the collection records no database collation, {default}" in text
+    assert (
+        f"-- `mixed`: its routines do not all record the same database collation, {default}" in text
+    )
+    assert "OR '1" not in text
+
+
+@pytest.mark.parametrize("engine", ["postgresql", "mysql"])
+def test_the_scripts_say_the_new_schemas_grants_are_the_customers(tmp_path, engine):
+    if engine == "postgresql":
+        text = _pg_schemas_case(tmp_path / "a", ["discourse_functions"])
+        grant, kind = "USAGE on each schema", "Schemas"
+    else:
+        text = _mysql_schemas_case(tmp_path / "a", ["shop_functions"])
+        grant, kind = "EXECUTE on each database", "Databases"
+    sentence = f"the script grants nothing: {grant} for the application user is yours to add."
+    assert sentence in text
+    md = (tmp_path / "a" / "step" / INSTRUCTIONS_FILE).read_text()
+    assert f"- {kind} it creates, which step 1's DDL does not: 1" in md
+    assert f"the script grants nothing: `{grant.split()[0]}`" in md
+    if engine == "postgresql":
+        _pg_schemas_case(tmp_path / "b", ["public"])
+    else:
+        _mysql_schemas_case(tmp_path / "b", ["shop"])
+    assert "grants nothing" not in (tmp_path / "b" / "step" / INSTRUCTIONS_FILE).read_text()
+
+
+def test_a_mysql_routine_database_that_differs_from_the_tables_only_by_case_is_refused(tmp_path):
+    # With lower_case_table_names=0, `Shop` would be a second, empty database: refused instead.
+    rows = [
+        row("Shop.p0", "procedure", schema="Shop", name="p0", specific="p0", status="rewritten",
+            signature="IN int"),
+        row("shop.p1", "procedure", schema="shop", name="p1", specific="p1", status="rewritten",
+            signature="IN int", dependencies=[dep_routine("procedure", "Shop.p0")]),
+    ]  # fmt: skip
+    sources = [mysql_source(n, f"CREATE DEFINER=`app`@`%` PROCEDURE `{n}`(IN p INT)\n"
+                            "BEGIN\n  SELECT p;\nEND", schema=d) for n, d in (("p0", "Shop"), ("p1", "shop"))]  # fmt: skip
+    artifact = migration(rows, "mysql")
+    store = _job(tmp_path, artifact, sources, "mysql")
+    scripts = _write(tmp_path, store, contract_with_routines(artifact))
+    assert scripts.refused == [("procedure", "Shop.p0", "database_case_differs"),
+                               ("procedure", "shop.p1", "depends_on_refused")]  # fmt: skip
+    text = (tmp_path / "step" / DEPLOY_FILE).read_text()
+    assert "`Shop`" not in text and _schema_lines(text, "CREATE DATABASE") == []

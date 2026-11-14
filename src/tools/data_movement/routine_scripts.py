@@ -12,7 +12,10 @@ three files into ``data-movement/step-1/``:
   routine-migration rewrites applied again for the user who runs it (a MySQL
   ``DEFINER``). It first creates, ``IF NOT EXISTS``, each schema (on Aurora MySQL, each
   database) its routines land in that step 1's own DDL does not create (#2148): never
-  PostgreSQL's ``public`` nor a schema the step's tables are in. On Aurora PostgreSQL the
+  PostgreSQL's ``public`` nor the schema of a table the step moves. A MySQL database gets
+  the database collation its routines record, and nothing is granted on what it creates;
+  a MySQL database that differs from the moved tables' only by case is refused (by its
+  routines' ids, ``database_case_differs``). On Aurora PostgreSQL the
   script runs in one transaction with ``check_function_bodies`` on, and each trigger is
   disabled in that transaction, so no replicated change ever meets it enabled. On Aurora MySQL each routine runs under its
   own ``sql_mode`` and connection collation, as ``mysqldump`` does; MySQL triggers and
@@ -279,39 +282,100 @@ def _mysql_block(
 
 
 def _step_schemas(contract: StepContract) -> set[str]:
-    """The schemas (MySQL databases) step 1's own DDL creates: those its tables are in."""
-    return {
-        r.source_table.partition(".")[0]
-        for r in contract.rules
-        if r.status != "blocked" and "." in r.source_table
-    }
+    """The schemas (MySQL databases) step 1's own DDL creates: those of the tables it moves,
+    the same ``contract_tables`` ``render_ddl`` reads (a blocked rule's table and a rule that
+    moves no rows, #1918, are not among them)."""
+    from src.tools.data_movement.dms_step import contract_tables
+
+    return {t.schema for t in contract_tables(contract) if t.schema}
+
+
+def _case_clash(schema: str | None, step_schemas: set[str], engine: str) -> bool:
+    """A MySQL database that differs from one step 1's DDL creates only by case: on a
+    cluster with ``lower_case_table_names=0`` creating it would make a second, empty one."""
+    if engine != "aurora_mysql" or not schema or schema in step_schemas:
+        return False
+    return schema.lower() in {s.lower() for s in step_schemas}
+
+
+@dataclass(frozen=True)
+class _NewSchema:
+    """A schema (MySQL database) the deploy script creates before its routines (#2148)."""
+
+    name: str
+    collation: str | None = None  # MySQL: the database collation every routine records
+    note: str | None = None  # MySQL: why the server default applies instead
+
+
+_NO_COLLATION = "the collection records no database collation"
+_MIXED_COLLATION = "its routines do not all record the same database collation"
 
 
 def _routine_schemas(
-    rows: Iterable[StepRoutine], engine: str, target_database: str | None, contract: StepContract
-) -> list[str]:
+    rows: Iterable[StepRoutine],
+    engine: str,
+    target_database: str | None,
+    step_schemas: set[str],
+    collations: dict[tuple[str, str], str | None],
+) -> list[_NewSchema]:
     """The schemas (MySQL databases) the deploy script creates before its routines (#2148):
     each one ``rows`` land in, except PostgreSQL's ``public`` (every database has it) and a
-    schema step 1's tables are in (the step's DDL creates it). Names compare exactly, as
-    the target compares them. Sorted."""
-    skip = _step_schemas(contract) | ({"public"} if engine == "aurora_postgresql" else set())
-    found = {_target_schema(r, engine, target_database) for r in rows}
-    return sorted(s for s in found if s and _safe(s) and s not in skip)
+    schema step 1's DDL creates (:func:`_step_schemas`). Names compare exactly, as the target
+    compares them. On MySQL each gets the database collation its routines record
+    (``collations``, by routine) when they all record the same allowed one. Sorted."""
+    skip = step_schemas | ({"public"} if engine == "aurora_postgresql" else set())
+    found: dict[str, set[str | None]] = {}
+    for r in rows:
+        schema = _target_schema(r, engine, target_database)
+        if schema and _safe(schema) and schema not in skip:
+            value = collations.get((r.kind, r.routine_id))
+            found.setdefault(schema, set()).add(
+                value if value and _COLLATION.match(value) else None
+            )
+    out = []
+    for name in sorted(found):
+        if engine == "aurora_postgresql":
+            out.append(_NewSchema(name))
+            continue
+        values = found[name]
+        if len(values) > 1:
+            out.append(_NewSchema(name, note=_MIXED_COLLATION))
+        elif values == {None}:
+            out.append(_NewSchema(name, note=_NO_COLLATION))
+        else:
+            out.append(_NewSchema(name, collation=next(iter(values))))
+    return out
 
 
-def _schema_statements(engine: str, schemas: list[str]) -> list[str]:
+def _schema_statements(engine: str, schemas: list[_NewSchema]) -> list[str]:
     if not schemas:
         return []
     if engine == "aurora_postgresql":
-        made = [f"CREATE SCHEMA IF NOT EXISTS {_pg_ident(s)};" for s in schemas]
-    else:
-        made = [f"CREATE DATABASE IF NOT EXISTS {_mysql_ident(s)};" for s in schemas]
-    return [
-        "-- The schemas the routines live in that step 1's DDL does not create (the user that "
-        "runs this script needs CREATE on the database):",
-        *made,
-        "",
+        return [
+            "-- The schemas the routines live in that step 1's DDL does not create (the user that "
+            "runs this script needs CREATE on the database).",
+            "-- Each is owned by the user that runs this script, and the script grants nothing: "
+            "USAGE on each schema for the application user is yours to add.",
+            *(f"CREATE SCHEMA IF NOT EXISTS {_pg_ident(s.name)};" for s in schemas),
+            "",
+        ]
+    lines = [
+        "-- The databases the routines live in that step 1's DDL does not create (the user that "
+        "runs this script needs CREATE on them).",
+        "-- Each is created by the user that runs this script, and the script grants nothing: "
+        "EXECUTE on each database for the application user is yours to add.",
     ]
+    for s in schemas:
+        made = f"CREATE DATABASE IF NOT EXISTS {_mysql_ident(s.name)}"
+        if s.collation:
+            lines.append(f"{made} COLLATE {s.collation};")
+            continue
+        lines += [
+            f"-- `{_comment(s.name)}`: {s.note}, so the server default applies; check it "
+            "against the source's.",
+            f"{made};",
+        ]
+    return [*lines, ""]
 
 
 def _deploy_header(
@@ -319,7 +383,7 @@ def _deploy_header(
     section: StepRoutines,
     in_script: int,
     contract_sha: str,
-    schemas: list[str] | None = None,
+    schemas: list[_NewSchema] | None = None,
 ) -> str:
     made = _schema_statements(engine, schemas or [])
     lines = [
@@ -526,7 +590,12 @@ def _mysql_check(
 
 
 def _instructions(
-    engine: str, scripts: RoutineScripts, section: StepRoutines, output_path: str, user: str
+    engine: str,
+    scripts: RoutineScripts,
+    section: StepRoutines,
+    output_path: str,
+    user: str,
+    created: int = 0,
 ) -> str:
     pg = engine == "aurora_postgresql"
     deploy = (
@@ -561,6 +630,16 @@ def _instructions(
             f"- Left to the triggers-enable script: {section.deferred} MySQL triggers and events "
             "(MySQL cannot create a trigger disabled, and an enabled event would run on Aurora "
             "while DMS replicates the source's own event's effects)."
+        )
+    if created:
+        lines.append(
+            f"- Schemas it creates, which step 1's DDL does not: {created} (`{DEPLOY_FILE}` "
+            "names them). Each is owned by the user that runs it, and the script grants "
+            "nothing: `USAGE` on each schema for the application user is yours to add."
+            if pg
+            else f"- Databases it creates, which step 1's DDL does not: {created} (`{DEPLOY_FILE}` "
+            "names them). Each is created by the user that runs it, and the script grants "
+            "nothing: `EXECUTE` on each database for the application user is yours to add."
         )
     if scripts.refused:
         lines.append(
@@ -778,14 +857,25 @@ def write_routine_scripts(
     migration = read_migration(store, db, job_id, section)
     user = target_user or migration.target_user
     step_dir.mkdir(parents=True, exist_ok=True)
+    step_schemas = _step_schemas(contract)
+    collations: dict[RoutineKey, str | None] = {}
+    write_block = block_of(engine, migration, user, target_database)
+
+    def block(
+        row: StepRoutine, source: RoutineSource, position: int, total: int
+    ) -> tuple[str | None, str | None]:
+        if _case_clash(_target_schema(row, engine, target_database), step_schemas, engine):
+            return None, "database_case_differs"
+        collations[(row.kind, row.routine_id)] = source.session.database_collation
+        return write_block(row, source, position, total)
+
     with tempfile.TemporaryFile(dir=step_dir) as spool:
         spans, refused = spool_blocks(
-            store, db, job_id, carried, block_of(engine, migration, user, target_database),
-            spool, engine=engine, migration=migration,
+            store, db, job_id, carried, block, spool, engine=engine, migration=migration,
         )  # fmt: skip
         in_script = len(spans)
         in_rows = [r for r in carried if (r.kind, r.routine_id) in spans]
-        schemas = _routine_schemas(in_rows, engine, target_database, contract)
+        schemas = _routine_schemas(in_rows, engine, target_database, step_schemas, collations)
 
         def deploy_chunks() -> Iterator[bytes]:
             header = _deploy_header(engine, section, in_script, contract_sha, schemas)
@@ -807,7 +897,7 @@ def write_routine_scripts(
     output = str(step_dir / CHECK_OUTPUT)
     write_atomic(
         step_dir / INSTRUCTIONS_FILE,
-        iter([_instructions(engine, scripts, section, output, user).encode("utf-8")]),
+        iter([_instructions(engine, scripts, section, output, user, len(schemas)).encode("utf-8")]),
     )
     scripts.files = {
         name: str(step_dir / name) for name in (DEPLOY_FILE, CHECK_FILE, INSTRUCTIONS_FILE)

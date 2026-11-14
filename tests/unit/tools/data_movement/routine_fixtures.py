@@ -91,12 +91,14 @@ def contract_with_routines(
     engine: str | None = None,
     *,
     triggers: dict[str, dict[str, Any]] | None = None,
+    contract: StepContract | None = None,
 ) -> StepContract:
     """The step contract with the artifact's routines section; ``triggers`` sets, by
     routine id, what the collection gives a trigger (``source_state``, ``fires``,
-    ``action_order``), as ``attach_step_routines`` reads it."""
+    ``action_order``), as ``attach_step_routines`` reads it. ``contract`` replaces
+    ``make_contract``'s (for tables in other schemas)."""
     target = engine or artifact.target_engine
-    contract = make_contract(target)
+    contract = contract or make_contract(target)
     section = build_step_routines(artifact, contract, version=2)
     if triggers:
         rows = [StepRoutine.model_validate({**r.model_dump(), **triggers.get(r.routine_id, {})})
@@ -123,10 +125,12 @@ def mysql_source(
     sql_mode: str = "STRICT_TRANS_TABLES",
     collation: str | None = "utf8mb4_0900_ai_ci",
     schema: str = "shop",
+    database_collation: str | None = None,
 ) -> RoutineSource:
     return RoutineSource.model_validate({
         "kind": kind, "routine_id": name, "schema_name": schema, "specific_name": name,
         "create_statement": text, "origin": "show_create",
         "session": RoutineSession(sql_mode=sql_mode, character_set_client="utf8mb4",
-                                  collation_connection=collation),
+                                  collation_connection=collation,
+                                  database_collation=database_collation),
     })  # fmt: skip
