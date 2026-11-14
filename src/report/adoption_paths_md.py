@@ -295,7 +295,8 @@ def _stage_row(stage: dict[str, Any], gates: _SaidOnce) -> list[str]:
 def _table_md(header: list[str], rows: list[list[str]]) -> list[str]:
     """A Markdown table, each cell escaped (code-span cells are escaped too, #466)."""
     return [
-        "| " + " | ".join(header) + " |",
+        # The headings are escaped too: the metric names are report.json's (#1699).
+        "| " + " | ".join(escaping.md_cell(h) for h in header) + " |",
         "|" + "---|" * len(header),
         *("| " + " | ".join(escaping.md_cell(c) for c in row) + " |" for row in rows),
     ]

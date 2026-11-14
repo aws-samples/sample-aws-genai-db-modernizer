@@ -14,11 +14,12 @@ view does not change: the roadmap stays wave by wave (#1699's decisions).
 from __future__ import annotations
 
 import copy
+import re
 from typing import Any
 
 import pytest
 
-from src.report import adoption, escaping, executive_report
+from src.report import adoption, escaping
 from src.report.adoption_paths_md import wave_stages_md
 from src.report.formatting import _SaidOnce
 from src.report.renderers import render_engineering_report_md
@@ -150,15 +151,30 @@ def test_the_full_report_states_every_step_s_sentence_once() -> None:
 # --- The executive report -----------------------------------------------------------------
 
 
-def test_each_wave_panel_states_its_steps_sentences() -> None:
+def test_the_executive_report_carries_no_step_sentence() -> None:
+    """#1699's three levels: the executive phases stay as they are today; a step's why
+    sentence is the engineering level's (the review of #2279)."""
     report = _renderable(facts=True)
-    waves = normalize(section_texts(_render(report), "app")[executive_report.H_WAVES])
+    pages = normalize(" ".join(section_texts(_render(report), "app").values()))
     for step in report["facts"]["slice_plan"]["plan_steps"]:
-        assert f"{executive_report.L_WHY}: {normalize(step['why'])}" in waves, step["step_number"]
+        assert normalize(step["why"]) not in pages, step["step_number"]
+    assert adoption.WHY_HEADING not in pages
 
 
-def test_an_executive_why_sentence_is_printed_literally() -> None:
-    report = _renderable(facts=True)
-    report["facts"]["slice_plan"]["plan_steps"][3]["why"] = "Step 4 <b>bold</b> & more."
-    waves = normalize(section_texts(_render(report), "app")[executive_report.H_WAVES])
-    assert "Step 4 <b>bold</b> & more." in waves
+def test_a_label_holding_a_table_pipe_is_escaped_in_the_heading() -> None:
+    facts = _facts()
+    facts["slice_plan"]["metric_labels"]["gravity"] = "how | tied"
+    facts["slice_plan"]["metric_labels"]["blast_radius"] = "what | it touches"
+    section = _stages(facts, 3)
+    headings = [
+        line for line in section.splitlines() if line.startswith(("| Step |", "| Stage | Pilot"))
+    ]
+    assert len(headings) == 2
+    for line in headings:
+        assert "| How | tied |" not in line and "| What | it touches |" not in line
+    assert escaping.md_cell("How | tied") in headings[0]
+    assert escaping.md_cell("What | it touches") in headings[1]
+    # Each heading still has one cell per column: the escaped pipe splits nothing.
+    rows = [line for line in section.splitlines() if line.startswith("| Step ")]
+    widths = {len(re.split(r"(?<!\\)\|", line.strip())[1:-1]) for line in rows}
+    assert widths == {6}, widths

@@ -14,6 +14,8 @@ import { createRoot } from 'react-dom/client';
 import { createInstance } from 'i18next';
 import en from '../../locales/en.json';
 import WaveStages from '../WaveStages';
+import { formatFigure } from '../../utils/reportFacts';
+import { metricValueText } from '../../utils/adoptionPaths';
 
 jest.mock('@cloudscape-design/components/box', () => ({
   __esModule: true,
@@ -158,4 +160,27 @@ test('a plan with no labels shows the sentences and no metric it cannot name', (
   open();
   expect(all('step-why')).toHaveLength(2);
   expect(all('step-metrics')).toHaveLength(0);
+});
+
+test('a metric reads as the reports print it (fmt_num)', () => {
+  // fmt_num: thousands separators, at most two places, a tiny non-zero value as "<0.01".
+  expect(formatFigure(1234)).toBe('1,234');
+  expect(formatFigure(0.004)).toBe('<0.01');
+  expect(formatFigure(-0.004)).toBe('>-0.01');
+  expect(formatFigure(0)).toBe('0');
+  expect(formatFigure(0.625)).toBe('0.63');
+  expect(metricValueText('write_site_count', 1234)).toBe('1,234');
+  expect(metricValueText('gravity', 0.004)).toBe('<0.01');
+  expect(metricValueText('value_call_share_percent', 0.004)).toBe('<0.01%');
+  expect(metricValueText('value_call_share_percent', 1234.5)).toBe('1,234.5%');
+});
+
+test('the figures table prints large and tiny values as the reports do', () => {
+  const p = plan();
+  p.plan_steps[1].metrics.cut_cost.write_site_count = 1234;
+  p.plan_steps[1].metrics.hub_score = 0.004;
+  render(p);
+  open();
+  const row = [...all('step-metrics')[0].querySelectorAll('tbody tr')][1];
+  expect([...row.children].map(td => td.textContent)).toEqual(['4', '0.62', '<0.01', '3', '1,234', '67.3%']);
 });

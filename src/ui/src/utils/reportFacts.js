@@ -354,10 +354,13 @@ export function costSizingOf(synthesis, engine) {
   return (row && row.cost_sizing) || null;
 }
 
-// A number as the reports print it (fmt_num): thousands separators, at most two places.
-function formatFigure(value) {
+// A number as the reports print it (fmt_num): thousands separators, at most two places,
+// and a non-zero value too small for them as "<0.01" (">-0.01"), never "0".
+export function formatFigure(value) {
   const n = Number(value) || 0;
-  return n.toLocaleString('en-US', { minimumFractionDigits: 0, maximumFractionDigits: 2 });
+  if (n !== 0 && Math.abs(n) < 0.005) return n > 0 ? '<0.01' : '>-0.01';
+  const text = n.toLocaleString('en-US', { minimumFractionDigits: 0, maximumFractionDigits: 2 });
+  return text === '-0' ? '0' : text;
 }
 
 // "Sized for 67 queries, 96.51 calls/s" / "Sized for 20 cached reads, 185.07 calls/s",
