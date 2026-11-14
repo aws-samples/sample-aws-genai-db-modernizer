@@ -586,7 +586,8 @@ def test_an_event_in_a_database_that_differs_from_the_tables_only_by_case_is_lef
     assert _lines(text, "CREATE DATABASE") == ["CREATE DATABASE IF NOT EXISTS `jobs`;"]
     assert "USE `Shop`;" not in text and "CREATE DATABASE IF NOT EXISTS `Shop`" not in text
     md = " ".join(_read(tmp_path, TRIGGERS_INSTRUCTIONS).split())
-    assert f"- Left out as `database_case_differs`: 1. For each, {CASE_DIFFERS_TRIGGERS_WHY}" in md
+    assert ("- Left out as `database_case_differs`, or for calling a routine that was: 1. "
+            f"For each, {CASE_DIFFERS_TRIGGERS_WHY}") in md  # fmt: skip
     # The check that reports a left-out trigger or event is the triggers one.
     assert "triggers-enable-check.sql" in CASE_DIFFERS_TRIGGERS_WHY
     assert "routines-check.sql" not in CASE_DIFFERS_TRIGGERS_WHY
@@ -608,9 +609,10 @@ def test_a_database_the_deploy_already_created_is_counted_and_left_to_if_not_exi
     _write_scripts(tmp_path, store, contract_with_routines(artifact))
     assert _lines(_read(tmp_path, TRIGGERS_FILE), "CREATE DATABASE") == [
         "CREATE DATABASE IF NOT EXISTS `shop_functions`;"]  # fmt: skip
-    assert "neither step 1's DDL nor the routines deploy" not in _read(
-        tmp_path, TRIGGERS_INSTRUCTIONS
-    )
+    md = " ".join(_read(tmp_path, TRIGGERS_INSTRUCTIONS).split())
+    assert "- Databases it creates, which step 1's DDL does not: 1 (" in md  # counted, though made
+    assert "one the routines deploy script already created is left as it is" in md
+    assert "neither step 1's DDL nor the routines deploy" not in md
 
 
 def test_the_database_clauses_of_the_ddl_the_deploy_and_the_triggers_script_agree(tmp_path):
@@ -642,3 +644,24 @@ def test_the_database_clauses_of_the_ddl_the_deploy_and_the_triggers_script_agre
     ddl = render_ddl(make_step1_inputs("aurora_mysql"))
     assert "`shop_functions`" in deploy and "`jobs`" in triggers
     assert clauses(ddl) and clauses(deploy) == clauses(triggers) == clauses(ddl)
+
+
+def test_a_trigger_that_calls_a_case_clash_procedure_is_counted_with_it(tmp_path):
+    # `Shop.p0` is refused for the clash; the deferred trigger on shop.orders calls it.
+    rows = [row("Shop.p0", "procedure", schema="Shop", name="p0", specific="p0",
+                status="rewritten", signature="IN int"),
+            row("shop.orders_bi", "trigger", schema="shop", table="shop.orders",
+                specific="orders.orders_bi", status="rewritten",
+                dependencies=[dep_routine("procedure", "Shop.p0")])]  # fmt: skip
+    sources = [mysql_source("p0", "CREATE DEFINER=`app`@`%` PROCEDURE `p0`(IN p INT)\nBEGIN\n  "
+                            "SELECT p;\nEND", schema="Shop"),
+               mysql_source("orders.orders_bi", "CREATE DEFINER=`app`@`%` TRIGGER `orders_bi` "
+                            "BEFORE INSERT ON `orders` FOR EACH ROW CALL `Shop`.p0(1)",
+                            kind="trigger")]  # fmt: skip
+    artifact = migration(rows, "mysql")
+    store = _job(tmp_path, artifact, sources, "mysql")
+    scripts = _write_scripts(tmp_path, store, contract_with_routines(artifact))
+    assert scripts.excluded == [("trigger", "shop.orders_bi", "depends_on_refused")]
+    assert scripts.case_differs == [("trigger", "shop.orders_bi")]
+    md = " ".join(_read(tmp_path, TRIGGERS_INSTRUCTIONS).split())
+    assert "or for calling a routine that was: 1. For each, " in md
