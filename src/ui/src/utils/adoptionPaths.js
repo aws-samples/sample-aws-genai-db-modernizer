@@ -18,6 +18,7 @@
 //   relational_monthly_cost_usd is None (no relational step).
 
 import { displayEngine } from './engineNames';
+import { formatFigure } from './reportFacts';
 
 export const PER_PATH_SIZING = 'per_path_sizing';
 export const FULL_TARGET = 'full_target';
@@ -303,12 +304,13 @@ export function stepMetric(step, field) {
   return (cut && typeof cut === 'object' && cut[field] != null) ? cut[field] : null;
 }
 
-// A metric's stored value, formatted as the reports format it.
+// A metric's stored value, formatted as the reports format it (metric_value: fmt_num,
+// a share as a percent, a cost in dollars).
 export function metricValueText(field, value) {
   if (value === null || value === undefined) return '-';
-  if (field === 'value_call_share_percent') return `${value}%`;
+  if (field === 'value_call_share_percent') return `${formatFigure(value)}%`;
   if (field === 'value_monthly_cost_usd') return formatUsd(value);
-  return String(value);
+  return formatFigure(value);
 }
 
 // The wave's steps, in order, as its phase names them.

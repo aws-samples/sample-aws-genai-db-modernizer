@@ -27,6 +27,7 @@ import playwright.sync_api
 import pytest
 from playwright.sync_api import Browser, Locator, Page, expect
 
+from src.report import escaping
 from src.report.deliverables import DELIVERABLES_DIR, FOLDER_FILENAMES
 from src.report.risks import shared_mitigation_refs
 from src.shared.migration_risk_rules import backfill_report_risks
@@ -805,8 +806,11 @@ def test_results_page_shows_the_adoption_paths_stages_and_one_step_option(
             by_number = {s["step_number"]: s for s in plan.get("plan_steps") or []}
             whys = [w.inner_text().strip() for w in card.locator("[data-figure=step-why]").all()]
             assert whys == [by_number[n]["why"] for n in numbers], (r.db, phase["phase_wave"])
+            # The engineering report prints the same raw sentence, escaped as Markdown.
+            report_md = r.deliverable("engineering-report.md").read_text(encoding="utf-8")
             for sentence in whys:
-                assert f"  - {sentence}" in md.splitlines(), (r.db, sentence)
+                line = f"  - {escaping.md_text(sentence)}"
+                assert line in report_md.splitlines(), (r.db, sentence)
             labels = plan.get("metric_labels") or {}
             for heading in card.locator("[data-figure=step-metrics] th[title]").all():
                 assert heading.get_attribute("title") in labels.values(), (r.db, heading)

@@ -95,14 +95,11 @@ from .adoption import (
     one_step_verdict,
     path_label,
     per_path_priced,
-    plan_step,
     queries_moved_header,
     relational_cost_stated,
-    slice_plan_block,
     stage_kinds_text,
     summary_paths,
     wave_phase,
-    why_sentence,
 )
 from .architecture import _architecture_engines
 from .cache_layer import cache_change_notes, cache_layer_text, cache_role_notes
@@ -258,8 +255,6 @@ L_ENGINES = "Engines"
 L_ONE_STEP = "One step"
 L_NOT_OFFERED = "Not offered"
 L_STAGES = "Stages"
-#: The label of each step's why sentence on its wave's panel (#1699).
-L_WHY = "Why"
 
 # ---------------------------------------------------------------------------
 # design: the retired deck's own values (13.33 x 7.5 in, Amazon Ember, dark theme)
@@ -1305,10 +1300,6 @@ def _waves(report: dict[str, Any], st: dict[str, ParagraphStyle], names: Any) ->
         stages = _wave_stages_text(report_facts(report), n)
         if stages:
             content.append(_labelled(L_STAGES, stages, st["small"]))
-        # #1699: each of the wave's steps says why it sits where it does, as the facts
-        # state it (``facts.slice_plan.plan_steps[].why``): no table name, no graph term.
-        for sentence in _wave_why_sentences(report_facts(report), n):
-            content.append(_labelled(L_WHY, sentence, st["small"]))
         if wf is not None:
             content.append(
                 _labelled(
@@ -1322,13 +1313,6 @@ def _waves(report: dict[str, Any], st: dict[str, ParagraphStyle], names: Any) ->
                 content.append(_labelled("Readiness", wf["readiness_line_short"], st["small"]))
         flow += [_Panel(content, accent), _gap(10)]
     return flow[:-1] if waves else flow
-
-
-def _wave_why_sentences(facts: dict[str, Any], wave: int) -> list[str]:
-    """The why sentences of the wave's steps, in step order, as stored (#1699)."""
-    plan = slice_plan_block(facts)
-    steps = [plan_step(plan, n) for n in wave_phase(facts, wave).get("step_numbers") or []]
-    return [why_sentence(s) for s in steps if why_sentence(s)]
 
 
 def _wave_stages_text(facts: dict[str, Any], wave: int) -> str:
