@@ -187,32 +187,47 @@ class TestOrderAndNumbering:
 
 
 class TestAuroraWave:
-    def test_the_gate_retires_the_source_after_your_cutover_and_names_where_later_waves_start(
-        self,
-    ):
+    def test_the_gate_names_where_later_waves_start_and_whose_the_decommissioning_is(self):
         """The discourse judge read "decommission the legacy source once replication lag
-        is zero" as retiring something before wave 2's dual-write: the gate names the
-        source database it retires and that later waves move from Aurora, not from it.
-        #2107: the cutover is the customer's, so the gate states no timing criterion."""
+        is zero" as retiring something before wave 2's dual-write: the gate says later
+        waves move from Aurora, not from the source database. #2107: the cutover is the
+        customer's. #2265: so is decommissioning the source, with no timing or order."""
         gate = _build()[0]["gate"]
         assert "legacy source" not in gate and "lag is zero" not in gate
         assert "caught up" not in gate and "before cutover" not in gate
+        assert "once you have completed" not in gate and "Decommission the" not in gate
         assert gate == (
-            "Schema and data parity validated against the source database. Decommission the "
-            "source MySQL database once you have completed your cutover: later waves move "
-            "from Aurora MySQL, not from it. The cutover is your responsibility."
+            "Schema and data parity validated against the source database. Later waves move "
+            "from Aurora MySQL, not from the source MySQL database. The cutover is your "
+            "responsibility. Decommissioning the source database is your responsibility."
         )
 
-    def test_the_cross_engine_gate_ends_with_the_same_responsibility_sentence(self):
-        """#2107: the cross-engine wave 1 gate follows the same pattern."""
+    def test_the_cross_engine_gate_ends_with_the_same_responsibility_sentences(self):
+        """#2107, #2265: the cross-engine wave 1 gate follows the same pattern."""
         gate = _build(source_engine="sqlserver", known_tables=KNOWN_TABLES)[0]["gate"]
         assert gate == (
             "Cross-engine move: validate the schema and query translation to Aurora MySQL "
             "(SQL dialect and data types converted, with the current data model). "
-            "Decommission the source SQL Server database once you have completed your "
-            "cutover: later waves move from Aurora MySQL, not from it. The cutover is your "
+            "Later waves move from Aurora MySQL, not from the source SQL Server database. "
+            "The cutover is your responsibility. Decommissioning the source database is your "
             "responsibility."
         )
+
+    @pytest.mark.parametrize(
+        "kwargs",
+        [{}, {"source_engine": "sqlserver", "known_tables": KNOWN_TABLES}],
+        ids=["homogeneous", "cross-engine"],
+    )
+    def test_no_wave_says_anything_else_about_decommissioning(self, kwargs):
+        """#2265: the responsibility sentence once, in wave 1's gate, and nowhere else."""
+        from src.shared.cutover_message import DECOMMISSION_MESSAGE
+
+        waves = _build(**kwargs)
+        texts = [str(w.get(k) or "") for w in waves for k in ("title", "rationale", "gate")]
+        assert sum(t.count(DECOMMISSION_MESSAGE) for t in texts) == 1
+        assert waves[0]["gate"].count(DECOMMISSION_MESSAGE) == 1
+        rest = " ".join(texts).replace(DECOMMISSION_MESSAGE, "").lower()
+        assert "decommission" not in rest
 
     def test_whole_schema_moves_first_and_is_homogeneous(self):
         wave = _build()[0]

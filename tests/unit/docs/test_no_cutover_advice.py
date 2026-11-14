@@ -32,8 +32,18 @@ import pytest
 
 from scripts import render_dms_step
 from src.report.renderers import render_engineering_report_md
-from src.shared.cutover_message import CUTOVER_DISCLAIMER, CUTOVER_MESSAGE, cutover_message_text
-from src.shared.cutover_wording import MODEL_TEXT_BANNED, WAVE_ONE_COUNT, cutover_claims
+from src.shared.cutover_message import (
+    CUTOVER_DISCLAIMER,
+    CUTOVER_MESSAGE,
+    DECOMMISSION_MESSAGE,
+    cutover_message_text,
+)
+from src.shared.cutover_wording import (
+    MODEL_TEXT_BANNED,
+    WAVE_ONE_COUNT,
+    cutover_claims,
+    model_text_flags,
+)
 from src.tools.data_movement.dms_gate import REPLICATING_MESSAGE
 from src.tools.data_movement.routine_scripts import DEPLOY_FILE, INSTRUCTIONS_FILE
 from src.tools.data_movement.triggers_scripts import TRIGGERS_FILE, TRIGGERS_INSTRUCTIONS
@@ -211,6 +221,9 @@ def _allowed(
         return True
     if deliverable and label == "cutover timing":
         return bool(WAVE_ONE_COUNT.search(line[:end]))
+    if label == "decommission":
+        # #2265: only the responsibility sentence, in every text.
+        return not model_text_flags(label, line, start, end)
     return label == "ready" and any(
         m.start() <= start and end <= m.end()
         for pattern in READY_FORMS
@@ -347,8 +360,12 @@ def test_each_cutover_facing_file_starts_with_the_disclaimer(tmp_path):
 def test_the_fixed_messages_are_the_decided_wording():
     assert cutover_message_text() == "The cutover is your responsibility."
     assert REPLICATING_MESSAGE == "Full load complete. Replication is in progress."
-    for text in (CUTOVER_MESSAGE, REPLICATING_MESSAGE):
+    # Maintainer decision of 2026-11-14 on #2265: the same plain form as the cutover's.
+    assert DECOMMISSION_MESSAGE == "Decommissioning the source database is your responsibility."
+    for text in (CUTOVER_MESSAGE, REPLICATING_MESSAGE, DECOMMISSION_MESSAGE):
         assert _findings("message", text) == []
+        assert _findings("message", text, deliverable=True) == []
+        assert _findings("message", text, model_text=True) == []
 
 
 def test_each_allowlisted_line_is_still_there():
@@ -494,7 +511,6 @@ def test_a_deliverable_never_says_in_sync(copy: str) -> None:
     "fine",
     [
         CUTOVER_MESSAGE,
-        "Decommission the source MySQL database once you have completed your cutover.",
         "3 tables kept current by CDC from their owners.",
         "Build the consumer that keeps wp_posts and wp_postmeta current from DynamoDB.",
         "Every other engine that reads a table reads a copy kept current from the owner.",
@@ -524,15 +540,60 @@ def test_the_guard_lets_the_deliverables_decided_wording_through(fine: str) -> N
     assert _findings("sample", fine, deliverable=True) == []
 
 
+# #2265: decommissioning the source is the customer's, like the cutover. The text never says
+# when, in what order or whether to do it; it states only DECOMMISSION_MESSAGE.
+DECOMMISSION_ADVICE = [
+    # Wave 1's gate before #2265, whole and as its first clause.
+    "Decommission the source MySQL database once you have completed your cutover: later "
+    "waves move from Aurora MySQL, not from it.",
+    "Decommission the source database once you have completed your cutover.",
+    "Decommission the source SQL Server database.",
+    "Then decommission the source.",
+    "Decommission the source when it is safe.",
+    "It is safe to decommission the source database.",
+    "You can decommission the source once wave 1 is done.",
+    "We recommend decommissioning the legacy MySQL source.",
+    "The source database can be decommissioned.",
+    "Shut down the source database once later waves have moved.",
+    "Turn off the source database.",
+    "Retire the legacy source.",
+    "Decommissioning the source database is your responsibility once the cutover is done.",
+    "Decommissioning the source database is your responsibility, after wave 1.",
+]
+DECOMMISSION_FINE = [
+    DECOMMISSION_MESSAGE,
+    f"{CUTOVER_MESSAGE} {DECOMMISSION_MESSAGE}",
+    "Schema and data parity validated against the source database. Later waves move from "
+    f"Aurora MySQL, not from the source MySQL database. {CUTOVER_MESSAGE} {DECOMMISSION_MESSAGE}",
+]
+
+
+@pytest.mark.parametrize("advice", DECOMMISSION_ADVICE)
+def test_the_guard_catches_decommission_advice_in_every_text(advice: str) -> None:
+    assert _findings("sample", advice, deliverable=True) != []
+    assert _findings("src/agents/referee/synthesis_report.py", advice, deliverable=True) != []
+    assert _findings("sample", advice) != []  # step 1's text
+    assert _findings("design note", advice, model_text=True) != []
+
+
+@pytest.mark.parametrize("fine", DECOMMISSION_FINE)
+def test_the_guard_lets_the_decommission_sentence_through_in_every_text(fine: str) -> None:
+    assert _findings("sample", fine, deliverable=True) == []
+    assert _findings("sample", fine) == []
+    assert _findings("design note", fine, model_text=True) == []
+
+
 # ---------------------------------------------------------------------------
 # Model text: the skills that write customer prose carry the rule
 # ---------------------------------------------------------------------------
 
 SKILL_RULE = (
     "Cutover: the cutover is the customer's. The only sentence about it is \"The cutover is "
-    'your responsibility." Never say when or how to cut over, switch or decommission (no '
-    '"before cutover", "after cutover", "once replication has caught up", "when lag reaches '
-    'zero"), and never use "caught up", "proven" or "ready" as readiness wording. Never write '
+    "your responsibility.\" Decommissioning the source database is the customer's too: the only "
+    'sentence about it is "Decommissioning the source database is your responsibility." Never '
+    'say when, in what order or whether to cut over, switch or decommission (no "before '
+    'cutover", "after cutover", "once you have completed your cutover", "once replication has '
+    'caught up", "when lag reaches zero"), and never use "caught up", "proven" or "ready" as readiness wording. Never write '
     '"in sync": a copy that CDC keeps current from its owner is "kept current by CDC".'
 )
 # Each skill whose text reaches a deliverable, and the section that holds the rule (the one
@@ -604,6 +665,8 @@ MODEL_TEXT_ADVICE = [
     "Aurora is ready for your applications.",
     "The move is proven.",
     "DynamoDB is now ready.",
+    # #2265: decommissioning, whatever its timing.
+    *DECOMMISSION_ADVICE,
 ]
 MODEL_TEXT_FINE = [
     # The discourse e2e-llm run of #2111: a designer's uniqueness statement.
@@ -615,6 +678,7 @@ MODEL_TEXT_FINE = [
     "A DynamoDB Streams consumer keeps the summary item in sync with the order items.",
     "This is a production-ready key design.",
     "1 of the 3 tables stays dual-read until wave 4.",
+    *DECOMMISSION_FINE,
 ]
 
 

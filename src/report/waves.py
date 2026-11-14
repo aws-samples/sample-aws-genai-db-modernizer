@@ -8,7 +8,7 @@ from __future__ import annotations
 
 from typing import Any
 
-from src.shared.cutover_message import CUTOVER_MESSAGE
+from src.shared.cutover_message import CUTOVER_MESSAGE, DECOMMISSION_MESSAGE
 from src.shared.engine_names import display_engine, display_source_database
 from src.shared.migration_wave_engines import CACHE_ENGINES as _WAVE_CACHE_ENGINES
 from src.shared.migration_wave_engines import DOCUMENT_ENGINES as _WAVE_DOCUMENT_ENGINES
@@ -151,12 +151,12 @@ def _legacy_migration_waves(report: dict[str, Any]) -> list[dict[str, Any]]:
                     "has moved its own share away; every later wave's table count is a subset "
                     "of this wave's tables, never an addition to them."
                 ),
-                # #2107: the cutover is the customer's, so the gate sets no time for it.
+                # #2107, #2265: the gate sets no time or order; CUTOVER_MESSAGE and
+                # DECOMMISSION_MESSAGE say whose each step is.
                 "gate": (
                     "Schema and data parity validated against the source database. "
-                    "Decommission the source database once you have completed your cutover: "
-                    f"later waves move from {display_engine(retained_engine)}, not from it. "
-                    f"{CUTOVER_MESSAGE}"
+                    f"Later waves move from {display_engine(retained_engine)}, not from the "
+                    f"source database. {CUTOVER_MESSAGE} {DECOMMISSION_MESSAGE}"
                 ),
             }
         )

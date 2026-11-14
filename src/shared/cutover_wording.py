@@ -10,6 +10,10 @@ move, so only these phrases count there: cutover timing, "safe to cut over", the
 replication-finished phrases, and "in sync", "proven" or "ready" as a claim about the
 move (``cutover_claims``).
 
+Decommissioning the source database is the customer's too (#2265): the only text about it,
+in any text, is ``DECOMMISSION_MESSAGE``. Any other "decommission", or retiring, shutting
+down or turning off the source, counts, whatever its timing.
+
 Two places use it: the shared schema-design prose pass
 (``synthesis_prose.clean_schema_design_prose``), which sends a field with a claim back to
 its deterministic sentence, and the deliverables guard
@@ -22,12 +26,14 @@ from __future__ import annotations
 import re
 from dataclasses import dataclass
 
+from src.shared.cutover_message import DECOMMISSION_MESSAGE
+
 # What the shared prose pass does with a field that breaks the cutover rule: every
 # designer skill says it after the rule, word for word
 # (``tests/unit/agents/referee/test_cutover_advice_in_model_prose.py``).
 CUTOVER_FALLBACK_RULE = (
-    "Synthesis swaps a field that says when to cut over, or that uses readiness wording, "
-    "for a short deterministic sentence."
+    "Synthesis swaps a field that says when to cut over, that advises on decommissioning, "
+    "or that uses readiness wording, for a short deterministic sentence."
 )
 
 #: Each phrase model design text never uses, by label.
@@ -43,6 +49,12 @@ MODEL_TEXT_BANNED: dict[str, str] = {
     r"(?:the\s+|your\s+|their\s+)?cut\s*over\b(?!-)"
     r"|\b(?:after|before|once|until|when|as\s+soon\s+as)\s+(?:you|they|the\s+customer)\s+"
     r"cut\s*over\b",
+    # #2265: every word about decommissioning the source but DECOMMISSION_MESSAGE itself.
+    # (The constant's own name, DECOMMISSION_MESSAGE, is code, not text.)
+    "decommission": r"\bdecommission(?!_message\b)\w*"
+    r"|\b(?:retir(?:e|es|ed|ing)|shut(?:s|ting)?\s+down|turn(?:s|ed|ing)?\s+off|"
+    r"switch(?:es|ed|ing)?\s+off)\s+(?:the\s+|your\s+|their\s+)?"
+    r"(?:legacy\s+|old\s+|original\s+)?(?:\w+\s+)?source\b",
 }
 MODEL_TEXT_LABELS: tuple[str, ...] = tuple(MODEL_TEXT_BANNED)
 
@@ -113,6 +125,11 @@ def model_text_flags(label: str, line: str, start: int, end: int) -> bool:
         return bool(TIMING_WORD.search(CDC_TIMING.sub("", _sentence(line, end))))
     if label == "cutover timing":
         return not WAVE_ONE_COUNT.search(line[:end])
+    if label == "decommission":
+        return not any(
+            m.start() <= start and end <= m.end()
+            for m in re.finditer(re.escape(DECOMMISSION_MESSAGE), line)
+        )
     return True
 
 

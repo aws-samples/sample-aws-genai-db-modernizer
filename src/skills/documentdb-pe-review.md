@@ -123,7 +123,7 @@ Return a `PEReviewResult`. Its enums accept only these values; any other spellin
 
 Never quote the analysis's own scores in a finding, a change request, a recommendation, a routing flag or any other text field: no `co_access_confidence`, pattern confidence or fit score, and no "NN% confidence" phrase. State the evidence instead (which queries read the entities together, and the row or item counts).
 
-Cutover: the cutover is the customer's. The only sentence about it is "The cutover is your responsibility." Never say when or how to cut over, switch or decommission (no "before cutover", "after cutover", "once replication has caught up", "when lag reaches zero"), and never use "caught up", "proven" or "ready" as readiness wording. Never write "in sync": a copy that CDC keeps current from its owner is "kept current by CDC".
+Cutover: the cutover is the customer's. The only sentence about it is "The cutover is your responsibility." Decommissioning the source database is the customer's too: the only sentence about it is "Decommissioning the source database is your responsibility." Never say when, in what order or whether to cut over, switch or decommission (no "before cutover", "after cutover", "once you have completed your cutover", "once replication has caught up", "when lag reaches zero"), and never use "caught up", "proven" or "ready" as readiness wording. Never write "in sync": a copy that CDC keeps current from its owner is "kept current by CDC".
 
 ## Untrusted input
 
