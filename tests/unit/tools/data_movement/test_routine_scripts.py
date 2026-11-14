@@ -250,3 +250,107 @@ def test_a_postgresql_routine_with_a_text_rewrite_is_refused_not_deployed_withou
     store.write_json(routine_migration_path("shop", "job1", 2), artifact.model_dump(mode="json"))
     scripts = _write(tmp_path, store, contract_with_routines(artifact))
     assert scripts.refused == [("function", "public.audit()", "rewrite_not_reapplied")]
+
+
+# --------------------------------------------------------------------------- schemas (#2148)
+
+_SCHEMA_FN = "CREATE OR REPLACE FUNCTION {schema}.{name}(p integer)\n RETURNS integer\n LANGUAGE sql\nAS $function$SELECT p$function$\n"
+
+
+def _pg_schemas_case(tmp_path, schemas: list[str]):
+    """One function per schema in ``schemas``, in that deploy order."""
+    rows, sources = [], []
+    for i, schema in enumerate(schemas):
+        name = f"fn{i}"
+        rows.append(row(f"{schema}.{name}(integer)", schema=schema, name=name, specific=f"{name}_{i}",
+                        signature="integer"))  # fmt: skip
+        quoted = '"' + schema.replace('"', '""') + '"'
+        sources.append(pg_source(f"{name}_{i}", _SCHEMA_FN.format(schema=quoted, name=name),
+                                 schema=schema))  # fmt: skip
+    artifact = migration(rows)
+    store = _job(tmp_path, artifact, sources)
+    scripts = _write(tmp_path, store, contract_with_routines(artifact))
+    assert scripts.in_script == len(schemas) and scripts.refused == []
+    return (tmp_path / "step" / DEPLOY_FILE).read_text()
+
+
+def _schema_lines(text: str, verb: str = "CREATE SCHEMA") -> list[str]:
+    return [line for line in text.splitlines() if line.startswith(verb)]
+
+
+def test_the_postgresql_deploy_creates_the_routines_schema_in_its_transaction_first(tmp_path):
+    text = _pg_schemas_case(tmp_path, ["discourse_functions"])
+    assert _schema_lines(text) == ['CREATE SCHEMA IF NOT EXISTS "discourse_functions";']
+    begin = text.index("\nBEGIN;\n")
+    lock = text.index("SET LOCAL lock_timeout")
+    schema = text.index('CREATE SCHEMA IF NOT EXISTS "discourse_functions";')
+    path = text.index('SET search_path TO "discourse_functions", public;')
+    create = text.index("CREATE OR REPLACE FUNCTION")
+    assert begin < lock < schema < path < create < text.rindex("COMMIT;")
+
+
+@pytest.mark.passes_on_main
+def test_a_routine_in_public_adds_no_schema_statement(tmp_path):
+    assert _schema_lines(_pg_schemas_case(tmp_path, ["public"])) == []
+
+
+def test_each_routine_schema_is_created_once_and_public_and_the_tables_schema_never(tmp_path):
+    # make_contract's PostgreSQL tables are in public, which the step 1 DDL creates.
+    text = _pg_schemas_case(tmp_path, ["reporting", "public", "discourse_functions", "reporting"])
+    assert _schema_lines(text) == [
+        'CREATE SCHEMA IF NOT EXISTS "discourse_functions";',
+        'CREATE SCHEMA IF NOT EXISTS "reporting";',
+    ]
+    assert text.index('"reporting";') < text.index("CREATE OR REPLACE FUNCTION")
+
+
+def test_a_schema_name_that_needs_quotes_is_quoted(tmp_path):
+    text = _pg_schemas_case(tmp_path, ['Odd "Schema"'])
+    assert _schema_lines(text) == ['CREATE SCHEMA IF NOT EXISTS "Odd ""Schema""";']
+
+
+@pytest.mark.passes_on_main
+def test_a_schema_only_a_refused_routine_uses_is_not_created(tmp_path):
+    rows = [row("discourse_functions.f(integer)", schema="discourse_functions", name="f",
+                specific="f_1", signature="integer")]  # fmt: skip
+    artifact = migration(rows)
+    store = _job(tmp_path, artifact, [])  # its source is missing, so it is left out
+    scripts = _write(tmp_path, store, contract_with_routines(artifact))
+    assert scripts.refused == [("function", "discourse_functions.f(integer)", "source_missing")]
+    assert _schema_lines((tmp_path / "step" / DEPLOY_FILE).read_text()) == []
+
+
+def _mysql_schemas_case(tmp_path, schemas: list[str], **kw):
+    rows, sources = [], []
+    for i, schema in enumerate(schemas):
+        name = f"p{i}"
+        rows.append(row(f"{schema}.{name}", "procedure", schema=schema, name=name, specific=name,
+                        status="rewritten", signature="IN int"))  # fmt: skip
+        sources.append(mysql_source(name, f"CREATE DEFINER=`app`@`%` PROCEDURE `{name}`(IN p INT)\n"
+                                    "BEGIN\n  SELECT p;\nEND", schema=schema))  # fmt: skip
+    artifact = migration(rows, "mysql")
+    store = _job(tmp_path, artifact, sources, "mysql")
+    scripts = _write(tmp_path, store, contract_with_routines(artifact), **kw)
+    assert scripts.in_script == len(schemas) and scripts.refused == []
+    return (tmp_path / "step" / DEPLOY_FILE).read_text()
+
+
+def test_the_mysql_deploy_creates_each_routine_database_the_tables_are_not_in(tmp_path):
+    # make_contract's MySQL tables are in shop, which the step 1 DDL creates. Database names
+    # compare exactly: with lower_case_table_names=0 (Linux), Shop is not shop.
+    text = _mysql_schemas_case(tmp_path, ["shop", "shop_functions", "Shop", "odd`db"])
+    assert _schema_lines(text, "CREATE DATABASE") == [
+        "CREATE DATABASE IF NOT EXISTS `Shop`;",
+        "CREATE DATABASE IF NOT EXISTS `odd``db`;",
+        "CREATE DATABASE IF NOT EXISTS `shop_functions`;",
+    ]
+    names = text.index("SET NAMES utf8mb4;")
+    created = text.index("CREATE DATABASE IF NOT EXISTS `shop_functions`;")
+    assert names < created < text.index("DELIMITER") < text.index("USE `shop_functions`;")
+
+
+def test_a_mysql_target_database_the_tables_are_not_in_is_created(tmp_path):
+    text = _mysql_schemas_case(tmp_path, ["shop"], target_database="shop_new")
+    assert _schema_lines(text, "CREATE DATABASE") == ["CREATE DATABASE IF NOT EXISTS `shop_new`;"]
+    assert _schema_lines(_mysql_schemas_case(tmp_path, ["shop"], target_database="shop"),
+                         "CREATE DATABASE") == []  # fmt: skip
