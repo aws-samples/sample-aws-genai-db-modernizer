@@ -300,9 +300,9 @@ List each contradiction (kind `contradiction`) as a pair: both quotes, each with
 counts only if the two quotes cannot both be true when read literally. Not a
 contradiction: a pair that conflicts only after an inference, a pair about
 two different groups of tables (compare the table names, not the counts, so
-"3 tables read and written by no captured query get a one-time copy" and "3
-tables Aurora MySQL owns keep a DynamoDB copy current" are about different
-tables), and a pair a rule above reconciles.
+"3 tables written by no captured query change only when something outside the
+captured workload writes them" and "3 tables Aurora MySQL owns keep a DynamoDB
+copy current" are about different tables), and a pair a rule above reconciles.
 
 - **1** — Six or more contradictions (the headline cap above limits a
   contradiction on a headline to 2).

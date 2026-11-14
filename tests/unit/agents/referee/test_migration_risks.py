@@ -152,7 +152,10 @@ def test_a_table_written_on_several_engines_makes_the_wave_sync_risk_high() -> N
 KEPT = [{"table": "db.c", "owner": AURORA, "sync": "CDC"}]
 
 
-def test_tables_no_captured_query_writes_are_a_low_one_time_copy() -> None:
+def test_tables_no_captured_query_writes_are_a_low_cdc_copy() -> None:
+    """#2238: the data-movement plan feeds a table nothing writes from a hub topic, as
+    the wave plan says; the risk says CDC keeps its copy current and stays LOW, since
+    only a write outside the captured workload changes it."""
     risks = _build(
         migration_waves=[WAVE_1, WAVE_2, _wave_3(KEPT, ["db.c"])],
         query_assignments=[_qa("r1", DDB, ["db.c"])],
@@ -165,12 +168,18 @@ def test_tables_no_captured_query_writes_are_a_low_one_time_copy() -> None:
     assert risk["query_ids"] == ["r1"]
     assert risk["description"] == (
         "[dynamodb] Wave 3: 1 table is read on an engine that does not own it and written "
-        "by no captured query, so a one-time copy serves it."
+        "by no captured query; CDC keeps its copy current, and the copy changes only when "
+        "something outside the captured workload writes the table."
     )
-    assert "copy the read-only tables once" in risk["mitigation"]
+    assert risk["mitigation"] == (
+        "Before Wave 3 starts, set up CDC for the table no captured query writes, and check "
+        "whether anything outside the captured workload writes it. Compare the row counts "
+        "on both sides. See the Wave 3 gate in the roadmap."
+    )
+    assert "one-time" not in risk["description"] and "once" not in risk["mitigation"]
 
 
-def test_a_one_time_copy_folds_into_the_waves_cdc_risk() -> None:
+def test_an_unwritten_tables_copy_folds_into_the_waves_cdc_risk() -> None:
     risks = _build(
         migration_waves=[WAVE_1, WAVE_2, _wave_3(KEPT, ["db.a", "db.c"])],
         query_assignments=[_qa("r1", DDB, ["db.c"])],
@@ -184,9 +193,17 @@ def test_a_one_time_copy_folds_into_the_waves_cdc_risk() -> None:
         "[dynamodb] Wave 3: 2 queries read 2 tables on an engine that does not own them. "
         "1 of them reads a copy of 1 table that CDC keeps current from DynamoDB across 1 "
         "engine pair, so a read there can miss a recent write. The other table is written "
-        "by no captured query, so a one-time copy serves it."
+        "by no captured query; CDC keeps its copy current too, and the copy changes only "
+        "when something outside the captured workload writes the table."
     )
     assert risk["query_ids"] == ["r1", "r2"]
+    assert risk["mitigation"] == (
+        "Before Wave 3 starts, set up CDC for each engine pair the sources of truth section "
+        "lists, and send any read that must see its own write to its source of truth; set "
+        "up CDC for the table no captured query writes, and check whether anything outside "
+        "the captured workload writes it. Compare the row counts on both sides. See the "
+        "Wave 3 gate in the roadmap."
+    )
 
 
 def test_the_sync_risk_counts_both_directions_of_the_waves_copies() -> None:
@@ -219,7 +236,8 @@ def test_the_sync_risk_counts_both_directions_of_the_waves_copies() -> None:
         "[dynamodb] Wave 3: 3 queries read 3 tables on an engine that does not own them. "
         "1 of them reads a copy of 1 table that CDC keeps current from DynamoDB across "
         "1 engine pair, so a read there can miss a recent write. The other 2 tables are "
-        "written by no captured query, so a one-time copy serves them."
+        "written by no captured query; CDC keeps their copies current too, and a copy "
+        "changes only when something outside the captured workload writes its table."
     )
     assert len(risk["query_ids"]) == 3
 
@@ -253,7 +271,8 @@ def test_a_table_a_later_wave_reads_counts_in_that_waves_risk_only() -> None:
     assert risk["wave"] == 3 and risk["affected_tables"] == ["db.a"]
     assert risk["description"] == (
         "[documentdb] Wave 3: 1 table is read on an engine that does not own it and "
-        "written by no captured query, so a one-time copy serves it."
+        "written by no captured query; CDC keeps its copy current, and the copy changes "
+        "only when something outside the captured workload writes the table."
     )
 
 
@@ -283,9 +302,9 @@ def test_with_owner_lines_each_waves_risk_counts_the_shared_per_wave_tables() ->
         "table_owners": [{"table": "db.c", "owner": DDB, "sync": "CDC"}],
     }
     lines = _lines(
-        ("db.a", DDB, [AURORA]),  # never written: one-time copy, wave 2
+        ("db.a", DDB, [AURORA]),  # never written: CDC copy, wave 2
         ("db.b", AURORA, [DDB]),  # written on Aurora: CDC, wave 2
-        ("db.c", DDB, [DOC]),  # never written: one-time copy, wave 3
+        ("db.c", DDB, [DOC]),  # never written: CDC copy, wave 3
         ("db.d", AURORA, []),  # no other reader
     )
     qas = [
@@ -311,8 +330,9 @@ def test_with_owner_lines_each_waves_risk_counts_the_shared_per_wave_tables() ->
         "[dynamodb] Wave 2: 2 queries read 2 tables on an engine that does not own them. "
         "1 of them reads a copy of 1 table that CDC keeps current from Aurora MySQL across "
         "1 engine pair, so a read there can miss a recent write. The other table is written "
-        "by no captured query, so a one-time copy serves it. Across the plan, 3 tables are "
-        "read on an engine that does not own them; this wave's gate brings in 2."
+        "by no captured query; CDC keeps its copy current too, and the copy changes only "
+        "when something outside the captured workload writes the table. Across the plan, 3 "
+        "tables are read on an engine that does not own them; this wave's gate brings in 2."
     )
     assert sync[1]["description"].endswith(
         "Across the plan, 3 tables are read on an engine that does not own them; this "
@@ -336,7 +356,7 @@ def test_a_wave_whose_copied_tables_all_resolve_to_nothing_raises_no_sync_risk()
 
 def test_an_older_assignment_reads_the_waves_kept_tables() -> None:
     """No ``table_sources`` (written before write groups): the wave's kept tables
-    are CDC copies when a captured query writes them, a one-time copy otherwise."""
+    are CDC copies, and the ones no captured query writes are LOW on their own."""
     owners = [*KEPT, {"table": "db.a", "owner": AURORA, "sync": "CDC"}]
     wave = _wave_3(owners, ["db.a", "db.c"])
     written = _build(
@@ -356,7 +376,9 @@ def test_an_older_assignment_reads_the_waves_kept_tables() -> None:
         query_assignments=[_qa("r1", DDB, ["db.a", "db.c"])],
         source_queries=[_q("r1", "SELECT", ["db.a", "db.c"])],
     )
-    assert _one(read_only, "sync.wave")["severity"] == "LOW"
+    low = _one(read_only, "sync.wave")
+    assert low["severity"] == "LOW"
+    assert "written by no captured query; CDC keeps their copies current," in low["description"]
 
 
 def test_wave_1_and_the_cache_wave_raise_no_sync_risk() -> None:

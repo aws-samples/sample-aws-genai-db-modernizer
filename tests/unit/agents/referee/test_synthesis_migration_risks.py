@@ -134,7 +134,7 @@ def test_the_wave_risks_are_raised_and_the_summary_counts_them(store) -> None:
     """An assignment without write groups: the wave's kept table, which a captured
     query writes, is a CDC copy (one MEDIUM sync risk for the wave). ``users`` and
     ``sessions`` have no writer, so the relational step keeps them and DynamoDB reads a
-    one-time copy (#2166): the same risk names them."""
+    copy CDC keeps current (#2166, #2238): the same risk names them."""
     result = run_synthesis_deterministic(JOB, DB, store, assignment_version=2)
     risks = result["risk_assessment"]["risks"]
     sync = [r for r in risks if r.get("rule") == "sync.wave"]
@@ -142,6 +142,8 @@ def test_the_wave_risks_are_raised_and_the_summary_counts_them(store) -> None:
     assert sync[0]["severity"] == "MEDIUM"
     assert sync[0]["affected_tables"] == ["orders", "sessions", "users"]
     assert sync[0]["wave"] == 2
+    assert "one-time" not in sync[0]["description"]
+    assert "CDC keeps their copies current too" in sync[0]["description"]
     level = result["risk_assessment"]["overall_risk_level"]
     noun = "risk" if len(risks) == 1 else "risks"
     assert f"{len(risks)} open migration {noun} (overall: {level})" in result["summary"]
@@ -196,7 +198,7 @@ def test_with_write_groups_the_sync_risks_follow_the_sources_of_truth(store) -> 
     assert "orders" in sync["affected_tables"]
     assert "rel1" in sync["query_ids"]
     # users and sessions are never written, so the relational step keeps them (#2166)
-    # and DynamoDB's reads of them read a one-time copy, which the risk counts with the
+    # and DynamoDB's reads of them read a copy CDC keeps current, which the risk counts with the
     # CDC copy, so the two add up to the tables read off their owner. Aurora MySQL's read
     # of users reads its own table.
     assert sync["affected_tables"] == ["orders", "sessions", "users"]
@@ -206,7 +208,9 @@ def test_with_write_groups_the_sync_risks_follow_the_sources_of_truth(store) -> 
         "1 of them reads a copy of 1 table that CDC keeps current from DynamoDB"
     )
     assert sync["description"].endswith(
-        "The other 2 tables are written by no captured query, so a one-time copy serves them."
+        "The other 2 tables are written by no captured query; CDC keeps their copies current "
+        "too, and a copy changes only when something outside the captured workload writes "
+        "its table."
     )
     _write_synthesis_report(store, result, assignment_version=2)
     report = store.read_json(f"{DB}/{JOB}/synthesis/v2/report.json")
