@@ -38,8 +38,8 @@ from tests.unit.tools.data_movement.routine_fixtures import (
 UNICODE = "CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci"
 SERVER_DEFAULTS = "It sets no character set or collation: the cluster's server defaults apply."
 EXISTING = ("A database that already exists keeps its own collation: CREATE DATABASE IF NOT EXISTS "
-            "does not change it. If it holds nothing else yet, run the ALTER DATABASE above its "
-            "CREATE DATABASE first.")  # fmt: skip
+            "does not change it. If it holds nothing else yet, uncomment the ALTER DATABASE right "
+            "after its CREATE DATABASE; it runs on a new database too.")  # fmt: skip
 EDIT_DATABASE = ("edit the CREATE DATABASE statements in step-1.ddl.sql, routines-deploy.sql and "
                  "triggers-enable.sql together before you run them.")  # fmt: skip
 
@@ -142,17 +142,16 @@ def _database_clauses(text: str) -> set[str]:
 
 def test_the_ddl_creates_the_tables_database_on_the_source_collation(tmp_path):
     ddl = _ddl(_job(tmp_path))
-    assert f"CREATE DATABASE IF NOT EXISTS `shop` {UNICODE};\nUSE `shop`;" in ddl
+    assert f"CREATE DATABASE IF NOT EXISTS `shop` {UNICODE};\n" in ddl
     flat = _flat(ddl)
     assert SERVER_DEFAULTS not in flat
     # Only when the database does not exist yet: one that does keeps its own (review of #2282).
     assert ("It creates the database with CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci, the "
             "source's, when it does not exist yet") in flat  # fmt: skip
     assert EXISTING in flat
-    assert (
-        f"-- ALTER DATABASE `shop` {UNICODE};\nCREATE DATABASE IF NOT EXISTS `shop` {UNICODE};"
-        in ddl
-    )
+    # After its CREATE DATABASE, so uncommented in place it runs on a fresh cluster too.
+    assert (f"CREATE DATABASE IF NOT EXISTS `shop` {UNICODE};\n-- ALTER DATABASE `shop` {UNICODE};\n"
+            "USE `shop`;") in ddl  # fmt: skip
     # The tables take the database's: no table or column clause of their own.
     assert "DEFAULT CHARSET" not in ddl and _statements(ddl).count("COLLATE") == 1
     assert _contract(_job(tmp_path / "again"))["target"]["collation"] == {
@@ -171,7 +170,8 @@ def test_the_routine_databases_get_the_ddls_clause_from_the_same_contract(tmp_pa
     # Each script names the ALTER DATABASE for each database it creates.
     for text, name in ((ddl, "shop"), (deploy, "shop_functions"), (triggers, "jobs")):
         assert EXISTING in _flat(text)
-        assert f"-- ALTER DATABASE `{name}` {UNICODE};" in text
+        assert (f"CREATE DATABASE IF NOT EXISTS `{name}` {UNICODE};\n"
+                f"-- ALTER DATABASE `{name}` {UNICODE};\n") in text  # fmt: skip
 
 
 def test_a_table_and_a_column_that_differ_on_the_source_keep_their_own(tmp_path):
@@ -210,6 +210,23 @@ def test_a_non_text_column_never_gets_a_collation(tmp_path):
             "utf8mb4",
             "Aurora MySQL offers no collation named "
             "utf8mb4_unicode_520_nopad_ci; utf8mb4_unicode_520_ci is the closest one it offers",
+        ),
+        # The NO PAD binary match; a PAD SPACE to NO PAD change says what it means.
+        ("utf8mb4_nopad_bin", "utf8mb4", "utf8mb4_0900_bin is the closest one it offers"),
+        (
+            "utf8mb4_uca1400_ai_ci",
+            "utf8mb4",
+            "with it, trailing spaces count in comparisons and unique keys",
+        ),
+        (
+            "utf8mb4_unicode_520_nopad_ci",
+            "utf8mb4",
+            "with it, trailing spaces stop counting in comparisons and unique keys",
+        ),
+        (
+            "utf8mb4_uca1400_swedish_ai_ci",
+            "utf8mb4",
+            "utf8mb4_sv_0900_ai_ci is the closest one it offers",
         ),
         (
             "latin2_general_ci",
@@ -315,3 +332,28 @@ def test_a_contract_edited_to_a_collation_step_1_does_not_carry_is_refused(tmp_p
         _ddl(store)
     with pytest.raises((DmsStepError, ValueError), match=edited):
         _deploy(tmp_path, store)
+
+
+@pytest.mark.parametrize("name", ["sh\nop", "sh\rop", "sh op", ""])
+def test_a_database_name_that_would_end_a_comment_line_is_refused_in_each_comment(name):
+    # Defence in depth (review of #2282): the callers already refuse such a name, but a
+    # newline in one would end the `-- ALTER DATABASE` or the `-- GRANT ... ON` comment and
+    # leave the rest on a live line.
+    from src.contracts.transformation_contract import TargetSpec
+    from src.tools.data_movement.dms_step import _dms_user_lines
+    from src.tools.data_movement.routine_scripts import schema_statements
+
+    target = TargetSpec.model_validate({"engine": "aurora_mysql", "collation": {
+        "character_set": "utf8mb4", "collation": "utf8mb4_unicode_ci"}})  # fmt: skip
+    with pytest.raises((DmsStepError, ValueError), match="not a name"):
+        schema_statements("aurora_mysql", [name], target)
+    with pytest.raises((DmsStepError, ValueError), match="not a name"):
+        _dms_user_lines("aurora_mysql", "8.0", name, "shop")
+    # A plain name, a backtick included, is written.
+    assert "-- ALTER DATABASE `odd``db` CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;" in (
+        schema_statements("aurora_mysql", ["odd`db"], target)
+    )
+    assert any(
+        "ON `odd``db`.*" in line
+        for line in _dms_user_lines("aurora_mysql", "8.0", "odd`db", "shop")
+    )
