@@ -149,6 +149,10 @@ SELECT JSON_OBJECT(
     FROM information_schema.tables WHERE table_schema = @db
   ),
   'settings', JSON_OBJECT('sql_mode', @@GLOBAL.sql_mode),
+  -- #2276: the database's default character set and collation, which step 1 gives the
+  -- Aurora MySQL databases it creates.
+  'default_character_set', (SELECT DEFAULT_CHARACTER_SET_NAME FROM information_schema.SCHEMATA WHERE SCHEMA_NAME = @db),
+  'default_collation', (SELECT DEFAULT_COLLATION_NAME FROM information_schema.SCHEMATA WHERE SCHEMA_NAME = @db),
   -- The capture settings (#384): no cap (null) unless @query_limit is set.
   'query_capture', JSON_OBJECT('query_limit', @query_limit, 'min_executions', @min_executions)
 ) INTO @metadata;
@@ -176,6 +180,8 @@ SELECT JSON_ARRAYAGG(t_obj) INTO @tables FROM (
 -- ===================== 3. Columns =====================
 -- max_value_bytes (#2128) is not here: the LOB lengths are measured after the collection is
 -- printed, in section 13, and reach the ingest as a second object (see the header).
+-- character_set_name and collation_name (#2276): only where a column's collation differs
+-- from its table's (null otherwise), so step 1 gives that column its own.
 SET @is_mariadb = VERSION() LIKE '%MariaDB%';
 SET @grantee = CONCAT('''', SUBSTRING_INDEX(CURRENT_USER(), '@', 1), '''@''',
                       SUBSTRING_INDEX(CURRENT_USER(), '@', -1), '''');
@@ -190,9 +196,13 @@ SELECT JSON_ARRAYAGG(c_obj) INTO @columns FROM (
     'is_nullable', is_nullable,
     'column_default', column_default,
     'column_key', column_key,
-    'extra', extra
+    'extra', extra,
+    'character_set_name', IF(collation_name <=> (SELECT t.table_collation FROM information_schema.tables t
+      WHERE t.table_schema = c.table_schema AND t.table_name = c.table_name), NULL, character_set_name),
+    'collation_name', IF(collation_name <=> (SELECT t.table_collation FROM information_schema.tables t
+      WHERE t.table_schema = c.table_schema AND t.table_name = c.table_name), NULL, collation_name)
   ) AS c_obj
-  FROM information_schema.columns
+  FROM information_schema.columns c
   WHERE table_schema = @db
   ORDER BY table_name, ordinal_position
 ) AS c;

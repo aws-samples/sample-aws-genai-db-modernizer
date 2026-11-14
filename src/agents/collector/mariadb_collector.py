@@ -108,6 +108,8 @@ def _collect_live_mariadb_stages(inp: CollectorInput, ckpt) -> CollectorOutputCo
             "version": db.get_version(),
             "db_size_gb": db.get_database_size_gb(),
             "settings": db.get_settings(),
+            # #2276: the database's default character set and collation.
+            "charset": db.get_database_charset(),
         },
     )
     use_span_settings(span_settings("mariadb", meta_raw.get("settings")))
@@ -167,6 +169,7 @@ def _collect_live_mariadb_stages(inp: CollectorInput, ckpt) -> CollectorOutputCo
         procedures=schema_procs,
         triggers=schema_triggers,
         settings=meta_raw.get("settings"),
+        charset=meta_raw.get("charset"),
         query_capture=live_query_capture(len(queries_raw), inp.collection_options, query_error),
         # #1991: the server's uptime and own statement count (Questions).
         server_counters=live_server_counters(db),

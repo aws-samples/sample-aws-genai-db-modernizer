@@ -57,6 +57,14 @@ from src.shared.catalog.dms_sizing import EngineRules, dms_sizing
 from src.shared.contract_versioning import load_contract
 from src.shared.cutover_message import CUTOVER_DISCLAIMER
 from src.shared.engine_names import display_engine
+from src.tools.data_movement.collations import NOT_CARRIED as COLLATION_NOT_CARRIED
+from src.tools.data_movement.collations import SERVER_DEFAULTS as SERVER_DEFAULTS
+from src.tools.data_movement.collations import (
+    column_options,
+    database_options,
+    database_sentence,
+    table_options,
+)
 from src.tools.data_movement.dms_sizing import (
     DMS_MAX_LOB_KB,
     LOB_SIZES_COMMAND,
@@ -271,14 +279,6 @@ def unsupported_fields(contract: StepContract) -> tuple[UnsupportedField, ...]:
     )
 
 
-#: What step-1.ddl.sql says of the character set and collation it does not set; the routine
-#: deploy script says the same of the databases it creates (#2148).
-SERVER_DEFAULTS = (
-    "It sets no character set or collation: the cluster's server defaults apply. Check them "
-    "against the source's before you run it."
-)
-
-
 def contract_tables(contract: StepContract) -> list[ContractTable]:
     """The tables step 1 moves: the contract's unblocked rules, sorted by table id, but not a
     rule that moves no rows (#1918, its table is still in the DDL). Views are never rules, so
@@ -476,7 +476,7 @@ def _step1_ddl(
             ):
                 raise DmsStepError(f"{rule.source_table}.{f.target_column}: the DDL declares "
                                    f"{declared.get(f.target_column)}, the contract {f.target_type}")  # fmt: skip
-    ordered = [generated[name] for name in sorted(generated)]
+    ordered = [_with_collations(generated[name], rules[name]) for name in sorted(generated)]
     identity = sorted(
         (rule.source_table, c.name)
         for name, rule in rules.items()
@@ -484,6 +484,34 @@ def _step1_ddl(
         if c.identity
     )
     return assemble_full_ddl(ordered) + "\n", tuple(identity)
+
+
+def _with_collations(table: Any, rule: Rule) -> Any:
+    """``table``'s CREATE TABLE with the rule's own table and column collations (#2276):
+    ``DEFAULT CHARSET=... COLLATE=...`` after its closing parenthesis, ``CHARACTER SET ...
+    COLLATE ...`` after a column's type. Unchanged with none."""
+    columns = {f.target_column: f.collation for f in rule.fields if f.collation is not None}
+    if rule.collation is None and not columns:
+        return table
+    lines = table.create_sql.split("\n")
+    for c in table.columns:
+        if c.name not in columns:
+            continue
+        head = f"`{c.name.replace('`', '``')}` {c.aurora_type}"
+        found = [
+            i for i, line in enumerate(lines) if line in (f"  {c.fragment}", f"  {c.fragment},")
+        ]
+        if len(found) != 1 or not c.fragment.startswith(head):
+            raise DmsStepError(
+                f"{rule.source_table}.{c.name}: cannot place its collation in the DDL"
+            )
+        lines[found[0]] = lines[found[0]].replace(head, head + column_options(columns[c.name]), 1)
+    sql = "\n".join(lines)
+    if rule.collation is not None:
+        if not sql.endswith("\n);"):
+            raise DmsStepError(f"{rule.source_table}: cannot place its collation in the DDL")
+        sql = sql[:-1] + table_options(rule.collation) + ";"
+    return dataclasses.replace(table, create_sql=sql)
 
 
 def source_objects(collector: Any) -> SourceObjects:
@@ -1616,6 +1644,34 @@ def _lob_lines(inputs: Step1Inputs) -> list[str]:
     return ["", head]
 
 
+def _collation_lines(inputs: Step1Inputs) -> list[str]:
+    """The tables and columns that keep a collation of their own, and each one whose source
+    collation is not carried and why (#2276); none when the database's is not carried."""
+    if inputs.contract.target.collation is None:
+        return []
+    rules = _selected(inputs.contract)
+    own = [r.source_table for r in rules if r.collation is not None]
+    own += [
+        f"{r.source_table}.{f.target_column}"
+        for r in rules
+        for f in r.fields
+        if f.collation is not None
+    ]
+    lines = []
+    if own:
+        shown, more = ", ".join(own[:10]), len(own) - 10
+        lines += ["", "Own collations (a table that differs from its database on the source, a column that "
+                  "differs from its table, keeps its own): " + shown + (f" and {more} more" if more > 0 else "")
+                  + "."]  # fmt: skip
+    refused = [
+        (r.source_table, f) for r in rules for f in r.findings if f.code == COLLATION_NOT_CARRIED
+    ]
+    if refused:
+        lines += ["", "Collations not carried:"]
+        lines += [f"- {t}{'.' + f.column if f.column else ''}: {f.message}" for t, f in refused]
+    return lines
+
+
 def _not_moved_table_lines(inputs: Step1Inputs) -> list[str]:
     """The tables this file creates that the DMS task does not move (#1918)."""
     if not inputs.not_moved:
@@ -1685,7 +1741,7 @@ def render_ddl(inputs: Step1Inputs) -> str:
         "About this DDL:",
         "- Keep the declared column names: DMS matches columns by name, not by position, so the column "
         "order does not matter but a renamed column gets no data.",
-        f"- {SERVER_DEFAULTS}",
+        f"- {database_sentence(inputs.contract.target.collation, inputs.contract.target.collation_note)}",
         "- The indexes of a saved schema design are not in this file: it creates the keys, the source's "
         "indexes and the foreign keys between moved tables only. Add the design's indexes when you choose.",
     ]
@@ -1701,6 +1757,7 @@ def render_ddl(inputs: Step1Inputs) -> str:
         head += ["", f"Zero dates: aurora-target.yaml sets sql_mode = {ZERO_DATE_SQL_MODE} in the writer's "
                  f"DB parameter group. Why: {_zero_date_reason(counts)} The columns: "
                  + ", ".join(f"{t}.{c}" for t, c in zero) + "."]  # fmt: skip
+    head += _collation_lines(inputs)
     head += _extension_lines(inputs)
     head += _lob_lines(inputs)
     head.append("")
@@ -1728,7 +1785,8 @@ def render_ddl(inputs: Step1Inputs) -> str:
             out += f"CREATE EXTENSION IF NOT EXISTS {_pg_ident(e.name)};\n"
     else:
         db = database.replace("`", "``")
-        out += f"\nCREATE DATABASE IF NOT EXISTS `{db}`;\nUSE `{db}`;\n"
+        options = database_options(inputs.contract.target.collation)
+        out += f"\nCREATE DATABASE IF NOT EXISTS `{db}`{options};\nUSE `{db}`;\n"
     out += _enum_type_block(inputs)
     out += "\n" + inputs.ddl.strip() + "\n"
     replication = _replication(inputs)

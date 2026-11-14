@@ -200,6 +200,8 @@ def build_offline_contract(
         database_name=collected_name,
         # #1482: the source settings the collection script read.
         settings=offline_meta.get("settings"),
+        # #2276: the database's default character set and collation the script read.
+        charset=offline_meta if inp.engine.value in ("mysql", "mariadb") else None,
         # #384: the cap and floor the collection script ran with, when it says.
         query_capture=offline_query_capture(
             offline_meta,

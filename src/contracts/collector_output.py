@@ -445,6 +445,23 @@ class SourceDatabase(BaseModel):
             "reported, and each engine's defaults are read."
         ),
     )
+    default_character_set: str | None = Field(
+        None,
+        max_length=64,
+        description=(
+            "MySQL family: the collected database's default character set "
+            "(information_schema.SCHEMATA.DEFAULT_CHARACTER_SET_NAME, #2276); None when not read"
+        ),
+    )
+    default_collation: str | None = Field(
+        None,
+        max_length=64,
+        description=(
+            "MySQL family: the collected database's default collation "
+            "(information_schema.SCHEMATA.DEFAULT_COLLATION_NAME, #2276), which step 1 gives the "
+            "Aurora MySQL databases it creates; None when not read"
+        ),
+    )
 
 
 class QueryCapture(BaseModel):
@@ -764,6 +781,22 @@ class Column(BaseModel):
     default_value: str | int | float | bool | None = Field(None, description="Default value")
     is_auto_increment: bool | None = Field(False, description="Whether column is auto-incrementing")
     cardinality: int | None = Field(None, ge=0, description="Approximate number of distinct values")
+    character_set: str | None = Field(
+        None,
+        max_length=64,
+        description=(
+            "MySQL family: the column's character set, recorded only where its collation "
+            "differs from its table's (information_schema.COLUMNS.CHARACTER_SET_NAME, #2276)"
+        ),
+    )
+    collation: str | None = Field(
+        None,
+        max_length=64,
+        description=(
+            "MySQL family: the column's collation, recorded only where it differs from its "
+            "table's (information_schema.COLUMNS.COLLATION_NAME, #2276)"
+        ),
+    )
 
 
 class Index(BaseModel):

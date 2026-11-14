@@ -80,10 +80,34 @@ class DependsOn(BaseModel):
     )
 
 
+class CharacterSet(BaseModel):
+    """A MySQL character set and collation step 1 gives a target database, table or column
+    (#2276): one src/tools/data_movement/collations.py carries, never other collection text."""
+
+    character_set: str = Field(..., pattern=r"^[a-z0-9]{1,32}$", description="e.g. utf8mb4")
+    collation: str = Field(..., pattern=r"^[a-z0-9_]{1,64}$", description="e.g. utf8mb4_unicode_ci")
+
+
 class TargetSpec(BaseModel):
     """The engine the step writes."""
 
     engine: str = Field(..., min_length=1, description="Engine id, e.g. aurora_mysql")
+    # Left out of the dump when None, so a contract written before #2276 keeps its bytes
+    # (and the SHA-256 a plan pins).
+    collation: CharacterSet | None = Field(
+        None,
+        exclude_if=lambda value: value is None,
+        description=(
+            "Aurora MySQL: the source database's character set and collation, which "
+            "step-1.ddl.sql and the routine scripts give every database they create (#2276); "
+            "None when the collection records none or the target does not offer it"
+        ),
+    )
+    collation_note: str | None = Field(
+        None,
+        exclude_if=lambda value: value is None,
+        description="Why the source database's collation is not carried, and what to do",
+    )
 
 
 class FieldRule(BaseModel):
@@ -93,6 +117,12 @@ class FieldRule(BaseModel):
     target_column: str = Field(..., min_length=1)
     target_type: str = Field(..., min_length=1, description="The target column's declared type")
     op: LineageOp
+    collation: CharacterSet | None = Field(
+        None,
+        exclude_if=lambda value: value is None,
+        description="Aurora MySQL: the column's own character set and collation, where it "
+        "differs from its table's on the source (#2276)",
+    )
 
     @model_validator(mode="after")
     def _source_column_is_the_op_column(self) -> "FieldRule":
@@ -138,6 +168,12 @@ class Rule(BaseModel):
     findings: list[Finding] = Field(default_factory=list)
     # Left out of the dump when true, so a contract with no such rule keeps the bytes (and the
     # SHA-256 a plan pins) it had before the field existed.
+    collation: CharacterSet | None = Field(
+        None,
+        exclude_if=lambda value: value is None,
+        description="Aurora MySQL: the table's own character set and collation, where it "
+        "differs from its database's on the source (#2276)",
+    )
     moves_rows: bool = Field(
         True,
         exclude_if=lambda moves: moves is True,

@@ -13,7 +13,7 @@ from pathlib import Path
 import pytest
 
 from src.agents.collector.routine_sources import write_routine_sources
-from src.contracts.transformation_contract import NOT_MOVED, Finding
+from src.contracts.transformation_contract import NOT_MOVED, Finding, TargetSpec
 from src.storage.local_store import LocalArtifactStore
 from src.tools.data_movement.dms_step import render_ddl
 from src.tools.data_movement.routine_scripts import (
@@ -24,7 +24,7 @@ from src.tools.data_movement.routine_scripts import (
     write_routine_scripts,
 )
 from src.tools.routines.migration import routine_migration_path
-from tests.unit.tools.data_movement.dms_step_fixtures import make_contract, make_step1_inputs
+from tests.unit.tools.data_movement.dms_step_fixtures import make_bundle, make_contract, rebuilt
 from tests.unit.tools.data_movement.routine_fixtures import (
     SENTINEL,
     contract_with_routines,
@@ -375,7 +375,7 @@ def test_a_schema_only_a_refused_routine_uses_is_not_created(tmp_path):
     assert _schema_lines((tmp_path / "step" / DEPLOY_FILE).read_text()) == []
 
 
-def _mysql_schemas_case(tmp_path, schemas: list[str], collations=None, **kw):
+def _mysql_schemas_case(tmp_path, schemas: list[str], collations=None, target=None, **kw):
     rows, sources = [], []
     for i, schema in enumerate(schemas):
         name = f"p{i}"
@@ -386,7 +386,10 @@ def _mysql_schemas_case(tmp_path, schemas: list[str], collations=None, **kw):
                                     database_collation=(collations or {}).get(i)))  # fmt: skip
     artifact = migration(rows, "mysql")
     store = _job(tmp_path, artifact, sources, "mysql")
-    scripts = _write(tmp_path, store, contract_with_routines(artifact), **kw)
+    contract = contract_with_routines(artifact)
+    if target is not None:  # the contract's target, as the step 1 writer records it (#2276)
+        contract = contract.model_copy(update={"target": target})
+    scripts = _write(tmp_path, store, contract, **kw)
     assert scripts.in_script == len(schemas) and scripts.refused == []
     return (tmp_path / "step" / DEPLOY_FILE).read_text()
 
@@ -421,16 +424,19 @@ def _database_clauses(text: str) -> set[str]:
 
 
 def test_a_routine_database_is_created_as_the_step_ddl_creates_the_tables_database(tmp_path):
-    # step-1.ddl.sql creates the tables' database with no character set or collation, so the
-    # tables take the server default; a routine database must take the same, or a routine
-    # comparing a parameter with a moved column fails with an illegal mix of collations.
-    text = _mysql_schemas_case(tmp_path, ["shop_functions"],
+    # step-1.ddl.sql gives the tables' database the source's collation the contract carries
+    # (#2276); a routine database must take the same, or a routine comparing a parameter
+    # with a moved column fails with an illegal mix of collations (ERROR 1267).
+    target = TargetSpec.model_validate({"engine": "aurora_mysql", "collation": {
+        "character_set": "utf8mb4", "collation": "utf8mb4_unicode_ci"}})  # fmt: skip
+    text = _mysql_schemas_case(tmp_path, ["shop_functions"], target=target,
                                collations={0: "utf8mb4_unicode_ci"})  # fmt: skip
-    ddl = render_ddl(make_step1_inputs("aurora_mysql"))
-    assert _database_clauses(text) == _database_clauses(ddl) == {""}
-    assert "COLLATE" not in text and "CHARACTER SET" not in text
-    found = re.search(r"It sets no character set or collation: .*? before you run it\.",
-                      _flat_comments(ddl))  # fmt: skip
+    bundle = make_bundle("aurora_mysql")
+    ddl = render_ddl(rebuilt(bundle, bundle.contract.rules, target=target))
+    assert _database_clauses(text) == _database_clauses(ddl)
+    assert "COLLATE utf8mb4_unicode_ci" in text and "CHARACTER SET utf8mb4" in text
+    found = re.search(r"It gives the database the source's character set and collation .*? keeps "
+                      r"its own\.", _flat_comments(ddl))  # fmt: skip
     assert found and found.group(0) in _flat_comments(text)
 
 

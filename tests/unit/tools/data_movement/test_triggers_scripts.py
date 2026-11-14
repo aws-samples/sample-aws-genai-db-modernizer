@@ -505,8 +505,9 @@ def test_a_hundred_thousand_triggers_write_in_linear_time(tmp_path):
 # --------------------------------------------------------------------------- #2273: event databases
 
 
-def _event_in(tmp_path, *databases, **kw):
-    """A MySQL contract with one deferred event in each of ``databases`` (and nothing else)."""
+def _event_in(tmp_path, *databases, target=None, **kw):
+    """A MySQL contract with one deferred event in each of ``databases`` (and nothing else);
+    ``target`` replaces the contract's target (its carried collation, #2276)."""
     rows, sources = [], []
     for i, db in enumerate(databases):
         name = f"ev{i}"
@@ -518,6 +519,8 @@ def _event_in(tmp_path, *databases, **kw):
     artifact = migration(rows, "mysql")
     store = _job(tmp_path, artifact, sources, "mysql")
     contract = contract_with_routines(artifact)
+    if target is not None:
+        contract = contract.model_copy(update={"target": target})
     return _write_scripts(tmp_path, store, contract, **kw), store, contract
 
 
@@ -549,6 +552,21 @@ def test_the_mysql_triggers_enable_script_creates_the_database_a_deferred_event_
     assert "one the routines deploy script already created is left as it is" in md
     assert "needs `CREATE` and `EVENT` on each new database" in " ".join(md.split())
     assert "EXECUTE" not in md
+
+
+def test_the_databases_the_triggers_enable_script_creates_get_the_carried_collation(tmp_path):
+    # As step-1.ddl.sql's and routines-deploy.sql's (#2276): an event's DECLAREd text
+    # variables take its database's collation, so it must match the moved tables'.
+    from src.contracts.transformation_contract import TargetSpec
+
+    target = TargetSpec.model_validate({"engine": "aurora_mysql", "collation": {
+        "character_set": "utf8mb4", "collation": "utf8mb4_unicode_ci"}})  # fmt: skip
+    _event_in(tmp_path, "shop", "jobs", target=target)
+    text = _read(tmp_path, TRIGGERS_FILE)
+    assert _lines(text, "CREATE DATABASE") == [
+        "CREATE DATABASE IF NOT EXISTS `jobs` CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;"]  # fmt: skip
+    flat = " ".join(line[3:].strip() for line in text.splitlines() if line.startswith("-- "))
+    assert "It gives the database the source's character set and collation (utf8mb4," in flat
 
 
 @pytest.mark.passes_on_main

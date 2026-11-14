@@ -13,10 +13,11 @@ three files into ``data-movement/step-1/``:
   ``DEFINER``). It first creates, ``IF NOT EXISTS``, each schema (on Aurora MySQL, each
   database) its routines land in that step 1's own DDL does not create (#2148): never
   PostgreSQL's ``public`` nor the schema of a table the step moves. A MySQL database gets
-  no character set or collation, as ``step-1.ddl.sql`` gives the tables' database, and
-  nothing is granted on what it creates; a MySQL database that differs from the moved
-  tables' only by case is refused (by its routines' ids, ``database_case_differs``, with
-  :data:`CASE_DIFFERS_WHY`). On Aurora PostgreSQL the
+  what ``step-1.ddl.sql`` gives the tables' database (the source's character set and
+  collation the contract carries, #2276, else none), and nothing is granted on what it
+  creates; a MySQL database that differs from the moved tables' only by case is refused
+  (by its routines' ids, ``database_case_differs``, with :data:`CASE_DIFFERS_WHY`). On
+  Aurora PostgreSQL the
   script runs in one transaction with ``check_function_bodies`` on, and each trigger is
   disabled in that transaction, so no replicated change ever meets it enabled. On Aurora MySQL each routine runs under its
   own ``sql_mode`` and connection collation, as ``mysqldump`` does; MySQL triggers and
@@ -53,7 +54,12 @@ from typing import IO, Any
 from src.agents.collector.routine_sources import read_routine_sources
 from src.contracts.routine_migration import RoutineMigrationContract
 from src.contracts.routine_sources import RoutineSource
-from src.contracts.transformation_contract import StepContract, StepRoutine, StepRoutines
+from src.contracts.transformation_contract import (
+    StepContract,
+    StepRoutine,
+    StepRoutines,
+    TargetSpec,
+)
 from src.shared.cutover_message import CUTOVER_DISCLAIMER
 
 __all__ = [
@@ -350,7 +356,13 @@ def routine_schemas(
     return sorted(s for s in found if s and _safe(s) and s not in skip)
 
 
-def schema_statements(engine: str, schemas: list[str], *, triggers: bool = False) -> list[str]:
+def schema_statements(
+    engine: str, schemas: list[str], target: TargetSpec | None = None, *, triggers: bool = False
+) -> list[str]:
+    """The ``CREATE SCHEMA`` (``CREATE DATABASE``) statements for ``schemas``. On Aurora
+    MySQL each database gets what step-1.ddl.sql gives the tables' database (#2276): the
+    source's character set and collation that ``target`` carries, else none (the server
+    defaults), with the same sentence. ``triggers``: the triggers-enable script's (#2273)."""
     if not schemas:
         return []
     if engine == "aurora_postgresql":
@@ -362,8 +374,12 @@ def schema_statements(engine: str, schemas: list[str], *, triggers: bool = False
             *(f"CREATE SCHEMA IF NOT EXISTS {_pg_ident(s)};" for s in schemas),
             "",
         ]
-    from src.tools.data_movement.dms_step import SERVER_DEFAULTS
+    from src.tools.data_movement.collations import database_options, database_sentence
 
+    # As step-1.ddl.sql creates the tables' database, so a routine's parameters (an event's
+    # DECLAREd variables) take the moved tables' collation (a mix fails with ERROR 1267, #2276).
+    value = target.collation if target else None
+    sentence = database_sentence(value, target.collation_note if target else None)
     if triggers:  # the triggers-enable script (#2273): its databases hold triggers and events
         return [
             "-- The databases its triggers and events live in that step 1's DDL does not create "
@@ -372,20 +388,24 @@ def schema_statements(engine: str, schemas: list[str], *, triggers: bool = False
             "creating a database gives its creator no privileges on it.",
             "-- Each event runs as its DEFINER, which needs the privileges its body uses; the "
             "script grants nothing.",
-            f"-- Each CREATE DATABASE here is like step-1.ddl.sql's. {SERVER_DEFAULTS}",
-            *(f"CREATE DATABASE IF NOT EXISTS {_mysql_ident(s)};" for s in schemas),
+            f"-- Each CREATE DATABASE here is like step-1.ddl.sql's. {sentence}",
+            *(
+                f"CREATE DATABASE IF NOT EXISTS {_mysql_ident(s)}{database_options(value)};"
+                for s in schemas
+            ),
             "",
         ]
 
-    # As step-1.ddl.sql creates the tables' database: no character set or collation, so a
-    # routine's parameters take the same server default as the moved tables' columns.
     return [
         "-- The databases the routines live in that step 1's DDL does not create (the user that "
         "runs this script needs CREATE on them).",
         "-- Each is created by the user that runs this script, and the script grants nothing: "
         "EXECUTE on each database for the application user is yours to add.",
-        f"-- Each CREATE DATABASE here is like step-1.ddl.sql's. {SERVER_DEFAULTS}",
-        *(f"CREATE DATABASE IF NOT EXISTS {_mysql_ident(s)};" for s in schemas),
+        f"-- Each CREATE DATABASE here is like step-1.ddl.sql's. {sentence}",
+        *(
+            f"CREATE DATABASE IF NOT EXISTS {_mysql_ident(s)}{database_options(value)};"
+            for s in schemas
+        ),
         "",
     ]
 
@@ -396,8 +416,9 @@ def _deploy_header(
     in_script: int,
     contract_sha: str,
     schemas: list[str] | None = None,
+    target: TargetSpec | None = None,
 ) -> str:
-    made = schema_statements(engine, schemas or [])
+    made = schema_statements(engine, schemas or [], target)
     lines = [
         f"-- {CUTOVER_DISCLAIMER}",
         "-- Step 1 routines: generated by the modernizer; you run it, it never connects to "
@@ -891,7 +912,9 @@ def write_routine_scripts(
         schemas = routine_schemas(in_rows, engine, target_database, tables_in)
 
         def deploy_chunks() -> Iterator[bytes]:
-            header = _deploy_header(engine, section, in_script, contract_sha, schemas)
+            header = _deploy_header(
+                engine, section, in_script, contract_sha, schemas, contract.target
+            )
             yield header.encode("utf-8")
             yield from spooled_chunks(spool, carried, spans)
             yield _deploy_footer(engine).encode("utf-8")

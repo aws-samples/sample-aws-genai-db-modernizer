@@ -422,6 +422,8 @@ def _collect_live_stages(inp: CollectorInput, ckpt) -> CollectorOutputContract:
             "version": db.get_version(),
             "db_size_gb": db.get_database_size_gb(),
             "settings": db.get_settings(),
+            # #2276: the database's default character set and collation.
+            "charset": db.get_database_charset(),
         },
     )
     use_span_settings(span_settings(inp.engine.value, meta_raw.get("settings")))
@@ -490,6 +492,7 @@ def _collect_live_stages(inp: CollectorInput, ckpt) -> CollectorOutputContract:
         procedures=schema_procs,
         triggers=schema_triggers,
         settings=meta_raw.get("settings"),
+        charset=meta_raw.get("charset"),
         query_capture=live_query_capture(len(queries_raw), inp.collection_options, query_error),
         # #1991: the server's uptime and own statement count (Questions).
         server_counters=live_server_counters(db),
@@ -1094,9 +1097,31 @@ def _build_columns(raw: list[dict]) -> list[Column]:
             is_auto_increment=(
                 _is_truthy(c.get("is_identity")) or "auto_increment" in (c.get("extra") or "")
             ),
+            # #2276: the MySQL family's, only where the column's collation differs from its
+            # table's (the script and the live query leave them null otherwise).
+            character_set=_charset_name(c.get("character_set_name")),
+            collation=_charset_name(c.get("collation_name")),
         )
         for c in raw
     ]
+
+
+def _charset_name(value: Any) -> str | None:
+    """A character set or collation name as the server reports it, or None: missing, blank,
+    the client's NULL, or longer than any name (the contract's 64), which step 1 never
+    carries anyway."""
+    text = _text_or_none(value)
+    return text if text and text.upper() != "NULL" and len(text) <= 64 else None
+
+
+def source_charset(raw: object) -> dict[str, str | None]:
+    """``SourceDatabase``'s default character set and collation from what a collection
+    read (#2276): the offline script's metadata, a live stage's
+    :meth:`~src.tools.database.mysql_tools.MySQLRemoteCollector.get_database_charset`."""
+    if not isinstance(raw, Mapping):
+        return {}
+    kept = {k: _charset_name(raw.get(k)) for k in ("default_character_set", "default_collation")}
+    return {k: v for k, v in kept.items() if v is not None}
 
 
 def _offline_query_log_source(engine: str) -> QueryLogSource:
@@ -1751,6 +1776,7 @@ def _build_output(
     routine_stats_source: object = None,
     routine_capture: object = None,
     server_counters: object = None,
+    charset: object = None,
 ) -> CollectorOutputContract:
     """``engines_in_use`` (#949): the engine ids an offline collection records as
     already running next to the source; anything but a list of strings is ignored.
@@ -1766,7 +1792,9 @@ def _build_output(
     cannot hold (#2023);
     ``routine_stats_source``: how routine execution counts were read; ``routine_capture``:
     how routine bodies were read (#1652); ``server_counters``: the server's uptime, reset
-    age and own statement count (#1991); each ignored when it is not one."""
+    age and own statement count (#1991); ``charset``: the database's default character set
+    and collation (#2276), kept as :func:`source_charset` reads them; each ignored when it
+    is not one."""
     elapsed = time.monotonic() - start
     output = CollectorOutputContract(
         job_id=inp.job_id,
@@ -1783,6 +1811,7 @@ def _build_output(
                 deployment_type=DeploymentType.rds_instance if inp.aws_config else None,
                 rds_instance_metadata=rds_meta,
                 settings=source_settings(settings),
+                **source_charset(charset),
             ),
             engines_in_use=(
                 [e for e in engines_in_use if isinstance(e, str)]
