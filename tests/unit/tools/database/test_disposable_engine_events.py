@@ -75,6 +75,7 @@ def test_loading_an_event_makes_a_runner_procedure_from_the_servers_own_body():
     assert f"CREATE PROCEDURE `{runner}`() INSERT INTO t VALUES (1)" in _statements(cur)
 
 
+@pytest.mark.passes_on_main  # main makes no runner for a procedure; this keeps it so
 def test_loading_a_procedure_makes_no_runner():
     cur = _Cursor("x")
     _backend(cur).load(
