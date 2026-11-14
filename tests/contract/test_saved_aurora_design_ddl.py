@@ -745,33 +745,55 @@ def _null_ddl(design: dict) -> None:
     [None, _fk_list, _gsi_names, _null_ddl],
     ids=["as committed", "empty foreign_keys", "index names", "null generated_ddl"],
 )
-def test_a_dynamodb_design_with_no_aurora_content_loads(tmp_path: Path, edit) -> None:
-    """Round 3: a key alone is no Aurora content; an empty, null or name-only value
-    loads, in the DynamoDB folder and in the legacy Aurora one."""
+def test_a_dynamodb_design_loads_in_its_own_folder(tmp_path: Path, edit) -> None:
+    """Round 3: a key alone, an empty or null value or a name-only index list is no Aurora
+    content in the DynamoDB folder."""
     design = _dynamodb(edit)
-    for folder in ("schema-dynamodb", "schema-aurora"):
-        store, key = _at(tmp_path, folder, design, True)
-        assert store.read_json(key) == design
+    store, key = _at(tmp_path, "schema-dynamodb", design, True)
+    assert store.read_json(key) == design
+
+
+@pytest.mark.passes_on_main
+@pytest.mark.parametrize("edit", [_fk_list, _null_ddl, None], ids=["empty FKs", "null DDL", "none"])
+def test_a_design_with_no_ddl_field_filled_loads_in_an_aurora_folder(tmp_path: Path, edit) -> None:
+    """Round 5: an Aurora-family folder runs the full check only when a DDL, index, FK or
+    column-type field holds something; empty and null values hold nothing."""
+    design = _dynamodb(edit)
+    store, key = _at(tmp_path, "schema-aurora", design, True)
+    assert store.read_json(key) == design
+
+
+def test_a_dynamodb_design_with_indexes_is_refused_in_an_aurora_folder(tmp_path: Path) -> None:
+    """Round 5 reverses round 4's "must load": the UI shows a design in ``schema-aurora/`` as
+    Aurora, so its ``indexes`` run the full Aurora check, which a DynamoDB design fails."""
+    design = _dynamodb(_gsi_names)
+    store, key = _at(tmp_path, "schema-aurora", design, True)
+    with pytest.raises(ContractVersionError):
+        store.read_json(key)
 
 
 def _ddl_only(design: dict) -> None:
     design["generated_ddl"] = "DROP TABLE users;"
 
 
-def _table_fk_statement(design: dict) -> None:
-    design["table_definitions"][0]["foreign_keys"] = [
-        "ALTER TABLE t ADD CONSTRAINT f FOREIGN KEY (a) REFERENCES u (b); DROP TABLE u;"
-    ]
+def _aurora_type(design: dict) -> None:
+    design["table_definitions"][0]["columns"] = [{"name": "pk", "aurora_type": "TEXT"}]
+
+
+def _names_aurora(design: dict) -> None:
+    design["target_engine"] = "Aurora_MySQL"
 
 
 @pytest.mark.parametrize(
-    "edit", [_ddl_only, _table_fk_statement], ids=["a DDL script", "a table FK statement"]
+    "edit",
+    [_ddl_only, _aurora_type, _names_aurora],
+    ids=["a DDL script", "an Aurora column type", "an Aurora target engine"],
 )
 def test_aurora_content_in_a_dynamodb_design_is_refused_as_dynamodb(
     tmp_path: Path, edit: Callable[[dict], None]
 ) -> None:
-    """Each signal alone (no Aurora column types) is enough, and the message names the
-    folder's engine and its own next step."""
+    """Another engine's folder allows none of the Aurora-only fields, and the message names
+    the folder's engine and its own next step."""
     store, key = _at(tmp_path, "schema-dynamodb", _dynamodb(edit), True)
     with pytest.raises(ContractVersionError) as caught:
         store.read_json(key)
@@ -827,83 +849,123 @@ def test_the_canonical_folder_wins_a_version_tie(reverse: bool) -> None:
     assert served["artifact_path"] == f"{DB}/{JOB}/schema-aurora_mysql/v1/schema_output.json"
 
 
-# --- Round 4: statements at any depth count; descriptive text does not ---------------
+# --- Round 5: decided by folder, never by text ----------------------------------------
 
-_NESTED = {
-    "a nested list": [["DROP TABLE users;"]],
-    "a dict entry": [{"name": "ix", "sql": "DROP TABLE users;"}],
+# Executable forms a keyword rule missed or would miss (round 5's corpus): each is a
+# statement some Aurora engine, or its shell, runs.
+CORPUS = [
+    "DROP TABLE users;", "/*! DROP TABLE users */", "/*!50000 DROP TABLE users */",
+    "GSI1 on (pk)\nDROP TABLE users;", "GSI1 on (pk)\r\nDROP TABLE users;",
+    "GSI1 -- note\nDROP TABLE users;", "(SELECT 1)", "EXPLAIN ANALYZE DELETE FROM users",
+    "DO $$ BEGIN DELETE FROM users; END $$", "VACUUM users", "REINDEX TABLE users",
+    "REFRESH MATERIALIZED VIEW v", "SECURITY LABEL ON TABLE users IS 'x'",
+    "IMPORT FOREIGN SCHEMA s FROM SERVER x INTO public", "HANDLER users OPEN",
+    "ANALYZE users", "BEGIN", "START TRANSACTION", "USE mysql", "TABLE users", "VALUES (1)",
+    "FLUSH PRIVILEGES", "KILL 1", "SHUTDOWN", "INSTALL PLUGIN x SONAME 'y.so'",
+    "OPTIMIZE TABLE users", "REASSIGN OWNED BY a TO b", "DISCARD ALL", "CLUSTER users",
+    "\\! rm -rf /", "﻿DROP TABLE users", "​DROP TABLE users",
+    "create index ix on t (a)", "-- note\nDROP TABLE users", "/* x */ DROP TABLE users",
+    "\n   DROP TABLE users", "WITH x AS (SELECT 1) DELETE FROM users",
+    "ALTER TABLE users DROP COLUMN id", "GRANT ALL ON users TO public",
+    "ix_name; DROP TABLE users", "CALL p()", "COPY users TO PROGRAM 'x'", "TRUNCATE users",
+    "RENAME TABLE a TO b", "REVOKE ALL ON users FROM public", "SET ROLE admin",
+    "LOAD DATA INFILE 'x' INTO TABLE users", "PREPARE s FROM 'x'", "LOCK TABLES users WRITE",
+    "COMMENT ON TABLE users IS 'x'",
+]  # fmt: skip
+assert len(CORPUS) == 50
+_AURORA_FOLDERS = ["schema-aurora", "schema-Aurora_MySQL"]
+_SHAPES: dict[str, Callable[[dict, str], None]] = {
+    "a table index": lambda d, t: d["table_definitions"][0]["indexes"].append(t),
+    "a table FK": lambda d, t: d["table_definitions"][0]["foreign_keys"].append(t),
+    "a nested index": lambda d, t: d["table_definitions"][0]["indexes"].append([t]),
+    "a dict index": lambda d, t: d["table_definitions"][0]["indexes"].append({"sql": t}),
+    "the script": lambda d, t: d.__setitem__("generated_ddl", d["generated_ddl"] + "\n\n" + t),
 }
-_FOREIGN_FOLDERS = ["schema-aurora", "schema-Aurora_MySQL", "schema-dynamodb"]
 
 
-def _place(design: dict, where: str, field: str, value: object) -> None:
-    if where == "top level":
-        design[field] = value
-    else:
-        design["table_definitions"][0][field] = value
-
-
-@pytest.mark.parametrize("where", ["top level", "on a table"])
-@pytest.mark.parametrize("field", ["indexes", "foreign_keys"])
-@pytest.mark.parametrize("value", list(_NESTED.values()), ids=list(_NESTED))
-@pytest.mark.parametrize("folder", _FOREIGN_FOLDERS)
-def test_a_statement_nested_in_a_list_or_dict_is_refused(
-    tmp_path: Path, folder: str, value: object, field: str, where: str
+@pytest.mark.parametrize("shape", list(_SHAPES))
+@pytest.mark.parametrize("text", CORPUS)
+@pytest.mark.parametrize("folder", _AURORA_FOLDERS)
+def test_every_corpus_form_is_refused_in_an_aurora_folder(
+    tmp_path: Path, folder: str, text: str, shape: str
 ) -> None:
-    design = _dynamodb()
-    _place(design, where, field, copy.deepcopy(value))
-    store, key = _at(tmp_path, folder, design, True)
+    """Whatever the text, a filled index, FK or script field in an Aurora-family folder runs
+    the full rebuild check, which no form of the corpus passes."""
+    saved = _load(WORDPRESS)
+    _SHAPES[shape](saved, text)
+    store, key = _at(tmp_path, folder, saved, True)
     with pytest.raises(ContractVersionError) as caught:
         store.read_json(key)
     assert type(caught.value).__name__ == "UnsafeArtifactError"
-    assert "DROP" not in str(caught.value) and "DROP" not in caught.value.public_message
+    shown = text.strip()
+    assert shown not in str(caught.value) and shown not in caught.value.public_message
 
 
-_DESCRIPTIVE = {
-    "an index with its keys": ("indexes", "GSI1 on (pk, sk)"),
-    "an index with its key names": ("indexes", "GSI1: PK=user_id, SK=created_at"),
-    "a reference": ("foreign_keys", "orders.user_id references users.id"),
-}
+@pytest.mark.parametrize("text", CORPUS)
+def test_every_corpus_form_is_refused_or_never_aurora_in_another_engines_folder(
+    tmp_path: Path, text: str
+) -> None:
+    """In ``schema-dynamodb/`` a form is refused where only Aurora reads it (the script) and
+    elsewhere is served as the DynamoDB design it is: ``/schema-designs`` lists it under
+    ``dynamodb``, which the UI never renders as Aurora DDL."""
+    from src.api.services.local_s3 import LocalS3Service
+    from tests.unit.agents.schema_design.test_rerun_over_refused_design import _MemoryStore
+
+    design = _dynamodb()
+    design["generated_ddl"] = text
+    store, key = _at(tmp_path, "schema-dynamodb", design, True)
+    with pytest.raises(ContractVersionError):
+        store.read_json(key)
+    design = _dynamodb()
+    design["indexes"] = [text]
+    design["table_definitions"][0]["indexes"] = [text, [text], {"sql": text}]
+    memory = _MemoryStore()
+    memory.base_dir = tmp_path  # type: ignore[attr-defined]  # read only by other routes
+    memory.write_json(f"{DB}/{JOB}/schema-dynamodb/v1/schema_output.json", design)
+    [served] = LocalS3Service(memory).read_all_schema_designs(DB, JOB)
+    assert served["target_type"] == "dynamodb"
+
+
+NOTES = [
+    "Select by email", "Update frequency: hourly", "Delete after 30 days (TTL)",
+    "Create on first write", "Set TTL to 30 days", "Copy of orders for reporting",
+    "Load by user_id", "Lock-free counter", "Comment count per post", "Call log by caller_id",
+    "Replace on write", "With sort key created_at", "Merge sessions by user",
+    "Execute once per day", "GSI1; select by status",
+]  # fmt: skip
+assert len(NOTES) == 15
 
 
 @pytest.mark.passes_on_main
-@pytest.mark.parametrize("where", ["top level", "on a table"])
-@pytest.mark.parametrize("case", list(_DESCRIPTIVE.values()), ids=list(_DESCRIPTIVE))
-@pytest.mark.parametrize("folder", ["schema-dynamodb", "schema-aurora"])
-def test_descriptive_text_in_a_dynamodb_design_loads(
-    tmp_path: Path, folder: str, case: tuple[str, str], where: str
-) -> None:
-    field, text = case
+@pytest.mark.parametrize("note", NOTES)
+def test_a_natural_note_loads_in_a_dynamodb_design(tmp_path: Path, note: str) -> None:
     design = _dynamodb()
-    _place(design, where, field, [text])
-    store, key = _at(tmp_path, folder, design, True)
+    design["indexes"] = [note]
+    design["table_definitions"][0]["indexes"] = [note]
+    design["table_definitions"][0]["foreign_keys"] = [note]
+    store, key = _at(tmp_path, "schema-dynamodb", design, True)
     assert store.read_json(key) == design
 
 
-_STATEMENTS = {
-    "lowercase": "create index ix on t (a)",
-    "a leading comment": "-- note\nDROP TABLE users",
-    "a leading block comment": "/* x */ DROP TABLE users",
-    "leading whitespace": "\n   DROP TABLE users",
-    "WITH": "WITH x AS (SELECT 1) DELETE FROM users",
-    "ALTER": "ALTER TABLE users DROP COLUMN id",
-    "GRANT": "GRANT ALL ON users TO public",
-    "a later statement": "ix_name; DROP TABLE users",
-}
+@pytest.mark.passes_on_main
+def test_no_other_engines_contract_has_an_aurora_only_field() -> None:
+    """The allowlist's ground truth: no non-Aurora design contract declares
+    ``generated_ddl`` or ``aurora_type`` anywhere, and its ``target_engine`` (where it has
+    one) never names Aurora, so another engine's folder never needs them."""
+    from src.shared.contract_versioning import _import, _schema_output_targets
 
-
-@pytest.mark.parametrize("where", ["top level", "on a table"])
-@pytest.mark.parametrize("text", list(_STATEMENTS.values()), ids=list(_STATEMENTS))
-@pytest.mark.parametrize("folder", _FOREIGN_FOLDERS)
-def test_a_statement_in_any_form_is_refused(
-    tmp_path: Path, folder: str, text: str, where: str
-) -> None:
-    design = _dynamodb()
-    _place(design, where, "indexes", [text])
-    store, key = _at(tmp_path, folder, design, True)
-    with pytest.raises(ContractVersionError) as caught:
-        store.read_json(key)
-    assert "DROP" not in str(caught.value) and "GRANT" not in str(caught.value)
+    seen = 0
+    for _, target in _schema_output_targets():
+        if "aurora" in target:
+            continue
+        model = _import(target)
+        text = json.dumps(model.model_json_schema())
+        assert '"generated_ddl"' not in text and '"aurora_type"' not in text, target
+        field = model.model_fields.get("target_engine")
+        if field is not None and isinstance(field.default, str):
+            assert not field.default.lower().startswith("aurora"), target
+        seen += 1
+    assert seen >= 4  # DynamoDB, DocumentDB, ElastiCache, OpenSearch
 
 
 @pytest.mark.passes_on_main
@@ -921,3 +983,23 @@ def test_every_committed_non_aurora_design_loads(tmp_path: Path, path: Path) -> 
     folder = next(part for part in path.parts if part.startswith("schema-"))
     store, key = _at(tmp_path, folder, design, True)
     assert store.read_json(key) == design
+
+
+@pytest.mark.parametrize(
+    "table",
+    [
+        {"table_name": "t", "indexes": ["GSI1"]},
+        {"table_name": "t", "foreign_keys": ["orders.user_id references users.id"]},
+        {"table_name": "t", "columns": [{"name": "a", "aurora_type": "TEXT"}]},
+    ],
+    ids=["a table index", "a table FK", "a column's Aurora type"],
+)
+@pytest.mark.parametrize("folder", _AURORA_FOLDERS)
+def test_each_ddl_field_alone_runs_the_check_in_an_aurora_folder(
+    tmp_path: Path, folder: str, table: dict
+) -> None:
+    """One filled field is enough, with no script and nothing else: the design runs the full
+    check (here with no engine named, so it is refused), whatever the field holds."""
+    store, key = _at(tmp_path, folder, {"table_definitions": [table]}, True)
+    with pytest.raises(ContractVersionError, match="names no Aurora engine"):
+        store.read_json(key)

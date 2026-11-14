@@ -184,7 +184,7 @@ class _DeleteRaises(_MemoryStore):
 _KEPT = {
     _S3Like: ("copied the refused saved design", True),
     _DeleteDoesNothing: ("copied the refused saved design", True),
-    _DeleteRaises: ("could not set aside the refused saved design", True),
+    _DeleteRaises: (f"copied it to {KEY}.refused, and the original stays", True),
     _AtxLike: ("this store cannot copy it", False),
 }
 

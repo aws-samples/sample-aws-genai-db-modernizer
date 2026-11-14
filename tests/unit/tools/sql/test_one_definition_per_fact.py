@@ -132,9 +132,6 @@ OTHER_SQL_MODULES: dict[str, str] = {
     "src/graph/schema.py": "the graph store's own DDL, not a workload query",
     "src/tools/schema/aurora_common/delta_merge.py": "the generated Aurora DDL",
     "src/tools/schema/aurora_common/saved_design.py": "a saved design's generated Aurora DDL",
-    "src/shared/contract_versioning.py": (
-        "tells whether a saved schema design carries a SQL statement (#2199), not a query"
-    ),
     "src/report/executive_report.py": (
         "the executive report keeps quoted SQL out of what it prints (#1020); it reads no "
         "query fact"
