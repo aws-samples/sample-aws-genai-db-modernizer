@@ -241,13 +241,27 @@ _PAIR_RES = (
 _KEY_WORD_RE = re.compile(r"pass|pwd|secret|contrase|token|key", re.I)
 # A Markdown table cell that is a credential key name; a separator row.
 _KEY_CELL_RE = re.compile(rf"\s*{_KEY_NAME}\s*", re.I)
+# A whole credential key name, in any case (a named bind's name, #2248).
+_KEY_NAME_RE = re.compile(_KEY_NAME, re.I)
 _SEPARATOR_ROW_RE = re.compile(r"[\s|:-]*")
 _JSON_LITERALS = frozenset({"null", "true", "false"})
 # A short integer (a count or a size in a design), never a long number or a float.
 _COUNT_RE = re.compile(r"\d{1,6}")
-# A SQL bind parameter after ``=`` (``post_password = ?``) stands for a value.
-_BIND_RE = re.compile(r"\?|%s|\$\d+")
-_NAMED_BIND_RE = re.compile(r"[:@](?P<name>[a-z_][a-z0-9_]*)")
+# A SQL bind parameter after ``=`` (``post_password = ?``) stands for a value: a known
+# positional shape (``?``, ``%s``, ``$N``; ``:N`` / ``@N``, SQL Server's ``@P1`` and
+# Oracle's ``:B1`` / ``:SYS_B_0`` with at most three digits), or a named one
+# (``:name``, ``@name``, ``%(name)s``) whose name is a credential key name (#2248).
+_BIND_RE = re.compile(r"\?|%s|\$\d+|[:@]\d{1,3}|@P\d{1,3}|:B\d{1,3}|:SYS_B_\d{1,3}", re.I)
+_NAMED_BIND_RE = re.compile(
+    r"[:@](?P<name>[A-Za-z_][A-Za-z0-9_]*)|%\((?P<py>[A-Za-z_][A-Za-z0-9_]*)\)s"
+)
+# A bare ``key`` (``token = :key``) or ``pw`` names a bind too.
+_BARE_BIND_NAMES = frozenset({"key", "pw"})
+# A ``.env`` line (``DB_PASSWORD=...``, ``export ...``) or a connection string's
+# ``;Password=...``: an assignment with no space around ``=``, at column 0 of a line
+# or after ``;``. Its value is a literal, never a bind. An indented one is SQL (a
+# ``SET`` list written one column per line: ``\t\tPasswordResetToken=@token,``).
+_ENV_START_RE = re.compile(r"(?:export\s+)?")
 # A column note in prose: `` `table.column`: varchar(255) ``.
 _SQL_TYPE_RE = re.compile(
     r"(?:var)?char|(?:tiny|medium|long)?text|(?:tiny|small|medium|big)?int(?:eger)?|decimal"
@@ -258,17 +272,33 @@ _SQL_TYPE_RE = re.compile(
 _SQL_TYPE_VALUE_RE = re.compile(rf"(?:{_SQL_TYPE_RE.pattern})(?:\(\d+(?:,\s*\d+)?\))?[,:]?", re.I)
 
 
+def _key_value_assignment(m: re.Match[str]) -> bool:
+    """``key=value`` with no space around ``=``, starting a ``.env`` line or following a
+    connection string's ``;`` (``_ENV_START_RE``, column 0 only): not SQL, so no bind."""
+    line, key, sep = m.string, m.start("key"), m.start("sep")
+    if line[sep - 1 : sep].isspace() or line[sep + 1 : sep + 2].isspace():
+        return False
+    return line[key - 1 : key] == ";" or _ENV_START_RE.fullmatch(line, 0, key) is not None
+
+
 def _bind_parameter(m: re.Match[str], value: str) -> bool:
-    """``key = ?`` / ``%s`` / ``$N`` / ``:name`` / ``@name``, unquoted after ``=``, where a
-    named parameter is a lower-case identifier ending in the key's own word
-    (``post_password = :post_password``)."""
-    if m.groupdict().get("sep") != "=":
+    """``key = <bind>``, unquoted after ``=`` in SQL, the bind as the whole value: a
+    known positional shape (``_BIND_RE``), or a named ``:name`` / ``@name`` /
+    ``%(name)s`` whose name, in any case, is itself a credential key name (a full match
+    of ``_KEY_NAME``: ``@ApiKey``, ``:NEW_PASSWORD``, ``@passwordResetToken``) or a bare
+    ``key`` / ``pw``, with no digit in it (#2248). ``@@name`` (a system variable), a quoted string, a
+    ``key: value`` line, a ``.env`` line and a connection string stay values."""
+    if m.groupdict().get("sep") != "=" or _key_value_assignment(m):
         return False
     if _BIND_RE.fullmatch(value):
         return True
     named = _NAMED_BIND_RE.fullmatch(value)
-    word = next(m.group(g) for g in ("pw", "tok", "ak") if m.group(g))
-    return named is not None and named.group("name").endswith(word.lower())
+    if named is None:
+        return False
+    name = named.group("name") or named.group("py")
+    if any(c.isdigit() for c in name):
+        return False  # ``@Summer2024Password``, ``@hunter2_pwd``: a value, not a name
+    return name.lower() in _BARE_BIND_NAMES or _KEY_NAME_RE.fullmatch(name) is not None
 
 
 # The first word of the pipeline's own key note (``src/shared/key_refusals.py``
