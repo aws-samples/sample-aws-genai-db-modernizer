@@ -18,6 +18,7 @@ import html
 import json
 import re
 import subprocess  # nosec B404 -- runs this repo's own scripts/binaries with fixed argv
+from collections.abc import Iterable
 from pathlib import Path
 
 import pytest
@@ -4318,13 +4319,15 @@ def test_the_flagged_value_matcher_is_built_once_per_upload(
     from ci.llm import private_scan
 
     built: list[int] = []
-    real = private_scan.flagged_matcher
+    real = private_scan._KeyMatcher.build
 
-    def counting(flagged: list[tuple[str, str]], cut: list[str]) -> object:
+    def counting(cls: type, flagged: list[tuple[str, str]], cut: Iterable[str] = ()) -> object:
         built.append(1)
         return real(flagged, cut)
 
-    monkeypatch.setattr(private_scan, "flagged_matcher", counting)
+    # The construction itself is counted (round 2, Important 2), so a per-file build
+    # by any path, the call without ``matcher=`` included, fails this.
+    monkeypatch.setattr(private_scan._KeyMatcher, "build", classmethod(counting))
     a = "Uc7Pb3Xn" + "Mr5Qk9Ws"  # pragma: allowlist secret
     _collect(
         tmp_path,
@@ -4332,6 +4335,52 @@ def test_the_flagged_value_matcher_is_built_once_per_upload(
         {"notes.md": "password = " + a + "\n", "a.md": "a\n", "b.json": "{}", "c.log": "c\n"},
     )
     assert built == [1]
+
+
+def test_a_file_named_after_a_flagged_value_is_never_named_in_the_manifest(
+    tmp_path: Path,
+) -> None:
+    """#2266 review round 2, Important 1: ``rewritten`` shows a file whose name holds a
+    piece of a flagged value as ``[withheld]``, so neither ``job.findings.json`` nor
+    ``results.json`` carries the name; other files keep their names."""
+    from ci.llm import private_scan
+
+    a = "Wn6Rt9Kc" + "Bv2Xq7Pz"  # pragma: allowlist secret
+    out = _out_with_results(tmp_path)
+    (out / "deliverables").mkdir()
+    (out / "deliverables" / f"{a}.md").write_text("uses " + a + "\n")
+    (out / "deliverables" / f"report-{a[3:9].lower()}.md").write_text("uses " + a + "\n")
+    (out / "steps.md").write_text("uses " + a + "\n")
+    (out / "notes.md").write_text("password = " + a + "\n")
+    result = run.collect_job(tmp_path / "artifacts", out)
+    manifest = (out / "job.findings.json").read_text()
+    results = (out / "results.json").read_text()
+    withheld = private_scan.WITHHELD_NAME
+    assert json.loads(manifest)["rewritten"] == {withheld: 2, "steps.md": 1}
+    assert json.loads(results)["private_scan"]["rewritten"] == {withheld: 2, "steps.md": 1}
+    for text in (manifest, results, json.dumps(result)):
+        assert not [p for p in _pieces(a) if p in text.lower()]
+
+
+def test_an_escaped_value_in_a_markdown_or_html_upload_is_redacted(tmp_path: Path) -> None:
+    """#2266 review round 2, Important 3: through ``collect_job``, a ``.md`` upload
+    gets its Markdown escapes undone and an ``.html`` upload its character references,
+    before matching, so a value our renderers escaped is redacted; a ``.txt`` upload is
+    read as written."""
+    a = "Wn6Rt9_Kc*" + "Bv2Xq7"  # pragma: allowlist secret
+    md = "Wn6Rt9\\_Kc\\*Bv2Xq7"
+    entities = "".join(f"&#x{ord(c):x};" for c in a)
+    out = _out_with_results(tmp_path)
+    (out / "deliverables").mkdir()
+    (out / "deliverables" / "engineering-report.md").write_text(f"| {md} |\n")
+    (out / "deliverables" / "report.html").write_text(f"<td>{entities}</td>\n")
+    (out / "deliverables" / "notes.txt").write_text(f"{md} {entities}\n")
+    (out / "notes.md").write_text("password = " + a + "\n")
+    run.collect_job(tmp_path / "artifacts", out)
+    deliverables = out / "deliverables"
+    assert (deliverables / "engineering-report.md").read_text() == f"| {_MARK} |\n"
+    assert (deliverables / "report.html").read_text() == f"<td>{_MARK}</td>\n"
+    assert (deliverables / "notes.txt").read_text() == f"{md} {entities}\n"
 
 
 def test_a_unicode_escaped_value_is_compared_and_measured_decoded(tmp_path: Path) -> None:
