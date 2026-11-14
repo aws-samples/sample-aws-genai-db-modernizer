@@ -577,13 +577,14 @@ for _fn in (
     "_number_edits",
 ):
     NOT_OTHER_SQL_HEURISTICS[f"{_REDACT}:{_fn}"] = "a step of redact_literals, registered"
-for _fn in ("_Redactor.redact", "_Redactor._redact", "_Redactor._string"):
+for _fn in ("_Redactor.redact", "_Redactor._redact", "_Redactor._string", "_Redactor._comment"):
     NOT_OTHER_SQL_HEURISTICS[f"{_REDACT}:{_fn}"] = (
         "a step of redact_literals and redact_definition, registered"
     )
-for _fn in ("scrub_comment", "redact_comment"):
+for _fn in ("_credentials_masked", "_scrubbed_once", "redact_comment"):
     NOT_OTHER_SQL_HEURISTICS[f"{_REDACT}:{_fn}"] = (
-        "redacts a comment's text (quoted runs, e-mail addresses, long digit runs): a "
+        "redacts a comment's text (quoted runs, credential shapes, e-mail addresses, long "
+        "digit runs): a "
         "comment is prose to it, with no SQL span to read"
     )
 

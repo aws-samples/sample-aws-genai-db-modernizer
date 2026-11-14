@@ -19,8 +19,9 @@ the scripts and the live collectors use
 Both go through the one writer, so under the same rules:
 
 - the whole text is written only there, and its string literals stay only there: never
-  in the collector output (whose definitions keep their comments' plain text, #2234),
-  the result, a log line or an error message;
+  in the collector output, the result, a log line or an error message. The collector
+  output's definitions keep their comments' plain words, less each value the
+  repository's own credential rules flag, which is masked (#2234);
 - an index plus gzip chunks of at most 5,000 routines. The writer holds one chunk at a
   time; the request itself holds every entry, so "one chunk at a time" holds on the
   writer side only;

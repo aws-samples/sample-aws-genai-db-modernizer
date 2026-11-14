@@ -56,15 +56,19 @@ What is kept, because it is structure the routing parser reads and holds no valu
   (``@p1``, ``:id``, ``$1``, ``?``).
 
 Comments are not values, but they can hold one (:func:`redact_comment`, which also
-redacts each query tag read from a comment): an e-mail address (``%40``-encoded too)
-and a run of nine or more digits (a card, account or phone number) become ``?``
-(:func:`scrub_comment`), and in a comment that is not a sqlcommenter tag every run
+redacts each query tag read from a comment): each value the repository's own credential
+rules flag (:func:`src.shared.secret_scan.credential_spans`: an AWS access key id, a
+key-name pair such as ``password: ...``, a bearer or other known token format, a bare
+secret key, a public IP address; #2234), an e-mail address (``%40``-encoded too) and a
+run of nine or more digits (a card, account or phone number) become ``?``
+(:func:`scrub_comment`), keeping any ``/*`` or ``*/`` inside it (a MySQL executable
+comment is code, and only the known token formats in it are masked), and in a comment that is not a sqlcommenter tag every run
 of text between two quotes becomes ``?``, whether or not the quotes pair as a string
 (an apostrophe, ``don't``, would otherwise pair with a value's opening quote), so
-sqlcommenter keys and values and endpoint names stay readable. Plain words are kept: a name written in a comment is not found. A line
+sqlcommenter keys and values and endpoint names stay readable. Other plain words are kept: a name written in a comment is not found. A line
 comment that runs to the end of the text is the rest of the statement on the SQL
 Server and Oracle collections, which put each statement on one line, so its content
-is redacted as SQL. An unterminated string (a text cut at a length cap) keeps its
+is redacted as SQL, then scrubbed, keeping its bind parameters. An unterminated string (a text cut at a length cap) keeps its
 opening quote and loses the rest.
 
 :func:`redact_definition` does the same for a view, procedure or trigger definition,
@@ -102,6 +106,7 @@ from threading import Lock
 from typing import Any
 
 from src.contracts import collector_output as _collector_output
+from src.shared.secret_scan import credential_spans, token_format_spans
 from src.shared.sql_comments import block_comments_nest
 from src.shared.sql_spans import (
     Grammar,
@@ -350,9 +355,69 @@ def _long_digit_runs(text: str) -> str:
     return "".join(out)
 
 
-def scrub_comment(text: str) -> str:
-    """``text`` (a comment, or a tag read from one) with each e-mail address and each
-    run of nine or more digits replaced by ``?``. Idempotent, and linear in the text."""
+# An executable comment's leading version number (``/*!50000``, ``/*!800001``).
+_VERSION_RE = re.compile(r"\d{0,6}")
+# A bind parameter (``?``, ``$1``, ``%s``, ``:name``, ``@name``): no value, in code.
+_BIND_VALUE_RE = re.compile(r"\?|\$\d+|%s|[:@][A-Za-z_][\w$#]*")
+
+
+def _credentials_masked(
+    text: str, spans: list[tuple[int, int]] | None = None, *, code: bool = False
+) -> str:
+    """``text`` with each credential value the repository's own rules flag
+    (:func:`src.shared.secret_scan.credential_spans`, or the ``spans`` given) replaced
+    by ``?``. A ``/*`` or ``*/`` inside a flagged value is kept: a nested comment's
+    markers never change, so the SQL around the comment reads the same (#2234). With
+    ``code`` (text read as SQL), a flagged value that is a bind parameter is kept."""
+    if spans is None:
+        spans = credential_spans(text)
+    if code:
+        spans = [(a, b) for a, b in spans if not _BIND_VALUE_RE.fullmatch(text[a:b].rstrip("),;"))]
+    if not spans:
+        return text
+    marker = [False] * len(text)
+    for i in range(len(text) - 1):
+        if text[i : i + 2] in ("/*", "*/"):
+            marker[i] = marker[i + 1] = True
+    out: list[str] = []
+    last = 0
+    for start, end in spans:
+        out.append(text[last:start])
+        i = start
+        while i < end:
+            if marker[i]:
+                out.append(text[i])
+                i += 1
+                continue
+            while i < end and not marker[i]:
+                i += 1
+            out.append("?")
+        last = end
+    out.append(text[last:])
+    return "".join(out)
+
+
+# Masking one value can join what is left into another: the scrub repeats until
+# nothing changes (each pass only masks more; the bound is a guard).
+_SCRUB_PASSES = 4
+
+
+def scrub_comment(text: str, *, code: bool = False) -> str:
+    """``text`` (a comment, or a tag read from one) with each credential value the
+    repository's own rules flag (#2234), each e-mail address and each run of nine or
+    more digits replaced by ``?``. With ``code`` (the rest of a one-line statement, read
+    as SQL), a flagged value that is a bind parameter (``= @ApiKey``) is kept.
+    Idempotent."""
+    for _ in range(_SCRUB_PASSES):
+        again = _scrubbed_once(text, code)
+        if again == text:
+            break
+        text = again
+    return text
+
+
+def _scrubbed_once(text: str, code: bool = False) -> str:
+    text = _credentials_masked(text, code=code)
     if "@" not in text and "%40" not in text and not any(c.isdigit() for c in text):
         return text
     if "@" in text or "%40" in text:
@@ -686,11 +751,18 @@ class _Redactor:
         code = True
         if code and opener in ("--", "#") and at_end and "\n" not in span:
             # The rest of a one-line statement: SQL, redacted as such.
-            rest = scrub_comment(span[len(opener) :])
-            return opener + scrub_comment(self._redact(rest, numbering, body=False))
+            rest = scrub_comment(span[len(opener) :], code=True)
+            return opener + scrub_comment(self._redact(rest, numbering, body=False), code=True)
         if code and span.startswith("/*!") and span.endswith("*/") and len(span) >= 5:
-            # MySQL's executable comment is code.
-            return "/*!" + self._redact(span[3:-2], numbering, body=False) + "*/"
+            # MySQL's executable comment is code, less any known token format, which
+            # valid SQL never holds outside a string (#2234).
+            inner = span[3:-2]
+            # The version (MySQL reads its first 5 or 6 digits) is no part of a token
+            # stuck to it (``/*!50000<token>``).
+            version = len(_VERSION_RE.match(inner).group())  # type: ignore[union-attr]
+            spans = [(a + version, b + version) for a, b in token_format_spans(inner[version:])]
+            inner = _credentials_masked(inner, spans)
+            return "/*!" + self._redact(inner, numbering, body=False) + "*/"
         if code and opener == "/*" and (len(span) < 4 or not span.endswith("*/")):
             # Cut inside a comment: what follows may be the statement itself.
             return "/*" + scrub_comment(

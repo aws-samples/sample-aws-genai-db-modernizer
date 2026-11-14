@@ -158,6 +158,7 @@ def _chunks(collector: Path) -> list[bytes]:
     return [p.read_bytes() for p in sorted((collector / "routine_sources").glob("part-*"))]
 
 
+@pytest.mark.passes_on_main  # only its docstring changed (#2234)
 @pytest.mark.parametrize("collection", [pg_collection, mysql_collection])
 def test_a_1_4_run_extracts_the_collections_bodies_as_the_scripts_do(
     collection: Any, tmp_path: Path, caplog: pytest.LogCaptureFixture
@@ -166,8 +167,8 @@ def test_a_1_4_run_extracts_the_collections_bodies_as_the_scripts_do(
     audit's pg_collection: 4 bodies) writes the routine sources the scripts write from
     the same file, byte for byte: the same writer, exact rule, scan and chunks. A string
     literal of a body (SEED) stays only in the chunks: not in the result, a log record or
-    any other file. Comment text is kept by the collector output's redaction (#2234), so
-    the claim, and this test, are about literals."""
+    any other file. A credential's shape in a comment is covered by
+    test_a_credential_in_a_body_comment_stays_only_in_the_chunks (#2234)."""
     caplog.set_level(logging.DEBUG)
     # SEED sits inside a string literal of each body it is in: what the claim covers.
     assert all(
@@ -193,6 +194,35 @@ def test_a_1_4_run_extracts_the_collections_bodies_as_the_scripts_do(
     assert SEED not in result.model_dump_json()
     assert SEED not in caplog.text
     assert all(SEED not in (record.exc_text or "") for record in caplog.records)
+
+
+# A made-up AWS access key id's shape (two parts, so no scanner reads it here).
+_COMMENT_KEY = "AKIA" + "QWERTYUIOPASDFGH"  # pragma: allowlist secret
+
+
+@pytest.mark.parametrize("collection", [pg_collection, mysql_collection])
+def test_a_credential_in_a_body_comment_stays_only_in_the_chunks(
+    collection: Any, tmp_path: Path, caplog: pytest.LogCaptureFixture
+) -> None:
+    """A credential's shape written unquoted in a routine body's comment (#2234) is
+    masked in the collector output's redacted definition, as a string literal is: the
+    full text is only in the chunks, never in the result (its artifacts block included),
+    another file or a log record."""
+    caplog.set_level(logging.DEBUG)
+    raw = collection()
+    for row in raw["procedures"]:
+        if row.get("definition"):
+            row["definition"] = row["definition"].replace(
+                "BEGIN\n", f"BEGIN\n  -- deploy key {_COMMENT_KEY}\n  /* key {_COMMENT_KEY} */\n", 1
+            )
+    assert any(_COMMENT_KEY in (row.get("definition") or "") for row in raw["procedures"])
+    result, _store = _run(tmp_path, raw, None, include_artifacts=True)
+    leaks = _files_holding(tmp_path / "artifacts", _COMMENT_KEY)
+    assert leaks and all(
+        p.startswith("shop/rs000001/collector/routine_sources/part-") for p in leaks
+    )
+    assert _COMMENT_KEY not in result.model_dump_json()
+    assert _COMMENT_KEY not in caplog.text
 
 
 def test_a_1_4_run_with_the_opt_out_extracts_none_even_from_a_file_holding_bodies(

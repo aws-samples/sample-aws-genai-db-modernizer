@@ -526,11 +526,14 @@ def _allowed(kind: str, line: str, span: tuple[int, int]) -> bool:
 Hit = tuple[str, "tuple[int, int] | None"]
 
 
-def _line_hits(line: str, emails: bool, narrow_key_names: bool = False) -> list[Hit]:
+def _line_hits(
+    line: str, emails: bool, narrow_key_names: bool = False, plugins: bool = True
+) -> list[Hit]:
     """Each finding on ``line``: its kind and the span of its value (``None`` when the
-    value cannot be placed on the line). Allowed values are left out."""
+    value cannot be placed on the line). Allowed values are left out. ``plugins=False``
+    runs the repository's own rules only (``RULE_SET`` ``"regex"``)."""
     found: list[Hit] = []
-    for secret in _detect_secrets_line(line):
+    for secret in _detect_secrets_line(line) if plugins else ():
         value = secret.secret_value or ""
         spans = [(m.start(), m.end()) for m in re.finditer(re.escape(value), line)] if value else []
         if not spans:
@@ -602,3 +605,57 @@ def secret_kinds(text: str, key_names: bool = True) -> set[str]:
     for _number, _line, _body, hits, _table in _scan_lines(text, key_names):
         kinds.update(kind for kind, _ in hits)
     return kinds
+
+
+# A URL's userinfo password (``mysql://user:<password>@host``, ``jdbc:mysql://...``,
+# Redis's empty user ``redis://:<password>@host``): the value detect-secrets' Basic Auth
+# plugin reports. The user is read as that plugin reads it, or is empty; the password
+# with fewer characters left out, so every value it reports is found, and up to the
+# last ``@`` before the host (an unencoded ``@`` in it, split as common parsers do).
+_URL_USER = r"[^\s{}:/?#\[\]@!$&'()*+,;=]*"
+_URL_PASSWORD_RE = re.compile(r"://" + _URL_USER + r":(?P<v>[^\s{}/]+)@")
+# A known token format standing on its own (not the tail of a longer word).
+_BOUNDED_TOKEN_RE = re.compile(r"(?<![\w-])(?:" + _TOKEN_FORMAT_RE.pattern + r")")
+
+
+def token_format_spans(text: str) -> list[tuple[int, int]]:
+    """The span of each known token format in ``text`` (``_TOKEN_FORMAT_RE``: an AWS
+    access key id, a GitHub, GitLab, Slack, npm, Stripe or OpenAI-style token, a JSON
+    Web Token) that is not the tail of a longer word: what valid SQL never holds
+    outside a string, so it can be masked in code (a MySQL executable comment, #2234)."""
+    return [m.span() for m in _BOUNDED_TOKEN_RE.finditer(text)]
+
+
+def credential_spans(text: str) -> list[tuple[int, int]]:
+    """The span (offsets in ``text``) of each credential value the repository's own
+    rules find, strictly, sorted and merged: every ``RULE_SET`` ``"regex"`` rule (key-name
+    pairs, a Markdown credential column, the AWS, Google, Slack, bearer and private-key
+    shapes, a bare secret key, public IP addresses), a URL's userinfo password (only the
+    password: the scheme, user and host stay), and the known token formats of
+    ``_TOKEN_FORMAT_RE`` (GitHub, GitLab, Slack, npm, Stripe and OpenAI-style tokens, a
+    JSON Web Token), which stand in for detect-secrets' shape plugins. No plugin runs,
+    so the spans are the same in every image, with or without detect-secrets: what the
+    collector masks in a SQL comment (``src.tools.sql.redact.scrub_comment``, #2234)
+    never depends on a dev dependency."""
+    if not text:
+        return []
+    spans: list[tuple[int, int]] = []
+    offset = 0
+    lines = text.splitlines(keepends=True)
+    tables = _table_hits([line.rstrip("\r\n") for line in lines])
+    for index, line in enumerate(lines):
+        body = line.rstrip("\r\n")
+        hits = _line_hits(body, emails=False, plugins=False)
+        hits += [(kind, span) for kind, span, _ in tables.get(index, [])]
+        found = [span for _kind, span in hits if span is not None]
+        found += [m.span() for m in _TOKEN_FORMAT_RE.finditer(body)]
+        found += [m.span("v") for m in _URL_PASSWORD_RE.finditer(body)]
+        spans += [(offset + a, offset + b) for a, b in found if b > a]
+        offset += len(line)
+    merged: list[tuple[int, int]] = []
+    for start, end in sorted(spans):
+        if merged and start <= merged[-1][1]:
+            merged[-1] = (merged[-1][0], max(merged[-1][1], end))
+        else:
+            merged.append((start, end))
+    return merged
