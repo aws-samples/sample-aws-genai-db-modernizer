@@ -39,6 +39,11 @@ def _fold(value: object) -> str:
     return str(value or "").strip().casefold()
 
 
+def _exact(value: object) -> str:
+    # a PostgreSQL schema "Reporting" is not reporting: schemas match exactly
+    return str(value or "").strip()
+
+
 def trigger_events(raw: object) -> list[str]:
     """Every DML event in ``raw``, in INSERT, UPDATE, DELETE order; empty for none."""
     text = " ".join(str(r) for r in raw) if isinstance(raw, list | tuple) else str(raw or "")
@@ -248,13 +253,13 @@ def attach_routine_stats(
         return
 
     def attach(kind: str, item: dict[str, Any], name_key: str) -> None:
-        schema = _fold(item.get("schema_name"))
+        schema = _exact(item.get("schema_name"))
         rows = [
             s
             for s in by_name.get((kind, _fold(item.get(name_key))), [])
             if not schema
-            or not _fold(s.get("schema_name"))
-            or _fold(s.get("schema_name")) == schema
+            or not _exact(s.get("schema_name"))
+            or _exact(s.get("schema_name")) == schema
         ]
         counts = [c for c in (_number(s.get("execution_count")) for s in rows) if c is not None]
         if not counts:

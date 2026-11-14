@@ -92,7 +92,6 @@ _PROCEDURES_SQL = """
       AND n.nspname NOT IN ('pg_catalog', 'information_schema')
       AND n.nspname NOT LIKE 'pg_toast%'
       AND n.nspname NOT LIKE 'pg_temp%'
-      AND pr.proname NOT LIKE 'pg_%'
       AND NOT EXISTS (
         SELECT 1 FROM pg_depend x
         WHERE x.classid = 'pg_proc'::regclass AND x.objid = pr.oid
@@ -136,6 +135,10 @@ _TRIGGERS_SQL = """
       AND n.nspname NOT IN ('pg_catalog', 'information_schema')
       AND n.nspname NOT LIKE 'pg_toast%'
       AND n.nspname NOT LIKE 'pg_temp%'
+      AND NOT EXISTS (
+        SELECT 1 FROM pg_depend xt
+        WHERE xt.classid = 'pg_class'::regclass AND xt.objid = c.oid
+          AND xt.refclassid = 'pg_extension'::regclass AND xt.deptype = 'e')
     ORDER BY c.relname, t.tgname
 """
 
@@ -487,10 +490,18 @@ class PostgreSQLRemoteCollector:
         filled only when ``track_functions`` is pl or all) and how they were read; the
         setting is never changed."""
         stats = self._query("""
-            SELECT funcname AS routine_name, schemaname AS schema_name,
-                   'FUNCTION' AS object_type, calls AS execution_count,
-                   round(total_time::numeric, 3) AS total_time_ms
-            FROM pg_stat_user_functions
+            SELECT s.funcname AS routine_name, s.schemaname AS schema_name,
+                   'FUNCTION' AS object_type, s.calls AS execution_count,
+                   round(s.total_time::numeric, 3) AS total_time_ms
+            FROM pg_stat_user_functions s
+            JOIN pg_proc pr ON pr.oid = s.funcid
+            WHERE s.schemaname NOT IN ('pg_catalog', 'information_schema')
+              AND s.schemaname NOT LIKE 'pg_toast%'
+              AND s.schemaname NOT LIKE 'pg_temp%'
+              AND NOT EXISTS (
+                SELECT 1 FROM pg_depend x
+                WHERE x.classid = 'pg_proc'::regclass AND x.objid = pr.oid
+                  AND x.refclassid = 'pg_extension'::regclass AND x.deptype = 'e')
         """)
         setting = self._query("SELECT current_setting('track_functions') AS track_functions")
         if setting and str(setting[0].get("track_functions") or "") == "none":
