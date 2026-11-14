@@ -43,7 +43,11 @@ def _schema_key(source_engine: str) -> Callable[[object], str]:
     """How the engine compares schema names: a PostgreSQL schema ``"Reporting"`` is not
     ``reporting``, so it matches exactly; MySQL, MariaDB and SQL Server may spell one
     schema two ways (``lower_case_table_names=2``), so they fold the case."""
-    return (lambda v: str(v or "").strip()) if source_engine == "postgresql" else _fold
+    from src.tools.database.offline_parser import normalize_engine  # offline_parser imports us
+
+    if normalize_engine(source_engine) == "postgresql":
+        return lambda v: str(v or "").strip()
+    return _fold
 
 
 def trigger_events(raw: object) -> list[str]:
