@@ -60,6 +60,7 @@ from src.shared.engine_names import display_engine
 from src.tools.data_movement.collations import NOT_CARRIED as COLLATION_NOT_CARRIED
 from src.tools.data_movement.collations import SERVER_DEFAULTS as SERVER_DEFAULTS
 from src.tools.data_movement.collations import (
+    alter_comment,
     column_options,
     database_options,
     database_sentence,
@@ -476,7 +477,8 @@ def _step1_ddl(
             ):
                 raise DmsStepError(f"{rule.source_table}.{f.target_column}: the DDL declares "
                                    f"{declared.get(f.target_column)}, the contract {f.target_type}")  # fmt: skip
-    ordered = [_with_collations(generated[name], rules[name]) for name in sorted(generated)]
+    line = contract.target.engine_line
+    ordered = [_with_collations(generated[name], rules[name], line) for name in sorted(generated)]
     identity = sorted(
         (rule.source_table, c.name)
         for name, rule in rules.items()
@@ -486,7 +488,7 @@ def _step1_ddl(
     return assemble_full_ddl(ordered) + "\n", tuple(identity)
 
 
-def _with_collations(table: Any, rule: Rule) -> Any:
+def _with_collations(table: Any, rule: Rule, engine_line: str | None = None) -> Any:
     """``table``'s CREATE TABLE with the rule's own table and column collations (#2276):
     ``DEFAULT CHARSET=... COLLATE=...`` after its closing parenthesis, ``CHARACTER SET ...
     COLLATE ...`` after a column's type. Unchanged with none."""
@@ -505,12 +507,13 @@ def _with_collations(table: Any, rule: Rule) -> Any:
             raise DmsStepError(
                 f"{rule.source_table}.{c.name}: cannot place its collation in the DDL"
             )
-        lines[found[0]] = lines[found[0]].replace(head, head + column_options(columns[c.name]), 1)
+        clause = column_options(columns[c.name], engine_line)
+        lines[found[0]] = lines[found[0]].replace(head, head + clause, 1)
     sql = "\n".join(lines)
     if rule.collation is not None:
         if not sql.endswith("\n);"):
             raise DmsStepError(f"{rule.source_table}: cannot place its collation in the DDL")
-        sql = sql[:-1] + table_options(rule.collation) + ";"
+        sql = sql[:-1] + table_options(rule.collation, engine_line) + ";"
     return dataclasses.replace(table, create_sql=sql)
 
 
@@ -1644,6 +1647,10 @@ def _lob_lines(inputs: Step1Inputs) -> list[str]:
     return ["", head]
 
 
+def _collation_sentence(target: Any) -> str:
+    return database_sentence(target.collation, target.engine_line, target.collation_note)
+
+
 def _collation_lines(inputs: Step1Inputs) -> list[str]:
     """The tables and columns that keep a collation of their own, and each one whose source
     collation is not carried and why (#2276); none when the database's is not carried."""
@@ -1741,7 +1748,7 @@ def render_ddl(inputs: Step1Inputs) -> str:
         "About this DDL:",
         "- Keep the declared column names: DMS matches columns by name, not by position, so the column "
         "order does not matter but a renamed column gets no data.",
-        f"- {database_sentence(inputs.contract.target.collation, inputs.contract.target.collation_note)}",
+        f"- {_collation_sentence(inputs.contract.target)}",
         "- The indexes of a saved schema design are not in this file: it creates the keys, the source's "
         "indexes and the foreign keys between moved tables only. Add the design's indexes when you choose.",
     ]
@@ -1785,8 +1792,12 @@ def render_ddl(inputs: Step1Inputs) -> str:
             out += f"CREATE EXTENSION IF NOT EXISTS {_pg_ident(e.name)};\n"
     else:
         db = database.replace("`", "``")
-        options = database_options(inputs.contract.target.collation)
-        out += f"\nCREATE DATABASE IF NOT EXISTS `{db}`{options};\nUSE `{db}`;\n"
+        target = inputs.contract.target
+        options = database_options(target.collation, target.engine_line)
+        alter = "".join(
+            f"{line}\n" for line in alter_comment(f"`{db}`", target.collation, target.engine_line)
+        )
+        out += f"\n{alter}CREATE DATABASE IF NOT EXISTS `{db}`{options};\nUSE `{db}`;\n"
     out += _enum_type_block(inputs)
     out += "\n" + inputs.ddl.strip() + "\n"
     replication = _replication(inputs)

@@ -561,12 +561,20 @@ def test_the_databases_the_triggers_enable_script_creates_get_the_carried_collat
 
     target = TargetSpec.model_validate({"engine": "aurora_mysql", "collation": {
         "character_set": "utf8mb4", "collation": "utf8mb4_unicode_ci"}})  # fmt: skip
+    from src.tools.data_movement.dms_step import render_ddl
+    from tests.unit.tools.data_movement.dms_step_fixtures import make_bundle, rebuilt
+
     _event_in(tmp_path, "shop", "jobs", target=target)
     text = _read(tmp_path, TRIGGERS_FILE)
-    assert _lines(text, "CREATE DATABASE") == [
-        "CREATE DATABASE IF NOT EXISTS `jobs` CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;"]  # fmt: skip
+    bundle = make_bundle("aurora_mysql")
+    ddl = render_ddl(rebuilt(bundle, bundle.contract.rules, target=target))
+    # The clause step-1.ddl.sql writes for the same contract, whatever its text (#2276).
+    (clause,) = {line.split("`shop`", 1)[1] for line in _lines(ddl, "CREATE DATABASE")}
+    assert " COLLATE utf8mb4_unicode_ci" in clause
+    assert _lines(text, "CREATE DATABASE") == [f"CREATE DATABASE IF NOT EXISTS `jobs`{clause}"]
+    assert f"-- ALTER DATABASE `jobs`{clause}" in text  # for a database that already exists
     flat = " ".join(line[3:].strip() for line in text.splitlines() if line.startswith("-- "))
-    assert "It gives the database the source's character set and collation (utf8mb4," in flat
+    assert "It creates the database with CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci" in flat
 
 
 @pytest.mark.passes_on_main

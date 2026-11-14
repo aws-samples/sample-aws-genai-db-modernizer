@@ -31,8 +31,9 @@ def database_collation(
     if engine != "aurora_mysql" or source.engine.value not in _SOURCES:
         return TargetSpec(engine=engine)
     value, note = carry(source.default_collation, source.default_character_set, line,
-                        "the database", "the cluster's server defaults")  # fmt: skip
-    return TargetSpec(engine=engine, collation=value, collation_note=note)
+                        "the database", "the cluster's server default")  # fmt: skip
+    return TargetSpec(engine=engine, collation=value, collation_note=note,
+                      engine_line=line if value is not None else None)  # fmt: skip
 
 
 def _same(value: CharacterSet, name: str) -> bool:

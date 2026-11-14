@@ -435,8 +435,7 @@ def test_a_routine_database_is_created_as_the_step_ddl_creates_the_tables_databa
     ddl = render_ddl(rebuilt(bundle, bundle.contract.rules, target=target))
     assert _database_clauses(text) == _database_clauses(ddl)
     assert "COLLATE utf8mb4_unicode_ci" in text and "CHARACTER SET utf8mb4" in text
-    found = re.search(r"It gives the database the source's character set and collation .*? keeps "
-                      r"its own\.", _flat_comments(ddl))  # fmt: skip
+    found = re.search(r"It creates the database with .*? keeps its own\.", _flat_comments(ddl))
     assert found and found.group(0) in _flat_comments(text)
 
 

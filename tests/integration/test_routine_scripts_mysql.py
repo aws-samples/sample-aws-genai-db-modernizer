@@ -253,3 +253,44 @@ def test_tables_and_routines_land_on_the_source_collation_and_a_parameter_compar
         assert mixed.returncode != 0 and b"ERROR 1267" in mixed.stderr, mixed.stderr.decode()
     finally:
         _mysql(client, sock, reset)
+
+
+def test_a_database_that_already_exists_lands_on_the_source_collation_with_the_alter_the_scripts_name(
+    mysql_socket, tmp_path
+):
+    # Review of #2282: CREATE DATABASE IF NOT EXISTS keeps an existing database's collation.
+    # Created beforehand on the server default, `shop` gives the tables utf8mb4_0900_ai_ci next
+    # to routines on utf8mb4_unicode_ci (ERROR 1267); the ALTER DATABASE the scripts name, run
+    # first while the database holds nothing else, puts it on the source's.
+    import re
+
+    client, sock = mysql_socket
+    reset = "DROP DATABASE IF EXISTS shop; DROP DATABASE IF EXISTS shop_functions;"
+    _mysql(
+        client,
+        sock,
+        reset + "CREATE USER IF NOT EXISTS 'admin'@'%'; GRANT ALL ON *.* TO 'admin'@'%';",
+    )
+    step = _collation_job(tmp_path)
+    ddl = (step / "step-1.ddl.sql").read_text()
+    (alter,) = re.findall(r"^-- (ALTER DATABASE `shop` [^\n]*;)$", ddl, re.M)
+    try:
+        for first in ("", alter):
+            _mysql(client, sock, reset + "CREATE DATABASE shop;" + first)
+            for script in ("step-1.ddl.sql", DEPLOY_FILE):
+                ran = _mysql(client, sock, None, stdin=step / script)
+                assert ran.returncode == 0, ran.stderr.decode()
+            _mysql(client, sock, "INSERT INTO shop.audit_log (msg) VALUES ('x');")
+            called = _mysql(
+                client, sock, "CALL shop_functions.find_msg('x')", "--batch", "--skip-column-names"
+            )
+            if not first:
+                assert (
+                    called.returncode != 0 and b"ERROR 1267" in called.stderr
+                ), called.stderr.decode()
+            else:
+                assert (
+                    called.returncode == 0 and called.stdout.decode().strip() == "1"
+                ), called.stderr.decode()
+    finally:
+        _mysql(client, sock, reset)

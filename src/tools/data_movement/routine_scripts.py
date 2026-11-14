@@ -374,12 +374,25 @@ def schema_statements(
             *(f"CREATE SCHEMA IF NOT EXISTS {_pg_ident(s)};" for s in schemas),
             "",
         ]
-    from src.tools.data_movement.collations import database_options, database_sentence
+    from src.tools.data_movement.collations import (
+        alter_comment,
+        database_options,
+        database_sentence,
+    )
 
     # As step-1.ddl.sql creates the tables' database, so a routine's parameters (an event's
     # DECLAREd variables) take the moved tables' collation (a mix fails with ERROR 1267, #2276).
     value = target.collation if target else None
-    sentence = database_sentence(value, target.collation_note if target else None)
+    line = target.engine_line if target else None
+    sentence = database_sentence(value, line, target.collation_note if target else None)
+    statements = [
+        text
+        for s in schemas
+        for text in (
+            *alter_comment(_mysql_ident(s), value, line),
+            f"CREATE DATABASE IF NOT EXISTS {_mysql_ident(s)}{database_options(value, line)};",
+        )
+    ]
     if triggers:  # the triggers-enable script (#2273): its databases hold triggers and events
         return [
             "-- The databases its triggers and events live in that step 1's DDL does not create "
@@ -389,10 +402,7 @@ def schema_statements(
             "-- Each event runs as its DEFINER, which needs the privileges its body uses; the "
             "script grants nothing.",
             f"-- Each CREATE DATABASE here is like step-1.ddl.sql's. {sentence}",
-            *(
-                f"CREATE DATABASE IF NOT EXISTS {_mysql_ident(s)}{database_options(value)};"
-                for s in schemas
-            ),
+            *statements,
             "",
         ]
 
@@ -402,10 +412,7 @@ def schema_statements(
         "-- Each is created by the user that runs this script, and the script grants nothing: "
         "EXECUTE on each database for the application user is yours to add.",
         f"-- Each CREATE DATABASE here is like step-1.ddl.sql's. {sentence}",
-        *(
-            f"CREATE DATABASE IF NOT EXISTS {_mysql_ident(s)}{database_options(value)};"
-            for s in schemas
-        ),
+        *statements,
         "",
     ]
 
