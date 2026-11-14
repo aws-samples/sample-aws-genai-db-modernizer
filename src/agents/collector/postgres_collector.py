@@ -419,7 +419,7 @@ def _collect_schema_raw(db: PostgreSQLRemoteCollector, include_bodies: bool = Tr
     routine_status: dict | None = None
     try:
         routine_stats, routine_status = db.collect_routine_stats()
-        attach_routine_stats(procedures, triggers, routine_stats)
+        attach_routine_stats(procedures, triggers, routine_stats, source_engine="postgresql")
     except Exception:
         logger.warning("Failed to collect routine stats")
 

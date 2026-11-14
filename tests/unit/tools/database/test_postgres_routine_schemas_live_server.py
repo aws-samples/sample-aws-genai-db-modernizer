@@ -176,7 +176,6 @@ def test_a_user_function_named_pg_something_is_kept(server):
     assert {("public", "pg_audit_note"), ("public", "pgsync_rows")} <= script
 
 
-@pytest.mark.passes_on_main
 def test_aggregates_are_not_collected(server):
     names = {r["routine_name"] for r in _live(server).collect_procedures()}
     assert "sc_sum" not in names and "sc_sfunc" in names
@@ -233,6 +232,7 @@ def _run_all(server, sql: str) -> list[dict]:
     return _live(server)._query(sql)
 
 
+@pytest.mark.passes_on_main
 def test_function_counts_leave_out_extension_and_system_functions(server):
     server.psql("ALTER DATABASE postgres SET track_functions = 'all';")
     server.psql("SELECT ext_home.vector_dims('[1,2]'::ext_home.vector); SELECT 1;")
@@ -250,9 +250,65 @@ def test_function_counts_keep_schemas_that_differ_only_by_case_apart(server):
     procs = [r for r in db.collect_procedures() if r["routine_name"] == "f"]
     from src.agents.collector.routine_rows import attach_routine_stats
 
-    attach_routine_stats(procs, [], stats)
+    attach_routine_stats(procs, [], stats, source_engine="postgresql")
     counts = {p["schema_name"]: p.get("execution_count") for p in procs}
-    assert counts["Reporting"] != counts["reporting"] and counts["reporting"] >= 2
+    assert (counts["Reporting"], counts["reporting"]) == (1, 2)
+
+
+def test_a_user_trigger_on_a_user_table_in_an_extension_schema_is_kept(server):
+    server.psql(
+        "\\set ON_ERROR_STOP on\n"
+        "CREATE TABLE ext_home.user_t (id int);\n"
+        "CREATE FUNCTION ext_home.user_fn() RETURNS trigger LANGUAGE plpgsql "
+        "AS $$ BEGIN RETURN NEW; END $$;\n"
+        "CREATE TRIGGER user_tg BEFORE INSERT ON ext_home.user_t "
+        "FOR EACH ROW EXECUTE FUNCTION ext_home.user_fn();\n"
+    )
+    live = _live(server)
+    assert ("ext_home", "user_tg") in {
+        (r["schema_name"], r["trigger_name"]) for r in live.collect_triggers()
+    }
+    assert ("ext_home", "user_fn") in {
+        (r["schema_name"], r["routine_name"]) for r in live.collect_procedures()
+    }
+    script = {(r["schema_name"], r["trigger_name"]) for r in _script_rows(server, "triggers_data")}
+    assert ("ext_home", "user_tg") in script
+
+
+def test_function_counts_leave_out_another_sessions_temporary_function(server):
+    server.psql("ALTER DATABASE postgres SET track_functions = 'all';")
+    server.psql(
+        "SET allow_system_table_mods = on;\n"
+        "CREATE OR REPLACE FUNCTION pg_toast.sc_toast_fn() RETURNS int LANGUAGE plpgsql "
+        "AS $$ BEGIN RETURN 9; END $$;\nSELECT pg_toast.sc_toast_fn();\n"
+    )
+    ready = threading.Event()
+
+    def hold():
+        ready.set()
+        server.psql(
+            "CREATE FUNCTION pg_temp.sc_tmp_count() RETURNS int LANGUAGE plpgsql AS $$ "
+            "BEGIN RETURN 1; END $$;\n"
+            "SELECT pg_temp.sc_tmp_count();\nSELECT pg_stat_force_next_flush();\n"
+            "SELECT pg_sleep(6);\n"
+        )
+
+    thread = threading.Thread(target=hold)
+    thread.start()
+    ready.wait()
+    time.sleep(2)
+    try:
+        raw = _live(server)._query(
+            "SELECT schemaname AS schema_name FROM pg_stat_user_functions "
+            "WHERE funcname IN ('sc_tmp_count', 'sc_toast_fn')"
+        )
+        assert {r["schema_name"].split("_")[1] for r in raw} == {"temp", "toast"}, raw
+        live, _ = _live(server).collect_routine_stats()
+        script = _script_rows(server, "routine_stats_data")
+        for rows in (live, script):
+            assert not any(r["schema_name"].startswith(("pg_temp", "pg_toast")) for r in rows)
+    finally:
+        thread.join()
 
 
 def test_the_scripts_function_counts_leave_out_extension_functions(server):

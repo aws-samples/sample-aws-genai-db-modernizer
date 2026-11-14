@@ -17,7 +17,7 @@ from __future__ import annotations
 
 import logging
 import re
-from collections.abc import Mapping, Sequence
+from collections.abc import Callable, Mapping, Sequence
 from decimal import Decimal
 from typing import TYPE_CHECKING, Any, cast
 
@@ -39,9 +39,11 @@ def _fold(value: object) -> str:
     return str(value or "").strip().casefold()
 
 
-def _exact(value: object) -> str:
-    # a PostgreSQL schema "Reporting" is not reporting: schemas match exactly
-    return str(value or "").strip()
+def _schema_key(source_engine: str) -> Callable[[object], str]:
+    """How the engine compares schema names: a PostgreSQL schema ``"Reporting"`` is not
+    ``reporting``, so it matches exactly; MySQL, MariaDB and SQL Server may spell one
+    schema two ways (``lower_case_table_names=2``), so they fold the case."""
+    return (lambda v: str(v or "").strip()) if source_engine == "postgresql" else _fold
 
 
 def trigger_events(raw: object) -> list[str]:
@@ -238,11 +240,16 @@ def execution_stats(row: Mapping[str, Any]) -> Any:
 
 
 def attach_routine_stats(
-    procedures: Sequence[dict[str, Any]], triggers: Sequence[dict[str, Any]], stats: object
+    procedures: Sequence[dict[str, Any]],
+    triggers: Sequence[dict[str, Any]],
+    stats: object,
+    *,
+    source_engine: str,
 ) -> None:
     """Copy each stats row's ``execution_count`` and ``total_time_ms`` onto its routine,
     in place, summed over overloads. A row matches by kind (trigger or routine) and name,
-    and by schema when both sides name one; a row for a routine the collection does not
+    and by schema when both sides name one (exactly for PostgreSQL, ignoring case for the
+    other engines); a row for a routine the collection does not
     list (dropped, system, another schema) is ignored."""
     by_name: dict[tuple[str, str], list[Mapping[str, Any]]] = {}
     for s in stats if isinstance(stats, list) else []:
@@ -251,15 +258,14 @@ def attach_routine_stats(
             by_name.setdefault((kind, _fold(s["routine_name"])), []).append(s)
     if not by_name:
         return
+    same = _schema_key(source_engine)
 
     def attach(kind: str, item: dict[str, Any], name_key: str) -> None:
-        schema = _exact(item.get("schema_name"))
+        schema = same(item.get("schema_name"))
         rows = [
             s
             for s in by_name.get((kind, _fold(item.get(name_key))), [])
-            if not schema
-            or not _exact(s.get("schema_name"))
-            or _exact(s.get("schema_name")) == schema
+            if not schema or not same(s.get("schema_name")) or same(s.get("schema_name")) == schema
         ]
         counts = [c for c in (_number(s.get("execution_count")) for s in rows) if c is not None]
         if not counts:
