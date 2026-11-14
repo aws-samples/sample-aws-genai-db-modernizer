@@ -34,10 +34,12 @@ ADR-030), whose gate fails a routing regression.
   `tables_served`, `primary_tables`, `owned_tables`, schema counts, assignment reasons),
   `eliminated_engines` (with `absorbed_by`), `reality_check` (before/after
   query distribution and each move), `tco`, `risks[]`, `mitigation_strategies`,
-  `migration_waves`, `routing_margins` (close calls per engine pair) and
+  `migration_waves`, `routing_margins` (close calls per engine pair),
   `migration_risk_facts` (what this migration's shape implies the risk
-  register should cover; `null` in a field means the report does not carry
-  it, not zero).
+  register should cover) and `adoption` (the adoption paths shown: each
+  path's engines, queries off the relational engine and cost, the cost basis,
+  the paths not offered and the one-step verdict). `null` in a field means
+  the report does not carry it, not zero.
 - **`executive_pdf`**: full text of the executive report PDF, one
   `[page N: title]` marker per page. It is a briefing: totals and reasons, and
   no per-query detail. It leaves out every sentence or clause that names a
@@ -124,11 +126,16 @@ count) that no `facts` field carries, or that contradicts one (kinds
 `unsupported_figure`, `cost_mismatch`), or a per-engine cost row that does not
 add up to the total (more than $1 apart). Renderers only format (ADR-032): a
 sum, difference or share that a renderer computed and `facts` does not carry
-is a defect, even when the arithmetic is right. Not a defect: a figure `facts`
+is a defect, even when the arithmetic is right. An adoption path's engines,
+queries off the relational engine, cost and difference are checked against
+`facts.adoption.paths`: a cost or difference is null there where no
+deliverable may print one (an earlier path's cost needs `cost_basis`
+`per_path_sizing`), so a figure printed in its place is `unsupported_figure`.
+Not a defect: a figure `facts`
 carries (a wave's `facts.wave_figures`, `facts.tco`, `facts.totals`), a facts
 figure rounded to the precision it is shown at, a per-query or schema-design
 figure shown verbatim from its own section (not summed or shared in a
-renderer), and the same figure stated twice.
+renderer), "-" for a cost that is null, and the same figure stated twice.
 
 - **1** — Six or more defects (the headline cap above limits a headline
   defect to 2).
@@ -224,6 +231,11 @@ count table scores it.
 
 - `roadmap_mismatch`: a wave lists a table whose engine in the wave is not in
   that table's `tables_served`, and the wave does not list it as kept current by CDC.
+  For the adoption paths (`facts.adoption`, counted per path): engines that
+  differ from the path's entry, a default other than `default_path_id` (the
+  staged full target), wording that ranks one path above another ("best",
+  "recommended", "quickest win"), or cutover advice (when or how to switch,
+  "ready", "caught up") beyond "The cutover is your responsibility.".
 - `unclear_order`: a wave whose section, and the roadmap's introduction, state
   no reason at all for its position (a dependency, a risk or a business
   priority, in a "once", "before", "because" or "Why" sentence). A reason that
@@ -272,7 +284,9 @@ repeated in several places counts once.
 
 ## 6. concision
 
-Every passage carries information a reader needs, once.
+Every passage carries information a reader needs, once. The adoption paths
+read summary first: the paths table before any path's detail, and the
+executive page names no table and no graph metric.
 
 - **1** — Repetition, filler or machine-sounding fragments are pervasive: the
   same trade-off or list repeats across sections, and key content is hard to
@@ -295,6 +309,9 @@ served by several engines (the multi-engine rule above), a recommended
 engine in `table_mappings` that differs from the Migration map's Owner (the
 ownership rule above), a statement and its
 stated exception, or a resolved risk listed next to the open ones.
+
+The Ways to adopt page and the Adoption paths section stating different
+paths or figures for the same path is a contradiction.
 
 List each contradiction (kind `contradiction`) as a pair: both quotes, each with its place. It
 counts only if the two quotes cannot both be true when read literally. Not a
@@ -344,15 +361,13 @@ Where to look when scoring each criterion (the inputs are above).
   engines and tables against `facts.engines[].tables_served` (multi-engine
   rule) and `facts.eliminated_engines`, and ordering rationale against
   `facts.reality_check` and the per-engine risks.
-  `executive_pdf > Ways to adopt` shows `engineering_report > Adoption paths` in
-  the same words: the same paths (the plan stopped after each step), with their
-  steps, gates, queries off the relational engine, monthly cost, difference from
-  the relational move only, open critical and high risks and engines, the same
-  one-step lines and checks, and the paths not offered. The staged full target is
-  the default and nothing ranks the paths. An earlier path's cost shows "-" when
-  the report was not priced path by path, and the difference column is left out
-  when there is no relational move only. Neither prints how many tables a path
-  moves. A report with no paths has no such page: that is not a defect.
+  `executive_pdf > Ways to adopt` and `engineering_report > Adoption paths`
+  show `facts.adoption` in the same words: the paths shown (`paths_shown`, the
+  plan stopped after each step), their engines, steps, gates, queries off the
+  relational engine, cost and difference, open critical and high risks, the
+  one-step lines and checks, and the paths not offered. Neither prints how many
+  tables a path moves. A report with no paths has no such page: that is not a
+  defect.
 
 - **hedging, concision, contradictions:** the prose of `executive_pdf` and
   `engineering_report`; for contradictions, also `facts` (a headline that

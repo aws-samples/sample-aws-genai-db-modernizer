@@ -52,6 +52,14 @@ rubric criteria are checked against, as one compact JSON-serialisable dict:
   partitions, unservable queries, unresolved ties and design trade-offs. The
   risks criterion grades completeness against it. ``None`` means the report
   does not carry that field (an older report), not zero.
+* ``adoption`` -- the adoption paths both reports show (#1136), from
+  ``facts.adoption`` and the slice plan's relational step: the paths a capped view
+  shows (``summary_path_ids``), each with its engines, steps, gates and queries off the
+  relational engine; its cost only where a deliverable may print one (an earlier
+  path's only with ``per_path_sizing``, ADR-033 Amendment 2) and its difference only
+  when the relational move only is priced; the paths not offered and the one-step
+  verdict. The figures no deliverable prints (``tables_migrate``, query ids) are left
+  out. ``None`` for a report written before ``facts.adoption``.
 
 Domain rule (the reason ``tables_served`` exists): assignments map *queries*
 to engines, and a table can be served by several engines.
@@ -420,6 +428,92 @@ def _routing_margins(report: dict[str, Any]) -> dict[str, Any] | None:
         slot["max_gap"] = max(gaps) if gaps else None
         out.append(slot)
     return {"close_call_query_count": len(calls), "settled_tie_count": settled, "engine_pairs": out}
+
+
+def _adoption_path(path: dict[str, Any], per_path: bool, relational_priced: bool) -> dict[str, Any]:
+    """One shown path's figures as the deliverables print them: an earlier path's cost
+    only when every path was priced for itself, the difference only when the relational
+    move only is priced, and never for the relational move only itself."""
+    path_id = path.get("path_id")
+    cost_printed = per_path or path_id == "full_target"
+    delta_printed = cost_printed and relational_priced and path_id != "relational_only"
+    return {
+        "path_id": path_id,
+        "engines": list(path.get("engines") or []),
+        "step_count": path.get("step_count"),
+        "stage_count": path.get("stage_count"),
+        "gate_count": path.get("gate_count"),
+        "queries_off_relational": path.get("queries_moved"),
+        "queries_by_engine": dict(path.get("queries_by_engine") or {}),
+        "monthly_cost_usd": path.get("monthly_cost_usd") if cost_printed else None,
+        "cost_delta_vs_relational_usd": (
+            path.get("cost_delta_vs_relational_usd") if delta_printed else None
+        ),
+        "critical_high_risks": path.get("critical_high_risks"),
+        "replicated_table_count": path.get("replicated_table_count"),
+        "temporary_stream_count": path.get("temporary_stream_count"),
+    }
+
+
+def _adoption(report: dict[str, Any]) -> dict[str, Any] | None:
+    """The adoption paths the Ways to adopt page and the Adoption paths section show
+    (#1136), from ``facts.adoption``; ``None`` when the report does not carry it."""
+    facts = report.get("facts") or {}
+    adoption = facts.get("adoption")
+    if not isinstance(adoption, dict):
+        return None
+    steps = (facts.get("slice_plan") or {}).get("plan_steps") or []
+    relational = next(
+        (
+            s.get("engine")
+            for s in steps
+            if isinstance(s, dict) and s.get("kind") == "relational_step"
+        ),
+        None,
+    )
+    shown = [str(i) for i in adoption.get("summary_path_ids") or []]
+    per_path = adoption.get("cost_basis") == "per_path_sizing"
+    relational_priced = adoption.get("relational_monthly_cost_usd") is not None
+    one = adoption.get("one_step")
+    return {
+        "default_path_id": adoption.get("default_path_id"),
+        "path_count": adoption.get("path_count"),
+        "paths_shown": shown,
+        "relational_engine": relational,
+        "cost_basis": adoption.get("cost_basis"),
+        "relational_monthly_cost_usd": adoption.get("relational_monthly_cost_usd"),
+        "paths": [
+            _adoption_path(p, per_path, relational_priced)
+            for p in adoption.get("paths") or []
+            if isinstance(p, dict) and str(p.get("path_id")) in shown
+        ],
+        "not_offered": [
+            {
+                k: n.get(k)
+                for k in (
+                    "path_id",
+                    "reason",
+                    "failing_query_count",
+                    "serving_engines",
+                    "offered_instead",
+                )
+            }
+            for n in adoption.get("not_offered") or []
+            if isinstance(n, dict)
+        ],
+        "one_step": (
+            {
+                "suits_one_step": one.get("suits_one_step"),
+                "staged_step_count": one.get("staged_step_count"),
+                "staged_stage_count": one.get("staged_stage_count"),
+                "gate_count": one.get("gate_count"),
+                "staged_temporary_stream_count": one.get("staged_temporary_stream_count"),
+                "checks": list(one.get("one_step_checks") or []),
+            }
+            if isinstance(one, dict)
+            else None
+        ),
+    }
 
 
 def _wave_sync(
@@ -902,6 +996,7 @@ def build_facts(
         "wave_figures": _wave_figures(report),
         "scope_figures": _scope_figures(report),
         "routing_margins": _routing_margins(report),
+        "adoption": _adoption(report),
         "migration_risk_facts": _migration_risk_facts(
             report,
             db,

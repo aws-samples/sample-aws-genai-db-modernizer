@@ -75,3 +75,27 @@ def test_judge_facts_equal_the_reports_own_figures(run: PipelineResult) -> None:
     assert shared == {
         w["wave"]: len(w["shared_in_wave"]) for w in layer["waves"] if w.get("shared_in_wave")
     }
+
+
+def test_judge_adoption_facts_are_the_paths_the_report_shows(run: PipelineResult) -> None:
+    """#1136: the paths shown, each with the report's own engines and queries off the
+    relational engine, and its cost wherever the judge states one."""
+    built, layer = _facts(run)
+    adoption = layer.get("adoption")
+    if adoption is None:  # a report written before facts.adoption
+        assert built["adoption"] is None
+        return
+    block = built["adoption"]
+    shown = adoption.get("summary_path_ids") or []  # absent from a block saved before #2172
+    assert block["paths_shown"] == shown
+    assert block["path_count"] == adoption.get("path_count")
+    stated = {p["path_id"]: p for p in adoption["paths"]}
+    assert [p["path_id"] for p in block["paths"]] == [
+        p["path_id"] for p in adoption["paths"] if p["path_id"] in shown
+    ]
+    for path in block["paths"]:
+        own = stated[path["path_id"]]
+        assert path["engines"] == own["engines"]
+        assert path["queries_off_relational"] == own["queries_moved"]
+        assert path["monthly_cost_usd"] in (None, own["monthly_cost_usd"])
+    assert (block["one_step"] is None) == (adoption.get("one_step") is None)
