@@ -189,9 +189,15 @@ def _aurora_delta_request(llm_request: dict, engine: str) -> dict:
 def run_external(store, job_id: str, db: str, engine: str, assignment_version: int) -> None:
     """Prepare LLM input payload and write it; print awaiting_llm status."""
     from src.agents.prompt_framing import with_untrusted_notice
-    from src.agents.schema_design.handler import clear_design_skip, prepare_schema_design_input
+    from src.agents.schema_design.handler import (
+        clear_design_skip,
+        prepare_schema_design_input,
+        set_aside_refused_design,
+    )
 
-    # The design supersedes a skip record of the engine on this version (#2154).
+    # A saved design its read refuses is set aside, kept, and replaced (#2199); the design
+    # supersedes a skip record of the engine on this version (#2154).
+    set_aside_refused_design(store, db, job_id, engine, assignment_version)
     clear_design_skip(store, db, job_id, engine, assignment_version)
     llm_request = prepare_schema_design_input(
         job_id=job_id,

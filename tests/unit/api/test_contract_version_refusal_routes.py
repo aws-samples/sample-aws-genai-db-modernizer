@@ -141,6 +141,77 @@ def test_a_saved_aurora_design_with_an_injected_type_is_a_409(job: Path) -> None
     assert "DROP" not in json.dumps(body) and "/" not in body["detail"]
 
 
+def test_a_saved_aurora_design_with_an_injected_index_is_a_409(job: Path) -> None:
+    """#2199: an index statement that does not rebuild from its parts is refused too."""
+    index = 'CREATE INDEX "ix" ON "users" ("id"); DROP TABLE "users";'
+    design = {
+        "contract_version": "1.1",
+        "job_id": JOB,
+        "source_database": DB,
+        "migration_strategy": "carry_over",
+        "table_definitions": [
+            {
+                "table_name": "users",
+                "columns": [{"name": "id", "aurora_type": "BIGINT", "script_derived": True}],
+                "primary_key": ["id"],
+                "indexes": [index],
+            }
+        ],
+        "generated_ddl": f'CREATE TABLE "users" (\n  "id" BIGINT,\n  PRIMARY KEY ("id")\n);\n\n{index}',
+    }
+    _write(job, "schema-aurora_postgresql/v1/schema_output.json", design)
+    status, body = _get("/schema-designs")
+    assert status == 409, body
+    assert isinstance(body, dict) and "index definition" in body["detail"]
+    assert "DROP" not in json.dumps(body) and "/" not in body["detail"]
+
+
+@pytest.mark.parametrize("engine", ["aurora_mysql", "aurora_postgresql"])
+@pytest.mark.parametrize("shape", ["missing", "null", "object", "skipped"])
+def test_sql_text_with_no_table_definitions_is_a_409(job: Path, shape: str, engine: str) -> None:
+    """#2199 review: no table definitions (missing, null, an object) or a skip placeholder
+    never lets a stored script through to the UI's DDL panel."""
+    from tests.contract.test_saved_aurora_design_ddl import _untabled
+
+    _write(job, f"schema-{engine}/v1/schema_output.json", _untabled(engine, shape))
+    status, body = _get("/schema-designs")
+    assert status == 409, body
+    assert isinstance(body, dict) and "failed its safety check" in body["detail"]
+    assert "schema design." in body["detail"]
+    assert "DROP" not in json.dumps(body) and "/" not in body["detail"]
+
+
+@pytest.mark.parametrize(
+    "rel",
+    [
+        "schema-aurora/v1/schema_output.json",
+        "schema-aurora/schema_output.json",
+        "schema-Aurora_MySQL/v1/schema_output.json",
+    ],
+)
+def test_an_injected_script_in_a_legacy_or_case_variant_folder_is_a_409(
+    job: Path, rel: str
+) -> None:
+    """#2199 round 2: the folder never decides whether a design is checked."""
+    from tests.contract.test_saved_aurora_design_ddl import WORDPRESS, _load
+
+    saved = _load(WORDPRESS)
+    saved["generated_ddl"] += '\n\nDROP TABLE "users";'
+    _write(job, rel, saved)
+    status, body = _get("/schema-designs")
+    assert status == 409, body
+    assert "DROP" not in json.dumps(body) and "/" not in body["detail"]  # type: ignore[index]
+
+
+def test_a_case_variant_folder_lists_under_its_engine(job: Path) -> None:
+    from tests.contract.test_saved_aurora_design_ddl import WORDPRESS, _load
+
+    _write(job, "schema-Aurora_MySQL/v1/schema_output.json", _load(WORDPRESS))
+    status, body = _get("/schema-designs")
+    assert status == 200, body
+    assert [d["target_type"] for d in body["schema_designs"]] == ["aurora_mysql"]  # type: ignore[index]
+
+
 def test_a_readable_job_still_answers(job: Path) -> None:
     """Control: the same routes at the current MAJOR are not refused."""
     _write(job, "assignment/v1/assignment.json", _ASSIGNMENT)

@@ -281,7 +281,7 @@ def write_aurora_postgresql_design(
                     ],
                     "primary_key": ["ID"],
                     "indexes": [
-                        'CREATE INDEX "type_status_date" ON "wp_posts" ("post_type", "post_status");'
+                        'CREATE INDEX "type_status_date" ON "wp_posts" ("ID", "post_title");'
                     ],
                 },
                 {
@@ -292,7 +292,15 @@ def write_aurora_postgresql_design(
                     "primary_key": ["comment_ID"],
                 },
             ],
-            "generated_ddl": 'CREATE TABLE "wp_posts" (\n  "ID" BIGINT NOT NULL,\n  PRIMARY KEY ("ID")\n);',
+            # The script as the DDL generator writes it: a saved design's DDL is rebuilt
+            # from its table definitions on every read (#2199).
+            "generated_ddl": (
+                'CREATE TABLE "wp_posts" (\n  "ID" BIGINT NOT NULL,\n  "post_title" TEXT,\n'
+                '  PRIMARY KEY ("ID")\n);\n\n'
+                'CREATE TABLE "wp_comments" (\n  "comment_ID" BIGINT NOT NULL,\n'
+                '  PRIMARY KEY ("comment_ID")\n);\n\n'
+                'CREATE INDEX "type_status_date" ON "wp_posts" ("ID", "post_title");'
+            ),
             "trade_offs": [{"description": "Translate the schema", "impact": "Types change."}],
             "validation_passed": True,
         }

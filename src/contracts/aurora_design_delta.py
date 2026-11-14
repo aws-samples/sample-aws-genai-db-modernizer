@@ -18,7 +18,9 @@ structured (name, columns, flags) and rendered by the DDL generator with
 quoted identifiers. A legacy ``CREATE INDEX`` string is accepted only when it
 parses completely under a strict grammar, and is then re-rendered the same way.
 A saved design's column types run the same type grammar on every read
-(:func:`check_design_column_types`, #2155), so an edited file is refused too.
+(:func:`check_design_column_types`, #2155), and its DDL, index and foreign-key strings
+are rebuilt from checked parts (``src/tools/schema/aurora_common/saved_design.py``,
+#2199), so an edited file is refused too.
 
 Shared by both Aurora engines: the merged output is validated against the
 engine's own contract afterwards.
@@ -249,17 +251,31 @@ def validate_aurora_type(value: str, engine: str | None = None) -> str:
     return normalized
 
 
-class SavedDesignTypeError(ValueError):
+class SavedDesignError(ValueError):
+    """A saved Aurora design holds a string a read refuses (#2155, #2199).
+
+    ``where`` is the string's position (``generated_ddl``, ``table_definitions[i].indexes[j]``),
+    never a table or column name; ``kind`` says what it should have been (``column type``,
+    ``DDL script``, ``index definition``, ``foreign key definition``). ``value`` is the
+    refused value as stored, or ``None`` when no part of it may be shown.
+    """
+
+    kind = "column type"
+
+    def __init__(self, where: str, value: object, reason: str, *, kind: str | None = None) -> None:
+        self.where = where
+        self.value = value
+        if kind is not None:
+            self.kind = kind
+        super().__init__(f"{where}: {reason}")
+
+
+class SavedDesignTypeError(SavedDesignError):
     """A saved Aurora design holds a column type the allowlist refuses (#2155).
 
     ``where`` is the column's position (``table_definitions[i].columns[j].aurora_type``),
     never its table or column name, and ``value`` the refused value as stored.
     """
-
-    def __init__(self, where: str, value: object, reason: str) -> None:
-        self.where = where
-        self.value = value
-        super().__init__(f"{where}: {reason}")
 
 
 def check_design_column_types(payload: Mapping[str, Any], engine: str) -> Mapping[str, Any]:

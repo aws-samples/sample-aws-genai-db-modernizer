@@ -241,6 +241,7 @@
   "analysis-results.error.invalid-job-id": "Invalid Job ID",
   "analysis-results.error.no-job-id": "No job ID provided",
   "analysis-results.error.failed-to-load": "Failed to load results",
+  "analysis-results.error.schema-designs-refused": "The schema designs could not be loaded",
   "analysis-results.states.loading": "Loading assessment results...",
   "analysis-results.header.title": "Results",
   "analysis-results.actions.back-to-assessment": "Back to assessment",

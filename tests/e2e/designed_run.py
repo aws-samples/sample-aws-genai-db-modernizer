@@ -425,7 +425,7 @@ def write_aurora_mysql_design(
                     ],
                     "primary_key": ["ID"],
                     "indexes": [
-                        "CREATE INDEX type_status_date ON wp_posts (post_type, post_status)"
+                        "CREATE INDEX `type_status_date` ON `wp_posts` (`ID`, `post_title`(191));"
                     ],
                 },
                 # A second table: two tables (and their query groups) render two
@@ -447,9 +447,14 @@ def write_aurora_mysql_design(
                     "primary_key": ["comment_ID"],
                 },
             ],
+            # The script as the DDL generator writes it: a saved design's DDL is rebuilt
+            # from its table definitions on every read (#2199).
             "generated_ddl": (
-                "CREATE TABLE wp_posts (\n  ID BIGINT UNSIGNED NOT NULL,\n"
-                "  post_title TEXT,\n  PRIMARY KEY (ID)\n);"
+                "CREATE TABLE `wp_posts` (\n  `ID` BIGINT UNSIGNED NOT NULL,\n"
+                "  `post_title` TEXT,\n  PRIMARY KEY (`ID`)\n);\n\n"
+                "CREATE TABLE `wp_comments` (\n  `comment_ID` BIGINT UNSIGNED NOT NULL,\n"
+                "  `comment_post_ID` BIGINT UNSIGNED NOT NULL,\n  PRIMARY KEY (`comment_ID`)\n);"
+                "\n\nCREATE INDEX `type_status_date` ON `wp_posts` (`ID`, `post_title`(191));"
             ),
             "app_layer_notes": [
                 {

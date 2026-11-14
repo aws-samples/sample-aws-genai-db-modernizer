@@ -330,6 +330,7 @@ ENGINE_OR_PATTERN_TABLES: dict[str, tuple[frozenset[str], str]] = {
         frozenset({"_GENERATORS", "_DIALECTS", "_OUTPUT_CONTRACTS"}),
         _PLUMBING,
     ),
+    "src/tools/schema/aurora_common/saved_design.py": (frozenset({"DIALECTS"}), _PLUMBING),
     "src/tools/schema/aurora_common/source_family.py": (
         frozenset({"_PG_ALIASES", "_MYSQL_ALIASES", "AuroraTarget"}),
         _PLUMBING,
