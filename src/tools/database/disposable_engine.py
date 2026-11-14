@@ -307,6 +307,10 @@ class CallResult:
     constraint: str | None = field(default=None, repr=False)
     #: The call ran past its time limit and was interrupted (:func:`time_limit`).
     timed_out: bool = False
+    #: The engine had nothing to run (a MySQL event the server dropped as it was created,
+    #: or one with no runnable name, #1971): ``error`` says why, in the engine's own fixed
+    #: words, and there is no SQLSTATE because no statement reached the server.
+    not_run: bool = False
     #: The engine's type of each result column (PostgreSQL ``format_type``, MySQL's field
     #: type), one tuple per result set, so ``1`` from an ``integer`` and from a
     #: ``boolean`` or ``double`` column are told apart.
@@ -1575,7 +1579,7 @@ class _MySQLBackend(_Backend):
             if args or modes or casts:
                 raise ValueError("an event run takes no argument")
             if (why := self._no_run.get(_event_key(name))) is not None:
-                return CallResult(error=why)
+                return CallResult(error=why, not_run=True)
             name, kind = event_runner_name(name), "procedure"
         modes = list(modes or ["IN"] * len(args))
         if len(modes) != len(args):
