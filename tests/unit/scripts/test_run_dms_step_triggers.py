@@ -201,3 +201,37 @@ def test_no_status_line_or_result_says_cutover(tmp_path, capsys):
                for name in ("routines-check.json", "triggers-enable-check.json")]  # fmt: skip
     for text in [*printed, *written]:
         assert "cutover" not in text.lower(), text
+
+
+def test_a_case_only_database_clash_says_why_in_the_triggers_scripts_output(tmp_path, capsys):
+    # The event's database `Shop` differs from the moved tables' `shop` only by case; the
+    # check that reports it missing is the triggers one, not routines-check.sql.
+    from src.tools.data_movement.routine_scripts import CASE_DIFFERS_TRIGGERS_WHY
+    from tests.unit.tools.data_movement.routine_fixtures import mysql_source
+
+    rows = [row("Shop.sweep", "event", schema="Shop", status="rewritten", specific="sweep")]
+    _job(tmp_path, rows, schema="Shop", target_database=None,
+         extra=[mysql_source("sweep", "CREATE DEFINER=`app`@`%` EVENT `sweep` ON SCHEDULE EVERY 1 "
+                             "DAY STARTS '2036-01-01 00:00:00' DISABLE DO SELECT 1", kind="event",
+                             schema="Shop")])  # fmt: skip
+    code, line = base._run(tmp_path, "triggers-scripts", capsys=capsys)
+    assert code == 0, line
+    (left_out,) = line["excluded_routines"]
+    assert (left_out["routine_id"], left_out["reason"]) == ("Shop.sweep", "database_case_differs")
+    assert left_out["why"] == CASE_DIFFERS_TRIGGERS_WHY
+    assert (
+        "triggers-enable-check.sql" in left_out["why"] and "routines-check" not in left_out["why"]
+    )
+    text = (
+        (tmp_path / STEP / "triggers.md").read_text()
+        if (tmp_path / STEP / "triggers.md").exists()
+        else ""
+    )
+    assert "routines-check.sql" not in text
+
+
+@pytest.mark.passes_on_main
+def test_an_excluded_trigger_with_no_case_clash_has_no_why(tmp_path, capsys):
+    _job(tmp_path, _rows())
+    code, line = base._run(tmp_path, "triggers-scripts", capsys=capsys)
+    assert code == 0 and all("why" not in r for r in line["excluded_routines"])

@@ -105,6 +105,14 @@ CASE_DIFFERS_WHY = (
     "these routines by hand in the database the application uses, then run "
     "routines-check.sql again; until then the check reports them missing."
 )
+#: :data:`CASE_DIFFERS_WHY` for a trigger or event the triggers-enable script leaves out: the
+#: check that reports it missing is triggers-enable-check.sql.
+CASE_DIFFERS_TRIGGERS_WHY = (
+    "its database differs from a moved table's database only by case, and the collection "
+    "cannot tell whether the target folds case. Rename one side on the source, or create "
+    "these triggers and events by hand in the database the application uses, then run "
+    "triggers-enable-check.sql again; until then the check reports them missing."
+)
 _DELIMITER_LINE = re.compile(r"(?im)^\s*delimiter\b")
 _BAD_CATEGORIES = {"Cc", "Cf", "Zl", "Zp", "Cs", "Co", "Cn"}
 
@@ -294,7 +302,7 @@ def _mysql_block(
 # --------------------------------------------------------------------------- the files
 
 
-def _step_schemas(contract: StepContract) -> set[str]:
+def step_schemas(contract: StepContract) -> set[str]:
     """The schemas (MySQL databases) step 1's own DDL creates: those of the tables it moves,
     the same ``contract_tables`` ``render_ddl`` reads (a blocked rule's table and a rule that
     moves no rows, #1918, are not among them)."""
@@ -303,12 +311,12 @@ def _step_schemas(contract: StepContract) -> set[str]:
     return {t.schema for t in contract_tables(contract) if t.schema}
 
 
-def _case_clash(schema: str | None, step_schemas: set[str], engine: str) -> bool:
+def case_clash(schema: str | None, tables_in: set[str], engine: str) -> bool:
     """A MySQL database that differs from one step 1's DDL creates only by case: on a
     cluster with ``lower_case_table_names=0`` creating it would make a second, empty one."""
-    if engine != "aurora_mysql" or not schema or schema in step_schemas:
+    if engine != "aurora_mysql" or not schema or schema in tables_in:
         return False
-    return schema.lower() in {s.lower() for s in step_schemas}
+    return schema.lower() in {s.lower() for s in tables_in}
 
 
 def case_differs_keys(
@@ -319,30 +327,30 @@ def case_differs_keys(
     refused as ``depends_on_refused``) and clears with the same fix. ``run_dms_step.py``
     gives each :data:`CASE_DIFFERS_WHY`."""
     engine = contract.target.engine
-    step_schemas = _step_schemas(contract)
+    tables_in = step_schemas(contract)
     deps = _dependencies(migration)
     out: set[tuple[str, str]] = set()
     for row in _routine_order(require_section(contract)):  # deploy order: dependencies first
         key = (row.kind, row.routine_id)
-        clash = _case_clash(_target_schema(row, engine, target_database), step_schemas, engine)
+        clash = case_clash(_target_schema(row, engine, target_database), tables_in, engine)
         if clash or any(d in out for d in deps.get(key, ())):
             out.add(key)
     return out
 
 
-def _routine_schemas(
-    rows: Iterable[StepRoutine], engine: str, target_database: str | None, step_schemas: set[str]
+def routine_schemas(
+    rows: Iterable[StepRoutine], engine: str, target_database: str | None, tables_in: set[str]
 ) -> list[str]:
     """The schemas (MySQL databases) the deploy script creates before its routines (#2148):
     each one ``rows`` land in, except PostgreSQL's ``public`` (every database has it) and a
-    schema step 1's DDL creates (:func:`_step_schemas`). Names compare exactly, as the target
+    schema step 1's DDL creates (:func:`step_schemas`). Names compare exactly, as the target
     compares them. Sorted."""
-    skip = step_schemas | ({"public"} if engine == "aurora_postgresql" else set())
+    skip = tables_in | ({"public"} if engine == "aurora_postgresql" else set())
     found = {_target_schema(r, engine, target_database) for r in rows}
     return sorted(s for s in found if s and _safe(s) and s not in skip)
 
 
-def _schema_statements(engine: str, schemas: list[str]) -> list[str]:
+def schema_statements(engine: str, schemas: list[str], *, triggers: bool = False) -> list[str]:
     if not schemas:
         return []
     if engine == "aurora_postgresql":
@@ -355,6 +363,19 @@ def _schema_statements(engine: str, schemas: list[str]) -> list[str]:
             "",
         ]
     from src.tools.data_movement.dms_step import SERVER_DEFAULTS
+
+    if triggers:  # the triggers-enable script (#2273): its databases hold triggers and events
+        return [
+            "-- The databases its triggers and events live in that step 1's DDL does not create "
+            "(one the routines deploy script already created is left as it is).",
+            "-- The user that runs this script needs CREATE and EVENT on each new database: "
+            "creating a database gives its creator no privileges on it.",
+            "-- Each event runs as its DEFINER, which needs the privileges its body uses; the "
+            "script grants nothing.",
+            f"-- Each CREATE DATABASE here is like step-1.ddl.sql's. {SERVER_DEFAULTS}",
+            *(f"CREATE DATABASE IF NOT EXISTS {_mysql_ident(s)};" for s in schemas),
+            "",
+        ]
 
     # As step-1.ddl.sql creates the tables' database: no character set or collation, so a
     # routine's parameters take the same server default as the moved tables' columns.
@@ -376,7 +397,7 @@ def _deploy_header(
     contract_sha: str,
     schemas: list[str] | None = None,
 ) -> str:
-    made = _schema_statements(engine, schemas or [])
+    made = schema_statements(engine, schemas or [])
     lines = [
         f"-- {CUTOVER_DISCLAIMER}",
         "-- Step 1 routines: generated by the modernizer; you run it, it never connects to "
@@ -851,13 +872,13 @@ def write_routine_scripts(
     migration = read_migration(store, db, job_id, section)
     user = target_user or migration.target_user
     step_dir.mkdir(parents=True, exist_ok=True)
-    step_schemas = _step_schemas(contract)
+    tables_in = step_schemas(contract)
     write_block = block_of(engine, migration, user, target_database)
 
     def block(
         row: StepRoutine, source: RoutineSource, position: int, total: int
     ) -> tuple[str | None, str | None]:
-        if _case_clash(_target_schema(row, engine, target_database), step_schemas, engine):
+        if case_clash(_target_schema(row, engine, target_database), tables_in, engine):
             return None, CASE_DIFFERS
         return write_block(row, source, position, total)
 
@@ -867,7 +888,7 @@ def write_routine_scripts(
         )  # fmt: skip
         in_script = len(spans)
         in_rows = [r for r in carried if (r.kind, r.routine_id) in spans]
-        schemas = _routine_schemas(in_rows, engine, target_database, step_schemas)
+        schemas = routine_schemas(in_rows, engine, target_database, tables_in)
 
         def deploy_chunks() -> Iterator[bytes]:
             header = _deploy_header(engine, section, in_script, contract_sha, schemas)

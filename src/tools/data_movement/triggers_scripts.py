@@ -34,6 +34,12 @@ writes three files into ``data-movement/step-1/``, from the step contract's rout
 
 There is no rollback section: nothing here disables a trigger again or drops a routine.
 
+On Aurora MySQL the script first creates, ``IF NOT EXISTS`` and as step 1's DDL does (no
+character set or collation), every database its triggers and events live in except those
+step 1's DDL creates (#2273); one ``routines-deploy.sql`` already created is left as it is.
+A database that differs from a moved table's only by case is never created, and what lives
+in it is left out (``database_case_differs``).
+
 A trigger or event the triggers-enable script cannot act on is left out and named, by id and reason code,
 in the script's header and on the printed line: one step 1 does not carry (its contract
 reasons); one whose source state (PostgreSQL, ``trigger_state_unknown``) or firing order
@@ -62,19 +68,26 @@ from src.contracts.routine_sources import RoutineSource
 from src.contracts.transformation_contract import StepContract, StepRoutine, StepRoutines
 from src.shared.cutover_message import CUTOVER_DISCLAIMER
 from src.tools.data_movement.routine_scripts import (
+    CASE_DIFFERS,
+    CASE_DIFFERS_TRIGGERS_WHY,
     PG_LOCK_TIMEOUT,
     CheckScript,
     RoutineScriptError,
     _comment,
     _pg_ident,
     _table_name,
+    _target_schema,
     block_of,
+    case_clash,
     output_key,
     read_migration,
     render_check_script,
     require_section,
+    routine_schemas,
+    schema_statements,
     spool_blocks,
     spooled_chunks,
+    step_schemas,
     write_atomic,
 )
 
@@ -335,7 +348,13 @@ def _pg_set_to(scripts: TriggersScripts) -> str:
     )
 
 
-def _header(engine: str, contract_sha: str, scripts: TriggersScripts, resume: bool) -> list[str]:
+def _header(
+    engine: str,
+    contract_sha: str,
+    scripts: TriggersScripts,
+    resume: bool,
+    schemas: list[str],
+) -> list[str]:
     pg = engine == "aurora_postgresql"
     what = (
         f"sets the {scripts.in_script} triggers step 1 created disabled{_pg_set_to(scripts)}; "
@@ -392,6 +411,7 @@ def _header(engine: str, contract_sha: str, scripts: TriggersScripts, resume: bo
             "",
             "SET NAMES utf8mb4;",
             "",
+            *schema_statements(engine, schemas, triggers=True),
         ]
     return lines
 
@@ -412,7 +432,7 @@ def _pg_state(row: StepRoutine, position: int, total: int) -> str:
     )
 
 
-def _instructions(engine: str, scripts: TriggersScripts, output: str) -> str:
+def _instructions(engine: str, scripts: TriggersScripts, output: str, created: int = 0) -> str:
     pg = engine == "aurora_postgresql"
 
     def mysql(script: str) -> str:
@@ -470,6 +490,20 @@ def _instructions(engine: str, scripts: TriggersScripts, output: str) -> str:
             "and set each one listed yourself on Aurora (`ALTER TABLE ... ENABLE ALWAYS "
             "TRIGGER ...` or `ENABLE REPLICA TRIGGER`):\n\n"
             f"  ```sql\n  {SOURCE_ALWAYS_REPLICA_QUERY}\n  ```"
+        )
+    if created:
+        lines.append(
+            f"- Databases it creates, which step 1's DDL does not: {created} (`{TRIGGERS_FILE}` "
+            "names them; one the routines deploy script already created is left as it is, "
+            "`IF NOT EXISTS`). The user that runs it needs `CREATE` and `EVENT` on each new "
+            "database, since creating one gives its creator no privileges on it. Each event "
+            "runs as its DEFINER, which needs the privileges its body uses. The script grants "
+            "nothing."
+        )
+    clashes = sum(1 for _, _, code in scripts.excluded if code == CASE_DIFFERS)
+    if clashes:
+        lines.append(
+            f"- Left out as `{CASE_DIFFERS}`: {clashes}. For each, {CASE_DIFFERS_TRIGGERS_WHY}"
         )
     if not pg:
         lines.append(
@@ -590,11 +624,16 @@ def write_triggers_scripts(
     }
     positions.update({(r.kind, r.routine_id): (i + 1, len(ordered)) for i, r in enumerate(ordered)})
     deploy = block_of(engine, migration, user, target_database)
+    tables_in = step_schemas(contract)
     states: dict[tuple[str, str], str | None] = {}
 
     def block(
         row: StepRoutine, source: RoutineSource, position: int, total: int
     ) -> tuple[str | None, str | None]:
+        # As the deploy script does: a database that differs from a moved table's only by
+        # case is never created, and what lives in it is left out.
+        if case_clash(_target_schema(row, engine, target_database), tables_in, engine):
+            return None, CASE_DIFFERS
         text, code = deploy(row, source, position, total)
         if text is not None and row.carry == "deferred_to_cutover" and row.kind == "event":
             states[(row.kind, row.routine_id)] = event_state(
@@ -617,6 +656,9 @@ def write_triggers_scripts(
         there = [r for r in keep if present and output_key(r, engine, target_database) in present]
         _resumable(keep, there)
         keep = [r for r in keep if r not in there]
+        # Step 1's DDL and the deploy script create the databases of the tables and of the
+        # routines they carry; a deferred event can live in one neither creates (#2273).
+        schemas = [] if pg else routine_schemas(keep, engine, target_database, tables_in)
 
         def state(row: StepRoutine) -> str | None:
             return states.get((row.kind, row.routine_id))
@@ -634,7 +676,7 @@ def write_triggers_scripts(
         )
 
         def chunks() -> Iterator[bytes]:
-            head = _header(engine, contract_sha, scripts, present is not None)
+            head = _header(engine, contract_sha, scripts, present is not None, schemas)
             yield ("\n".join(head) + "\n").encode("utf-8")
             if pg:
                 for i, row in enumerate(keep, start=1):
@@ -658,7 +700,7 @@ def write_triggers_scripts(
     output = str(step_dir / TRIGGERS_CHECK_OUTPUT)
     write_atomic(
         step_dir / TRIGGERS_INSTRUCTIONS,
-        iter([_instructions(engine, scripts, output).encode("utf-8")]),
+        iter([_instructions(engine, scripts, output, len(schemas)).encode("utf-8")]),
     )
     scripts.files = {name: str(step_dir / name) for name in _FILES}
     return scripts
