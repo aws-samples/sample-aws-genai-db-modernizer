@@ -188,3 +188,56 @@ def test_a_triggers_enable_run_that_stopped_part_way_resumes_in_firing_order(
                    "WHERE TRIGGER_SCHEMA = 'cut_two' ORDER BY ACTION_ORDER", "--batch",
                    "--skip-column-names")  # fmt: skip
     assert order.stdout.decode().split() == ["b_bi", "1", "a_bi", "2"]  # as on the source
+
+
+def test_the_triggers_enable_script_creates_the_database_of_an_event_nothing_else_creates(
+    mysql_socket, tmp_path
+):
+    client, sock = mysql_socket
+    _mysql(client, sock, "CREATE USER IF NOT EXISTS 'admin'@'%'; GRANT ALL ON *.* TO 'admin'@'%';"
+           "DROP DATABASE IF EXISTS jobs; DROP DATABASE IF EXISTS shop_functions;")  # fmt: skip
+    # `jobs` holds only an event; `shop_functions` holds a carried routine (the deploy creates
+    # it) and an event (the triggers-enable script finds it there already).
+    rows = [
+        row("shop_functions.tally", "procedure", schema="shop_functions", status="rewritten",
+            signature="", specific="tally"),
+        row("shop_functions.sweep", "event", schema="shop_functions", status="rewritten",
+            specific="sweep"),
+        row("jobs.nightly", "event", schema="jobs", status="rewritten", specific="nightly"),
+    ]  # fmt: skip
+    event = ("CREATE DEFINER=`app`@`%` EVENT `{name}` ON SCHEDULE EVERY 1 DAY STARTS "
+             "'2036-01-01 00:00:00' DISABLE DO SELECT 1")  # fmt: skip
+    sources = [
+        mysql_source("tally", "CREATE DEFINER=`app`@`%` PROCEDURE `tally`()\nBEGIN SELECT 1; END",
+                     schema="shop_functions"),
+        mysql_source("sweep", event.format(name="sweep"), kind="event", schema="shop_functions"),
+        mysql_source("nightly", event.format(name="nightly"), kind="event", schema="jobs"),
+    ]  # fmt: skip
+    artifact = migration(rows, "mysql")
+    store = _job(tmp_path, artifact, sources, "mysql")
+    contract = contract_with_routines(artifact)
+    _write(tmp_path, store, contract)
+    step = tmp_path / "step"
+    try:
+        deployed = _mysql(client, sock, None, stdin=step / DEPLOY_FILE)
+        assert deployed.returncode == 0, deployed.stderr.decode()
+        scripts = write_triggers_scripts(store, "shop", "job1", contract, SHA, step)
+        assert (scripts.expected, scripts.in_script) == (2, 2)
+        ran = _mysql(client, sock, None, stdin=step / TRIGGERS_FILE)
+        assert ran.returncode == 0, ran.stderr.decode()
+        found = _mysql(client, sock, "SELECT EVENT_SCHEMA, EVENT_NAME FROM information_schema.EVENTS "
+                       "WHERE EVENT_SCHEMA IN ('jobs', 'shop_functions') ORDER BY 1",
+                       "--batch", "--skip-column-names")  # fmt: skip
+        assert found.stdout.decode().split() == ["jobs", "nightly", "shop_functions", "sweep"]
+        again = _mysql(client, sock, None, "--batch", "--skip-column-names",
+                       stdin=step / TRIGGERS_CHECK_FILE)  # fmt: skip
+        assert again.returncode == 0, again.stderr.decode()
+        (step / TRIGGERS_CHECK_OUTPUT).write_bytes(again.stdout)
+        result = read_triggers_check(step / TRIGGERS_CHECK_OUTPUT, contract, store, job_id="job1",
+                                    database_name="shop", contract_sha=SHA,
+                                    target_database=None)  # fmt: skip
+        assert (result.status, result.confirmed, result.mismatches) == ("pass", 2, [])
+    finally:
+        _mysql(
+            client, sock, "DROP DATABASE IF EXISTS jobs; DROP DATABASE IF EXISTS shop_functions;"
+        )
