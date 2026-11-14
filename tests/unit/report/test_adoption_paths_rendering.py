@@ -336,9 +336,13 @@ def test_a_wave_gains_its_stages_with_the_pilot_named() -> None:
     assert stages["4a"][1:4] == ["reads on a CDC copy", "1", "1"]
     assert stages["4a"][4].startswith("CDC from Aurora MySQL to DynamoDB")
     assert stages["4c"][1:4] == ["ownership with a CDC copy back to an earlier engine", "2", "5"]
-    # The units, each owning its tables and reading its copies, the pilot named.
-    assert "| Stage | Pilot | Queries | Owns | Reads a copy of | CDC copy back to |" in lines
-    units = [r for r in rows if len(r) == 6]
+    # The units, each owning its tables and reading its copies, the pilot named; then its
+    # order metrics, named by the facts' metric_labels (#1699).
+    assert (
+        "| Stage | Pilot | Queries | Owns | Reads a copy of | CDC copy back to | How tightly "
+        "tied | Shared by many parts | What the move touches |" in lines
+    )
+    units = [r[:6] for r in rows if len(r) == 9]
     assert ["4a", "Pilot", "1", "-", "`app.products`", "-"] in units
     assert ["4b", "-", "2", "`app.sessions`", "-", "-"] in units
     assert ["4c", "-", "3", "`app.cart_items`, `app.carts`", "-", "Aurora MySQL (1 read)"] in units
@@ -386,7 +390,7 @@ def test_a_stage_shows_the_first_ten_units_then_how_many_more() -> None:
         plan["move_units"].append({**sample, "key": key, "pilot": False})
         stage["unit_keys"].append(key)
     rows = _rows(wave_stages_md({**facts, "slice_plan": plan}, 3, _SaidOnce()))
-    of_stage = [r for r in rows if len(r) == 6 and r[0] == stage["label"]]
+    of_stage = [r for r in rows if len(r) == 9 and r[0] == stage["label"]]
     assert len(of_stage) == 11
     assert of_stage[-1][:2] == [stage["label"], "+3 more units"]
 

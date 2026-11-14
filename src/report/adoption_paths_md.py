@@ -27,14 +27,20 @@ from .adoption import (
     ONE_STEP_CHECK_HEADER,
     RISKS_HEADER,
     STAGE_KIND_LABELS,
+    STEP_COLUMN,
+    UNIT_METRIC_FIELDS,
+    WHY_HEADING,
     adoption_block,
     cap_text,
+    capitalized,
     cost_difference,
     cost_note,
     cost_stated,
     cost_text,
     difference_phrase,
     intro_text,
+    metric_label,
+    metric_value,
     not_offered_texts,
     one_step_block,
     one_step_check_rows,
@@ -46,8 +52,11 @@ from .adoption import (
     queries_moved_header,
     relational_cost_stated,
     slice_plan_block,
+    step_metric,
+    step_metric_columns,
     summary_paths,
     wave_phase,
+    why_sentence,
 )
 from .formatting import _SaidOnce, fmt_num, plural_noun, plural_verb
 
@@ -231,7 +240,7 @@ def _stages_by_label(plan: dict[str, Any]) -> dict[str, dict[str, Any]]:
     }
 
 
-def _unit_row(label: str, unit: dict[str, Any]) -> list[str] | None:
+def _unit_row(label: str, unit: dict[str, Any], metrics: list[str]) -> list[str] | None:
     """One move unit as a row of its stage's unit table: the tables it owns (the step
     takes over their writes), the copies it reads, where a CDC copy of its tables goes
     back to, and its query count. The pilot is named; a unit is never shown by its key,
@@ -251,6 +260,8 @@ def _unit_row(label: str, unit: dict[str, Any]) -> list[str] | None:
     back_cell = ", ".join(
         f"{display_engine(engine)} ({fmt_num(n)} {plural_noun(n, 'read')})" for engine, n in back
     )
+    raw = unit.get("metrics")
+    figures: dict[str, Any] = raw if isinstance(raw, dict) else {}
     return [
         label,
         "Pilot" if unit.get("pilot") else "-",
@@ -258,6 +269,7 @@ def _unit_row(label: str, unit: dict[str, Any]) -> list[str] | None:
         _code_list(owned, _UNIT_TABLES_SHOWN) or "-",
         _code_list(reads, _UNIT_TABLES_SHOWN) or "-",
         back_cell or "-",
+        *(metric_value(f, figures.get(f)) for f in metrics),
     ]
 
 
@@ -328,6 +340,31 @@ def _table_class_lines(plan: dict[str, Any], wave: int) -> list[str]:
     return out
 
 
+def _why_lines(plan: dict[str, Any], steps: list[dict[str, Any]]) -> list[str]:
+    """The wave's steps' why sentences as stored, and a table of each slice step's order
+    figures, its columns named by ``metric_labels`` (#1699). Nothing is counted: a step
+    with no sentence adds no line, and a metric the facts do not name adds no column."""
+    sentences = [why_sentence(s) for s in steps if why_sentence(s)]
+    if not sentences:
+        return []
+    out = [f"- {WHY_HEADING}:", *(f"  - {escaping.md_text(t)}" for t in sentences), ""]
+    measured = [s for s in steps if isinstance(s.get("metrics"), dict)]
+    columns = step_metric_columns(plan, measured)
+    if columns:
+        out += [
+            *_table_md(
+                [STEP_COLUMN, *(capitalized(metric_label(plan, f)) for f in columns)],
+                [
+                    [f"{STEP_COLUMN} {s.get('step_number')}"]
+                    + [metric_value(f, step_metric(s, f)) for f in columns]
+                    for s in measured
+                ],
+            ),
+            "",
+        ]
+    return out
+
+
 def wave_stages_md(facts: dict[str, Any], wave: int, gates: _SaidOnce) -> list[str]:
     """One wave's steps and stages in "Migration roadmap" (#1131).
 
@@ -367,6 +404,14 @@ def wave_stages_md(facts: dict[str, Any], wave: int, gates: _SaidOnce) -> list[s
         ),
         "",
     ]
+    steps = [
+        s
+        for n in numbers
+        for s in plan.get("plan_steps") or []
+        if isinstance(s, dict) and s.get("step_number") == n
+    ]
+    out += _why_lines(plan, steps)
+    unit_metrics = [f for f in UNIT_METRIC_FIELDS if metric_label(plan, f)]
     unit_rows: list[list[str]] = []
     for stage in shown:
         if stage.get("kind") == "whole_database":
@@ -375,18 +420,29 @@ def wave_stages_md(facts: dict[str, Any], wave: int, gates: _SaidOnce) -> list[s
         label = str(stage.get("label"))
         keys = [str(k) for k in stage.get("unit_keys") or []]
         for key in keys[:_UNITS_SHOWN]:
-            row = _unit_row(label, units.get(key) or {})
+            row = _unit_row(label, units.get(key) or {}, unit_metrics)
             if row is not None:
                 unit_rows.append(row)
         if keys[_UNITS_SHOWN:]:
             more = len(keys) - _UNITS_SHOWN
-            unit_rows.append([label, f"+{more} more {plural_noun(more, 'unit')}", "", "", "", ""])
+            unit_rows.append(
+                [label, f"+{more} more {plural_noun(more, 'unit')}", "", "", "", ""]
+                + [""] * len(unit_metrics)
+            )
     if unit_rows:
         out += [
             f"- Units of each stage, the first {_UNITS_SHOWN}:",
             "",
             *_table_md(
-                ["Stage", "Pilot", "Queries", "Owns", "Reads a copy of", "CDC copy back to"],
+                [
+                    "Stage",
+                    "Pilot",
+                    "Queries",
+                    "Owns",
+                    "Reads a copy of",
+                    "CDC copy back to",
+                    *(capitalized(metric_label(plan, f)) for f in unit_metrics),
+                ],
                 unit_rows,
             ),
             "",

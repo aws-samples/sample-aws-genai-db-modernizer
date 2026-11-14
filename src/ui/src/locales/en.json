@@ -703,6 +703,8 @@
   "analysis-results.adoption.wave-steps": "Steps {{first}} to {{last}}",
   "analysis-results.adoption.stages-label": "Stages",
   "analysis-results.adoption.wave-stages": "{{steps}}: {{stages}}",
+  "analysis-results.adoption.why-heading": "Why each step sits where it does",
+  "analysis-results.adoption.step-column": "Step",
   "analysis-results.adoption.stages-show_one": "Show the {{count}} stage",
   "analysis-results.adoption.stages-show_other": "Show the {{count}} stages",
   "analysis-results.adoption.stages-hide_one": "Hide the {{count}} stage",

@@ -4,7 +4,8 @@
 import { useEffect, useId, useRef, useState } from 'react';
 import Box from "@cloudscape-design/components/box";
 import {
-  pathTakesStep, stageKindText, stageUnits, unitText, wavePhase, waveStages, waveStepsText,
+  capitalized, metricLabel, metricValueText, pathTakesStep, stageKindText, stageUnits,
+  stepMetric, stepMetricColumns, unitText, wavePhase, waveStages, waveSteps, waveStepsText,
 } from "../utils/adoptionPaths";
 
 /**
@@ -13,6 +14,9 @@ import {
  * moves, its units and queries and its gate, and its units expand the same way. The
  * stages are facts.slice_plan's (wave_phases and plan_steps[].step_stages, #2156), in
  * run order; nothing is counted here.
+ *
+ * Open, the list also states each step's why sentence and a table of its order figures,
+ * named by facts.slice_plan.metric_labels (#1699); collapsed, the card reads as before.
  *
  * With an earlier path selected, a stage of a step the path does not take is greyed
  * out and marked "Left out of this path"; the full target (the default) greys nothing.
@@ -125,7 +129,7 @@ function StageItem({ plan, entry, path, t }) {
           >
             <ul>
               {units.map(unit => (
-                <li key={unit.key} data-figure="stage-unit">{unitText(t, unit)}</li>
+                <li key={unit.key} data-figure="stage-unit">{unitText(t, unit, plan)}</li>
               ))}
             </ul>
           </Disclosure>
@@ -138,6 +142,46 @@ function StageItem({ plan, entry, path, t }) {
         </Box>
       )}
     </li>
+  );
+}
+
+// The wave's steps' why sentences, as stored, and a table of each slice step's order
+// figures headed by the facts' metric_labels (#1699). Nothing is counted here.
+function StepWhy({ plan, wave, t }) {
+  const steps = waveSteps(plan, wave);
+  const told = steps.filter(s => s.why);
+  if (told.length === 0) return null;
+  const measured = steps.filter(s => s.metrics && typeof s.metrics === 'object');
+  const columns = stepMetricColumns(plan, measured);
+  return (
+    <div data-figure="step-why-block">
+      <Box variant="h4">{t('analysis-results.adoption.why-heading')}</Box>
+      <ul>
+        {told.map(s => (
+          <li key={s.step_number} data-figure="step-why" data-step={s.step_number}>{String(s.why)}</li>
+        ))}
+      </ul>
+      {columns.length > 0 && (
+        <table data-figure="step-metrics">
+          <thead>
+            <tr>
+              <th scope="col">{t('analysis-results.adoption.step-column')}</th>
+              {columns.map(f => (
+                <th key={f} scope="col" title={metricLabel(plan, f)}>{capitalized(metricLabel(plan, f))}</th>
+              ))}
+            </tr>
+          </thead>
+          <tbody>
+            {measured.map(s => (
+              <tr key={s.step_number} data-step={s.step_number}>
+                <td>{s.step_number}</td>
+                {columns.map(f => <td key={f}>{metricValueText(f, stepMetric(s, f))}</td>)}
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      )}
+    </div>
   );
 }
 
@@ -163,6 +207,7 @@ export default function WaveStages({ plan, wave, path, t }) {
         figure="wave-stage-list"
         t={t}
       >
+        <StepWhy plan={plan} wave={wave} t={t} />
         <ol style={{ listStyle: 'none', paddingLeft: 0 }}>
           {stages.map(entry => (
             <StageItem key={entry.stage.label} plan={plan} entry={entry} path={path} t={t} />

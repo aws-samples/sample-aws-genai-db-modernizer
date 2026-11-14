@@ -111,6 +111,78 @@ ONE_STEP_RULE_LABELS = {
 ONE_STEP_CHECK_HEADER = ("Check", "Observed", "At most", "Holds")
 
 
+#: The heading of each wave's why sentences, and the step figures table's first column
+#: (#1699). The sentences and the metric names are the facts' (``why``,
+#: ``metric_labels``); only these two pieces of layout are the renderers'.
+WHY_HEADING = "Why each step sits where it does"
+STEP_COLUMN = "Step"
+
+#: The order metrics a step and a unit show, by their fields in ``SliceMetrics`` (with
+#: ``CutCost``'s) and ``UnitMetrics``: the order of the columns, never their names, which
+#: are read from ``facts.slice_plan.metric_labels`` (#1699).
+STEP_METRIC_FIELDS = (
+    "gravity",
+    "hub_score",
+    "replica_table_count",
+    "write_site_count",
+    "transactions_split",
+    "value_call_share_percent",
+    "value_monthly_cost_usd",
+)
+UNIT_METRIC_FIELDS = ("gravity", "hub_score", "blast_radius")
+
+
+def capitalized(text: str) -> str:
+    """A label as a column heading: its first letter upper case."""
+    return text[:1].upper() + text[1:]
+
+
+def metric_label(plan: dict[str, Any], field: str) -> str:
+    """The plain name the facts give an order metric, or "" when they give none: a
+    renderer then leaves the metric out rather than name it in words of its own."""
+    labels = plan.get("metric_labels")
+    label = labels.get(field) if isinstance(labels, dict) else None
+    return str(label) if label else ""
+
+
+def step_metric(step: dict[str, Any], field: str) -> Any:
+    """A slice step's order metric as stored (its cut cost's parts included), or None."""
+    metrics = step.get("metrics")
+    if not isinstance(metrics, dict):
+        return None
+    if field in metrics:
+        return metrics.get(field)
+    cut = metrics.get("cut_cost")
+    return cut.get(field) if isinstance(cut, dict) else None
+
+
+def metric_value(field: str, value: Any) -> str:
+    """An order metric's stored value, formatted: a share as a percent, a cost in
+    dollars, the rest as numbers."""
+    if value is None:
+        return NO_FIGURE
+    if field == "value_call_share_percent":
+        return f"{fmt_num(value)}%"
+    if field == "value_monthly_cost_usd":
+        return _fmt_usd(value)
+    return fmt_num(value)
+
+
+def step_metric_columns(plan: dict[str, Any], steps: list[dict[str, Any]]) -> list[str]:
+    """The step figures a table of ``steps`` shows: each metric the facts name that at
+    least one of them states (a column of nothing but "-" is left out)."""
+    return [
+        f
+        for f in STEP_METRIC_FIELDS
+        if metric_label(plan, f) and any(step_metric(s, f) is not None for s in steps)
+    ]
+
+
+def why_sentence(step: dict[str, Any]) -> str:
+    """A step's why sentence as the facts state it, or "" (#1699)."""
+    return str(step.get("why") or "")
+
+
 def adoption_block(facts: dict[str, Any]) -> dict[str, Any]:
     """``facts.adoption`` as stored, or {} (a report written before it)."""
     block = facts.get("adoption")
