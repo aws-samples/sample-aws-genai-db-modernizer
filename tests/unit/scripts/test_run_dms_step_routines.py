@@ -22,6 +22,7 @@ from tests.unit.tools.data_movement.dms_step_fixtures import make_plan
 from tests.unit.tools.data_movement.routine_fixtures import (
     SENTINEL,
     contract_with_routines,
+    dep_routine,
     migration,
     mysql_source,
     row,
@@ -31,7 +32,12 @@ STEP = Path("shop") / "job1" / "data-movement" / "step-1"
 
 
 def _job(
-    tmp_path: Path, rows=None, *, schema: str = "shop", target_database: str | None = "shop"
+    tmp_path: Path,
+    rows=None,
+    *,
+    schema: str = "shop",
+    target_database: str | None = "shop",
+    extra=(),
 ) -> str:
     rows = rows if rows is not None else [
         row("shop.place_order", "procedure", schema="shop", status="rewritten", signature="IN int",
@@ -43,7 +49,7 @@ def _job(
     write_routine_sources(store, "shop", "job1", {"metadata": {"source_database": {"engine": "mysql"}}},
                           [mysql_source("place_order", "CREATE DEFINER=`app`@`%` PROCEDURE "
                                         f"`place_order`(IN p INT)\nBEGIN SELECT '{SENTINEL}'; END",
-                                        schema=schema)])  # fmt: skip
+                                        schema=schema), *extra])  # fmt: skip
     store.write_bytes("shop/job1/transformation-contract/v2/step-1.json", canonical_json(contract))
     store.write_json(f"{STEP}/plan.json", make_plan(contract).model_dump(mode="json"))
     inputs = {k: v for k, v in base.INPUTS.items() if k != "target_database_name"}
@@ -154,3 +160,29 @@ def test_a_missing_routine_with_no_case_clash_has_no_why(tmp_path, capsys):
     code, line = base._run(tmp_path, "routines-check", capsys=capsys)
     assert (code, line["status"], line["mismatches"][0]["problem"]) == (0, "fail", "missing")
     assert "why" not in line["mismatches"][0]
+
+
+def test_a_routine_left_out_for_depending_on_a_case_clash_says_why_too(tmp_path, capsys):
+    # shop.total is in the tables' database but calls Shop.place_order, left out for the clash:
+    # it clears with the same fix, so its lines say so.
+    rows = [row("Shop.place_order", "procedure", schema="Shop", status="rewritten",
+                signature="IN int", specific="place_order"),
+            row("shop.total", "procedure", schema="shop", status="rewritten", signature="IN int",
+                specific="total", dependencies=[dep_routine("procedure", "Shop.place_order")])]  # fmt: skip
+    sha = _job(tmp_path, rows, schema="Shop", target_database=None,
+               extra=[mysql_source("total", "CREATE DEFINER=`app`@`%` PROCEDURE `total`(IN p INT)\n"
+                                   "BEGIN CALL `Shop`.place_order(p); END")])  # fmt: skip
+    cred = StubbedCredMgr()
+    _loaded(cred, 100)
+    code, line = base._run(tmp_path, "routines", clients=base._clients(cred), capsys=capsys)
+    assert code == 0, line
+    why = {r["routine_id"]: (r["reason"], r.get("why")) for r in line["refused_routines"]}
+    assert why["shop.total"] == ("depends_on_refused", why["Shop.place_order"][1])
+    assert why["shop.total"][1]
+    header = ["modernizer-routines-check", "1", "aurora_mysql", sha, "", "", ""]
+    end = ["modernizer-routines-check-end", "", "", "", "", "", ""]
+    (tmp_path / STEP / "routines-check.tsv").write_text(
+        "\n".join("\t".join(x) for x in [header, end]) + "\n")  # fmt: skip
+    code, line = base._run(tmp_path, "routines-check", capsys=capsys)
+    got = {m["routine_id"]: (m["problem"], m.get("why")) for m in line["mismatches"]}
+    assert got["shop.total"] == ("missing", why["Shop.place_order"][1])
