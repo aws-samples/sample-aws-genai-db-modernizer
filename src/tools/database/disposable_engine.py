@@ -134,6 +134,7 @@ import atexit
 import contextlib
 import datetime
 import decimal
+import hashlib
 import logging
 import os
 import re
@@ -395,6 +396,19 @@ def _select_all_sql(table: str, mark: str) -> str:
         _quote(table, mark) if _IDENT.match(table.split(".")[-1]) else _quote_table(table, mark)
     )
     return f"SELECT * FROM {target}"  # nosec B608 - see _SQL_NOTE
+
+
+_EVENT_RUNNER = "__proof_event_"
+_MY_NAME_MAX = 64
+
+
+def event_runner_name(event: str) -> str:
+    """The name of the procedure the MySQL backend makes from an event's own body (#1971):
+    ``__proof_event_`` and a hash of the event's plain name (any schema part dropped), so
+    it is deterministic, within MySQL's 64-character limit and never the event's text."""
+    name = _parts(event)[-1]
+    digest = hashlib.sha256(name.encode()).hexdigest()[:20]
+    return f"{_EVENT_RUNNER}{digest}"
 
 
 def _call_sql(
@@ -1170,6 +1184,8 @@ class _PostgresBackend(_Backend):
         # as the call's row; a function's OUT arguments are not passed at all. A cast
         # names the overload: f(%s::integer) is never f(bigint) or f(text).
         name, kind = _routine_kind(self._kinds, routine)
+        if kind == "event":
+            raise ValueError("an event runs on MySQL only")
         casts = list(casts or [None] * len(args))
         if len(casts) != len(args):
             raise ValueError("one cast (or None) per argument")
@@ -1505,14 +1521,39 @@ class _MySQLBackend(_Backend):
             for routine in routines:
                 self._kinds[routine.name] = routine.kind
                 cur.execute(routine.create_sql)
+                if routine.kind == "event":
+                    self._make_event_runner(cur, routine.name)
         except self._mc.Error as exc:
             raise EngineError(f"{type(exc).__name__}: {exc}".strip(), _sqlstate(exc)) from exc
         finally:
             cur.close()
 
+    def _make_event_runner(self, cur, event: str) -> None:  # type: ignore[no-untyped-def]
+        """Make a procedure with the event's own statement as its body, read back from the
+        server, so one run of the event is a ``CALL`` while the scheduler stays off. Made
+        here, at load, because DDL commits the transaction a call runs in."""
+        name = _parts(event)[-1]
+        _execute(
+            cur,
+            "SELECT EVENT_DEFINITION FROM information_schema.EVENTS "
+            "WHERE EVENT_SCHEMA = DATABASE() AND EVENT_NAME = %s",
+            [name],
+        )
+        found = cur.fetchall()
+        if not found or not found[0][0]:
+            raise EngineError(f"no event {name!r} to run once")
+        runner = _quote(event_runner_name(name), "`")
+        _execute(cur, f"DROP PROCEDURE IF EXISTS {runner}")
+        # nosec B608 - a hashed, quoted name; the body is the event's own text
+        _execute(cur, f"CREATE PROCEDURE {runner}() {found[0][0]}")  # nosec B608
+
     def call(self, routine, args, modes=None, casts=None):  # type: ignore[no-untyped-def]
         # MySQL has no overloads, so a cast is never needed and is not written.
         name, kind = _routine_kind(self._kinds, routine)
+        if kind == "event":
+            if args or modes:
+                raise ValueError("an event run takes no argument")
+            name, kind = event_runner_name(name), "procedure"
         modes = list(modes or ["IN"] * len(args))
         if len(modes) != len(args):
             raise ValueError("one mode per argument")

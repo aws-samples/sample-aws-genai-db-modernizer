@@ -21,6 +21,12 @@ both from shapes only:
   held-back synthetic row, an ``UPDATE`` of the first row (a column of ``UPDATE OF``
   when it names one) and a ``DELETE`` of a row no foreign key points at, each trigger
   on a table with its own rows.
+- **Event runs.** A MySQL event (#1971) gets one run of its body, recorded as a call
+  (``kind`` ``event``, no arguments) so the comparison reads its table changes as data.
+  The disposable engine runs with ``--event-scheduler=OFF`` and never turns it on: the
+  engine runs the event's own statement once, on demand (``disposable_engine.call``), so
+  a run never waits for a schedule or fires between other calls. A disabled event is run
+  too: its body is carried logic, whatever its status.
 - **Rows.** ``generate_related_rows`` (the ADR-033 generator,
   :mod:`src.tools.synthetic_data.generator`) seeds every table the routines touch, plus
   the tables their foreign keys reference: types, primary keys, unique indexes, foreign
@@ -50,7 +56,9 @@ Input shape. :class:`RoutineProofInput` is the metadata the routine collection (
 modes (``proargnames``, ``proargtypes`` / ``proallargtypes``, ``proargmodes``) and
 ``pg_trigger``; MySQL ``information_schema.parameters`` (``PARAMETER_MODE``,
 ``PARAMETER_NAME``, ``DTD_IDENTIFIER``) and ``information_schema.triggers``
-(``ACTION_TIMING``, ``EVENT_MANIPULATION``, ``EVENT_OBJECT_TABLE``). Tables are the
+(``ACTION_TIMING``, ``EVENT_MANIPULATION``, ``EVENT_OBJECT_TABLE``) and
+``information_schema.events`` (``EVENT_TYPE``, ``INTERVAL_VALUE``, ``INTERVAL_FIELD``,
+``STATUS``). Tables are the
 collection's own table objects (``database_schema.tables``); a column may also carry
 ``null_rate``, ``min_value`` and ``max_value``, which the collector contract does not
 have yet.
@@ -60,7 +68,7 @@ function (it runs through its trigger), a routine with a ``VARIADIC`` argument, 
 PostgreSQL routine with a parameter whose type no cast can name (an uncast call could
 reach another overload, so none is sent), a trigger
 on a view (``INSTEAD OF``), a ``TRUNCATE`` trigger, and a trigger on a table the
-collection lacks. MySQL events are not taken (#1971), and setup tables are created
+collection lacks, and a MySQL event on PostgreSQL (#1971). Setup tables are created
 without a schema, so a routine body that names another schema (#1970) does not find
 them.
 
@@ -191,15 +199,54 @@ class TriggerSpec(BaseModel):
         return value
 
 
+_INTERVALS = ("YEAR", "QUARTER", "MONTH", "WEEK", "DAY", "HOUR", "MINUTE", "SECOND",
+              "YEAR_MONTH", "DAY_HOUR", "DAY_MINUTE", "DAY_SECOND", "HOUR_MINUTE",
+              "HOUR_SECOND", "MINUTE_SECOND", "DAY_MICROSECOND", "HOUR_MICROSECOND",
+              "MINUTE_MICROSECOND", "SECOND_MICROSECOND", "MICROSECOND")  # fmt: skip
+
+
+class EventSpec(BaseModel):
+    """A MySQL event's metadata, as ``information_schema.events`` gives it (#1971):
+    ``EVENT_TYPE`` (``schedule``: ``ONE TIME`` or ``RECURRING``), ``INTERVAL_VALUE`` and
+    ``INTERVAL_FIELD`` of a recurring event, and ``STATUS`` (``ENABLED``, ``DISABLED`` or
+    ``SLAVESIDE_DISABLED``). The tables it touches go in the routine's ``tables``."""
+
+    model_config = _HIDDEN
+
+    schedule: Literal["ONE TIME", "RECURRING"]
+    interval_value: int | None = Field(None, ge=1)
+    interval_field: Literal[_INTERVALS] | None = None  # type: ignore[valid-type]
+    status: Literal["ENABLED", "DISABLED", "SLAVESIDE_DISABLED"] = "ENABLED"
+
+    @field_validator("schedule", "interval_field", "status", mode="before")
+    @classmethod
+    def _upper(cls, value: object) -> object:
+        return " ".join(value.upper().split()) if isinstance(value, str) else value
+
+    @model_validator(mode="after")
+    def _interval_iff_recurring(self) -> EventSpec:
+        has = self.interval_value is not None and self.interval_field is not None
+        if (self.schedule == "RECURRING") != has or (
+            (self.interval_value is None) != (self.interval_field is None)
+        ):
+            raise ValueError("a recurring event has an interval, and a one-time event has none")
+        return self
+
+    @property
+    def enabled(self) -> bool:
+        return self.status == "ENABLED"
+
+
 class RoutineProofInput(BaseModel):
     """One routine's metadata, as the routine collection gives it (see the module
     docstring): no ``CREATE`` text.
 
     - ``routine_id``: the verdict's id (``public.add_tax(numeric)``, ``shop.restock``).
-    - ``kind``: ``function``, ``procedure`` or ``trigger``.
+    - ``kind``: ``function``, ``procedure``, ``trigger`` or ``event`` (MySQL).
     - ``name``: what a call names (``public.add_tax``); a trigger's own name.
     - ``parameters``: in declaration order. ``returns``: a function's return type.
-    - ``trigger``: required for a trigger, refused otherwise.
+    - ``trigger``: required for a trigger, refused otherwise. ``event``: the same for
+      an event (:class:`EventSpec`).
     - ``tables``: the tables the routine touches (ids or names, for instance the
       verdict's table dependencies).
     """
@@ -207,17 +254,20 @@ class RoutineProofInput(BaseModel):
     model_config = _HIDDEN
 
     routine_id: str = Field(min_length=1)
-    kind: Literal["function", "procedure", "trigger"]
+    kind: Literal["function", "procedure", "trigger", "event"]
     name: str = Field(min_length=1)
     parameters: tuple[RoutineParameter, ...] = ()
     returns: str | None = None
     trigger: TriggerSpec | None = None
+    event: EventSpec | None = None
     tables: tuple[str, ...] = ()
 
     @model_validator(mode="after")
     def _trigger_iff_kind(self) -> RoutineProofInput:
         if (self.kind == "trigger") != (self.trigger is not None):
             raise ValueError("a trigger needs its trigger spec, and only a trigger has one")
+        if (self.kind == "event") != (self.event is not None):
+            raise ValueError("an event needs its event spec, and only an event has one")
         return self
 
 
@@ -230,7 +280,8 @@ class ProofCall:
     statement from these fields each time, checking every name, so a saved and reloaded
     call list is never trusted as SQL.
 
-    - ``action`` ``call``: ``name`` is the routine, ``kind`` its kind, ``args`` the
+    - ``action`` ``call``: ``name`` is the routine (or the MySQL event, run once, with no
+      arguments), ``kind`` its kind, ``args`` the
       arguments, ``modes`` their modes and ``casts`` their PostgreSQL types (None where
       no cast is written; MySQL writes none).
     - ``action`` ``row_change``: ``name`` is the table, ``kind`` the event, ``columns``
@@ -499,6 +550,8 @@ def _cast(param: RoutineParameter) -> str | None:
 
 
 def _skip_reason(routine: RoutineProofInput, dialect: Dialect) -> str | None:
+    if routine.kind == "event" and dialect != "mysql":
+        return "a MySQL event is generated for MySQL only"
     if routine.kind == "function" and (routine.returns or "").strip().lower() in _NO_CALL_RETURNS:
         return "a trigger function runs through its trigger, not by a call"
     if any(p.mode == "VARIADIC" for p in routine.parameters):
@@ -533,6 +586,8 @@ def routine_calls(
         raise ValueError("a trigger's row changes come from build_proof_inputs")
     if (why := _skip_reason(routine, dialect)) is not None:
         raise ValueError(why)
+    if routine.kind == "event":  # one run of its body: the engine runs it, scheduler off
+        return (ProofCall(routine.routine_id, "run", "call", routine.name, "event"),), False
     passed = _passed(routine, dialect)
     modes = tuple("OUT" if p.mode in ("OUT", "TABLE") else p.mode for p in passed)
     casts = tuple(_cast(p) for p in passed) if dialect == "postgresql" else ()
@@ -1014,7 +1069,7 @@ def load_setup(
     de.load(handle, inputs.setup.ddl, inputs.setup.rows_by_table(), routines)
 
 
-_CALL_KINDS = {"function", "procedure"}
+_CALL_KINDS = {"function", "procedure", "event"}
 
 
 def _checked_casts(handle: de.EngineHandle, call: ProofCall) -> tuple[str, ...]:
@@ -1046,7 +1101,14 @@ def run_call(handle: de.EngineHandle, call: ProofCall) -> de.CallResult:
     if call.action != "call":
         raise ValueError(f"not an action: {call.action!r}")
     if call.kind not in _CALL_KINDS:
-        raise ValueError(f"a call is to a function or a procedure, not {call.kind!r}")
+        raise ValueError(f"a call is to a function, a procedure or an event, not {call.kind!r}")
+    if call.kind == "event":
+        if handle.engine != "mysql":
+            raise ValueError("an event runs on MySQL only")
+        if call.args or call.modes or call.casts:
+            raise ValueError("an event run takes no argument")
+        de.event_runner_name(call.name)  # the name is checked before the engine sees it
+        return de.call(handle, de.SourceRoutine(call.name, "event", ""), [], [], None)
     casts = _checked_casts(handle, call)
     args = list(call.args)
     for i, value in enumerate(args):
