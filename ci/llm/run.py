@@ -180,7 +180,7 @@ from collections.abc import Iterable
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from pathlib import Path
-from typing import Any
+from typing import Any, TypeGuard
 
 from defusedxml import ElementTree as ET
 
@@ -453,7 +453,8 @@ def check_ui_pointers(records: list[dict[str, Any]], mode: str) -> tuple[bool, s
         rtype = rec.get("type")
         if rtype == "user":
             run += 1
-        message = rec.get("message") if isinstance(rec.get("message"), dict) else {}
+        raw_message = rec.get("message")
+        message = raw_message if isinstance(raw_message, dict) else {}
         message_key = str(message.get("id") or f"run-{run}")
         if (
             rtype == "system"
@@ -501,10 +502,10 @@ def check_ui_pointers(records: list[dict[str, Any]], mode: str) -> tuple[bool, s
             elif rtype == "user" and block.get("type") == "tool_result":
                 use_id = str(block.get("tool_use_id"))
                 result_text = _text_from_content(block.get("content"))
-                page = pending.get(use_id)
+                pointed_page = pending.get(use_id)
                 url = _page_url_from_result(result_text)
-                if page and url:
-                    urls[page] = url
+                if pointed_page and url:
+                    urls[pointed_page] = url
                 printed = (
                     _PRINTED_RESULTS_RE.search(result_text) if use_id in printed_final else None
                 )
@@ -853,7 +854,7 @@ def _is_safe_name(value: str) -> bool:
     return bool(_SAFE_NAME_RE.fullmatch(value)) and set(value) != {"."}
 
 
-def _is_number(value: Any) -> bool:
+def _is_number(value: Any) -> TypeGuard[int | float]:
     return isinstance(value, (int, float)) and not isinstance(value, bool)
 
 
@@ -1855,7 +1856,8 @@ def check_explore(
     units = _units(_without_entry_ref(answer, ref))
     ran = _ran_entry(records, entry, job_id, params)
 
-    raw_rows = expected.get("rows") if isinstance(expected.get("rows"), list) else []
+    expected_rows = expected.get("rows")
+    raw_rows = expected_rows if isinstance(expected_rows, list) else []
     figures = [
         f
         for f in (
@@ -2721,7 +2723,8 @@ def _mark_results(out_dir: Path, scan: dict) -> None:
     # keeps a run that passed everything else.
     row["private_scan"] = {**scan, "pass_before_scan": row.get("pass") is True}
     row["pass"] = False
-    reasons = row.get("fail_reasons") if isinstance(row.get("fail_reasons"), list) else []
+    earlier_reasons = row.get("fail_reasons")
+    reasons = earlier_reasons if isinstance(earlier_reasons, list) else []
     withheld = scan.get("withheld") or []
     row["fail_reasons"] = [
         *reasons,

@@ -1223,6 +1223,8 @@ def _not_updatable(clients: MoveClients, name: str, stack: dict[str, Any]) -> di
 
 def _upload(clients: MoveClients, inputs: MoveInputs, name: str, body: str) -> str:
     """Put the template, and nothing else, in the customer's bucket; return its URL."""
+    if clients.sts is None or clients.s3 is None:  # only `deploy` builds these two clients
+        raise RuntimeError("the template upload needs the S3 and STS clients, built for deploy")
     bucket, key = str(inputs.template_bucket), f"{name}/{TEMPLATE}"
     account = clients.sts.get_caller_identity()["Account"]
     clients.s3.put_object(Bucket=bucket, Key=key, Body=body.encode(),

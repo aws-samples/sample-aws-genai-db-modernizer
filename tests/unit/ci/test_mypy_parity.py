@@ -64,7 +64,7 @@ def test_the_configured_files_are_every_tracked_python_tree_but_contrib() -> Non
     assert _config()["exclude"] == ["^contrib/"]
 
 
-def test_src_keeps_strict_optional_and_the_other_trees_that_have_a_package_do_not() -> None:
+def test_only_tests_still_skip_strict_optional() -> None:
     relaxed = {
         m.split(".")[0]
         for o in _config()["overrides"]
@@ -72,4 +72,4 @@ def test_src_keeps_strict_optional_and_the_other_trees_that_have_a_package_do_no
         for m in o["module"]
     }
     assert "src" not in relaxed
-    assert relaxed == {"tests", "scripts", "ci", "benchmarks"}
+    assert relaxed == {"tests"}, "scripts, ci and benchmarks are strict since #2255"

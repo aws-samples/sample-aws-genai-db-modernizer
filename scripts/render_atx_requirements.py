@@ -107,7 +107,7 @@ def render() -> str:
         match = re.match(r"([A-Za-z0-9._-]+)==", line)
         if match and canonicalize_name(match[1]) in needed:
             lines.append(line)
-    found = {canonicalize_name(re.match(r"[A-Za-z0-9._-]+", ln)[0]) for ln in lines}
+    found = {canonicalize_name(m[0]) for ln in lines if (m := re.match(r"[A-Za-z0-9._-]+", ln))}
     missing = needed - found
     if missing:
         raise SystemExit(f"uv export has no pin for: {', '.join(sorted(missing))}")

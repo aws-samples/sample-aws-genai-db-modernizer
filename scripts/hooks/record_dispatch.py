@@ -138,16 +138,16 @@ def record(event: dict[str, Any], project: Path) -> str | None:
         dispatch_ledger.log(folder, f"reopened {target} (SendMessage resumes it)")
         return f"reopened {target}"
     if name == "SubagentStop":
-        agent = event.get("agent_id")
+        stopped = event.get("agent_id")
         folder = job_dir(project, session)
         if folder is None:
             return None
-        if not isinstance(agent, str) or not dispatch_ledger.valid_id(agent):
+        if not isinstance(stopped, str) or not dispatch_ledger.valid_id(stopped):
             dispatch_ledger.log(folder, "SubagentStop with no agent id: nothing recorded")
             return None
-        dispatch_ledger.mark_reported(folder, [agent], session=session, by="subagent stop hook")
-        dispatch_ledger.log(folder, f"reported {agent}")
-        return f"reported {agent}"
+        dispatch_ledger.mark_reported(folder, [stopped], session=session, by="subagent stop hook")
+        dispatch_ledger.log(folder, f"reported {stopped}")
+        return f"reported {stopped}"
     return None
 
 
