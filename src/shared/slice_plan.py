@@ -47,6 +47,7 @@ from src.shared.dependency_graph import (
     Graph,
     Slice,
     build_graph,
+    cut_cost,
     measure_slices,
     share,
     slice_order_key,
@@ -426,6 +427,7 @@ def build_slice_plan(
     position: dict[str, tuple[int, int, int]] = {}
     pilots: set[str] = set()
     seen_engines: set[str] = set()
+    cut_costs: dict[int, tuple[int, int]] = {}  # an engine-wave step's, as a slice's (#1699)
     if whole is not None:
         stage = _stage_dict(
             "1",
@@ -474,6 +476,8 @@ def build_slice_plan(
             ]
         else:
             stages = _moving_stages(number, engine, members, calls_total)
+            if kind == "engine_wave":
+                cut_costs[number] = cut_cost(members)
             if sum(s["unit_count"] for s in stages) > 1:
                 pilots.add(stages[0]["unit_keys"][0])
         for stage in stages:
@@ -542,7 +546,8 @@ def build_slice_plan(
     plan["wave_phases"] = [
         p.model_dump(mode="json") for p in phase_facts([SliceStep.model_validate(s) for s in steps])
     ]
-    return SlicePlanFacts.model_validate(with_step_explanations(plan)).model_dump(mode="json")
+    explained = with_step_explanations(plan, cut_costs)
+    return SlicePlanFacts.model_validate(explained).model_dump(mode="json")
 
 
 def _group_dict(g: KeptWhole) -> dict[str, Any]:

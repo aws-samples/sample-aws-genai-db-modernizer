@@ -29,10 +29,13 @@ from pydantic import ValidationError
 from src.agents.referee.write_groups import assignment_placement_groups
 from src.contracts.synthesis_output import ReportFacts, SlicePlanFacts
 from src.shared.cache_engines import CACHE_ENGINES
-from src.shared.step_explanations import METRIC_LABELS, step_why
+from src.shared.step_explanations import METRIC_LABELS, step_ties, step_why
 from src.tools.validation.customer_text_guard import scan_json
 from tests.e2e.pipeline import REPO, PipelineResult, _env
-from tests.unit.shared.test_step_explanations import customer_text_findings
+from tests.unit.shared.test_step_explanations import (
+    customer_text_findings,
+    numbers_not_in_the_facts,
+)
 
 MOVING = {"owner", "replica_reads", "read_model"}
 
@@ -78,18 +81,32 @@ def test_each_step_says_why_it_sits_where_it_does(run: PipelineResult) -> None:
     and passes the customer-text guard; the metrics carry their plain names."""
     plan = _plan(_report(run))
     assert plan["metric_labels"] == METRIC_LABELS, run.db
+    ties = step_ties(plan)
     for step in plan["plan_steps"]:
         sentence = step["why"]
-        assert sentence == step_why(plan, step), (run.db, step["step_number"])
+        number = step["step_number"]
+        assert sentence == step_why(plan, step), (run.db, number)
         assert customer_text_findings(sentence) == [], (run.db, sentence)
-        assert sentence.startswith(f"Step {step['step_number']} "), sentence
+        assert numbers_not_in_the_facts(step, plan) == [], (run.db, sentence)
+        assert sentence.startswith(f"Step {number} "), sentence
         assert f"{step['query_count']:,} quer" in sentence or step["kind"] == "cache", sentence
+        # The ties are counted once, from the plan; an engine-wave step's cut cost is the
+        # slice plan's own, passed in, so only it is left out of the recount.
+        recount = {
+            k: v
+            for k, v in ties[number].items()
+            if step["kind"] != "engine_wave" or k not in ("replica_table_count", "write_site_count")
+        }
+        assert {k: step["ties"][k] for k in recount} == recount, (run.db, number)
+        if step["kind"] in ("slice", "engine_wave"):
+            copied, writes = step["ties"]["replica_table_count"], step["ties"]["write_site_count"]
+            assert f"{copied:,} table" in sentence and f"{writes:,} write statement" in sentence
         if step["metrics"] is not None:
             cut = step["metrics"]["cut_cost"]
-            assert f"{cut['replica_table_count']:,} table" in sentence, sentence
-            assert f"{cut['write_site_count']:,} write statement" in sentence, sentence
+            assert (copied, writes) == (cut["replica_table_count"], cut["write_site_count"])
         held = sorted({r for st in step["step_stages"] for r in st["holding_risk_ids"]})
-        assert all(r in sentence for r in held) and ("holds back" in sentence) == bool(held)
+        # "holds back" for one risk, "hold back" for several.
+        assert all(r in sentence for r in held) and (" back " in sentence) == bool(held)
 
 
 def test_every_moving_query_is_in_one_unit_and_no_group_is_split(run: PipelineResult) -> None:

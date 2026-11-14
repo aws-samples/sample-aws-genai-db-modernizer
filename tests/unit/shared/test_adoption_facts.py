@@ -24,6 +24,7 @@ from src.report.engineering_report import render_engineering_report_md
 from src.report.facts import report_facts
 from src.shared.adoption_facts import adoption_facts, slice_plan_facts
 from src.shared.report_facts import compute_report_facts
+from src.shared.step_explanations import METRIC_LABELS
 
 REPO = Path(__file__).resolve().parents[3]
 SAVED_REPORTS = (
@@ -65,7 +66,9 @@ def test_a_stored_block_is_read_as_stored() -> None:
     stored = {"step_basis": "engine_waves", "plan_steps": [], "marker": True}
     report["facts"] = {**report["facts"], "slice_plan": stored}
     facts = report_facts(report)
-    assert facts["slice_plan"] is stored
+    # Every stored field is kept; an empty plan stored before #1699 gains only the
+    # metrics' plain names, as a new one carries them.
+    assert facts["slice_plan"] == {**stored, "metric_labels": METRIC_LABELS}
     assert facts["adoption"] == adoption_facts(report, stored)
 
 
