@@ -107,3 +107,38 @@ def test_an_unreadable_move_is_one_failed_status_line_with_no_stored_value(
     )
     assert "evidence.group_scores.[*]" in line["message"]
     assert "card_number" not in proc.stdout + proc.stderr
+
+
+def test_a_design_that_fails_its_safety_check_is_its_own_failed_status_line(
+    tmp_path: Path,
+) -> None:
+    """#2199 review: a saved design the read refuses is not "missing": synthesis stops with
+    the refusal's public message and next step, the field's position, and no stored text."""
+    from src.shared.engine_names import display_engine
+
+    store = _job(tmp_path)
+    _design(store, "dynamodb")
+    store.write_json(
+        f"{DB}/{JOB}/schema-opensearch/v1/schema_output.json",
+        {
+            "status": "skipped",
+            "target_type": "opensearch",
+            "reason": "x",
+            "generated_ddl": f"DROP TABLE t; {PLANTED}",
+        },
+    )
+    proc = _run(tmp_path)
+    line = _status(proc)
+    name = display_engine("opensearch")
+    assert line == {
+        "status": "failed",
+        "phase": "synthesis",
+        "error": "UnsafeArtifactError",
+        "message": (
+            f"This assessment's saved {name} design failed its safety check: it has a DDL "
+            f"script the tool does not write, so it was not loaded. Rerun the {name} schema "
+            "design. (field: generated_ddl)"
+        ),
+    }
+    assert "card_number" not in proc.stdout + proc.stderr
+    assert f"missing: {DB}/{JOB}/schema-opensearch" not in proc.stdout + proc.stderr

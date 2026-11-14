@@ -58,6 +58,7 @@ import UnreviewedMovesNote from "../components/UnreviewedMovesNote";
 import EngineChoicesNote from "../components/EngineChoicesNote";
 import MigrationWavePlan from "../components/MigrationWavePlan";
 import { schemaSectionIdOf } from "../utils/adoptionPaths";
+import { schemaDesignsRefusal } from "../utils/schemaDesignsLoad";
 import RoutineMigrationSection from "../components/RoutineMigrationSection";
 import ExecutiveSummaryStats from "../components/ExecutiveSummaryStats";
 import SourcesOfTruthCallout from "../components/SourcesOfTruthCallout";
@@ -297,6 +298,10 @@ const AnalysisResultsPage = memo(() => {
 
       if (results['schemas']?.success) {
         setSchemaDesigns(results['schemas'].schema_designs || []);
+      }
+      const designsRefused = schemaDesignsRefusal(results['schemas']);
+      if (designsRefused) {
+        addFlashbarMessage({ type: 'error', header: t('analysis-results.error.schema-designs-refused'), content: designsRefused, dismissible: true, id: `error-schemas-${Date.now()}` });
       }
 
       if (results['collector']?.success) {

@@ -62,8 +62,11 @@ GENERATORS = {"aurora_postgresql": generate_pg_ddl, "aurora_mysql": generate_mys
 
 # SQL metacharacters a collector string could carry; every generated string ends with
 # the sentinel, so a field that reaches SQL code unquoted shows it there.
+# Control characters, the Unicode line separators, a zero-width space and homoglyph quotes
+# too (#2199): a name carrying one must still give DDL a saved design's read check accepts.
 _PIECES = ['"', "'", "`", ";", "--", "\n", "\r", "\\", "(", ")", ",", " ", "/*", "*/", "$$",
-           "E'", "DROP TABLE t", "NULL", "1", "id", SENTINEL]  # fmt: skip
+           "E'", "DROP TABLE t", "NULL", "1", "id", "\x00", "\x01", "\x1f", "\x7f", "\x85",
+           "\x9b", "\u2028", "\u2029", "\u200b", "\uff02", "\u02bc", "é", SENTINEL]  # fmt: skip
 _hostile = st.lists(st.sampled_from(_PIECES), max_size=6).map(lambda p: "".join(p) + SENTINEL)
 _REAL_TYPES = ["varchar(20)", "integer", "numeric(10,2)", "text", "timestamptz", "int unsigned",
                "enum('a','b')", "bigint", "decimal(70,40)", "jsonb", "tinyint(1)", "bit(3)"]  # fmt: skip
@@ -314,6 +317,10 @@ def test_column_ddl_is_built_in_one_place_and_it_runs_the_allowlist():
 DDL_WRITERS = {
     # The Aurora DDL generator: the property tests above.
     "src/tools/schema/aurora_common/ddl_generator.py",
+    # A saved design's DDL rebuilt on read (#2199): it writes nothing new, only compares
+    # the stored text with the generator's own renderers' output and refuses the design
+    # otherwise; tests/contract/test_saved_aurora_design_ddl.py.
+    "src/tools/schema/aurora_common/saved_design.py",
     # step-1.ddl.sql around the generator's DDL: the step 1 tests below (schema, table and
     # database names are plain identifiers, checked when step 1 reads its inputs).
     "src/tools/data_movement/dms_step.py",

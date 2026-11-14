@@ -236,6 +236,55 @@ def record_design_skip(
     return key
 
 
+REFUSED_SUFFIX = ".refused"
+
+
+def set_aside_refused_design(
+    store: ArtifactStore,
+    database_name: str,
+    job_id: str,
+    target_type: str,
+    assignment_version: int,
+) -> str | None:
+    """Move the engine's saved design aside when its read refuses it (#2199), so a rerun of
+    the schema design (the next step the refusal names) replaces it instead of failing on
+    it. The refused file is kept, never deleted: renamed with :data:`REFUSED_SUFFIX` in the
+    same folder (``.refused.2`` and on if one is already there), which no reader loads.
+    Logs the path and the refused field's position, never the file's content. Returns the
+    new key, or ``None`` when there is no file or it reads."""
+    from src.shared.contract_versioning import ContractVersionError
+
+    folder = f"{database_name}/{job_id}/schema-{target_type}"
+    key = (
+        f"{folder}/v{assignment_version}/schema_output.json"
+        if assignment_version > 0
+        else f"{folder}/schema_output.json"
+    )
+    if not store.exists(key):
+        return None
+    try:
+        store.read_json(key)
+        return None
+    except ContractVersionError as exc:
+        where = getattr(exc, "where", None) or "contract_version"
+    except (OSError, ValueError):
+        return None
+    aside, n = f"{key}{REFUSED_SUFFIX}", 1
+    while store.exists(aside):
+        n += 1
+        aside = f"{key}{REFUSED_SUFFIX}.{n}"
+    store.write_bytes(aside, store.read_bytes(key))
+    store.delete(key)
+    logger.warning(
+        "Schema design: set aside the refused saved design %s as %s (field: %s); "
+        "this run replaces it",
+        key,
+        aside,
+        where,
+    )
+    return aside
+
+
 def clear_design_skip(
     store: ArtifactStore,
     database_name: str,
@@ -250,6 +299,7 @@ def clear_design_skip(
     and the external request -- so a design that never writes anything leaves the record
     and the engine still reports as skipped. A design is never removed. Returns whether
     a record was removed."""
+    from src.shared.contract_versioning import ContractVersionError
     from src.shared.design_records import skip_reason
 
     if assignment_version <= 0:
@@ -259,6 +309,10 @@ def clear_design_skip(
         return False
     try:
         record = store.read_json(key)
+    except ContractVersionError:
+        # A refused design is no skip record; the design that starts replaces it (#2199).
+        set_aside_refused_design(store, database_name, job_id, target_type, assignment_version)
+        return False
     except (OSError, ValueError):
         return False
     if skip_reason(record) is None or (isinstance(record, dict) and record.get("excluded_queries")):
@@ -966,6 +1020,9 @@ def run_schema_design(
         require_valid_guardrail_config()
     if llm_mode == "none":
         return _skip_without_model(store, database_name, job_id, target_type, assignment_version)
+    # A design with a model replaces a saved one its read refuses (#2199): set it aside
+    # first, so nothing below fails on it and the refused copy is kept.
+    set_aside_refused_design(store, database_name, job_id, target_type, assignment_version)
     # --- External LLM mode: write prepared input and return early ---
     if llm_mode == "external":
         # The request on disk is design work in progress: the engine is no longer
@@ -1154,6 +1211,7 @@ def run_schema_split(
 
     start_time = time.time()
     say(f"[schema-split/{target_type}] Starting for {database_name}")
+    set_aside_refused_design(store, database_name, job_id, target_type, assignment_version)
     clear_design_skip(store, database_name, job_id, target_type, assignment_version)
 
     # Read collector output

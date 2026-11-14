@@ -20,7 +20,12 @@ from collections.abc import Callable
 from dataclasses import dataclass, field
 
 from src.contracts.aurora_design_delta import INDEX_METHODS, validate_aurora_type
-from src.contracts.schema_design_input import AgentColumn, AgentIndex, AgentTable
+from src.contracts.schema_design_input import (
+    AgentColumn,
+    AgentIndex,
+    AgentTable,
+    ForeignKeyAction,
+)
 from src.shared.engine_names import display_engine
 from src.tools.schema.aurora_common.constraint_translator import (
     DefaultTranslation,
@@ -387,20 +392,35 @@ def _create_table_sql(
     dialect: Dialect,
     notes: list[dict] | None = None,
 ) -> str:
-    lines = [f"  {c.fragment}" for c in columns]
-    if table.primary_key:
-        prefixes = (
-            _mysql_primary_key_prefixes(table, columns, notes if notes is not None else [])
-            if dialect is MYSQL
-            else {}
-        )
+    prefixes: dict[str, int] = {}
+    if table.primary_key and dialect is MYSQL:
+        prefixes = _mysql_primary_key_prefixes(table, columns, notes if notes is not None else [])
+    return render_create_table(
+        dialect,
+        table.table_name,
+        [c.fragment for c in columns],
+        [(c, prefixes.get(c.lower())) for c in table.primary_key or []],
+    )
+
+
+def render_create_table(
+    dialect: Dialect,
+    table_name: str,
+    fragments: list[str],
+    primary_key: list[tuple[str, int | None]],
+) -> str:
+    """One CREATE TABLE statement: each column fragment on its own line, then the PRIMARY
+    KEY (column, Aurora MySQL key prefix or None) when there is one. A saved design's
+    ``generated_ddl`` is rebuilt through this on every read (#2199)."""
+    lines = [f"  {f}" for f in fragments]
+    if primary_key:
         pk_cols = ", ".join(
-            dialect.q(c) + (f"({prefixes[c.lower()]})" if c.lower() in prefixes else "")
-            for c in table.primary_key
+            dialect.q(c) + _prefix_suffix([n for _, n in primary_key], pos)
+            for pos, (c, _) in enumerate(primary_key)
         )
         lines.append(f"  PRIMARY KEY ({pk_cols})")
     body = ",\n".join(lines)
-    return f"CREATE TABLE {dialect.q(table.table_name)} (\n{body}\n);"
+    return f"CREATE TABLE {dialect.q(table_name)} (\n{body}\n);"
 
 
 def is_primary_key_index(idx: AgentIndex, table: AgentTable) -> bool:
@@ -874,12 +894,17 @@ def _key_prefix_note(table: str, index: str, plan: KeyPlan, unique: bool) -> dic
     return {"table": table, "index": index, "kind": "key_prefix", "reason": " ".join(parts)}
 
 
+# Why an index is not created, the one sentence the draft has written since it first left
+# one out (#1623); a saved design's skipped-index comment must end with exactly this (#2199).
+NOT_CREATED_REASON = (
+    f"its key parts cannot share {MYSQL_MAX_KEY_BYTES} bytes on Aurora MySQL (4 bytes per "
+    "character on utf8mb4) with a useful prefix on its TEXT or BLOB columns. Index fewer or "
+    "shorter columns, or serve the lookups another way."
+)
+
+
 def _not_created_reason(plan: KeyPlan) -> str:
-    return (
-        f"its key parts cannot share {MYSQL_MAX_KEY_BYTES} bytes on Aurora MySQL (4 bytes per "
-        "character on utf8mb4) with a useful prefix on its TEXT or BLOB columns. Index fewer or "
-        "shorter columns, or serve the lookups another way."
-    )
+    return NOT_CREATED_REASON
 
 
 def _over_limit_reason(what: str, key_bytes: int | None = None) -> str:
@@ -891,11 +916,30 @@ def _over_limit_reason(what: str, key_bytes: int | None = None) -> str:
     )
 
 
+SKIPPED_INDEX_PREFIX = "-- Index "
+SKIPPED_INDEX_SUFFIX = f" not created: {NOT_CREATED_REASON}"
+# Characters a ``--`` comment may not carry: every C0 and C1 control character (``\r``
+# among them, which some viewers read as a line break) and the Unicode line separators.
+_COMMENT_UNSAFE = re.compile("[\x00-\x1f\x7f-\x9f\u2028\u2029]")
+
+
+def comment_name(table_name: str, index_name: str) -> str:
+    """``table.index`` as a skipped-index comment writes it: each control character or line
+    separator replaced by a space, then the whitespace collapsed, so the comment is one
+    line and nothing after it is part of it. A saved design's comment is checked against
+    this (#2199)."""
+    return " ".join(_COMMENT_UNSAFE.sub(" ", f"{table_name}.{index_name}").split())
+
+
+def skipped_index_comment(table_name: str, index_name: str) -> str:
+    """The SQL comment standing in for an index the key limit rules out."""
+    return f"{SKIPPED_INDEX_PREFIX}{comment_name(table_name, index_name)}{SKIPPED_INDEX_SUFFIX}"
+
+
 def _skipped_index(table_name: str, idx: AgentIndex, plan: KeyPlan) -> str:
     """A SQL comment standing in for an index the key limit rules out, so the draft keeps
     one statement per source index and the DDL still applies."""
-    name = " ".join(f"{table_name}.{idx.index_name}".split())
-    return f"-- Index {name} not created: {_not_created_reason(plan)}"
+    return skipped_index_comment(table_name, idx.index_name)
 
 
 def _index_sql(
@@ -1104,15 +1148,39 @@ def render_index(
 def _fk_sql(table: AgentTable, dialect: Dialect) -> list[str]:
     statements: list[str] = []
     for fk in table.foreign_keys or []:
-        local = ", ".join(dialect.q(c) for c in fk.columns)
-        ref = ", ".join(dialect.q(c) for c in fk.referenced_columns)
         statements.append(
-            f"ALTER TABLE {dialect.q(table.table_name)} "
-            f"ADD CONSTRAINT {dialect.q(fk.constraint_name)} "
-            f"FOREIGN KEY ({local}) REFERENCES {dialect.q(fk.referenced_table)} ({ref})"
-            f"{fk_on_delete_clause(fk.on_delete)};"
+            render_foreign_key(
+                dialect,
+                table.table_name,
+                fk.constraint_name,
+                fk.columns,
+                fk.referenced_table,
+                fk.referenced_columns,
+                fk.on_delete,
+            )
         )
     return statements
+
+
+def render_foreign_key(
+    dialect: Dialect,
+    table_name: str,
+    constraint_name: str,
+    columns: list[str],
+    referenced_table: str,
+    referenced_columns: list[str],
+    on_delete: ForeignKeyAction | None,
+) -> str:
+    """One ALTER TABLE ... ADD CONSTRAINT ... FOREIGN KEY statement, every identifier quoted.
+    A saved design's ``foreign_keys`` are re-rendered through this on every read (#2199)."""
+    local = ", ".join(dialect.q(c) for c in columns)
+    ref = ", ".join(dialect.q(c) for c in referenced_columns)
+    return (
+        f"ALTER TABLE {dialect.q(table_name)} "
+        f"ADD CONSTRAINT {dialect.q(constraint_name)} "
+        f"FOREIGN KEY ({local}) REFERENCES {dialect.q(referenced_table)} ({ref})"
+        f"{fk_on_delete_clause(on_delete)};"
+    )
 
 
 def _key_columns(table: AgentTable, dialect: Dialect) -> set[str]:

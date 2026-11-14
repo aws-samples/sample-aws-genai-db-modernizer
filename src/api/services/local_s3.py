@@ -312,7 +312,12 @@ class LocalS3Service:
             if len(parts) < 2:
                 continue
 
-            engine = parts[0].removeprefix("schema-")
+            # A folder name in another case (``schema-Aurora_MySQL/``) is the same engine
+            # (#2199): every design is keyed by the lower-case engine id the UI and the
+            # engine names know, and the canonical folder wins a version tie. Its content
+            # is checked on read whatever the folder is called (``check_artifact``).
+            folder = parts[0].removeprefix("schema-")
+            engine = folder.lower()
 
             # Versioned: schema-{type}/v{N}/schema_output.json
             if len(parts) == 3 and parts[1].startswith("v") and parts[2] == "schema_output.json":
@@ -321,12 +326,12 @@ class LocalS3Service:
                 except ValueError:
                     continue
                 current = latest.get(engine, (-1, ""))
-                if version > current[0]:
+                if version > current[0] or (version == current[0] and folder == engine):
                     latest[engine] = (version, full_path)
 
             # Legacy: schema-{type}/schema_output.json
             elif len(parts) == 2 and parts[1] == "schema_output.json":
-                if engine not in latest:
+                if engine not in latest or (latest[engine][0] == 0 and folder == engine):
                     latest[engine] = (0, full_path)
 
         designs = []

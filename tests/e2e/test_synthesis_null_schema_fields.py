@@ -9,6 +9,12 @@ returns ``None`` for a key that is present with a null value, which crashed synt
 ``build_ranking`` before any model call. On a designed wordpress job (DynamoDB, the cache
 layer and Aurora MySQL designs, no model), each list field of each design is nulled in
 turn -- top level, then on every item -- and synthesis runs end to end.
+
+The exception (#2199): an Aurora design's ``generated_ddl`` is rebuilt on every read from
+its table definitions, their columns, primary keys, indexes and foreign keys. Nulling one
+of those leaves a script the definitions no longer rebuild, so the read refuses the design
+(``UnsafeArtifactError``, the refusal synthesis reports) instead of loading SQL text it
+cannot check. Those variants must be refused, never crash or load.
 """
 
 from __future__ import annotations
@@ -34,6 +40,25 @@ JOB = "null-fld"
 @pytest.fixture(scope="module")
 def designed(tmp_path_factory: pytest.TempPathFactory) -> PipelineResult:
     return run_designed_wordpress(tmp_path_factory.mktemp("null-fields"), JOB)
+
+
+# The fields an Aurora design's DDL is rebuilt from (#2199): nulled, the read refuses it.
+_AURORA = ("aurora_mysql", "aurora_postgresql")
+_DDL_SOURCES = {"table_definitions"} | {
+    f"table_definitions[].{k}" for k in ("columns", "primary_key", "indexes", "foreign_keys")
+}
+
+
+def _refused(engine: str, label: str, design: dict) -> bool:
+    """Whether nulling ``label`` must make the read refuse ``design``: an Aurora design's
+    DDL source that held something (a null where the script lists nothing still rebuilds)."""
+    if engine not in _AURORA or label not in _DDL_SOURCES:
+        return False
+    tables = design.get("table_definitions") or []
+    if label == "table_definitions":
+        return bool(tables)
+    field = label.removeprefix("table_definitions[].")
+    return any(isinstance(t, dict) and t.get(field) for t in tables)
 
 
 def _designs(job_dir: Path) -> dict[str, Path]:
@@ -94,13 +119,22 @@ def test_synthesis_survives_each_nulled_list_field(designed: PipelineResult) -> 
     for engine, path in _designs(designed.job_dir()).items():
         original = path.read_text()
         try:
-            for label, variant in _variants(json.loads(original)):
+            saved = json.loads(original)
+            for label, variant in _variants(saved):
                 path.write_text(json.dumps(variant))
                 runs += 1
                 try:
                     report = _synthesize(root)
                 except Exception as exc:  # noqa: BLE001 -- collect every crash, then fail once
+                    if (
+                        _refused(engine, label, saved)
+                        and type(exc).__name__ == "UnsafeArtifactError"
+                    ):
+                        continue
                     failures.append(f"{engine}.{label}: {type(exc).__name__}: {exc}")
+                    continue
+                if _refused(engine, label, saved):
+                    failures.append(f"{engine}.{label}: loaded a script it cannot rebuild")
                     continue
                 assert report.get("query_groups") is not None, f"{engine}.{label}"
         finally:
@@ -115,11 +149,13 @@ def test_synthesis_survives_every_item_list_field_nulled_at_once(designed: Pipel
     try:
         for engine, path in designs.items():
             design = json.loads(originals[engine])
-            for value in design.values():
+            for key, value in design.items():
                 for item in value if isinstance(value, list) else []:
                     if isinstance(item, dict):
                         for k, v in list(item.items()):
-                            if isinstance(v, list):
+                            if isinstance(v, list) and not _refused(
+                                engine, f"{key}[].{k}", json.loads(originals[engine])
+                            ):
                                 item[k] = None
             path.write_text(json.dumps(design))
         report = _synthesize(designed.artifact_root)

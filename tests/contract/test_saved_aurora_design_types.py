@@ -22,10 +22,13 @@ from pathlib import Path
 import pytest
 from pydantic import BaseModel, ValidationError
 
+from src.contracts.aurora_design_delta import validate_aurora_type
 from src.contracts.aurora_mysql_model_output import AuroraMySQLModelOutputContract
 from src.contracts.aurora_postgresql_model_output import AuroraPostgresqlModelOutputContract
 from src.shared.contract_versioning import ContractVersionError, read_contract_payload
 from src.storage.local_store import LocalArtifactStore
+from src.tools.schema.aurora_common.ddl_generator import render_create_table
+from src.tools.schema.aurora_common.saved_design import DIALECTS
 
 REPO = Path(__file__).resolve().parents[2]
 SAVED = (
@@ -37,6 +40,20 @@ MODELS: dict[str, type[BaseModel]] = {
     "aurora_mysql": AuroraMySQLModelOutputContract,
     "aurora_postgresql": AuroraPostgresqlModelOutputContract,
 }
+
+
+def _ddl(engine: str, types: tuple[str, ...]) -> str:
+    """The script the generator writes for ``types`` (#2199 rebuilds it on every read)."""
+    dialect = DIALECTS[engine]
+
+    def written(t: str) -> str:
+        try:
+            return validate_aurora_type(t, engine)
+        except ValueError:
+            return t  # refused by the column type check before the script is read
+
+    fragments = [f"{dialect.q(f'c{i}')} {written(t)}" for i, t in enumerate(types)]
+    return render_create_table(dialect, "users", fragments, [("c0", None)])
 
 
 def _design(engine: str, *types: str) -> dict:
@@ -56,7 +73,7 @@ def _design(engine: str, *types: str) -> dict:
                 ],
             }
         ],
-        "generated_ddl": "CREATE TABLE users (c0 BIGINT);",
+        "generated_ddl": _ddl(engine, types),
         "trade_offs": [{"description": "Carry over", "impact": "Same shape."}],
         "validation_passed": True,
     }
@@ -201,11 +218,24 @@ def test_a_legal_type_in_odd_case_or_spacing_loads_normalized(
 
 
 @pytest.mark.passes_on_main
-def test_a_skipped_placeholder_and_another_engine_are_not_checked(tmp_path: Path) -> None:
+def test_a_skipped_placeholder_and_another_engines_design_are_not_checked(tmp_path: Path) -> None:
     """Only an Aurora design carries Aurora column types."""
     skipped = {"status": "skipped", "reason": "no queries", "target_type": "aurora_mysql"}
     store, key = _store(tmp_path, "aurora_mysql", skipped)
     assert store.read_json(key)["status"] == "skipped"
-    other = {"contract_version": "1.0", "table_definitions": [{"columns": [{"aurora_type": "x;"}]}]}
+    other = {"contract_version": "1.0", "table_definitions": [{"table_name": "t", "gsis": []}]}
     store, key = _store(tmp_path, "dynamodb", other)
     assert store.read_json(key) == other
+
+
+def test_aurora_column_types_in_another_engines_folder_are_checked(tmp_path: Path) -> None:
+    """#2199 round 2: content decides, never the folder. Aurora column types in another
+    engine's folder run the Aurora check for the engine the file names, or are refused
+    when it names none (the #2155 version of this test read them unchecked)."""
+    other = {"contract_version": "1.0", "table_definitions": [{"columns": [{"aurora_type": "x;"}]}]}
+    store, key = _store(tmp_path, "dynamodb", other)
+    with pytest.raises(ContractVersionError, match="target_engine"):
+        store.read_json(key)
+    store, key = _store(tmp_path, "dynamodb", {**other, "target_engine": "aurora_mysql"})
+    with pytest.raises(ContractVersionError, match="aurora_type"):
+        store.read_json(key)
