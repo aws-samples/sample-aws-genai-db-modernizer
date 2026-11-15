@@ -140,3 +140,39 @@ def test_documented_command_with_a_shell_expansion_is_blocked_with_a_hint(
 def test_other_refusals_carry_no_expansion_hint(run_hook) -> None:
     res = run_hook("enforce_tool_use_rule.py", bash("cat artifacts/x/output.json"))
     assert res.blocked and "single quotes" not in res.stderr
+
+
+PROOF_TARGET_FORMS = [
+    "uv run python scripts/run_dms_step.py proof-target-deploy --job-id j --db d --approve",
+    'uv run python scripts/run_dms_step.py "proof-target-deploy" --job-id j --db d --approve',
+    "uv run python scripts/run_dms_step.py 'proof-target-teardown' --job-id j --db d --approve",
+    "uv run python scripts/run_dms_step.py proof\\-target-status --job-id j --db d",
+    'uv run python scripts/run_dms_step.py "proof"-target-plan --job-id j --db d',
+    "uv run python scripts/run_dms_step.py --job-id j --db d proof-target-deploy --approve",
+    "uv run python scripts/run_dms_step.py --job-id j --db d 'proof-target-plan'",
+]
+
+
+@pytest.mark.parametrize("command", PROOF_TARGET_FORMS)
+def test_a_proof_target_call_is_blocked_whatever_its_quoting_or_option_order(
+    command: str, run_hook
+) -> None:
+    """#1946: the deny rules match the command text, so a quoted or escaped subcommand slips
+    past them; the hook reads the subcommand the shell would pass and refuses it."""
+    assert hook.is_proof_target_call(command)
+    res = run_hook("enforce_tool_use_rule.py", bash(command))
+    assert res.blocked and "routine-proof test cluster" in res.stderr
+
+
+@pytest.mark.parametrize(
+    "command",
+    [
+        "uv run python scripts/run_dms_step.py status --job-id j --db d --until stack",
+        "uv run python scripts/run_dms_step.py plan --job-id j --db d",
+        'uv run python scripts/run_dms_step.py "teardown" --job-id j --db d --approve',
+        "uv run python scripts/run_dms_step.py --job-id j --db d routines",
+    ],
+)
+def test_the_other_run_dms_step_subcommands_still_pass(command: str, run_hook) -> None:
+    assert not hook.is_proof_target_call(command)
+    assert run_hook("enforce_tool_use_rule.py", bash(command)).code == 0

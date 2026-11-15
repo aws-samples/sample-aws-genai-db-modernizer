@@ -559,6 +559,7 @@ def test_the_readme_lists_every_aws_call_the_commands_make() -> None:
     # What CloudFormation does as the caller for the template's resources, and no IAM role.
     for action in ("rds:CreateDBCluster", "rds:CreateDBInstance", "rds:EnableHttpEndpoint",
                    "rds:DeleteDBCluster", "ec2:CreateSecurityGroup", "ec2:DeleteSecurityGroup",
-                   "secretsmanager:CreateSecret"):  # fmt: skip
+                   "secretsmanager:CreateSecret", "kms:DescribeKey",
+                   "ec2:DescribeInternetGateways"):  # fmt: skip
         assert f"`{action}`" in write, action
     assert "iam:PassRole" not in section and "logs:" not in write
