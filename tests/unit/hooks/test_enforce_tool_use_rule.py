@@ -150,15 +150,23 @@ PROOF_TARGET_FORMS = [
     'uv run python scripts/run_dms_step.py "proof"-target-plan --job-id j --db d',
     "uv run python scripts/run_dms_step.py --job-id j --db d proof-target-deploy --approve",
     "uv run python scripts/run_dms_step.py --job-id j --db d 'proof-target-plan'",
+    # Expansions shlex does not perform, which bash and zsh do: ANSI-C quoting, braces, globs.
+    "uv run python scripts/run_dms_step.py $'proof-target-deploy' --job-id j --db d --approve",
+    "uv run python scripts/run_dms_step.py {proof-target-deploy,} --job-id j --db d --approve",
+    "uv run python scripts/run_dms_step.py pr{oof-target-deploy,} --job-id j --db d --approve",
+    "uv run python scripts/run_dms_step.py proof-target-depl?y --job-id j --db d --approve",
+    "uv run python scripts/run_dms_step.py pro*-deploy --job-id j --db d --approve",
 ]
 
 
 @pytest.mark.parametrize("command", PROOF_TARGET_FORMS)
-def test_a_proof_target_call_is_blocked_whatever_its_quoting_or_option_order(
+def test_a_proof_target_call_is_blocked_quoted_escaped_expanded_or_after_the_options(
     command: str, run_hook
 ) -> None:
-    """#1946: the deny rules match the command text, so a quoted or escaped subcommand slips
-    past them; the hook reads the subcommand the shell would pass and refuses it."""
+    """#1946: the deny rules match the command text, so a quoted, escaped or expanded subcommand
+    slips past them. The hook splits the command as the shell does and refuses a
+    ``run_dms_step.py`` argument that starts with ``proof-target`` or holds any character
+    outside ``[A-Za-z0-9_./=:,@+-]``, so no expansion is left to build one."""
     assert hook.is_proof_target_call(command)
     res = run_hook("enforce_tool_use_rule.py", bash(command))
     assert res.blocked and "routine-proof test cluster" in res.stderr
@@ -176,3 +184,30 @@ def test_a_proof_target_call_is_blocked_whatever_its_quoting_or_option_order(
 def test_the_other_run_dms_step_subcommands_still_pass(command: str, run_hook) -> None:
     assert not hook.is_proof_target_call(command)
     assert run_hook("enforce_tool_use_rule.py", bash(command)).code == 0
+
+
+def _documented_run_dms_step_calls() -> list[str]:
+    """Every distinct ``run_dms_step.py`` call in the shipped commands and skills, with its
+    ``{placeholder}`` and ``<placeholder>`` values filled in as a run fills them."""
+    import re
+
+    found: set[str] = set()
+    for folder in (REPO_ROOT / ".claude" / "commands", REPO_ROOT / "src" / "skills"):
+        for path in folder.rglob("*.md"):
+            for call in re.findall(
+                r"uv run python scripts/run_dms_step\.py[^`\n]*", path.read_text()
+            ):
+                filled = re.sub(r"\{[^}]*\}|<[^>]*>", "job-1a2b", call.strip())
+                found.add(filled)
+    return sorted(found)
+
+
+def test_every_documented_run_dms_step_call_still_passes_the_hook(run_hook) -> None:
+    """The character rule must never refuse a call the pipeline makes: a new command that does
+    not fit it fails here, not in a headless run."""
+    calls = _documented_run_dms_step_calls()
+    assert len(calls) >= 30, calls
+    refused = [c for c in calls if hook.is_proof_target_call(c)]
+    assert refused == []
+    for call in calls[:3]:  # and through the hook itself, end to end
+        assert run_hook("enforce_tool_use_rule.py", bash(call)).code == 0, call
