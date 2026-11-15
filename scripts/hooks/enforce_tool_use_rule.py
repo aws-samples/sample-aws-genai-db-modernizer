@@ -18,7 +18,8 @@ from a file: the scripts write their own artifacts and file writes go through
 Edit/Write, whose allow rules (``artifacts/**``) bound them; only ``2>&1``-style fd duplication and ``/dev/null`` are fine. Replaying 105 saved headless
 transcripts (2679 Bash calls) through it refused 26 calls, all genuine violations (pipes into
 ``head``/``tail``/``cut``/``grep``, ``ls``, ``find``, a ``VAR=...;`` chain, ``echo``), and none of
-the documented pipeline commands. Stdin: the hook event JSON. Exit 0 allows, exit 2
+the documented pipeline commands. It also refuses every ``run_dms_step.py proof-target-*`` call (#1946), read from the shell words,
+so no quoting gets past it. Stdin: the hook event JSON. Exit 0 allows, exit 2
 blocks.
 """
 
@@ -27,6 +28,7 @@ from __future__ import annotations
 import json
 import os
 import re
+import shlex
 import sys
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
@@ -104,6 +106,33 @@ def has_file_redirection(command: str) -> bool:
     return ">" in rest or "<" in rest
 
 
+# The routine-proof test cluster's commands (#1946) never run headless. settings.ci.json denies
+# them too, but a permission rule matches the command's text, so a quoted or escaped subcommand
+# ("proof-target-deploy", proof\-target-deploy) would slip past it: this reads the words the
+# shell would pass instead.
+PROOF_TARGET_SCRIPT = "run_dms_step.py"
+PROOF_TARGET_PREFIX = "proof-target"
+PROOF_TARGET_BLOCK = (
+    "Blocked: the routine-proof test cluster's commands (run_dms_step.py proof-target-*) never "
+    "run in a headless session; they deploy, read and delete AWS resources only in a run the "
+    "customer attends (#1946)."
+)
+
+
+def is_proof_target_call(command: str) -> bool:
+    """True when the shell would run ``run_dms_step.py`` with any argument starting with
+    ``proof-target``, whatever its quoting, escaping or option order. Fails closed: a command
+    the shell words cannot be read from that names the script counts as one."""
+    try:
+        words = shlex.split(command, comments=False, posix=True)
+    except ValueError:
+        return PROOF_TARGET_SCRIPT in command
+    for i, word in enumerate(words):
+        if os.path.basename(word) == PROOF_TARGET_SCRIPT:
+            return any(w.startswith(PROOF_TARGET_PREFIX) for w in words[i + 1 :])
+    return False
+
+
 def main() -> int:
     event = hook_common.read_event()
     if event.get("tool_name") not in (None, "Bash"):
@@ -115,6 +144,8 @@ def main() -> int:
         rules = allowed_rules()
     except (OSError, ValueError):
         return 0  # no allowlist to enforce; the permission rules still apply
+    if is_proof_target_call(command):
+        return int(hook_common.block(PROOF_TARGET_BLOCK))
     if is_documented_command(command, rules):
         return 0
     hint = EXPANSION_HINT if hook_common.has_shell_expansion(command) else ""
