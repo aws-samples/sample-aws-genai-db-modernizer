@@ -219,17 +219,20 @@ def failures_check(
     task_arn: str,
     dms_version: str | None = None,
     task_schema: str | None = None,
+    region: str | None = None,
 ) -> dict[str, Any]:
     """Where DMS lists the records that did not validate, with read-only SQL the customer runs
     on Aurora (the target), never the modernizer: a lookup of the table DMS made first, then a
     count per table. ``TASK_NAME`` holds the task's external resource id, the ARN's last
     segment (AWS DMS User Guide, AWS DMS data validation). ``task_schema`` is the live task's
     ``ControlSchema`` (``dms_control.task_control_schema``; None when unknown): a task whose
-    settings name another one, deployed from an older bundle, gets a first line that says
-    DMS may not have recorded the failures and how to rerun (#2133)."""
+    settings name another one, deployed from an older bundle, gets the customer's own steps
+    first on Aurora MySQL only (``dms_control.rerun_note``; ``region`` names the task's), where
+    DMS 3.6.1 may not have made its failure table (#2133); on Aurora PostgreSQL such a task
+    writes its failures to ``public``, the documented default, which the lookup finds."""
     task = _task_name(task_arn)  # allowlisted: letters, digits and hyphens only
-    note = ([] if task_schema is None or task_schema == CONTROL_SCHEMA
-            else [rerun_note(task_schema)])  # fmt: skip
+    old_mysql = family == "mysql" and task_schema not in (None, CONTROL_SCHEMA)
+    note = rerun_note(task_schema or "", task_arn, region or "<region>") if old_mysql else []
     steps = [*note, "On the Aurora cluster (the target), in a read-only session, run the first query "
              "(it names the failure table DMS made; when it names another one than the next "
              "query reads, use that name), then the next:"]  # fmt: skip
@@ -289,13 +292,14 @@ def table_steps(
     ]
 
 
-def gate_failures(gate: Any, plan: Any | None) -> dict[str, Any]:
+def gate_failures(gate: Any, plan: Any | None, task_schema: str | None = None) -> dict[str, Any]:
     """For the gate's line (#2064), in the shape status's lines use: ``validation_failures``
     (the tables whose records did not validate, at most ``TABLES_SHOWN``),
     ``validation_failures_not_shown`` and ``validation_failures_check`` (where DMS lists those
     records, the read-only SQL for the customer, and a hint per known pattern), None when none
     failed. ``plan`` (the step plan, or None when it cannot be read) gives the engine, the DMS
-    engine version and the LOB tables."""
+    engine version and the LOB tables; ``task_schema`` is the task's ``ControlSchema`` as the
+    gate read it, so the gate's line says what Prove's does about the same task."""
     from src.tools.data_movement.source_retention import family_of
 
     failed = [t for t in gate.tables if t.validation_failed_records
@@ -311,7 +315,7 @@ def gate_failures(gate: Any, plan: Any | None) -> dict[str, Any]:
              "ValidationState": t.validation_state,
              "ValidationFailedRecords": t.validation_failed_records,
              "ValidationSuspendedRecords": t.validation_suspended_records} for t in failed]  # fmt: skip
-    check = failures_check(family, gate.task_arn, dms_version(plan))
+    check = failures_check(family, gate.task_arn, dms_version(plan), task_schema, gate.region)
     return {"validation_failures": [_failure(r) for r in rows[:TABLES_SHOWN]],
             "validation_failures_not_shown": max(len(failed) - TABLES_SHOWN, 0),
             "validation_failures_check": {**check, "hints": lob_hints(lob, [t.table for t in failed])}}  # fmt: skip

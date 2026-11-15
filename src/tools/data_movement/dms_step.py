@@ -1825,6 +1825,13 @@ def render_ddl(inputs: Step1Inputs) -> str:
     replication = _replication(inputs)
     user = ["", "The DMS user, after the tables and the schema its grants name (YOUR RESPONSIBILITY, as "
             "above; uncomment to run):"]  # fmt: skip
+    if pg:
+        # The DMS user's name is the one in the target secret, which this file never reads, and
+        # an uncommented GRANT to a role that does not exist stops the file: so it stays here.
+        user.append(f"A DMS user created from an earlier step-1.ddl.sql needs only the GRANT USAGE, "
+                    f'CREATE ON SCHEMA "{CONTROL_SCHEMA}" line below, with its own name: this file '
+                    f"creates {CONTROL_SCHEMA} and the user who runs it owns it, so without that "
+                    "grant DMS cannot create its control tables there.")  # fmt: skip
     out += "\n" + with_header("", user, "--")
     out += "".join(f"-- {s}\n" for s in _dms_user_lines(engine, replication.target_engine_line,
                                                         database, schemas[0]))  # fmt: skip

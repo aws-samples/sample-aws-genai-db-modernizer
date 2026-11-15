@@ -29,6 +29,7 @@ on a PostgreSQL target ``awsdms_validation_failures_v2`` from DMS 3.6.1, AWS DMS
 from __future__ import annotations
 
 import json
+import shlex
 from collections.abc import Mapping
 from typing import Any
 
@@ -59,11 +60,35 @@ def task_control_schema(task: Mapping[str, Any]) -> str | None:
     return value if isinstance(value, str) else ""
 
 
-def rerun_note(found: str) -> str:
-    """For a task whose settings name another control schema than step 1 sets now."""
+def rerun_note(found: str, task_arn: str, region: str) -> list[str]:
+    """The customer's own steps for an Aurora MySQL task whose settings name another control
+    schema than step 1 sets now (a stack rendered before #2133), where DMS 3.6.1 may not have
+    made its failure table. Only theirs, with their credentials: DMS modifies a task only once
+    it is stopped (AWS DMS API Reference, ModifyReplicationTask), and ``/move step-1`` on a
+    running or stopped task goes back to Prove, never to a deploy. The modify sends the task's
+    whole settings with the control schema added, never a partial document. On Aurora
+    PostgreSQL an older task writes its failures to ``public``, the documented default, so it
+    gets no note."""
     named = f"names {found}" if found else "sets no DMS control schema"
-    return (f"This task {named} (step 1 now sets {CONTROL_SCHEMA}), so DMS may not have recorded "
-            "the records it counted as failed: the first query below shows where, if anywhere, "
-            "DMS made its failure table. To have them recorded, run /move step-1 again: it "
-            f"renders the DMS stack with ControlSchema {CONTROL_SCHEMA} and deploys that change "
-            "after your approval.")  # fmt: skip
+    arn, where = shlex.quote(task_arn), shlex.quote(region)
+    setting = json.dumps({"ControlTablesSettings": {"ControlSchema": CONTROL_SCHEMA}})
+    return [
+        f"This task {named} (step 1 now sets {CONTROL_SCHEMA}): on Aurora MySQL, DMS 3.6.1 may "
+        "not have made its failure table, so the failures it counted may be recorded nowhere. "
+        "Run the first query below: when it names an awsdms_validation_failures table, read "
+        "the failures there. When it names none, the failures already counted will not appear "
+        "later by themselves.",
+        "To have DMS record them from then on, with your own credentials (while the task is "
+        "stopped the source keeps its change log for it): stop the task: aws dms "
+        f"stop-replication-task --replication-task-arn {arn} --region {where}",
+        "Save its settings: aws dms describe-replication-tasks --filters "
+        f"Name=replication-task-arn,Values={arn} --query "
+        f"'ReplicationTasks[0].ReplicationTaskSettings' --output text --region {where} > "
+        f"task-settings.json, then add {setting[1:-1]} to that JSON object and run: aws dms "
+        f"modify-replication-task --replication-task-arn {arn} --replication-task-settings "
+        f"file://task-settings.json --region {where}",
+        f"Resume it: aws dms start-replication-task --replication-task-arn {arn} "
+        f"--start-replication-task-type resume-processing --region {where}",
+        "Then run /move step-1: it goes on at Prove, and when the gate names these tables it "
+        "offers revalidate, which validates them again so DMS records what still differs.",
+    ]

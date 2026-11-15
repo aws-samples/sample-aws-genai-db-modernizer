@@ -25,6 +25,7 @@ import json
 import os
 import sys
 from pathlib import Path
+from typing import Any
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 if str(REPO_ROOT) not in sys.path:
@@ -33,6 +34,7 @@ if str(REPO_ROOT) not in sys.path:
 from botocore.exceptions import BotoCoreError, ClientError  # noqa: E402
 
 from src.shared.cutover_message import cutover_message_text  # noqa: E402
+from src.tools.data_movement.dms_control import task_control_schema  # noqa: E402
 from src.tools.data_movement.dms_gate import (  # noqa: E402
     DEFAULT_STALE_SECONDS,
     DEFAULT_WINDOW_MINUTES,
@@ -91,9 +93,15 @@ def main(argv: list[str] | None = None, *, clients: GateClients | None = None) -
         window_minutes=args.window_minutes,
         stale_seconds=args.stale_seconds,
     )
+    observed: dict[str, Any] = {}
     try:
         path, gate = write_gate(
-            LocalArtifactStore(base_dir=args.artifact_root), db, job_id, request, clients
+            LocalArtifactStore(base_dir=args.artifact_root),
+            db,
+            job_id,
+            request,
+            clients,
+            observed=observed,
         )
     except (DmsStepError, FileNotFoundError, ClientError, BotoCoreError) as exc:
         return error(str(exc))
@@ -103,7 +111,8 @@ def main(argv: list[str] | None = None, *, clients: GateClients | None = None) -
                       "cutover_message": cutover_message_text(gate.cutover_message_id),
                       "reasons": [f"{c.id}: {r}" for c in gate.checks for r in c.reasons],
                       "exceptions": [{"table": e.table, "kind": e.kind} for e in gate.exceptions],
-                      **gate_failures(gate, step_plan(args.artifact_root, db, job_id))}))  # fmt: skip
+                      **gate_failures(gate, step_plan(args.artifact_root, db, job_id),
+                                      task_control_schema(observed.get("task") or {}))}))  # fmt: skip
     return 0
 
 

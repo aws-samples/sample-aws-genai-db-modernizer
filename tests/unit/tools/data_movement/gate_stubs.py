@@ -6,6 +6,7 @@
 from __future__ import annotations
 
 import datetime as dt
+import json
 
 from src.tools.data_movement.dms_gate import GateClients, GateRequest
 from tests.unit.tools.aws.aws_stubs import REGION, StubbedCredMgr
@@ -61,6 +62,7 @@ def queue(
     age_minutes=0,
     instance_arn=INSTANCE,
     metric_dims=(INSTANCE_DIM,),
+    settings=None,
 ):
     """Queue every response ``read_task`` consumes. ``stat_pages`` splits the table statistics
     over several pages (a Marker each); ``task_dim`` is the CloudWatch task dimension value
@@ -76,6 +78,8 @@ def queue(
     }  # fmt: skip
     if instance_arn:
         task["ReplicationInstanceArn"] = instance_arn
+    if settings is not None:  # the task's ReplicationTaskSettings, as DMS returns them
+        task["ReplicationTaskSettings"] = json.dumps(settings)
     dms.add_response("describe_replication_tasks", {"ReplicationTasks": [task]},
                      {"Filters": [{"Name": "replication-task-arn", "Values": [TASK]}]})  # fmt: skip
     dms.add_response("list_tags_for_resource", {"TagList": [{"Key": "modernizer:contract-sha256", "Value": tag or sha}]},

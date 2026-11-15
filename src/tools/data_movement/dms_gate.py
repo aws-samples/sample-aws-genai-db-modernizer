@@ -642,8 +642,13 @@ def run_gate(
     now: datetime,
     routines: RoutineCheckResult | None = None,
     seen: ValidatedTables | None = None,
+    observed: dict[str, Any] | None = None,
 ) -> DmsGate:
+    """``observed``, when given, gets the task as DMS described it (``task``), for what the
+    gate's line says beyond the gate contract (its control schema, #2133)."""
     view = read_task(clients, request, now=now)
+    if observed is not None:
+        observed["task"] = view.task
     max_lag = inputs.plan.gates.max_lag_seconds
     seen = ValidatedTables(dict(seen.marks) if seen else {})
     seen.observe(view.statistics.values())  # this read's drops apply too; the file is unchanged
@@ -667,14 +672,15 @@ def run_gate(
 
 
 def write_gate(store: Any, db: str, job_id: str, request: GateRequest, clients: GateClients, *,
-               now: datetime | None = None) -> tuple[str, DmsGate]:  # fmt: skip
+               now: datetime | None = None,
+               observed: dict[str, Any] | None = None) -> tuple[str, DmsGate]:  # fmt: skip
     inputs = load_step1(store, db, job_id, with_ddl=False)
     routines = None
     check_key = f"{db}/{job_id}/data-movement/step-1/routines-check.json"
     if inputs.contract.routines is not None and store.exists(check_key):
         routines = load_contract(RoutineCheckResult, store.read_json(check_key), artifact=check_key)
     gate = run_gate(inputs, request, clients, now=now or datetime.now(UTC), routines=routines,
-                    seen=load_validated(store, db, job_id))  # fmt: skip
+                    seen=load_validated(store, db, job_id), observed=observed)  # fmt: skip
     path = f"{db}/{job_id}/data-movement/step-1/gate.json"
     store.write_json(path, gate.model_dump(mode="json"))
     return path, gate

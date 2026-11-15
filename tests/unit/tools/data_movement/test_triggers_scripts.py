@@ -12,6 +12,7 @@ import json
 
 import pytest
 
+from src.tools.data_movement.dms_control import CONTROL_SCHEMA
 from src.tools.data_movement.routine_scripts import RoutineScriptError
 from src.tools.data_movement.triggers_scripts import (
     TRIGGERS_CHECK_FILE,
@@ -572,7 +573,7 @@ def test_the_databases_the_triggers_enable_script_creates_get_the_carried_collat
     (clause,) = {
         line.split("`shop`", 1)[1]
         for line in _lines(ddl, "CREATE DATABASE")
-        if "`awsdms_control`" not in line
+        if f"`{CONTROL_SCHEMA}`" not in line
     }  # DMS's control database (#2133)
     assert " COLLATE utf8mb4_unicode_ci" in clause
     assert _lines(text, "CREATE DATABASE") == [f"CREATE DATABASE IF NOT EXISTS `jobs`{clause}"]

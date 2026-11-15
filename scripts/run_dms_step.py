@@ -840,6 +840,7 @@ def _table_problems(out: dict[str, Any], task: dict[str, Any], tables: list[dict
             task["ReplicationTaskArn"],
             None if steps is None else steps.dms_version,
             task_control_schema(task),
+            None if steps is None else steps.region,
         )
     if not problems["errored_tables"]:
         return out

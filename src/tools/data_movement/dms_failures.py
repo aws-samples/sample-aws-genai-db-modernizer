@@ -22,6 +22,8 @@ import re
 from dataclasses import dataclass
 from typing import Any
 
+from src.tools.data_movement.dms_control import CONTROL_SCHEMA
+
 FAILED = frozenset({"failed", "failed-move"})
 # StopReason values that mean the task stopped by itself on a problem (DMS API Reference,
 # ReplicationTask.StopReason), not because someone stopped it or it reached a stop point.
@@ -62,6 +64,25 @@ FAILURE_HINTS: tuple[FailureHint, ...] = (
           "ON SCHEMA public TO the user in the source secret, then retry.",
           "AWS DMS User Guide, PostgreSQL source endpoint settings (HeartbeatSchema); "
           "step 1 rehearsal (awsdms_heartbeat)"),
+    # The control schema step 1's DDL creates (#2133), owned by whoever ran it: a DMS user made
+    # from an earlier step-1.ddl.sql has no CREATE there. Only a denial on that schema itself.
+    _hint("postgresql_control_schema",
+          rf"\bpermission denied for schema\s+\"?{re.escape(CONTROL_SCHEMA)}\b\"?(?![\w])",
+          f"DMS cannot create its control tables in {CONTROL_SCHEMA} (the task's ControlSchema): "
+          "step-1.ddl.sql creates that schema and the user who ran it owns it, so a DMS user "
+          "created from an earlier step-1.ddl.sql has no CREATE there. On Aurora, as that user, "
+          f'run GRANT USAGE, CREATE ON SCHEMA "{CONTROL_SCHEMA}" TO <the user in the target '
+          "secret>; then retry.",
+          "AWS DMS User Guide, Using a PostgreSQL database as a target (security requirements); "
+          "Control table task settings (ControlSchema)"),
+    _hint("mysql_control_database",
+          rf"\bdenied (?:for|to) user \S+ (?:to database '{re.escape(CONTROL_SCHEMA)}'"
+          rf"|for table '{re.escape(CONTROL_SCHEMA)}\.)",
+          f"DMS cannot create its control tables in {CONTROL_SCHEMA} (the task's ControlSchema): "
+          f"on Aurora, run GRANT ALL PRIVILEGES ON `{CONTROL_SCHEMA}`.* TO <the user in the target "
+          "secret>@'%'; then retry.",
+          "AWS DMS User Guide, Using a MySQL-compatible database as a target (prerequisites); "
+          "Control table task settings (ControlSchema)"),
     # Binary logging said to be off, never a message that merely names a binlog variable.
     _hint("mysql_binary_logging",
           r"\bbinary\s+logging\s+(?:is\s+)?(?:disabled|not\s+enabled|must\s+be\s+enabled)\b",
