@@ -22,7 +22,8 @@ holds routine text.
 - a text that sets ``search_path`` (a function's ``SET`` clause or a statement in its
   body) or calls ``set_config``;
 - a body whose tables or calls, as the parser reads them, name another schema
-  (``pg_catalog`` and ``information_schema`` aside);
+  (``pg_catalog`` and ``information_schema`` aside; a table of a schema the setup created
+  its tables in, ``schemas``, may be named, #1970);
 - a name written so that the text and the server read it differently: a PostgreSQL
   ``U&"..."`` Unicode-escaped name, a MySQL ``/*! ... */`` versioned comment; and on
   PostgreSQL every name the statement binds is read again from the parser's tree, which
@@ -66,7 +67,7 @@ that names a time zone. None of these sees inside a dynamic statement.
 from __future__ import annotations
 
 import re
-from collections.abc import Iterator, Sequence
+from collections.abc import Collection, Iterator, Sequence
 
 from src.tools.routines.mysql_checks import MySqlRoutine, check_mysql_routine
 from src.tools.routines.postgresql_checks import (
@@ -477,9 +478,16 @@ def _role_or_account_change(text: str, engine: str) -> str | None:
     return None
 
 
-def create_refusal(text: str, engine: str, kind: str, namespace: str) -> str | None:
+def create_refusal(
+    text: str, engine: str, kind: str, namespace: str, schemas: Collection[str] = ()
+) -> str | None:
     """Why ``text`` (one ``CREATE`` of ``kind``) may not be created in ``namespace`` for a
-    comparison, or None (see the module docstring for what is refused)."""
+    comparison, or None (see the module docstring for what is refused).
+
+    ``schemas`` are the source schemas (PostgreSQL) or databases (MySQL) the setup created
+    its tables in (#1970): a body's table or a trigger's ``ON`` table may name one, since the
+    setup put it there; nothing is ever created in one, and a call to another schema's
+    routine is still refused."""
     if engine == "postgresql" and _UNICODE_NAME.search(text):
         return "it writes a Unicode-escaped name (U&), which the screen does not read"
     if engine == "mysql" and "/*!" in text:
@@ -529,13 +537,22 @@ def create_refusal(text: str, engine: str, kind: str, namespace: str) -> str | N
         if on is not None:
             places.append((_qualified(tokens, on + 1)[0], "its table"))
     for written, what in places:
-        if written is not None and not _same_schema(written, namespace, engine):
-            return f"{what} is qualified with a schema other than the target's ({namespace})"
+        if written is None or _same_schema(written, namespace, engine):
+            continue
+        if what == "its table" and any(_same_schema(written, s, engine) for s in schemas):
+            continue
+        return f"{what} is qualified with a schema other than the target's ({namespace})"
+    settled = {s.casefold() for s in schemas}
     if engine == "postgresql":  # the parser's own reading of every name the statement binds
         parsed = created_schemas(text, kind)  # type: ignore[arg-type]
         if parsed is None:
             return "its header is not in the expected form"
-        if any(sch is not None and sch != namespace for sch in parsed):
+        # a trigger's table comes first (it may sit in a setup schema), its function last
+        named = parsed[1:] if kind == "trigger" else parsed
+        table = parsed[:1] if kind == "trigger" else ()
+        if any(sch is not None and sch != namespace for sch in named) or any(
+            sch is not None and sch != namespace and sch.casefold() not in settled for sch in table
+        ):
             return f"its name is qualified with a schema other than the target's ({namespace})"
     why = _role_or_account_change(text, engine)
     if why is not None:
@@ -548,8 +565,13 @@ def create_refusal(text: str, engine: str, kind: str, namespace: str) -> str | N
         tables, calls = _references(text, engine, kind)
     except RoutineTokenError:
         return "its text could not be read"
-    allowed = {namespace if engine == "mysql" else namespace.casefold()} | _SYSTEM_SCHEMAS[engine]
-    for schema_name, _ in [*tables, *calls]:
-        if schema_name is not None and schema_name not in allowed:
+    own = {namespace if engine == "mysql" else namespace.casefold()} | _SYSTEM_SCHEMAS[engine]
+    # a setup schema holds tables only: a call into it is still another schema's routine
+    held = {s if engine == "mysql" else s.casefold() for s in schemas}
+    for schema_name, _ in calls:
+        if schema_name is not None and schema_name not in own:
+            return "its body names an object in a schema other than the target's"
+    for schema_name, _ in tables:
+        if schema_name is not None and schema_name not in own | held:
             return "its body names an object in a schema other than the target's"
     return None

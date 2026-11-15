@@ -1112,6 +1112,8 @@ def _table_names(
     for tid in inputs.setup.tables:
         table = by_id.get(tid, {})
         name = str(table.get("table_name") or tid.rpartition(".")[2])
+        if str(table.get("schema_name") or "") in inputs.setup.schemas:
+            name = f"{table['schema_name']}.{name}"  # a table of a source schema (#1970)
         names.append(name)  # any spelling: the engine quotes it
         keys[name] = tuple(table.get("primary_key") or ())
         observed.add(tid)
