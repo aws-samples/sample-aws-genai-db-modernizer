@@ -32,6 +32,17 @@ export function openRiskCountAt(synthesis, severity, shownAtSeverity) {
   return (shownAtSeverity || []).length;
 }
 
+// #2303: the risk tab to open on: the highest severity with an open risk
+// (`severities` is highest first), so the section never opens on an empty
+// "CRITICAL (0)" while risks sit under another tab. The first tab when none has one.
+export function defaultRiskSeverity(synthesis, risksBySeverity, severities) {
+  const withRisks = severities.find(
+    (severity) => ((risksBySeverity || {})[severity] || []).length > 0
+      || openRiskCountAt(synthesis, severity, []) > 0,
+  );
+  return withRisks || severities[0];
+}
+
 // "3 resolved by the assignment" (facts.resolved_risk_count).
 export function resolvedRiskCountOf(synthesis, shownRisks) {
   const n = factsOf(synthesis) && factsOf(synthesis).resolved_risk_count;

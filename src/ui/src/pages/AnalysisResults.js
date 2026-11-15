@@ -85,7 +85,7 @@ import EngineBadge from "../components/EngineBadge";
 import { WORKLOAD_FIT_DEFINITION } from "../utils/workloadFitLabels";
 import { optimizationLabel } from "../utils/optimizationLabels";
 import { displayTables } from "../utils/tableNames";
-import { accessPatternTotals, assumptionLinesOf, cacheLayerFactsOf, costAssumptionsOf, rateWindowRiskNoteOf, rateWindowScenarioOf, rateWindowStatementOf, rowCountStatementOf, derivedCopySyncOf, costCaveatOf, costScopeLabelOf, costSizingOf, costSizingText, designTableCountOf, noEngineInScopeOf, openRiskCountAt, procedureInternalQueryCountOf, procedureInternalRoutineCountOn, procedureInternalRoutineCountsOf, queryPatternCountsOf, resolvedRiskCountOf, resolvedRisksBySeverityText, routingHistoryRecorded, routingKindsById, tradeOffsByTab, tradeOffTabLabel, tradeOffTopicGroupsOf } from "../utils/reportFacts";
+import { accessPatternTotals, assumptionLinesOf, cacheLayerFactsOf, costAssumptionsOf, rateWindowRiskNoteOf, rateWindowScenarioOf, rateWindowStatementOf, rowCountStatementOf, derivedCopySyncOf, costCaveatOf, costScopeLabelOf, costSizingOf, costSizingText, defaultRiskSeverity, designTableCountOf, noEngineInScopeOf, openRiskCountAt, procedureInternalQueryCountOf, procedureInternalRoutineCountOn, procedureInternalRoutineCountsOf, queryPatternCountsOf, resolvedRiskCountOf, resolvedRisksBySeverityText, routingHistoryRecorded, routingKindsById, tradeOffsByTab, tradeOffTabLabel, tradeOffTopicGroupsOf } from "../utils/reportFacts";
 
 
 // ============================================
@@ -234,6 +234,7 @@ const AnalysisResultsPage = memo(() => {
   const { search: locationSearch, hash: locationHash } = useLocation();
   // #2300: the Table design tab a link names, read before the first render so the tabs
   // are controlled from the start.
+  const [riskTab, setRiskTab] = useState(null);
   const [designTab, setDesignTab] = useState(() => engineFromSearch(locationSearch));
   const [navigationOpen, setNavigationOpen] = useState(false);
   // The experimental graph explorer (#308): its entry shows only when the server flag is on.
@@ -484,6 +485,10 @@ const AnalysisResultsPage = memo(() => {
     [riskAssessment]
   );
   const risksBySeverity = useMemo(() => groupRisksBySeverity(openRisks), [openRisks]);
+  const riskTabIds = [
+    ...RISK_SEVERITIES,
+    ...((risksBySeverity[UNRATED] || []).length > 0 ? [UNRATED] : []),
+  ];
 
   // #334: a report with no current-cost baseline (the collector never reported
   // RDS instance metadata) left current_monthly_cost/savings_percent at 0, and
@@ -2607,10 +2612,13 @@ const AnalysisResultsPage = memo(() => {
                     caveat={resultsData?.no_open_risks_caveat}
                   />
                   <Tabs
-                    tabs={[
-                      ...RISK_SEVERITIES,
-                      ...((risksBySeverity[UNRATED] || []).length > 0 ? [UNRATED] : []),
-                    ].map((severity) => {
+                    activeTabId={
+                      riskTabIds.includes(riskTab)
+                        ? riskTab
+                        : defaultRiskSeverity(synthesis, risksBySeverity, RISK_SEVERITIES)
+                    }
+                    onChange={({ detail }) => setRiskTab(detail.activeTabId)}
+                    tabs={riskTabIds.map((severity) => {
                       const risksAtSeverity = risksBySeverity[severity] || [];
                       const severityCount = openRiskCountAt(synthesis, severity, risksAtSeverity);
                       const status = riskSeverityStatus(severity);
