@@ -50,7 +50,7 @@ import {
 import { sourceEngineOf } from "../utils/sqlLocking";
 import { ENGINE_STYLES, engineHex } from "../utils/engineColors";
 import EngineBadge from "../components/EngineBadge";
-import { resultsEngineHref } from "../utils/resultsLinks";
+import { resultsEngineHref, awaitsApproval } from "../utils/resultsLinks";
 import { getCacheOverlay, ownerDistribution, getQueryCacheInfo, formatCacheLayerLine, formatCacheReadLine, formatCacheReadsMore, formatCachedByLine, isCacheEngine, buildOverrideList, addCacheOverlayNode } from "../utils/cacheLayer";
 import { summaryFallbackInfo } from "../utils/summaryFallback";
 import { reroutedQueryIds, rowMoveKind } from "../utils/postSchemaReroutes";
@@ -139,6 +139,10 @@ const AssignmentGatePage = memo(() => {
   const [triageData, setTriageData] = useState(null);
   const [collectorData, setCollectorData] = useState(null);
   const [databaseName, setDatabaseName] = useState('');
+  // #2300: whether the job has results to link to, and whether a decision is pending
+  // (results that exist then belong to an earlier version).
+  const [resultsExist, setResultsExist] = useState(false);
+  const [decisionPending, setDecisionPending] = useState(false);
 
   // View mode
   const [viewMode, setViewMode] = useState('summary'); // 'summary' | 'advanced'
@@ -180,6 +184,7 @@ const AssignmentGatePage = memo(() => {
 
       const dbName = jobResult['job']?.database_name || '';
       setDatabaseName(dbName);
+      setDecisionPending(awaitsApproval(jobResult['job']));
 
       if (!dbName) {
         addFlash('error', t('assignment-gate.flash.missing-db-name'), t('assignment-gate.flash.missing-db-name-detail'));
@@ -194,7 +199,9 @@ const AssignmentGatePage = memo(() => {
         { id: 'phases', path: `assessments/${jobId}/phases`, method: 'GET', params: {} },
         { id: 'triage', path: `assessments/${jobId}/triage`, method: 'GET', params: {} },
         { id: 'collector', path: `assessments/${jobId}/collector`, method: 'GET', params: {} },
+        { id: 'results', path: `assessments/${jobId}/results`, method: 'GET', params: {} },
       ]);
+      setResultsExist(!!results['results']?.success);
 
       if (results['reality-check']?.success) {
         setRealityCheck(results['reality-check']);
@@ -326,10 +333,11 @@ const AssignmentGatePage = memo(() => {
   // ---- Handle Sankey node click ----
   const handleSankeyNodeClick = useCallback((nodeId) => {
     if (nodeId && nodeId !== 'patterns') {
-      // #2300: the engine's part of the results page, in this tab.
-      navigate(resultsEngineHref(jobId, nodeId));
+      // #2300: the engine's part of the results page, in a new tab: leaving this one
+      // would discard the overrides not yet saved.
+      window.open(resultsEngineHref(jobId, nodeId), '_blank', 'noopener');
     }
-  }, [jobId, navigate]);
+  }, [jobId]);
 
 
   // ---- Computed data ----
@@ -842,8 +850,15 @@ const AssignmentGatePage = memo(() => {
             width={900}
             height={Math.max(250, Object.keys(survivingAfterDist).length * 120)}
             data={sankeyData}
-            onNodeClick={handleSankeyNodeClick}
+            onNodeClick={resultsExist ? handleSankeyNodeClick : undefined}
+            unavailableTitle={t('assignment-gate.query-flow.details-after-completion')}
           />
+          {/* #2300: a decision is pending, so results that exist are an earlier version's. */}
+          {resultsExist && decisionPending && (
+            <Box padding={{ top: 's' }} textAlign="center" color="text-body-secondary" fontSize="body-s">
+              {t('assignment-gate.query-flow.older-version-note')}
+            </Box>
+          )}
           {/* #296/#330: ElastiCache never owns a query, so it's never a flow
               source -- the Sankey instead shows it as a node fed by its owner
               engines' flows (addCacheOverlayNode); this caption adds the

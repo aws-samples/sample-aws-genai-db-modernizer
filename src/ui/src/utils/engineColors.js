@@ -6,7 +6,7 @@
  * src/catalog/engines, rendered into engineCatalog.generated.js by
  * scripts/render_catalog.py, #492). The executive report draws its engine accents from
  * the same field (#1246), so a reader learns "colour = engine" once: badges, the Sankey,
- * the roadmap, the assignment gate, the pattern analysis page and the PDF agree.
+ * the roadmap, the assignment gate and the PDF agree.
  *
  * ENGINE_STYLES is keyed in the gate's engine-picker order (each engine's
  * ui_picker_order), so a new catalog engine appears here with no edit.

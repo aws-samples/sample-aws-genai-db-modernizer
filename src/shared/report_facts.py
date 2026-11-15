@@ -4153,7 +4153,9 @@ def mean_table_fit(analysis: Mapping[str, Any]) -> float:
 
 
 def routed_cache_fit_facts(confidence: int | None, queries: int) -> dict[str, Any]:
-    """The cache layer's routed fit, as the pattern analysis page shows it (#1325, ADR-032).
+    """The cache layer's routed fit, as the analysis endpoint serves it (#1325, ADR-032).
+
+    The page that showed it was removed in #2300; the analysis endpoint still serves it.
 
     ``confidence`` and ``queries`` are the cache entry's ``routed_confidence`` and
     ``routed_queries``: the mean fit of the reads the latest assignment routes to the cache
@@ -4176,10 +4178,10 @@ def analysis_overview_facts(
 ) -> dict[str, Any]:
     """The engine overview figures of one analysis artifact (#1312, ADR-032).
 
-    The pattern analysis page, the job's agent summary and each ``report.json`` ranking entry
+    The job's agent summary and each ``report.json`` ranking entry
     show the average fit of the engine's tables, its table, pattern and anti-pattern counts,
     its cost and the queries its patterns cover. They are computed here, from ``analysis.json``,
-    so a saved job of any age answers the same way and the page only formats them.
+    so a saved job of any age answers the same way and a renderer only formats them.
     ``anti_pattern_query_counts`` lists, in the order of ``anti_patterns_detected``, how many
     queries each one names. ``signal_query_total`` and ``signal_count`` (the page's "total
     queries" under the signal chart and the signal tab count) are added when the triage

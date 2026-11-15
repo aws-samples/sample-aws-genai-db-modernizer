@@ -2,9 +2,14 @@
 // SPDX-License-Identifier: MIT-0
 
 /**
- * #2300: clicking an engine node in the Sankey chart (assignment gate and
- * job monitoring summary) goes to that engine's part of the results page in the
- * same tab. It used to open the old pattern-analysis page in a new tab.
+ * #2300: clicking an engine node in the Sankey chart goes to that engine's part of
+ * the results page, but only when the job's results exist (the summary page's
+ * "View results" condition: the job is complete; at the gate: the results endpoint
+ * answers). On the summary page the click stays in the tab; at the gate it opens a
+ * new tab, so the unsaved overrides are not lost. Without results the node is not a
+ * link and says why. At the gate with a decision pending, results that exist belong
+ * to an earlier version, and the page says so. It used to open the old
+ * pattern-analysis page in a new tab, results or not.
  *
  * Renders both real pages with plain-DOM stand-ins for the Cloudscape components
  * (it ships ESM Jest cannot transform) and a ChartSankey stub that exposes one
@@ -60,11 +65,15 @@ jest.mock('../../components/UnservableAssignmentNotice', () => ({ __esModule: tr
 jest.mock('../../components/PendingEngineChoices', () => ({ __esModule: true, default: () => null }));
 jest.mock('../../components/ChartSankey', () => ({
   __esModule: true,
-  default: ({ data, onNodeClick }) => (
+  default: ({ data, onNodeClick, unavailableTitle }) => (
     <div>
-      {data.nodes.map((n) => (
-        <button key={n.id} className="sankey-node" data-node={n.id} onClick={() => onNodeClick(n.id)} />
-      ))}
+      {data.nodes.map((n) =>
+        onNodeClick ? (
+          <button key={n.id} className="sankey-node" data-node={n.id} onClick={() => onNodeClick(n.id)} />
+        ) : (
+          <span key={n.id} className="sankey-node-off" data-node={n.id} title={unavailableTitle} />
+        ),
+      )}
     </div>
   ),
 }));
@@ -107,8 +116,11 @@ const ASSIGNMENT = {
   },
 };
 
-const DATA = {
-  job: { database_name: 'discourse' },
+const BASE = {
+  job: {
+    database_name: 'discourse',
+    progress: { stages: [{ name: 'RunRealityCheck', status: 'completed' }] },
+  },
   assignments: ASSIGNMENT,
   'reality-check': {
     success: true,
@@ -130,14 +142,29 @@ const DATA = {
     success: true,
     database_name: 'discourse',
     progress: {
-      current_stage: 'WaitForAssignmentApproval',
-      stages: [{ name: 'WaitForAssignmentApproval', status: 'completed' }],
+      stages: [
+        { name: 'WaitForAssignmentApproval', status: 'completed' },
+        { name: 'RunRefereeSynthesis', status: 'running' },
+      ],
     },
   },
   'get-agent-details': { success: true },
   'get-execution-history': { success: true },
   'get-results': { success: true },
+  results: { success: false },
 };
+
+// The job is complete when its last stage, the review, is completed.
+const COMPLETE = {
+  progress: {
+    stages: [
+      { name: 'WaitForAssignmentApproval', status: 'completed' },
+      { name: 'LoadSynthesisOutput', status: 'completed' },
+    ],
+  },
+};
+
+let DATA = BASE;
 
 let container;
 let root;
@@ -148,6 +175,7 @@ beforeEach(() => {
   document.body.appendChild(container);
   root = createRoot(container);
   mockNavigate.mockClear();
+  DATA = BASE;
   openSpy = jest.spyOn(window, 'open').mockImplementation(() => null);
   ApiManager.mockImplementation(() => ({
     execute: async (requests) => Object.fromEntries(requests.map((r) => [r.id, DATA[r.id]])),
@@ -160,10 +188,14 @@ afterEach(() => {
   openSpy.mockRestore();
 });
 
-async function clickNode(Page, nodeId) {
+async function renderPage(Page) {
   await act(async () => {
     root.render(<Page />);
   });
+}
+
+async function clickNode(Page, nodeId) {
+  await renderPage(Page);
   const node = container.querySelector(`.sankey-node[data-node="${nodeId}"]`);
   expect(node).not.toBeNull();
   await act(async () => {
@@ -171,14 +203,60 @@ async function clickNode(Page, nodeId) {
   });
 }
 
-describe.each([
-  ['the assignment gate', AssignmentGate],
-  ['the job monitoring summary', JobMonitoringSummary],
-])('a Sankey engine click on %s', (_name, Page) => {
-  test('goes to that engine on the results page, in the same tab', async () => {
-    await clickNode(Page, 'dynamodb');
+const withData = (overrides) => {
+  DATA = { ...BASE, ...overrides };
+};
+
+describe('the job monitoring summary', () => {
+  test('a complete job: a Sankey engine click goes to that engine on the results page, in this tab', async () => {
+    withData({ 'get-job-details': { ...BASE['get-job-details'], ...COMPLETE } });
+    await clickNode(JobMonitoringSummary, 'dynamodb');
     expect(mockNavigate).toHaveBeenCalledTimes(1);
     expect(mockNavigate).toHaveBeenCalledWith('/analysis/results/job-1?engine=dynamodb#access-patterns-section');
     expect(openSpy).not.toHaveBeenCalled();
+  });
+
+  test('a job still running: no node is a link, and each says the details come with the completed assessment', async () => {
+    await renderPage(JobMonitoringSummary);
+    expect(container.querySelectorAll('.sankey-node')).toHaveLength(0);
+    const off = container.querySelector('.sankey-node-off[data-node="dynamodb"]');
+    expect(off.getAttribute('title')).toBe('job-summary.query-flow.details-after-completion');
+    expect(mockNavigate).not.toHaveBeenCalled();
+    expect(openSpy).not.toHaveBeenCalled();
+  });
+});
+
+describe('the assignment gate', () => {
+  test('with results: a click opens that engine on the results page in a new tab, never this one', async () => {
+    withData({ results: { success: true, synthesis: {} } });
+    await clickNode(AssignmentGate, 'dynamodb');
+    expect(openSpy).toHaveBeenCalledTimes(1);
+    expect(openSpy).toHaveBeenCalledWith(
+      '/analysis/results/job-1?engine=dynamodb#access-patterns-section', '_blank', 'noopener',
+    );
+    expect(mockNavigate).not.toHaveBeenCalled();
+    expect(container.textContent).not.toContain('assignment-gate.query-flow.older-version-note');
+  });
+
+  test('without results: no node is a link, and each says the details come with the completed assessment', async () => {
+    await renderPage(AssignmentGate);
+    expect(container.querySelectorAll('.sankey-node')).toHaveLength(0);
+    const off = container.querySelector('.sankey-node-off[data-node="dynamodb"]');
+    expect(off.getAttribute('title')).toBe('assignment-gate.query-flow.details-after-completion');
+    expect(openSpy).not.toHaveBeenCalled();
+    expect(mockNavigate).not.toHaveBeenCalled();
+  });
+
+  test('a decision pending while results exist: the link opens, and the page says they are an earlier version', async () => {
+    withData({
+      results: { success: true, synthesis: {} },
+      job: {
+        database_name: 'discourse',
+        progress: { stages: [{ name: 'WaitForAssignmentApproval', status: 'running' }] },
+      },
+    });
+    await clickNode(AssignmentGate, 'dynamodb');
+    expect(openSpy).toHaveBeenCalledTimes(1);
+    expect(container.textContent).toContain('assignment-gate.query-flow.older-version-note');
   });
 });

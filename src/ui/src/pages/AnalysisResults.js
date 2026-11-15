@@ -58,7 +58,7 @@ import UnreviewedMovesNote from "../components/UnreviewedMovesNote";
 import EngineChoicesNote from "../components/EngineChoicesNote";
 import MigrationWavePlan from "../components/MigrationWavePlan";
 import { schemaSectionIdOf } from "../utils/adoptionPaths";
-import { engineFromSearch } from "../utils/resultsLinks";
+import { engineFromSearch, linkedEngineTarget, activeDesignEngine } from "../utils/resultsLinks";
 import { schemaDesignsRefusal } from "../utils/schemaDesignsLoad";
 import RoutineMigrationSection from "../components/RoutineMigrationSection";
 import ExecutiveSummaryStats from "../components/ExecutiveSummaryStats";
@@ -231,6 +231,9 @@ const AnalysisResultsPage = memo(() => {
   const { t } = useTranslation();
   const { jobId } = useParams();
   const { search: locationSearch, hash: locationHash } = useLocation();
+  // #2300: the Table design tab a link names, read before the first render so the tabs
+  // are controlled from the start.
+  const [designTab, setDesignTab] = useState(() => engineFromSearch(locationSearch));
   const [navigationOpen, setNavigationOpen] = useState(false);
   // The experimental graph explorer (#308): its entry shows only when the server flag is on.
   const graphExplorer = useGraphExplorerFlag();
@@ -1013,33 +1016,6 @@ const AnalysisResultsPage = memo(() => {
   }, [displayItems, currentPage]);
 
 
-  // #2300: a link from the Sankey (or an old pattern-analysis link) names an
-  // engine (?engine=) and a section (#hash). Once the page has its data, filter
-  // the explorer to that engine (only when it has rows there) and scroll to the
-  // section. Done once per page load, so the user's own filter changes stand.
-  const linkedEngineHandled = useRef(false);
-  const [designTab, setDesignTab] = useState(null);
-  useEffect(() => {
-    if (loading || linkedEngineHandled.current) return;
-    linkedEngineHandled.current = true;
-    const engine = engineFromSearch(locationSearch);
-    let sectionId = locationHash.replace(/^#/, '');
-    if (engine && explorerPatterns.some(ap => ap.engine === engine)) {
-      setEngineFilter([{ label: ENGINE_LABELS[engine] || engine, value: engine }]);
-    } else if (engine && auroraDesigns.some(d => d.engine === engine)) {
-      // A relational engine has no explorer rows; its part is its Table design tab.
-      setDesignTab(engine);
-      sectionId = 'table-design-section';
-    }
-    if (sectionId) {
-      // Wait a frame so the sections the data just unlocked are in the DOM.
-      requestAnimationFrame(() => {
-        const el = document.getElementById(sectionId);
-        if (el) el.scrollIntoView({ block: 'start' });
-      });
-    }
-  }, [loading, locationSearch, locationHash, explorerPatterns, auroraDesigns]);
-
   // ============================================
   // Handlers
   // ============================================
@@ -1709,6 +1685,50 @@ const AnalysisResultsPage = memo(() => {
     }
     return options;
   }, [filteredEngineDist, cacheOverlay, filteredCacheLayerPatterns, t]);
+
+  // #2300: a link from the Sankey (or an old pattern-analysis link) names an
+  // engine (?engine=) and a section (#hash). Once the page has its data, filter
+  // the explorer to that engine (its Table design tab for a relational one), say so
+  // when the plan has no part for it, then scroll to the section and move focus
+  // there. Done once per page load, so the user's own filter changes stand.
+  const linkedEngineHandled = useRef(false);
+  useEffect(() => {
+    if (loading || linkedEngineHandled.current) return;
+    linkedEngineHandled.current = true;
+    const engine = engineFromSearch(locationSearch);
+    const target = linkedEngineTarget(
+      engine,
+      explorerPatterns.map(ap => ap.engine),
+      auroraDesigns.map(d => d.engine),
+    );
+    let sectionId = locationHash.replace(/^#/, '');
+    if (target === 'explorer') {
+      // The same label a user-picked token carries ("DynamoDB (55)").
+      const option = engineOptions.find(o => o.value === engine);
+      setEngineFilter([{ label: option?.label || ENGINE_LABELS[engine] || engine, value: engine }]);
+    } else if (target === 'design') {
+      sectionId = 'table-design-section';
+    } else if (target === 'absent') {
+      addFlashbarMessage({
+        type: 'info',
+        header: t('analysis-results.engine-link.absent', { engine: ENGINE_LABELS[engine] || engine }),
+        dismissible: true,
+        id: `engine-link-${engine}`,
+      });
+    }
+    if (sectionId) {
+      // Wait a frame so the sections the data just unlocked are in the DOM.
+      requestAnimationFrame(() => {
+        const el = document.getElementById(sectionId);
+        if (el) {
+          el.scrollIntoView({ block: 'start' });
+          // scrollIntoView leaves focus where it was; a screen reader starts at the section.
+          el.setAttribute('tabindex', '-1');
+          el.focus({ preventScroll: true });
+        }
+      });
+    }
+  }, [loading, locationSearch, locationHash, explorerPatterns, auroraDesigns, engineOptions, addFlashbarMessage, t]);
 
   const enginePieData = useMemo(() => {
     const engines = Object.entries(filteredEngineDist);
@@ -2912,7 +2932,7 @@ const AnalysisResultsPage = memo(() => {
                 }
               >
                 <Tabs
-                  activeTabId={designTab || undefined}
+                  activeTabId={activeDesignEngine(designTab, auroraDesigns.map(d => d.engine))}
                   onChange={({ detail }) => setDesignTab(detail.activeTabId)}
                   tabs={auroraDesigns.map(design => {
                     const queryCount = design.queryGroups.reduce((sum, g) => sum + g.queries.length, 0);

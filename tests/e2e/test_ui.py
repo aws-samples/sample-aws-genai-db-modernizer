@@ -298,16 +298,28 @@ def test_removed_job_pages_fall_through_to_the_dashboard(
     assert ev == {"console": [], "pageerror": [], "failed": []}, (route, ev)
 
 
+def _designed_aurora_engines(r: PipelineResult) -> list[str]:
+    return sorted(
+        {
+            p.parent.parent.name.removeprefix("schema-")
+            for p in real_designs(r.job_dir())
+            if p.parent.parent.name.startswith("schema-aurora_")
+        }
+    )
+
+
 def test_old_pattern_analysis_link_lands_on_the_engine_in_the_results_page(
     page: Page, ui: str, all_runs: list[PipelineResult]
 ) -> None:
     """#2300: the pattern-analysis page is gone; its old URL redirects to the results
-    page, at that engine's explorer filter or Table design tab (``target``)."""
+    page. A designed job lands on the explorer filtered to a NoSQL target, with the
+    counter and the token the explorer's own picker would show, and on the Table design
+    of an Aurora target; focus moves to that section. A job without a design only has to
+    reach the results page."""
+    checked = 0
     for r in all_runs:
         ev = _watch(page)
         page.goto(f"{ui}/analysis/patterns/{r.job_id}?target=dynamodb")
-        # The deterministic run designs no schema, so the explorer (and its section) may be
-        # absent; the results page itself is what the redirect must reach.
         expect(page.locator("#executive-summary-section")).to_be_visible(timeout=READY_MS)
         assert page.url.endswith(
             f"/analysis/results/{r.job_id}?engine=dynamodb#access-patterns-section"
@@ -315,6 +327,91 @@ def test_old_pattern_analysis_link_lands_on_the_engine_in_the_results_page(
         text = page.inner_text("body")
         assert "undefined" not in text and "NaN" not in text, r.db
         assert ev == {"console": [], "pageerror": [], "failed": []}, (r.db, ev)
+    for r in _designed_runs(all_runs):
+        if r.external:
+            continue  # a real run's engine plan is its own; the deterministic job is fixed
+        ev = _watch(page)
+        page.goto(f"{ui}/analysis/patterns/{r.job_id}?target=dynamodb")
+        section = page.locator("#access-patterns-section")
+        expect(section).to_be_visible(timeout=READY_MS)
+        header = section.locator("h2").first
+        expect(header).to_contain_text(re.compile(r"\(\d+ of \d+\)"), timeout=READY_MS)
+        shown, total = map(int, re.search(r"\((\d+) of (\d+)\)", header.inner_text()).groups())  # type: ignore[union-attr]
+        assert 0 < shown < total, (r.job_id, shown, total)
+        # The token reads as the one the explorer's own engine picker gives.
+        expect(section.get_by_text(re.compile(r"^DynamoDB \(\d+\)$")).first).to_be_visible()
+        assert page.evaluate("document.activeElement && document.activeElement.id") == (
+            "access-patterns-section"
+        ), r.job_id
+        assert ev == {"console": [], "pageerror": [], "failed": []}, (r.job_id, ev)
+        for engine in _designed_aurora_engines(r):
+            page.goto(f"{ui}/analysis/patterns/{r.job_id}?target={engine}")
+            expect(page.locator("#table-design-section")).to_be_visible(timeout=READY_MS)
+            selected = page.locator("#table-design-section [role=tab][aria-selected=true]")
+            expect(selected).to_contain_text(ENGINE_LABELS[engine])
+            assert page.evaluate("document.activeElement && document.activeElement.id") == (
+                "table-design-section"
+            ), (r.job_id, engine)
+        checked += 1
+    assert checked or any(r.external for r in all_runs), "no deterministic designed job"
+
+
+def test_a_link_to_an_engine_the_plan_has_no_part_for_says_so(
+    page: Page, ui: str, all_runs: list[PipelineResult]
+) -> None:
+    """#2300: the old link names an engine the job's plan has nothing for (here an id no
+    plan has); the results page opens as usual and a notice says why nothing is filtered."""
+    for r in all_runs:
+        ev = _watch(page)
+        page.goto(f"{ui}/analysis/patterns/{r.job_id}?target=no-such-engine")
+        expect(page.locator("#executive-summary-section")).to_be_visible(timeout=READY_MS)
+        expect(
+            page.get_by_text("no-such-engine has no access patterns or table design")
+        ).to_be_visible(timeout=READY_MS)
+        assert ev == {"console": [], "pageerror": [], "failed": []}, (r.job_id, ev)
+
+
+def test_a_link_opens_the_linked_table_design_tab_when_it_is_not_the_first(
+    page: Page, ui: str, all_runs: list[PipelineResult]
+) -> None:
+    """#2300: Cloudscape tabs decide on their first render whether they are controlled,
+    so the linked engine has to be known then. A second Aurora design is added to the
+    served schema designs (no e2e job has two), and the link to it opens its tab."""
+    checked = 0
+    for r in all_runs:
+        page.goto(f"{ui}/analysis/results/{r.job_id}")
+        design = page.locator("#table-design-section")
+        expect(design).to_be_visible(timeout=READY_MS)
+        tabs = design.locator("[role=tab]").all_inner_texts()
+        if not (
+            any("Aurora MySQL" in t for t in tabs)
+            and not any("Aurora PostgreSQL" in t for t in tabs)
+        ):
+            continue  # PostgreSQL sorts after MySQL, so it is the second tab only here
+
+        def add_second_design(route: playwright.sync_api.Route) -> None:
+            response = route.fetch()
+            body = response.json()
+            body["schema_designs"].append(
+                {
+                    "target_type": "aurora_postgresql",
+                    "content": {
+                        "table_definitions": [{"table_name": "second_design", "columns": []}]
+                    },
+                }
+            )
+            route.fulfill(response=response, json=body)
+
+        page.route("**/schema-designs", add_second_design)
+        try:
+            page.goto(f"{ui}/analysis/patterns/{r.job_id}?target=aurora_postgresql")
+            selected = page.locator("#table-design-section [role=tab][aria-selected=true]")
+            expect(selected).to_contain_text("Aurora PostgreSQL", timeout=READY_MS)
+            assert len(page.locator("#table-design-section [role=tab]").all_inner_texts()) == 2
+        finally:
+            page.unroute("**/schema-designs")
+        checked += 1
+    assert checked, "no job with a single Aurora MySQL design to add a second design to"
 
 
 def _moved_query_trace(r: PipelineResult) -> dict | None:
@@ -1734,7 +1831,7 @@ def test_query_routing_table_fits_its_card_at_1440(
 
 
 # #1246: one colour per engine on every view. Measured in the browser on the results
-# page and the pattern analysis page: every engine badge (cost cards, roadmap, explorer,
+# page: every engine badge (cost cards, roadmap, explorer,
 # risks), every Sankey node and every trade-off Mapping target chip is drawn in the
 # engine's catalog colour (colors.ui), and source-table chips in a neutral grey.
 _ENGINE_COLOURS_JS = """() => {
