@@ -40,6 +40,11 @@ describe('the results page', () => {
     expect(source).toContain(`id="${RESULTS_ENGINE_SECTION_ID}"`);
   });
 
+  test('opens a relational engine\'s Table design tab', () => {
+    expect(source).toMatch(/setDesignTab\(engine\)/);
+    expect(source).toMatch(/activeTabId=\{designTab \|\| undefined\}/);
+  });
+
   test('reads the engine from its URL and applies it to the explorer filter', () => {
     expect(source).toMatch(/engineFromSearch\(locationSearch\)/);
     expect(source).toMatch(/setEngineFilter\(\[\{ label: ENGINE_LABELS\[engine\] \|\| engine, value: engine \}\]\)/);
