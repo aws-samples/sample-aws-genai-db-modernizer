@@ -319,6 +319,7 @@ jobs:
           pip install checkov
           checkov -f infrastructure/cloudformation/automation.yaml \
             -f infrastructure/cloudformation/data-movement/debezium-plugin-bucket.yaml \
+            -f infrastructure/cloudformation/data-movement/routine-proof-target.yaml \
             -f infrastructure/cloudformation/data-movement/examples/wordpress-mysql.yaml \
             -f infrastructure/cloudformation/data-movement/examples/wordpress-postgresql.yaml \
             -f pipeline/iam-roles.yaml \

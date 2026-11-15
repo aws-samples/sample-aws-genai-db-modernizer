@@ -234,6 +234,12 @@ ENGINE_OR_PATTERN_TABLES: dict[str, tuple[frozenset[str], str]] = {
         "the routine kinds the triggers-enable script acts on per Aurora target (ADR-034 Decision "
         "6): plumbing for the customer's triggers-enable script, no routing rule (#1948)",
     ),
+    "src/tools/data_movement/proof_target.py": (
+        frozenset({"DATA_API_MINIMUM", "DATA_API_UNAVAILABLE"}),
+        "the lowest Aurora version of each line, and the regions, with the RDS Data API (Amazon "
+        "Aurora User Guide): plumbing for picking the routine-proof test cluster's version, no "
+        "routing rule (#1946)",
+    ),
     "src/tools/data_movement/dms_preflight.py": (
         frozenset({"_VERSION_ENGINE"}),
         "the source-engine name the version parser takes for each Aurora engine: plumbing "

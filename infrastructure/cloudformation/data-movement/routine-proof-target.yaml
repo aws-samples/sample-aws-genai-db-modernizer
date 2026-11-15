@@ -1,0 +1,211 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: |
+  Throwaway Aurora Serverless v2 test cluster for the routine proof (#1946). It holds only
+  synthetic rows and the carried routines, never customer data. scripts/run_dms_step.py
+  proof-target-deploy deploys it after the customer's approval, with the engine and version of
+  the planned Aurora target; proof-target-teardown deletes it. The proof reaches it through
+  the RDS Data API (HTTPS, signed with the caller's IAM credentials), so its security group
+  allows no inbound traffic at all. Deleting the stack takes no final snapshot.
+
+Parameters:
+  JobId:
+    Type: String
+    Description: Assessment job id the proof belongs to (tags every resource)
+    AllowedPattern: '^[A-Za-z0-9_-]{1,128}$'
+    ConstraintDescription: 1 to 128 letters, digits, underscores or hyphens
+
+  Engine:
+    Type: String
+    Description: The planned Aurora target's engine
+    AllowedValues:
+      - aurora-postgresql
+      - aurora-mysql
+
+  EngineVersion:
+    Type: String
+    Description: The engine version, on the planned target's version line
+    AllowedPattern: '^[0-9]+\.[0-9]+(\.mysql_aurora\.[0-9]+\.[0-9]+\.[0-9]+)?$'
+    ConstraintDescription: an Aurora PostgreSQL (16.4) or Aurora MySQL (8.0.mysql_aurora.3.08.0) version
+
+  MinCapacity:
+    Type: Number
+    Description: Lowest capacity in ACUs; 0 pauses the cluster when idle, on versions that support it
+    AllowedValues:
+      - 0
+      - 0.5
+
+  MaxCapacity:
+    Type: Number
+    Description: Highest capacity in ACUs
+    Default: 2
+    MinValue: 1
+    MaxValue: 16
+
+  SecondsUntilAutoPause:
+    Type: Number
+    Description: Idle seconds before a cluster with MinCapacity 0 pauses
+    Default: 300
+    MinValue: 300
+    MaxValue: 86400
+
+  VpcId:
+    Type: AWS::EC2::VPC::Id
+    Description: The VPC of the subnets; the stack creates no VPC, NAT or internet gateway
+
+  SubnetIds:
+    Type: List<AWS::EC2::Subnet::Id>
+    Description: Private subnets in at least two Availability Zones
+
+  DatabaseName:
+    Type: String
+    Description: The database the cluster creates for the proof
+    Default: routine_proof
+    AllowedPattern: '^[a-z][a-z0-9_]{0,62}$'
+
+Conditions:
+  AutoPause:
+    Fn::Equals:
+      - Ref: MinCapacity
+      - '0'
+  IsPostgreSQL:
+    Fn::Equals:
+      - Ref: Engine
+      - aurora-postgresql
+
+Resources:
+  SubnetGroup:
+    Type: AWS::RDS::DBSubnetGroup
+    Properties:
+      DBSubnetGroupDescription:
+        Fn::Sub: Private subnets of the routine-proof test cluster (job ${JobId})
+      SubnetIds:
+        Ref: SubnetIds
+      Tags:
+        - Key: modernizer:job-id
+          Value:
+            Ref: JobId
+        - Key: modernizer:purpose
+          Value: routine-proof
+
+  SecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: Routine-proof test cluster; no inbound rule, the proof uses the RDS Data API
+      VpcId:
+        Ref: VpcId
+      # No SecurityGroupIngress: nothing in the VPC or beyond can open a connection to the
+      # cluster. The one egress rule replaces the default allow-all one and reaches nothing.
+      SecurityGroupEgress:
+        - IpProtocol: '-1'
+          CidrIp: 127.0.0.1/32
+          Description: No outbound traffic (replaces the default allow-all rule)
+      Tags:
+        - Key: modernizer:job-id
+          Value:
+            Ref: JobId
+        - Key: modernizer:purpose
+          Value: routine-proof
+
+  Cluster:
+    Type: AWS::RDS::DBCluster
+    # Throwaway: deleting the stack deletes the cluster with no final snapshot.
+    DeletionPolicy: Delete
+    UpdateReplacePolicy: Delete
+    Properties:
+      Engine:
+        Ref: Engine
+      EngineVersion:
+        Ref: EngineVersion
+      EngineMode: provisioned
+      DatabaseName:
+        Ref: DatabaseName
+      MasterUsername: proofadmin
+      ManageMasterUserPassword: true
+      StorageEncrypted: true
+      DeletionProtection: false
+      EnableHttpEndpoint: true
+      EnableIAMDatabaseAuthentication: true
+      BackupRetentionPeriod: 1
+      CopyTagsToSnapshot: true
+      EnableCloudwatchLogsExports:
+        Fn::If:
+          - IsPostgreSQL
+          - - postgresql
+          - - error
+      DBSubnetGroupName:
+        Ref: SubnetGroup
+      VpcSecurityGroupIds:
+        - Ref: SecurityGroup
+      ServerlessV2ScalingConfiguration:
+        MinCapacity:
+          Ref: MinCapacity
+        MaxCapacity:
+          Ref: MaxCapacity
+        SecondsUntilAutoPause:
+          Fn::If:
+            - AutoPause
+            - Ref: SecondsUntilAutoPause
+            - Ref: AWS::NoValue
+      Tags:
+        - Key: modernizer:job-id
+          Value:
+            Ref: JobId
+        - Key: modernizer:purpose
+          Value: routine-proof
+
+  Writer:
+    Type: AWS::RDS::DBInstance
+    DeletionPolicy: Delete
+    UpdateReplacePolicy: Delete
+    Metadata:
+      cfn_nag:
+        rules_to_suppress:
+          - id: F80
+            reason: "Aurora takes deletion protection on the cluster, and this throwaway cluster has it off so teardown can delete it"
+      checkov:
+        skip:
+          - id: CKV_AWS_118
+            comment: >-
+              Enhanced monitoring needs a monitoring IAM role this throwaway test cluster does not
+              create; CloudWatch metrics and the exported logs cover the proof
+          - id: CKV_AWS_16
+            comment: >-
+              An Aurora instance stores nothing of its own: the cluster volume is encrypted by the
+              Cluster's StorageEncrypted, which an instance cannot set
+          - id: CKV_AWS_157
+            comment: >-
+              One Serverless v2 writer for a throwaway proof cluster; a second Availability Zone
+              would only double its cost
+    Properties:
+      Engine:
+        Ref: Engine
+      DBClusterIdentifier:
+        Ref: Cluster
+      DBInstanceClass: db.serverless
+      PubliclyAccessible: false
+      AutoMinorVersionUpgrade: true
+      Tags:
+        - Key: modernizer:job-id
+          Value:
+            Ref: JobId
+        - Key: modernizer:purpose
+          Value: routine-proof
+
+Outputs:
+  ClusterIdentifier:
+    Value:
+      Ref: Cluster
+  ClusterArn:
+    Value:
+      Fn::GetAtt:
+        - Cluster
+        - DBClusterArn
+  MasterUserSecretArn:
+    Description: The cluster's master secret, which RDS keeps in Secrets Manager (the Data API signs in with it)
+    Value:
+      Fn::GetAtt:
+        - Cluster
+        - MasterUserSecret.SecretArn
+  DatabaseName:
+    Value:
+      Ref: DatabaseName
