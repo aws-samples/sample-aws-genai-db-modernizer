@@ -1553,7 +1553,10 @@ def test_ui_shows_only_the_product_name(
         page.goto(f"{ui}{path}")
         # Content only the loaded page shows, so the text scan below never reads a spinner.
         if path == "/dashboard":
-            expect(page.get_by_role("link", name=r.job_id).first).to_be_visible(timeout=READY_MS)
+            # #2305: a finished job is named by its database and opens on its results.
+            expect(page.locator(f'a[href="/analysis/results/{r.job_id}"]').first).to_be_visible(
+                timeout=READY_MS
+            )
         elif path == "/analysis/create":
             expect(page.get_by_role("heading", name="Create analysis")).to_be_visible(
                 timeout=READY_MS

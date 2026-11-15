@@ -14,6 +14,7 @@ import Button from "@cloudscape-design/components/button";
 import Container from "@cloudscape-design/components/container";
 import KeyValuePairs from "@cloudscape-design/components/key-value-pairs";
 import Link from "@cloudscape-design/components/link";
+import CopyToClipboard from "@cloudscape-design/components/copy-to-clipboard";
 import Box from "@cloudscape-design/components/box";
 import StatusIndicator from "@cloudscape-design/components/status-indicator";
 import ButtonDropdown from "@cloudscape-design/components/button-dropdown";
@@ -30,6 +31,7 @@ import ApiManager from "../classes/ApiManager";
 import CustomTable from "../components/CustomTable";
 import { getStatusType as sharedGetStatusType, getStatusText as sharedGetStatusText, isAlreadyFinishedMessage } from "../utils/jobStatus";
 import { buildDashboardActionItems } from "../utils/dashboardActions";
+import { assessmentHref, databaseLabel } from "../utils/assessmentRows";
 
 
 
@@ -48,11 +50,12 @@ const ComponentPage = memo(() => {
   //--|#######################| Static Variables Section  |#######################
 
   //--## Table variables
-  const [visibleTableColumns] = useState(['jobId', 'status', 'created', 'duration']);
+  const [visibleTableColumns] = useState(['databaseName', 'jobId', 'status', 'created', 'duration']);
 
   const tableColumnsList = useMemo(() => {
         return  [
-            {id: 'jobId', header: t('dashboard.table.col-job-id'), cell: item => (<Link href={`/analysis/monitor/summary/${item.jobId}`} variant="primary">{item.jobId}</Link>), ariaLabel: createLabelFunction('jobId'), sortingField: 'jobId'},
+            {id: 'databaseName', header: t('dashboard.table.col-database'), cell: item => (<Link href={assessmentHref(item.jobId, item.status)} variant="primary">{databaseLabel(item.databaseName, item.jobId)}</Link>), ariaLabel: createLabelFunction('database'), sortingField: 'databaseName'},
+            {id: 'jobId', header: t('dashboard.table.col-job-id'), cell: item => (<SpaceBetween direction="horizontal" size="xxs" alignItems="center"><Box fontFamily="monospace" fontSize="body-s">{item.jobId}</Box><CopyToClipboard variant="icon" textToCopy={item.jobId} copyButtonAriaLabel={t('common.actions.copy-job-id')} copySuccessText={t('common.success.copied')} copyErrorText={t('common.errors.copy-failed')} /></SpaceBetween>), ariaLabel: createLabelFunction('jobId'), sortingField: 'jobId'},
             {id: 'status', header: t('dashboard.table.col-status'), cell: item => (<StatusIndicator type={getStatusType(item.status)}>{item.statusText}</StatusIndicator>), ariaLabel: createLabelFunction('Status'), sortingField: 'status'},
             {id: 'created', header: t('dashboard.table.col-created'), cell: item => item.created, ariaLabel: createLabelFunction('created'), sortingField: 'created'},
             {id: 'duration', header: t('dashboard.table.col-duration'), cell: item => item.duration, ariaLabel: createLabelFunction('duration'), sortingField: 'duration'},
@@ -605,6 +608,7 @@ const ComponentPage = memo(() => {
       extendedTableProperties={{
         variant: "embedded",
         loading: loading,
+        wrapLines: true,
       }}
       tableActions={
         <ButtonDropdown
