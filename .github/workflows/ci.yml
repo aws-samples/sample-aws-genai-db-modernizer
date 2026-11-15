@@ -180,6 +180,39 @@ jobs:
           uv run coverage combine coverage-data/coverage-*/.coverage
           uv run coverage report --fail-under=65
 
+  mysqld-tests:
+    # Step 1's routine scripts on a real MySQL 8.0 server (#2274): ci/test-mysqld.sh
+    # installs the pinned server (checksummed tarball, unpacked into the cached folder),
+    # runs `pytest -m integration` on the mysqld test files under --fail-on-skip, and the
+    # tests start and delete their own throwaway server (Unix socket, no TCP listener).
+    # ci/test.sh deselects these tests, so nothing runs twice. Pinned to 24.04 so the
+    # system libraries the server binary links against do not move with ubuntu-latest.
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+      - uses: actions/setup-python@0b93645e9fea7318ecaed2b359559ac225c90a2b # v5.3.0
+        with:
+          python-version: '3.12'
+      - name: Install uv
+        uses: astral-sh/setup-uv@1c37ad07a6a961277cf70c0d37d6f313000f5884 # v10.3.0
+        with:
+          enable-cache: true
+          cache-suffix: dev
+      - name: Install dependencies
+        run: uv sync --locked --extra dev
+      - name: Cache the MySQL server
+        # The download is about 900 MB; the unpacked server and client are far smaller.
+        # Keyed on the script, which holds the version and checksum.
+        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
+        with:
+          path: ~/.cache/db-modernizer-mysql
+          key: mysql-${{ runner.os }}-${{ hashFiles('ci/test-mysqld.sh') }}
+      - name: mysqld integration tests
+        env:
+          AWS_DEFAULT_REGION: us-east-1
+        run: ./ci/test-mysqld.sh
+
   e2e-shard:
     # The deterministic end-to-end suite (ci/e2e.sh) split eight ways (#956): the
     # report checks of each sample, the two determinism suites, the report checks
