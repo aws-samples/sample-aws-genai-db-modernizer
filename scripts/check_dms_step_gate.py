@@ -13,6 +13,12 @@ validate, ``validation_failures`` (the tables, with their counts) and
 customer to run there, and hints; #2064), in the shape ``run_dms_step.py status`` uses. Use
 read-only credentials (``AWS_PROFILE``). Exit 1 only when the gate could not run.
 
+Then it renders the job's deliverables again (#1801, ``scripts/run_report.py``'s own
+function, no AWS call), so the engineering report, the executive report and the results
+page state this read's evidence: ``deliverables`` in the line says ``complete``,
+``partial`` (a deliverable failed), ``no_report`` (no synthesis report yet) or ``failed``.
+A failure there never fails the gate.
+
 Usage:
     uv run python scripts/check_dms_step_gate.py --job-id <id> --db <db> --region <region> \\
       --stack-name dm-<job-id>-step-1 [--window-minutes 15] [--stale-seconds 300]
@@ -45,6 +51,25 @@ from src.tools.data_movement.dms_gate import (  # noqa: E402
 )
 from src.tools.data_movement.dms_step import DmsStepError  # noqa: E402
 from src.tools.data_movement.table_errors import gate_failures, step_plan  # noqa: E402
+
+
+def refresh_deliverables(artifact_root: str, db: str, job_id: str) -> str:
+    """Render the job's deliverables again, now with this gate's evidence (#1801): their
+    status, ``no_report`` when the job has no synthesis report, ``failed`` when rendering
+    raised. Never raises: the gate result is written either way."""
+    from src.report.deliverables import synthesis_report_key
+    from src.report.deliverables_folder import render_job_deliverables
+    from src.storage.local_store import LocalArtifactStore
+
+    try:
+        synthesis_report_key(LocalArtifactStore(base_dir=artifact_root), db, job_id, 0)
+    except FileNotFoundError:
+        return "no_report"
+    try:
+        result = render_job_deliverables(job_id, db, artifact_root, None, graph=False)
+    except Exception:  # noqa: BLE001 - the gate's own result is already written
+        return "failed"
+    return "failed" if result.get("status") == "error" else str(result.get("status"))
 
 
 def main(argv: list[str] | None = None, *, clients: GateClients | None = None) -> int:
@@ -105,7 +130,8 @@ def main(argv: list[str] | None = None, *, clients: GateClients | None = None) -
         )
     except (DmsStepError, FileNotFoundError, ClientError, BotoCoreError) as exc:
         return error(str(exc))
-    print(json.dumps({"status": gate.status, "gate": path, "contract_sha256": gate.contract_sha256,
+    deliverables = refresh_deliverables(args.artifact_root, db, job_id)
+    print(json.dumps({"status": gate.status, "gate": path, "deliverables": deliverables, "contract_sha256": gate.contract_sha256,
                       "result": REPLICATING_MESSAGE if gate.status == "pass" else None,
                       "cutover_decision": gate.cutover_decision,
                       "cutover_message": cutover_message_text(gate.cutover_message_id),

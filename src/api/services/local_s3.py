@@ -179,6 +179,13 @@ class LocalS3Service:
     def read_triage(self, database_name: str, job_id: str) -> dict | None:
         return self.read_artifact(database_name, job_id, "referee-triage", "triage.json")
 
+    def read_step_gate(self, database_name: str, job_id: str) -> dict | None:
+        """Step 1's gate evidence (#1801), ``facts.step_gate``, from the gate file ``/move``
+        saved; None when the step's gate never ran."""
+        from src.report.facts import step_gate_of
+
+        return step_gate_of(self._store, database_name, job_id)
+
     def read_analysis(self, database_name: str, job_id: str, agent_type: str) -> dict | None:
         return self.read_artifact(database_name, job_id, f"analysis-{agent_type}", "analysis.json")
 

@@ -24,6 +24,9 @@ DECOMMISSION_MESSAGE = "Decommissioning the source database is your responsibili
 # The first line of every step 1 file that touches the cutover (maintainer decision of
 # 2026-11-10 on #2062): the same sentence everywhere, before anything else.
 CUTOVER_DISCLAIMER = f"{CUTOVER_MESSAGE} The modernizer does not run, schedule or advise on it."
+# What step 1 shows once its gate passes, word for word (#2062): never more. The gate's
+# output line and every deliverable that shows the gate's evidence say it (#1801).
+REPLICATING_MESSAGE = "Full load complete. Replication is in progress."
 CUTOVER_MESSAGES: dict[str, str] = {
     CUTOVER_MESSAGE_ID: CUTOVER_MESSAGE,
     **{legacy: CUTOVER_MESSAGE for legacy in LEGACY_CUTOVER_MESSAGE_IDS},

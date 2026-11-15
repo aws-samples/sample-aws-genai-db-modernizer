@@ -207,6 +207,9 @@ ASSESSMENT_SOURCES = (
     "src/shared/slice_plan.py",
     "tests/fixtures/adoption_paths/wordpress.json",
     "tests/fixtures/adoption_paths/discourse.json",
+    # #1801: step 1's gate evidence in the deliverables, and the results page's copy of it.
+    "src/report/step_gate.py",
+    "src/ui/src/components/StepGateEvidence.js",
 )
 
 
@@ -836,3 +839,59 @@ def test_the_stored_only_values_are_caught_when_rendered() -> None:
     for value in STORED_ONLY:
         assert _STORED.search(f"- shop.orders_bi: {value}")
     assert not _STORED.search("present_before_triggers_enable")
+
+
+# ---------------------------------------------------------------------------
+# Step 1's gate evidence in the deliverables (#1801)
+# ---------------------------------------------------------------------------
+
+
+def _gate_report(gate: str) -> dict:
+    from src.report.facts import with_step_gate
+    from src.shared.report_facts import step_gate_facts
+    from tests.unit.report import step_gate_fixtures
+
+    return with_step_gate(
+        REPORTS["homogeneous"](), step_gate_facts(getattr(step_gate_fixtures, gate)())
+    )
+
+
+GATES = ("passed", "pending", "failed", "hostile")
+
+
+@pytest.mark.parametrize("gate", GATES)
+def test_the_gate_evidence_in_the_deliverables_gives_no_cutover_advice(gate: str) -> None:
+    """The evidence the gate read, as both reports print it: no readiness claim, no cutover
+    timing, and the cutover message verbatim wherever the evidence appears."""
+    report = _gate_report(gate)
+    md = render_engineering_report_md(report)
+    text = normalize(executive_text(report))
+    section = md.split("## Step 1 gate evidence\n", 1)[1].split("\n## ", 1)[0]
+    assert _findings(f"{gate} engineering", md, deliverable=True) == []
+    assert _findings(f"{gate} executive", text, deliverable=True) == []
+    assert section.count(CUTOVER_DISCLAIMER) == 1
+    assert text.split("Step 1 gate, read", 1)[1].count(CUTOVER_DISCLAIMER) == 1
+
+
+@pytest.mark.parametrize("gate", GATES)
+def test_only_a_passed_gate_says_the_replicating_message(gate: str) -> None:
+    md = render_engineering_report_md(_gate_report(gate))
+    section = md.split("## Step 1 gate evidence\n", 1)[1].split("\n## ", 1)[0]
+    says = REPLICATING_MESSAGE in section
+    assert says == (gate in ("passed", "hostile")), gate
+
+
+def test_the_gate_lines_the_facts_word_give_no_cutover_advice() -> None:
+    from src.shared import report_facts as rf
+    from tests.unit.report import step_gate_fixtures
+
+    lines = [rf.STEP_GATE_PENDING_LINE, rf.STEP_GATE_FAIL_LINE,
+             *rf.STEP_GATE_STATUS_TEXT.values(), *rf.STEP_GATE_CHECK_TEXT.values(),
+             *rf.STEP_GATE_TABLE_TEXT.values(), *rf.STEP_GATE_EXCEPTION_TEXT.values()]  # fmt: skip
+    for line in lines:
+        assert _findings("src/shared/report_facts.py (step gate)", line, deliverable=True) == []
+    for gate in GATES:
+        block = rf.step_gate_facts(getattr(step_gate_fixtures, gate)())
+        for key in ("result_line", "load_line", "lag_line", "validation_line"):
+            assert _findings(f"{gate} {key}", block[key], deliverable=True) == []
+        assert block["cutover_message"] == CUTOVER_DISCLAIMER

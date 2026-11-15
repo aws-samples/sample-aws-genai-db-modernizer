@@ -617,6 +617,8 @@ NUMERIC_CONSTANTS: dict[str, tuple[frozenset[str], str]] = {
                 "BRIEF_EXPOSURE_LIMIT",
                 # #1364: the places the detailed report shows a score to, as the trace does.
                 "_DETAIL_PLACES",
+                # #1801: the step gate findings the deliverables list before counting the rest.
+                "STEP_GATE_FINDINGS",
             }
         ),
         _BUDGET + "; CLOSE_CALL_MARGIN only decides which routed queries the report calls out",

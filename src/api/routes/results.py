@@ -14,7 +14,7 @@ from src.api.services.local_execution import LocalExecutionService
 from src.api.services.local_s3 import LocalS3Service
 from src.report.deliverables import FOLDER_ENTRIES, INDEX_FILENAME
 from src.report.engineering_report import brief_summary, summary_paragraphs
-from src.report.facts import report_facts
+from src.report.facts import report_facts, with_step_gate
 from src.report.formatting import label_summary_counts
 from src.report.renderers import resolve_migration_waves
 from src.report.risks import NO_OPEN_RISKS_CAVEAT, shared_mitigation_refs
@@ -89,6 +89,9 @@ def get_results(job_id: str = Depends(job_id_param)):
     # untouched when nothing is, so this costs a report that has everything nothing and
     # cannot go stale. In memory only: nothing here writes report.json.
     synthesis["facts"] = report_facts(synthesis)
+    # #1801: step 1's gate evidence, from the gate file /move saved after synthesis, the
+    # same block every deliverable states (absent when the gate never ran).
+    synthesis = with_step_gate(synthesis, s3_service.read_step_gate(db_name, job_id))
 
     # #996: the deterministic summary stored by an older run can name the other targets
     # by raw engine id and word its risk and access-pattern counts the old way. The

@@ -39,9 +39,11 @@ from src.shared.report_facts import (
     query_pattern_facts,
     query_total_facts,
     query_trace_facts,
+    read_step_gate_facts,
     resolved_risk_severity_facts,
     retired_in_use_engine_facts,
     shares_replica_risk,
+    step_gate_key,
     table_ownership_facts,
     trade_off_topic_facts,
     unservable_query_facts,
@@ -315,6 +317,32 @@ def report_facts(report: dict[str, Any]) -> dict[str, Any]:
     # #1992: a report with no facts block was written before the wave readiness check,
     # and states none: its designs carry no review counts to check.
     return compute_report_facts(report, waves=resolve_migration_waves(report), readiness=False)
+
+
+def step_gate_of(store: Any, db: str, job_id: str) -> dict[str, Any] | None:
+    """The job's step 1 gate evidence (#1801): ``step_gate_facts`` over the gate file
+    ``/move``'s read-only gate saved, or None when the gate never ran (or its file cannot
+    be read). Read from the job's artifacts only: never from a database or AWS."""
+    key = step_gate_key(db, job_id)
+    try:
+        raw = store.read_json(key) if store.exists(key) else None
+    except (OSError, ValueError):
+        raw = None
+    return read_step_gate_facts(raw, artifact=key)
+
+
+def with_step_gate(report: dict[str, Any], step_gate: dict[str, Any] | None) -> dict[str, Any]:
+    """``report`` with ``facts.step_gate`` set to ``step_gate`` (#1801), the block
+    ``step_gate_of`` read; ``report`` itself, unchanged, when there is none, so a report
+    whose step never ran its gate renders exactly as before.
+
+    The gate runs after synthesis (``/move`` follows the assessment), so its evidence is
+    attached when a deliverable reads the report, never stored by synthesis: every
+    deliverable, rendered after any gate read, states the latest one. In memory only:
+    nothing here writes report.json."""
+    if not isinstance(step_gate, dict):
+        return report
+    return {**report, "facts": {**report_facts(report), "step_gate": step_gate}}
 
 
 def _short_readiness_backfill(

@@ -84,6 +84,8 @@ const NOT_A_FIGURE = new Set(['engines', 'waves', 'wave', 'index']);
 const LIST_HELPERS = new Set([
   'waveFacts', 'realityCheckDecisions', 'currentTradeOffs', 'filterRisksWithContent',
   'groupRisksBySeverity', 'splitRankingByRole', 'cacheLayerCostBreakdown', 'accessPatternTotals',
+  // #1801: step 1's gate evidence (facts.step_gate).
+  'stepGateOf',
 ]);
 const ARRAY_WALKERS = new Set([
   'forEach', 'map', 'filter', 'some', 'every', 'find', 'findIndex', 'flatMap', 'reduce', 'sort',
@@ -115,6 +117,8 @@ const GUARDED_UI_FILES = [
   'components/ChartSankey.js',
   'components/SummaryFallbackNotice.js',
   'components/QueryDecisionTrace.js',
+  // #1801: step 1's gate evidence, from facts.step_gate.
+  'components/StepGateEvidence.js',
   // #308: every experimental graph explorer file (EXPLORER_UI_FILES below).
   'pages/GraphExplorer.js',
   'components/ExploreGraphButton.js',
@@ -1110,6 +1114,9 @@ function render(synthesis, loaded) {
       ['src/ui/src/pages/JobMonitoringSummary.js', 'queryCount: s.query_count ?? 0,', 'queryCount: s.query_ids?.length || 0,'],
       ['src/ui/src/pages/JobMonitoringSummary.js', 'signalCount: triageFacts.signal_count ?? 0,', 'signalCount: (res.triage.signals || []).length,'],
       ['src/ui/src/utils/cacheLayer.js', 'finite(facts?.projected_monthly_cost_usd);', 'finite(facts?.projected_monthly_cost_usd) ?? items.reduce((s, cb) => s + cb.monthly_cost_usd, 0);'],
+      // #1801: the gate's table count and its findings beyond those listed are stored.
+      ['src/ui/src/components/StepGateEvidence.js', '{ count: gate.table_count }', '{ count: tables.length }'],
+      ['src/ui/src/components/StepGateEvidence.js', '{ count: gate.gate_findings_not_shown }', '{ count: gate.gate_findings.length - findings.length }'],
     ])('%s: %s is caught when it is a recomputation', (file, fact, recomputed) => {
       const real = fs.readFileSync(`${REPO}/${file}`, 'utf8');
       expect(violationsIn(real, file)).toEqual([]);
