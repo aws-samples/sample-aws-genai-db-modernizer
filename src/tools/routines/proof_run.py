@@ -27,10 +27,13 @@ it fails: each target drops its own when it closes, and :func:`prove_routines` s
 job's prefix in a ``finally`` block.
 
 Load and run's rule: a routine is ``proved`` only when every call succeeded. When a call
-fails, the same calls run on the disposable source engine with the original text (when the
-source's version is there), and a call that fails with the same SQLSTATE there is left out:
-it is the synthetic input, not the target. Any other failure leaves the routine
-``not_proved``, ``target_gap`` when its SQLSTATE says Aurora lacks a feature or a function.
+fails, the same batch runs on the disposable source engine with the original texts (when
+the source's version is there). A call is left out only when the source ran that routine on
+identical rows and calls and the call failed there exactly the same way (the same call, its
+SQLSTATE, error number and first message line, and a SQLSTATE that names one failure): it is
+the synthetic input, not the target. Any other failure leaves the routine ``not_proved``,
+``target_gap`` when its SQLSTATE says Aurora lacks a feature or a function; a call that left
+the role it runs as makes the routine need attention.
 
 Nothing is logged, and no routine text is written into the artifact. A failed call's first
 message line is kept in that routine's ``failed_calls`` (the job folder only, never a
@@ -83,13 +86,15 @@ __all__ = [
     "prove_routines",
 ]
 
-#: Why the MySQL proof stops when its restricted runner user cannot be made.
+#: Why the MySQL proof stops when its restricted runner user cannot be made; the cleanup's
+#: outcome follows (:data:`RUNNER_CLEANED` or :data:`RUNNER_LEFT`).
 RUNNER_REFUSED = (
     "the MySQL proof runs its routines only as a restricted user granted the scratch database, "
     "and that user could not be created through the RDS Data API (it takes no bound password in "
-    "CREATE USER, and the password is never written into SQL text): nothing ran, and its "
-    "secret was deleted"
+    "CREATE USER, and the password is never written into SQL text): nothing ran"
 )
+RUNNER_CLEANED = ", and its secret was deleted"
+RUNNER_LEFT = ", and what could not be deleted is in left_on_cluster: {left}"
 #: The statuses a routine is carried with.
 CARRIED = ("as_is", "rewritten", "model_repaired")
 _COMPARED = ("rewritten", "model_repaired")
@@ -277,6 +282,8 @@ def _entry_of_comparison(c: RoutineComparison) -> RoutineProofEntry:
     outcome = {"no_differences_found": "proved", "different": "needs_attention"}.get(
         c.outcome, "not_proved"
     )
+    if c.reason_code == "role_changed":
+        outcome = "needs_attention"  # the routine left the role it runs as
     return RoutineProofEntry(mode="side_by_side", outcome=outcome, reason=c.reason,  # type: ignore[arg-type]
                              reason_code=c.reason_code, calls_run=c.calls_compared,
                              calls_succeeded=c.calls_succeeded, mismatches=c.differences_total)  # fmt: skip
@@ -292,23 +299,45 @@ def _target_gap(state: str) -> bool:
     return state[:2] in TARGET_GAP_CLASSES or state in TARGET_GAP_STATES
 
 
+#: SQLSTATEs that name no one failure: PostgreSQL's ``P0001`` (any ``RAISE``), ``XX000`` and
+#: ``22000``, MySQL's ``HY000`` (hundreds of error numbers), and a missing one. Two of them
+#: are never taken for the same failure.
+GENERIC_STATES = frozenset({"P0001", "XX000", "22000", "HY000", "?????"})
+
+
+def _left_out(r: RoutineRun, source: RoutineRun | None) -> tuple[set[int], str]:
+    """The failed calls of ``r`` to leave out, and a note when none can be. A call is left
+    out only when the disposable source engine ran this same routine on identical rows and
+    calls (the same ``inputs_digest``) and that call failed there with the same call index
+    and label, SQLSTATE, error number and first message line, and a SQLSTATE that names one
+    failure (not in :data:`GENERIC_STATES`)."""
+    if source is None or not r.failures:
+        return set(), ""
+    if source.outcome != "ran":
+        return set(), "; the source engine could not run it, so no failure is left out"
+    if r.inputs_digest is None or source.inputs_digest != r.inputs_digest:
+        return set(), "; the source engine ran other rows or calls, so no failure is left out"
+    theirs = set(source.failures)
+    return {f[0] for f in r.failures if f[2] not in GENERIC_STATES and f in theirs}, ""
+
+
 def _entry_of_run(r: RoutineRun, source: RoutineRun | None = None) -> RoutineProofEntry:
     """Load and run's outcome: ``proved`` only when every call succeeded, leaving out a call
-    that failed with the same SQLSTATE on the disposable source engine when one ran the same
-    inputs. A call that fails on the target alone leaves it ``not_proved``, with each
-    failing call's SQLSTATE and first message line; a feature Aurora does not support or a
-    function it does not have (``0A``, ``42883``) says so. A routine that does not load needs
-    attention."""
-    both = {(i, state) for i, _, state, _ in source.failures} if source is not None else set()
-    failures = [f for f in r.failures if (f[0], f[2]) not in both]
+    that failed exactly the same way on the disposable source engine on identical rows and
+    calls (:func:`_left_out`). Any other failure leaves it ``not_proved``, with each failing
+    call's SQLSTATE and first message line; a feature Aurora does not support or a function
+    it does not have (``0A``, ``42883``) says so. A routine that does not load, or whose call
+    left the role it runs as (``role_changed``), needs attention."""
+    skip, note = _left_out(r, source)
+    failures = [f for f in r.failures if f[0] not in skip]
     on_both = len(r.failures) - len(failures)
     failed = [
         ProofCallFailure(call=label, call_index=i, error_state=state, message=message or None)
-        for i, label, state, message in failures
+        for i, label, state, message, _errno in failures
     ]  # fmt: skip
     code: str | None = r.reason_code
     reason = r.reason
-    if r.outcome == "does_not_load":
+    if r.outcome == "does_not_load" or r.reason_code == "role_changed":
         outcome = "needs_attention"
     elif r.outcome != "ran":
         outcome = "not_proved"
@@ -324,16 +353,16 @@ def _entry_of_run(r: RoutineRun, source: RoutineRun | None = None) -> RoutinePro
                        f"{', '.join(st for st in states if _target_gap(st))})")  # fmt: skip
         else:
             code = "calls_failed"
-            reason += (
-                f"; {len(failures)} failed on the test cluster only (SQLSTATE {', '.join(states)})"
-            )
+            reason += f"; {len(failures)} failed on the test cluster (SQLSTATE {', '.join(states)})"
+        reason += note
     elif r.calls_succeeded == 0:
         outcome, code = "not_proved", "no_successful_call"
         reason += "; every call failed the same way on the source, so nothing ran to the end"
     else:
         outcome = "proved"
     if on_both and r.outcome == "ran":
-        reason += f"; {on_both} failed the same way on the source engine, so they are left out"
+        reason += (f"; {on_both} failed exactly the same way on the source engine, on the same "
+                   "rows and calls, so they are left out")  # fmt: skip
     return RoutineProofEntry(mode="load_and_run", outcome=outcome, reason=reason,  # type: ignore[arg-type]
                              reason_code=code, calls_run=r.calls_run, calls_succeeded=r.calls_succeeded,
                              calls_failed_on_both=on_both, error_states=list(r.error_states),
@@ -393,9 +422,11 @@ def prove_routines(
             failing = {rid for rid, r in runs.items() if r.failures}
             on_source: dict[str, RoutineRun] = {}
             if failing and source is not None:
-                # The same inputs on the source's own engine, the original text: a call that
-                # fails there the same way is no gap of the target's.
-                originals = [replace(r, carried=r.original) for r in _with_deps(plan, failing)]
+                # The same batch on the source's own engine, the original texts, so the
+                # synthetic rows and calls are built alike: a call that fails there exactly
+                # the same way, on identical inputs, is no gap of the target's.
+                originals = [replace(r, carried=r.original)
+                             for r in _with_deps(plan, plan.load_and_run)]  # fmt: skip
                 on_source = {r.routine_id: r for r in run_routines(
                     originals, tables, target=source, dialect=dialect, seed=seed,
                     extensions=extensions) if r.outcome == "ran"}  # fmt: skip
@@ -518,6 +549,10 @@ def run_proof(
             "status": "error",
             "message": "the test cluster has no Data API or no master secret ARN",
         }
+    from src.tools.data_movement.proof_target import mysql_refusal
+
+    if (refused := mysql_refusal(engine)) is not None:
+        return refused  # before any Data API call (#2298)
     if engine == "mysql" and secrets_client is None:
         return {"status": "error", "message": "the MySQL proof needs Secrets Manager for its "
                 "restricted runner user's secret"}  # fmt: skip
@@ -535,9 +570,15 @@ def run_proof(
                     "loaded event could fire outside every call's rollback and change rows "
                     "between a call and its snapshot: refused. Deploy the stack again from "
                     "routine-proof-target.yaml, whose parameter group sets it OFF"}  # fmt: skip
-    before = dat.cluster_baseline(data_api, **arns, engine=engine, admin_database=admin)
     left: list[str] = []
     dropped: list[str] = []
+    if engine == "mysql":
+        # What a killed run left: its runner users and their secrets, by the job's prefixes.
+        done, missed = dat.sweep_runners(data_api, secrets_client, **arns, job_id=job_id,
+                                         admin_database=admin)  # fmt: skip
+        dropped.extend(done)
+        left.extend(missed)
+    before = dat.cluster_baseline(data_api, **arns, engine=engine, admin_database=admin)
     runner: Any = None
     try:
         if engine == "mysql":
@@ -546,7 +587,10 @@ def run_proof(
                                            admin_database=admin, tags=_tags(job_id))  # fmt: skip
             except de.EngineError as exc:
                 # Never a fallback to the master user: the MySQL proof stops here.
-                return {"status": "error", "sqlstate": exc.sqlstate, "message": RUNNER_REFUSED}
+                left.extend(getattr(exc, "left", []))
+                tail = RUNNER_LEFT.format(left=", ".join(left)) if left else RUNNER_CLEANED
+                return {"status": "error", "sqlstate": exc.sqlstate,
+                        "message": RUNNER_REFUSED + tail, "left_on_cluster": left}  # fmt: skip
         collector = store.read_json(f"{db}/{job_id}/collector/output.json")
         user = runner.definer if runner else str(cluster.get("master_username") or "proofadmin")
         plan = plan_proof(migration, read_routine_sources(store, db, job_id), collector,

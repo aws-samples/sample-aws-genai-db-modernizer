@@ -28,14 +28,18 @@ holds routine text.
   PostgreSQL every name the statement binds is read again from the parser's tree, which
   decodes and folds names as the server does;
 - a text that changes the role it runs as (``SET [LOCAL|SESSION] ROLE``, ``SET SESSION
-  AUTHORIZATION``, ``RESET ROLE``, ``RESET ALL``, ``RESET SESSION AUTHORIZATION``,
-  ``DISCARD ALL``), whatever the spelling: each token is read as one word, a quoted name
-  unquoted and every word upper-cased, so ``RESET "role"`` is ``RESET ROLE``; the test
-  cluster's proof (#1945) confines each call with ``SET LOCAL ROLE`` (``set_config`` is
-  refused below);
-- a text that acts outside the scratch database: ``CREATE``, ``ALTER``, ``DROP`` or
-  ``RENAME`` of a user, role, database or schema, ``GRANT``, ``REVOKE``, and ``SET
-  GLOBAL``/``PERSIST`` (or an ``@@GLOBAL.`` assignment), since such a statement commits on its
+  AUTHORIZATION``, ``RESET ROLE``, ``RESET ALL``, ``RESET SESSION AUTHORIZATION``, the
+  ``session_authorization`` parameter set or reset, ``DISCARD ALL``): each token is read as
+  one word, its comments dropped, a quoted name unquoted and the word upper-cased, so
+  ``RESET "role"`` and ``RESET/*x*/role`` are ``RESET ROLE``. The screen is a first line
+  only: matching words can miss a spelling, so the test cluster's proof (#1945), which
+  confines each call with ``SET LOCAL ROLE``, also reads ``current_user`` and
+  ``session_user`` after every call and refuses a call that left the role
+  (``data_api_target``; ``set_config`` is refused below);
+- a text that acts outside the scratch database: ``CREATE``, ``ALTER`` or ``DROP`` of a
+  user, role, database or schema, ``RENAME USER``, ``GRANT``, ``REVOKE``, ``SET
+  GLOBAL``/``PERSIST`` (or an ``@@GLOBAL.`` assignment), ``SET PASSWORD``, ``INSTALL`` and
+  ``UNINSTALL`` (a plugin or component) and ``KILL``, since such a statement commits on its
   own on MySQL and outlives the call's rollback.
 
 What it does not refuse, as known limits: ``SECURITY DEFINER`` (on a disposable engine
@@ -369,13 +373,28 @@ def _after_definer(tokens: Sequence[RoutineToken], i: int) -> int | None:
     return None
 
 
+#: A comment the tokenizer can leave on a word (``/*x*/role``, ``-- note`` then a newline).
+_COMMENT = re.compile(r"/\*.*?\*/|--[^\n]*(?:\n|$)", re.S)
+
+
+def _unquoted(text: str) -> str | None:
+    if len(text) >= 2 and text[0] == text[-1] and text[0] in ('"', "`"):
+        return text[1:-1].replace(text[0] * 2, text[0])
+    return None
+
+
 def _word(tok: RoutineToken) -> str:
     """A token as one normalised word: a quoted identifier (``"role"``, a MySQL backticked
-    name) unquoted, then upper-cased, so ``RESET "role"`` reads as ``RESET ROLE``."""
+    name) unquoted; otherwise its comments dropped and its first word kept (the tokenizer
+    joins ``/*x*/role`` into one token, and MySQL's ``USER a TO b`` into another); then
+    upper-cased, so ``RESET "role"`` and ``RESET/*x*/role`` read as ``RESET ROLE``."""
     text = tok.text
-    if len(text) >= 2 and text[0] == text[-1] and text[0] in ('"', "`"):
-        text = text[1:-1].replace(text[0] * 2, text[0])
-    return text.upper()
+    plain = _unquoted(text)
+    if plain is None:
+        parts = _COMMENT.sub(" ", text).split()
+        text = parts[0] if parts else ""
+        plain = _unquoted(text)
+    return (plain if plain is not None else text).upper()
 
 
 #: Statements that change the role a call runs as, or act outside the scratch database
@@ -384,14 +403,17 @@ def _word(tok: RoutineToken) -> str:
 _ROLE_CHANGES: tuple[tuple[str, ...], ...] = (
     ("SET", "ROLE"), ("SET", "LOCAL", "ROLE"), ("SET", "SESSION", "ROLE"),
     ("RESET", "ROLE"), ("RESET", "ALL"), ("RESET", "SESSION"), ("DISCARD", "ALL"),
-    ("SESSION", "AUTHORIZATION"),
+    ("SESSION", "AUTHORIZATION"), ("RESET", "SESSION_AUTHORIZATION"),
+    ("SET", "SESSION_AUTHORIZATION"), ("SET", "LOCAL", "SESSION_AUTHORIZATION"),
+    ("SET", "SESSION", "SESSION_AUTHORIZATION"),
 )  # fmt: skip
 _ACCOUNT_CHANGES: tuple[tuple[str, ...], ...] = (
     ("CREATE", "USER"), ("ALTER", "USER"), ("DROP", "USER"), ("RENAME", "USER"),
     ("CREATE", "ROLE"), ("ALTER", "ROLE"), ("DROP", "ROLE"), ("GRANT",), ("REVOKE",),
     ("CREATE", "DATABASE"), ("DROP", "DATABASE"), ("ALTER", "DATABASE"),
     ("CREATE", "SCHEMA"), ("DROP", "SCHEMA"), ("ALTER", "SCHEMA"),
-    ("SET", "GLOBAL"), ("SET", "PERSIST"), ("SET", "PERSIST_ONLY"),
+    ("SET", "GLOBAL"), ("SET", "PERSIST"), ("SET", "PERSIST_ONLY"), ("SET", "PASSWORD"),
+    ("INSTALL",), ("UNINSTALL",), ("KILL",),
 )  # fmt: skip
 
 

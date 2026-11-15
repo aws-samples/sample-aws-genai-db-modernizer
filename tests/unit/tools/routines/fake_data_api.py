@@ -18,6 +18,9 @@ from typing import Any
 
 from botocore.exceptions import ClientError
 
+#: The test cluster's master user in every fake answer.
+MASTER = "proofadmin"
+
 
 def db_error(sqlstate: str = "42601", message: str = "ERROR: syntax error") -> ClientError:
     return ClientError(
@@ -54,7 +57,9 @@ class FakeDataApi:
                  strict: dict[str, list[tuple[str, str]]] | None = None,
                  extra_errors_fail: dict[str, str] | None = None,
                  internal_on: tuple[str, ...] = (), scheduler: str = "OFF",
-                 drop_fails: tuple[str, ...] = ()) -> None:  # fmt: skip
+                 drop_fails: tuple[str, ...] = (), role_reset_on: tuple[str, ...] = (),
+                 session_reset_on: tuple[str, ...] = (),
+                 bound_password_ok: bool = False) -> None:  # fmt: skip
         self.engine = engine
         self.sent: list[Sent] = []
         self.databases: set[str] = set()
@@ -69,6 +74,15 @@ class FakeDataApi:
         self.scheduler = scheduler
         self.drop_fails = drop_fails
         self.users: set[str] = set()
+        #: A statement holding one of these markers leaves the runner role (current_user
+        #: goes back to the master user) or changes session_user, in its transaction.
+        self.role_reset_on = role_reset_on
+        self.session_reset_on = session_reset_on
+        #: The real Data API rejects ``CREATE USER ... IDENTIFIED BY ?`` (1064 at the ``?``);
+        #: a test of the path #2298 opens says ``bound_password_ok``.
+        self.bound_password_ok = bound_password_ok
+        self._tx_role: dict[str, str] = {}
+        self._tx_session: dict[str, str] = {}
         self._strict_tx: set[str] = set()
         self._tx = 0
 
@@ -128,6 +142,23 @@ class FakeDataApi:
                     for i in range(width)]  # fmt: skip
             return {"records": records, "columnMetadata": meta}
 
+        if tx is not None:
+            set_role = re.match(r'SET LOCAL ROLE "(\w+)"', sql)
+            if set_role:
+                self._tx_role[tx] = set_role.group(1)
+            if any(m in sql for m in self.role_reset_on):
+                self._tx_role[tx] = MASTER
+            if any(m in sql for m in self.session_reset_on):
+                self._tx_session[tx] = "someone_else"
+        if sql.startswith("SELECT current_user::text, session_user::text"):
+            current = self._tx_role.get(tx or "", MASTER)
+            return rows([current, self._tx_session.get(tx or "", MASTER)], types=("text", "text"))
+        if sql.startswith("CREATE USER") and ":p" in sql and not self.bound_password_ok:
+            raise db_error("42000", "Database error code: 1064. Message: You have an error in "
+                           "your SQL syntax; check the manual near '?' at line 1")  # fmt: skip
+        if "FROM mysql.user WHERE" in sql:
+            prefix = params[-1]["value"]["stringValue"]
+            return rows(*[[u] for u in sorted(self.users) if u.startswith(prefix)])
         if any(name in sql for name in self.drop_fails) and sql.startswith("DROP"):
             raise db_error("55006", "ERROR: database is being accessed by other users")
         user = re.match(r"(CREATE|DROP) USER (?:IF EXISTS )?'(\w+)'@'%'", sql)
@@ -137,7 +168,7 @@ class FakeDataApi:
         if "@@GLOBAL.event_scheduler" in sql:
             return rows([self.scheduler], types=("VARCHAR",))
         if "FROM mysql.user" in sql:
-            return rows(*[[f"{u}@%"] for u in sorted(self.users | {"proofadmin"})])
+            return rows(*[[f"{u}@%"] for u in sorted(self.users | {MASTER})])
         if "FROM pg_roles ORDER BY" in sql:
             return rows(*[[r] for r in sorted(self.roles | {"proofadmin"})])
         if "FROM pg_database ORDER BY" in sql or "SCHEMATA ORDER BY" in sql:
@@ -217,11 +248,20 @@ class FakeDataApi:
 
 class FakeSecrets:
     """A fake Secrets Manager client: the secrets created, and the ones deleted with no
-    recovery window."""
+    recovery window (``delete_fails``: every delete is refused). It has no call that reads
+    a secret's value."""
 
-    def __init__(self) -> None:
+    def __init__(self, *, delete_fails: bool = False) -> None:
         self.secrets: dict[str, dict[str, Any]] = {}
         self.deleted: list[tuple[str, bool]] = []
+        self.delete_fails = delete_fails
+
+    def list_secrets(self, **kw: Any) -> dict[str, Any]:
+        """One page per call, filtered by name prefix as Secrets Manager's ``name`` filter is."""
+        prefixes = [v for f in kw.get("Filters", []) if f["Key"] == "name" for v in f["Values"]]
+        found = [{"ARN": arn, "Name": v["Name"]} for arn, v in self.secrets.items()
+                 if any(v["Name"].startswith(p) for p in prefixes)]  # fmt: skip
+        return {"SecretList": found}
 
     def create_secret(self, **kw: Any) -> dict[str, Any]:
         arn = f"arn:aws:secretsmanager:us-east-1:111122223333:secret:{kw['Name']}"  # pragma: allowlist secret
@@ -229,6 +269,9 @@ class FakeSecrets:
         return {"ARN": arn, "Name": kw["Name"]}
 
     def delete_secret(self, **kw: Any) -> dict[str, Any]:
+        if self.delete_fails:
+            raise ClientError({"Error": {"Code": "AccessDeniedException", "Message": ""}},
+                              "DeleteSecret")  # fmt: skip
         self.deleted.append((kw["SecretId"], bool(kw.get("ForceDeleteWithoutRecovery"))))
         self.secrets.pop(kw["SecretId"], None)
         return {}

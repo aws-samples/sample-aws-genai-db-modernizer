@@ -231,7 +231,8 @@ def test_a_failed_call_is_an_error_result_with_its_sqlstate_and_the_side_goes_on
         ProofCall("f", "baseline", "call", "public.f", "function", ("1",), ("IN",), ("integer",))
     )
     assert result.sqlstate == "22012" and result.error is not None
-    assert client.sent[-1].sql == "ROLLBACK TO SAVEPOINT modernizer_call"
+    assert [s.sql for s in client.sent[-2:]] == [
+        "ROLLBACK TO SAVEPOINT modernizer_call", "SELECT current_user::text, session_user::text"]  # fmt: skip
     target.end_call()
     target.close()
 
@@ -421,7 +422,9 @@ def test_a_mysql_value_read_as_text_is_converted_by_its_type_as_the_driver_does(
     "body",
     ['RESET "role"', 'RESET "ROLE"', 'SET "role" TO DEFAULT', 'SET LOCAL "Role" = postgres',
      "SET SESSION AUTHORIZATION DEFAULT", 'SET SESSION "authorization" DEFAULT',
-     "RESET SESSION AUTHORIZATION", "PERFORM set_config('role', 'postgres', true)"],
+     "RESET SESSION AUTHORIZATION", "PERFORM set_config('role', 'postgres', true)",
+     "RESET/*x*/role", 'RESET "session_authorization"', "SET session_authorization = DEFAULT",
+     "RESET -- a comment\n role", "SET LOCAL session_authorization TO DEFAULT"],
 )  # fmt: skip
 def test_every_spelling_of_a_role_change_is_refused(body):
     """Review of #2297: the screen reads each token as one normalised word, so a quoted or
@@ -438,6 +441,8 @@ def test_a_column_named_role_is_not_a_role_change():
     text = ("CREATE FUNCTION f() RETURNS void LANGUAGE plpgsql AS $$ BEGIN "
             "UPDATE t SET role = 'x' WHERE id = 1; END $$")  # fmt: skip
     assert create_refusal(text, "postgresql", "function", "public") is None
+    mysql = "CREATE PROCEDURE p() BEGIN UPDATE t SET password = 'x', user = 'y' WHERE id = 1; END"
+    assert create_refusal(mysql, "mysql", "procedure", "src") is None
 
 
 @pytest.mark.parametrize(
@@ -445,7 +450,9 @@ def test_a_column_named_role_is_not_a_role_change():
     ["CREATE USER 'x'@'%' IDENTIFIED BY 'y'", "GRANT ALL ON *.* TO 'x'@'%'",
      "REVOKE ALL ON *.* FROM 'x'@'%'", "CREATE DATABASE evil", "DROP DATABASE other",
      "CREATE SCHEMA evil", "SET GLOBAL event_scheduler = ON", "SET PERSIST max_connections = 10",
-     "SET @@GLOBAL.event_scheduler = ON", "DROP USER 'x'@'%'"],
+     "SET @@GLOBAL.event_scheduler = ON", "DROP USER 'x'@'%'", "RENAME USER a TO b",
+     "RENAME USER 'a'@'%' TO 'b'@'%'", "SET PASSWORD = 'x'", "SET PASSWORD FOR 'x'@'%' = 'y'",
+     "INSTALL PLUGIN p SONAME 'p.so'", "UNINSTALL PLUGIN p", "KILL 5", "KILL QUERY 5"],
 )  # fmt: skip
 def test_a_mysql_body_that_acts_outside_the_scratch_database_is_refused(body):
     """Review of #2297: a MySQL DDL or account statement commits on its own and outlives
@@ -489,7 +496,7 @@ def test_the_runner_user_and_its_secret_are_made_and_both_removed():
     from tests.unit.tools.routines.fake_data_api import FakeSecrets
 
     dat = _mod("data_api_target")
-    client, secrets = FakeDataApi("mysql"), FakeSecrets()
+    client, secrets = FakeDataApi("mysql", bound_password_ok=True), FakeSecrets()
     tags = [{"Key": "modernizer:job-id", "Value": JOB}]
     runner = dat.create_runner(client, secrets, **ARNS, job_id=JOB, admin_database=None, tags=tags)
     assert runner.username in client.users and runner.username.startswith(dat.runner_prefix(JOB))
@@ -506,23 +513,62 @@ def test_a_runner_user_that_cannot_be_made_leaves_no_secret():
     from tests.unit.tools.routines.fake_data_api import FakeSecrets
 
     dat = _mod("data_api_target")
-    client, secrets = FakeDataApi("mysql", fail_on={"CREATE USER": "HY000"}), FakeSecrets()
-    with pytest.raises(de.EngineError):
+    client, secrets = FakeDataApi("mysql"), FakeSecrets()  # the real Data API's 1064
+    with pytest.raises(dat.RunnerNotCreated) as refused:
         dat.create_runner(client, secrets, **ARNS, job_id=JOB, admin_database=None, tags=[])
     assert not secrets.secrets and secrets.deleted and secrets.deleted[0][1] is True
+    assert refused.value.left == [] and refused.value.sqlstate == "42000"
+
+
+def test_a_runner_whose_secret_cannot_be_deleted_says_so():
+    from tests.unit.tools.routines.fake_data_api import FakeSecrets
+
+    dat = _mod("data_api_target")
+    client, secrets = FakeDataApi("mysql"), FakeSecrets(delete_fails=True)
+    with pytest.raises(dat.RunnerNotCreated) as refused:
+        dat.create_runner(client, secrets, **ARNS, job_id=JOB, admin_database=None, tags=[])
+    assert refused.value.left and "secret" in refused.value.left[0]
+
+
+@pytest.mark.passes_on_main  # a test of the fake Data API, which matches the real one
+def test_the_fake_rejects_a_bound_create_user_password_as_the_real_data_api_does():
+    """Found on Aurora MySQL 3.14.0: ``CREATE USER ... IDENTIFIED BY ?`` is error 1064 at
+    the ``?``. The fake answers the same unless a test opts in (the path #2298 opens)."""
+    client = FakeDataApi("mysql")
+    with pytest.raises(Exception) as raised:
+        client.execute_statement(sql="CREATE USER 'u'@'%' IDENTIFIED BY :p0", database="",
+                                 parameters=[{"name": "p0", "value": {"stringValue": "x"}}])  # fmt: skip
+    assert "1064" in str(raised.value) and "42000" in str(raised.value)
+    assert not client.users
+
+
+def test_the_sweep_drops_a_killed_runs_runner_users_and_secrets_and_nothing_else():
+    from tests.unit.tools.routines.fake_data_api import FakeSecrets
+
+    dat = _mod("data_api_target")
+    mine, theirs = dat.runner_prefix(JOB) + "0f0f0f0f", dat.runner_prefix("job2") + "0f0f0f0f"
+    client, secrets = FakeDataApi("mysql"), FakeSecrets()
+    client.users |= {mine, theirs}
+    for job, user in ((JOB, mine), ("job2", theirs)):
+        secrets.create_secret(Name=dat.runner_secret_name(job, user), SecretString="{}")
+    dropped, left = dat.sweep_runners(client, secrets, **ARNS, job_id=JOB, admin_database=None)
+    assert left == [] and client.users == {theirs}
+    assert [v["Name"] for v in secrets.secrets.values()] == [dat.runner_secret_name("job2", theirs)]
+    assert set(dropped) == {f"user {mine}", f"secret {dat.runner_secret_name(JOB, mine)}"}
 
 
 def test_the_sweep_keeps_going_past_a_failed_drop_and_drops_an_orphaned_role():
     """Review of #2297: one drop that fails never stops the others, and a ``_runner`` role
     whose database is gone is dropped too."""
     dat = _mod("data_api_target")
-    stuck, other = dat.scratch_name(JOB), dat.scratch_name(JOB)
+    prefix = dat.scratch_prefix(JOB)  # the stuck name sorts first, and two come after it
+    stuck, after, last = prefix + "00000000", prefix + "77777777", prefix + "ffffffff"
     client = FakeDataApi(drop_fails=(stuck,))
-    client.databases |= {stuck, other}
-    client.roles |= {dat.scratch_name(JOB) + "_runner"}
+    client.databases |= {stuck, after, last}
+    client.roles |= {prefix + "88888888_runner"}
     dropped, left = dat.drop_scratch(client, **ARNS, engine="postgresql", job_id=JOB,
                                      admin_database="routine_proof")  # fmt: skip
-    assert left == [stuck] and other in dropped and not client.roles
+    assert left == [stuck] and {after, last} <= set(dropped) and not client.roles
 
 
 def test_the_baseline_names_what_a_run_left_outside_the_scratch_databases():
@@ -557,3 +603,103 @@ def test_a_plpgsql_check_that_cannot_be_created_is_not_available():
     target.prepare_calls()
     target.close()
     assert ran == ["not_available"] and strict == {}
+
+
+# --------------------------------------------------------------------------- role, at run time
+
+PLPGSQL = ("CREATE OR REPLACE FUNCTION public.f(p integer) RETURNS integer LANGUAGE plpgsql "
+           "AS $$ BEGIN {body}; RETURN 1; END $$")  # fmt: skip
+ROLE_ESCAPES = ["RESET/*x*/role", 'RESET "session_authorization"', "EXECUTE 'RESET ' || 'role'"]
+
+
+def _one_call(client: FakeDataApi, body: str) -> Any:
+    target = _factory(client)()
+    target.load_setup(ProofSetup(dialect="postgresql", ddl=(), rows=()))
+    target.create(de.SourceRoutine("public.f", "function", PLPGSQL.format(body=body)))
+    target.prepare_calls()
+    target.begin_call(
+        __import__("datetime").datetime(2024, 6, 1, tzinfo=__import__("datetime").UTC), 0.5
+    )
+    call = ProofCall("f", "baseline", "call", "public.f", "function", ("5",), ("IN",), ("integer",))
+    return target, call
+
+
+@pytest.mark.parametrize("body", ROLE_ESCAPES)
+def test_a_call_that_leaves_the_runner_role_is_refused_whatever_the_spelling(body, monkeypatch):
+    """Review round 2 of #2297: after each PostgreSQL call and before its rollback, the
+    target reads current_user and session_user in the call's transaction; a call that left
+    the runner role is refused, and its transaction is still rolled back. The screen is a
+    first line only: with it turned off (a spelling it would miss), the read still holds,
+    and dynamic SQL, which the screen cannot read, is caught the same way."""
+    from src.tools.routines import proof_targets
+    from src.tools.routines.proof_targets import RoleChanged
+
+    if body != ROLE_ESCAPES[-1]:
+        with pytest.raises(proof_targets.CreateRefused):  # the screen sees these two
+            _one_call(FakeDataApi(), body)
+    monkeypatch.setattr(proof_targets, "create_refusal", lambda *_a, **_k: None)
+    client = FakeDataApi(calls={'"public"."f"': [1]}, role_reset_on=('"public"."f"(',))
+    target, call = _one_call(client, body)
+    with pytest.raises(RoleChanged):
+        target.run(call)
+    tx = next(s.transaction for s in client.sent if '"public"."f"(' in s.sql)
+    check = [s for s in client.sent if s.sql.startswith("SELECT current_user::text")]
+    assert check and all(s.transaction == tx for s in check)
+    target.end_call()
+    assert client.sent[-1].op == "rollback" and client.sent[-1].transaction == tx
+    target.close()
+
+
+def test_a_call_that_keeps_the_runner_role_passes_the_check():
+    client = FakeDataApi(calls={'"public"."f"': [7]})
+    target, call = _one_call(client, "NULL")
+    assert target.run(call).rows == [[7]]
+    target.end_call()
+    target.close()
+
+
+def test_a_changed_session_user_is_refused_too():
+    """SET SESSION AUTHORIZATION changes session_user: the check compares it with the
+    session user read when the call began."""
+    from src.tools.routines.proof_targets import RoleChanged
+
+    client = FakeDataApi(calls={'"public"."f"': [1]}, session_reset_on=('"public"."f"(',))
+    target, call = _one_call(client, "NULL")
+    with pytest.raises(RoleChanged):
+        target.run(call)
+    target.end_call()
+    target.close()
+
+
+def test_a_role_change_refuses_the_routine_and_the_call_is_not_counted():
+    """Load and run: the routine is refused (role_changed) and that call counts neither as
+    run nor as succeeded; the next routine still runs."""
+    from src.tools.routines.comparison import run_routines
+
+    client = FakeDataApi(calls={'"public"."f"': [1], '"public"."g"': [1]},
+                         role_reset_on=('"public"."g"(',))  # fmt: skip
+    g = _routine("public.g(integer)", "public.g", FN.replace("public.f(", "public.g("))
+    runs = {r.routine_id: r for r in run_routines(
+        [g, _routine("public.f(integer)", "public.f", FN)], TABLES, target=_factory(client),
+        dialect="postgresql")}  # fmt: skip
+    refused = runs["public.g(integer)"]
+    assert (refused.outcome, refused.reason_code) == ("not_run", "role_changed")
+    assert refused.calls_run == 0 and refused.calls_succeeded == 0
+    assert "changed the role it runs as" in refused.reason
+    assert sum('"public"."g"(' in q for q in client.statements()) == 1  # never run again
+    assert runs["public.f(integer)"].outcome == "ran"
+    assert not client.databases
+
+
+def test_a_role_change_on_the_target_side_is_not_compared():
+    """Side by side: a call that left the runner role on the test cluster ends the
+    routine's comparison as role_changed, never as a difference or a match."""
+    from src.tools.routines.comparison import compare_routines
+
+    client = FakeDataApi(calls={'"public"."f"': [1]}, role_reset_on=('"public"."f"(',))
+    source = FakeDataApi(calls={'"public"."f"': [1]})
+    report = compare_routines([_routine("public.f(integer)", "public.f", FN)], TABLES,
+                              source=_factory(source), target=_factory(client), dialect="postgresql")  # fmt: skip
+    (one,) = report.results
+    assert (one.outcome, one.reason_code) == ("could_not_compare", "role_changed")
+    assert "changed the role it runs as" in one.reason

@@ -152,7 +152,7 @@ import json
 import re
 from collections import Counter
 from collections.abc import Callable, Collection, Iterable, Mapping, Sequence
-from dataclasses import dataclass, field
+from dataclasses import asdict, dataclass, field
 from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict, computed_field
@@ -176,6 +176,7 @@ from src.tools.routines.proof_targets import (
     ProofTarget,
     ProofTargetError,
     ProofTargetUnavailable,
+    RoleChanged,
     TargetFactory,
 )
 from src.tools.sql.facade import RoutineTokenError, routine_tokens
@@ -285,6 +286,7 @@ ReasonCode = Literal[
     "non_deterministic",
     "mostly_errors",
     "call_refused",
+    "role_changed",
 ]
 
 
@@ -1398,6 +1400,11 @@ def _compare_one(routine: ComparedRoutine, shared: _Batchwide) -> RoutineCompari
         except ValueError:
             return not_compared("call_refused", f"call {index} ({call.label}) was refused "
                                 "before it ran", done, succeeded)  # fmt: skip
+        except RoleChanged:
+            for side in sides.values():
+                side.open()  # rolled back already; the next routine starts clean
+            return not_compared("role_changed", f"call {index} ({call.label}) {ROLE_CHANGED}",
+                                done, succeeded)  # fmt: skip
         except ProofTargetError as exc:
             state = f" (SQLSTATE {exc.sqlstate})" if exc.sqlstate else ""
             return not_compared("engine_failed", f"call {index} ({call.label}) failed: "
@@ -1508,6 +1515,8 @@ def _run_side(side: _Side, call: ProofCall, index: int, seed: int) -> CallRun:
     rows, or the side failed, it is started again once."""
     try:
         return side.run(call, index, seed)
+    except RoleChanged:
+        raise  # the routine is refused: never run again
     except (_Leaked, ProofTargetError):
         try:
             side.open()  # a ProofTargetError here fails this routine only
@@ -1578,7 +1587,12 @@ RunReasonCode = Literal[
     "target_unavailable",
     "engine_failed",
     "call_refused",
+    "role_changed",
 ]
+
+#: Why a call that left its role refuses the routine (#1945 review): never a result.
+ROLE_CHANGED = ("changed the role it runs as (current_user or session_user after the call), "
+                "so the routine is refused and that call is not counted")  # fmt: skip
 
 
 class RoutineRun(BaseModel):
@@ -1593,9 +1607,13 @@ class RoutineRun(BaseModel):
 
     routine_id: str
     outcome: Literal["ran", "does_not_load", "not_run"]
-    #: Each failed call: its index (from 1), label, SQLSTATE, and the engine's first message
-    #: line, which can quote a name or value: never in a deliverable.
-    failures: tuple[tuple[int, str, str, str], ...] = ()
+    #: Each failed call: its index (from 1), label, SQLSTATE, the engine's first message
+    #: line (which can quote a name or value: never in a deliverable) and MySQL's error
+    #: number (None elsewhere).
+    failures: tuple[tuple[int, str, str, str, int | None], ...] = ()
+    #: A digest of the batch's synthetic rows and this routine's generated calls: two runs
+    #: of a routine with the same digest ran on identical rows and calls.
+    inputs_digest: str | None = None
     reason: str
     reason_code: RunReasonCode | None = None
     calls_run: int = 0
@@ -1636,12 +1654,16 @@ def _run_one(
                        + skipped.get(rid, "no call or row change was generated for it"))  # fmt: skip
     ran = ok = late = 0
     states: list[str] = []
-    failed_calls: list[tuple[int, str, str, str]] = []
+    failed_calls: list[tuple[int, str, str, str, int | None]] = []
     for index, call in enumerate(mine, start=1):
         try:
             run = _run_side(side, call, index, seed)
         except ValueError:
             return not_run("call_refused", f"call {index} ({call.label}) was refused before it ran",
+                           calls_run=ran, calls_succeeded=ok)  # fmt: skip
+        except RoleChanged:
+            side.open()  # its transaction was rolled back; the next routine starts clean
+            return not_run("role_changed", f"call {index} ({call.label}) {ROLE_CHANGED}",
                            calls_run=ran, calls_succeeded=ok)  # fmt: skip
         result = run.result
         ran += 1
@@ -1655,7 +1677,9 @@ def _run_one(
         else:
             states.append(result.sqlstate or "?????")
             first = (result.message or result.error or "").split("\n", 1)[0][:300]
-            failed_calls.append((index, call.label, result.sqlstate or "?????", first))
+            failed_calls.append(
+                (index, call.label, result.sqlstate or "?????", first, result.errno)
+            )
     failed = ran - ok
     reason = f"loaded and ran {_calls(ran)}: {ok} succeeded"
     if failed:
@@ -1714,12 +1738,18 @@ def run_routines(
             for call in inputs.calls:
                 calls.setdefault(call.routine_id, []).append(call)
             skipped = {s.routine_id: s.reason for s in inputs.skipped}
+            setup = json.dumps(asdict(inputs.setup), sort_keys=True, default=str)
             for routine in batch:
                 texts = [s.create_sql for m in _reached(routine, members, by_id, order, dialect)
                          for s in m.carried]  # fmt: skip
+                mine = [asdict(c) for c in calls.get(routine.routine_id, [])]
+                digest = hashlib.sha256(
+                    (setup + json.dumps(mine, sort_keys=True, default=str)).encode()
+                ).hexdigest()
                 try:
                     out[routine.routine_id] = _run_one(routine, side, calls, skipped, texts,
-                                                       dialect, seed, where)  # fmt: skip
+                                                       dialect, seed, where).model_copy(
+                        update={"inputs_digest": digest})  # fmt: skip
                 except Exception as exc:  # noqa: BLE001 - one routine never stops the others
                     out[routine.routine_id] = RoutineRun(
                         routine_id=routine.routine_id, outcome="not_run", reason_code="engine_failed",

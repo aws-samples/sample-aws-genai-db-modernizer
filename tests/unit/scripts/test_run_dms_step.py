@@ -7,6 +7,7 @@ Every AWS call goes to a botocore Stubber: nothing is sent."""
 
 from __future__ import annotations
 
+import ast
 import dataclasses
 import functools
 import json
@@ -333,20 +334,83 @@ def test_reads_under_the_sandbox_still_refuse_an_inputs_path_outside_the_repo(
     assert code == 1 and "--inputs" in json.loads(capsys.readouterr().out)["message"]
 
 
+#: Every Secrets Manager client and every secret-value read in src/ and scripts/, reviewed
+#: (#1945 round 2): a new one anywhere fails the guard below until it is listed with why.
+SECRETS_REVIEWED: dict[str, tuple[frozenset[str], str]] = {
+    "scripts/run_dms_step.py": (
+        frozenset({"client"}),
+        "the MySQL routine proof's runner " "secret, created and deleted by the run, never read",
+    ),
+    "src/tools/data_movement/dms_preflight.py": (
+        frozenset({"client"}),
+        "the preflight "
+        "describes the DMS secrets and reads their "
+        "resource policies, never their values",
+    ),
+    "src/tools/aws/rds_tools.py": (
+        frozenset({"client", "read"}),
+        "the collector's sign-in to " "the customer's source database; the move never calls it",
+    ),
+    "src/agents/load_test/documentdb/provisioner.py": (
+        frozenset({"client"}),
+        "the load test's " "own DocumentDB cluster secret",
+    ),
+}
+_SECRET_READS = {"get_secret_value", "batch_get_secret_value"}
+
+
+def _secrets_use(tree: ast.AST) -> set[str]:
+    """``client`` for a Secrets Manager client (``x.client("secretsmanager")``, either quote,
+    ``service_name=``, ``boto3.client``), ``read`` for any secret-value read: an attribute
+    or a string naming it (``getattr(c, "get_" "secret_value")`` is one string)."""
+    found: set[str] = set()
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Call):
+            func = node.func
+            name = func.attr if isinstance(func, ast.Attribute) else getattr(func, "id", None)
+            if name in ("client", "resource"):
+                values = [a.value for a in node.args[:1] if isinstance(a, ast.Constant)]
+                values += [k.value.value for k in node.keywords
+                           if k.arg == "service_name" and isinstance(k.value, ast.Constant)]  # fmt: skip
+                if "secretsmanager" in values:
+                    found.add("client")
+        if isinstance(node, ast.Attribute) and node.attr in _SECRET_READS:
+            found.add("read")
+        if isinstance(node, ast.Constant) and node.value in _SECRET_READS:
+            found.add("read")
+    return found
+
+
 def test_only_cloudformation_dms_s3_and_sts_clients_exist_so_no_secret_is_read() -> None:
+    """The move's clients are CloudFormation, DMS, S3 and STS; across src/ and scripts/ every
+    Secrets Manager client and secret-value read is a reviewed one, and none of the move's
+    or the routine proof's modules reads a secret's value."""
     assert [f.name for f in dataclasses.fields(script.MoveClients)] == [
         "cloudformation", "dms", "s3", "sts"]  # fmt: skip
-    source = (REPO_ROOT / "scripts" / "run_dms_step.py").read_text()
-    # The one Secrets Manager client is the MySQL routine proof's (#1945): it creates and
-    # deletes that run's own runner secret, and nothing in the move reads any secret's value.
-    assert source.count('client("secretsmanager")') == 1
-    assert "def _secrets(cred" in source and "_secrets(cred) if" in source
-    for path in ("scripts/run_dms_step.py", "src/tools/routines/data_api_target.py",
-                 "src/tools/routines/proof_run.py"):  # fmt: skip
-        text = (REPO_ROOT / path).read_text()
-        assert "get_secret_value" not in text and "GetSecretValue" not in text, path
+    found: dict[str, frozenset[str]] = {}
+    for base in ("src", "scripts"):
+        for path in sorted((REPO_ROOT / base).rglob("*.py")):
+            use = _secrets_use(ast.parse(path.read_text()))
+            if use:
+                found[path.relative_to(REPO_ROOT).as_posix()] = frozenset(use)
+    assert found == {k: v[0] for k, v in SECRETS_REVIEWED.items()}
+    for name, kinds in found.items():
+        if name.startswith(
+            ("src/tools/routines/", "src/tools/data_movement/", "scripts/run_dms_step")
+        ):
+            assert "read" not in kinds, name
     target = (REPO_ROOT / "src/tools/routines/data_api_target.py").read_text()
-    assert set(re.findall(r"secrets_client\.(\w+)\(", target)) == {"create_secret", "delete_secret"}
+    assert set(re.findall(r"secrets_client\.(\w+)\(", target)) <= {
+        "create_secret", "delete_secret", "list_secrets"}  # fmt: skip
+
+
+@pytest.mark.passes_on_main  # a test of the guard's own scanner
+def test_the_secrets_guard_sees_every_spelling() -> None:
+    for text in ('c.client("secretsmanager")', "c.client('secretsmanager')",
+                 'boto3.client(service_name="secretsmanager")', "c.get_secret_value(SecretId=a)",
+                 'getattr(c, "get_" "secret_value")(SecretId=a)', "c.batch_get_secret_value()"):  # fmt: skip
+        assert _secrets_use(ast.parse(text)), text
+    assert not _secrets_use(ast.parse('policy = "secretsmanager:GetSecretValue"'))
 
 
 # --- deploy / execute ----------------------------------------------------------------------

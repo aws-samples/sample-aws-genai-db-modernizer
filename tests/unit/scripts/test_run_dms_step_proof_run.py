@@ -24,6 +24,7 @@ from tests.unit.scripts.test_run_dms_step_proof_target import (  # noqa: F401 - 
     STACK,
     _cluster,
     _job,
+    _mysql_proof_available,
     _resources,
     _restore_aws_profile,
     _run,
@@ -179,13 +180,17 @@ def _with_mysql_routine(tmp_path: Path) -> None:
     store.write_json("shop/job1/routines/v2/routine_migration.json", artifact)
 
 
-def _mysql(tmp_path, cred, monkeypatch, **fake: Any) -> tuple[FakeDataApi, FakeSecrets]:
+def _mysql(tmp_path, cred, monkeypatch, secrets: FakeSecrets | None = None,
+           **fake: Any) -> tuple[FakeDataApi, FakeSecrets]:  # fmt: skip
+    """A MySQL job with the proof's switch on (the path #2298 opens): the fake takes a bound
+    CREATE USER password only when ``bound_password_ok`` says so, as the real Data API
+    does not."""
     _job(tmp_path)
     _with_mysql_routine(tmp_path)
     _stack(cred)
     _resources(cred)
     _cluster(cred, DatabaseName="routine_proof", MasterUsername="proofadmin")
-    client, secrets = FakeDataApi("mysql", **fake), FakeSecrets()
+    client, secrets = FakeDataApi("mysql", **fake), secrets or FakeSecrets()
     monkeypatch.setattr(script, "_data_api", lambda _cred: client, raising=False)
     monkeypatch.setattr(script, "_secrets", lambda _cred: secrets, raising=False)
     return client, secrets
@@ -197,7 +202,8 @@ def test_the_mysql_proof_runs_as_a_restricted_user_and_removes_it_and_its_secret
     """Review of #2297: the MySQL calls run as a per-run user granted the scratch database
     only, through its own secret tagged with the job id; the user is dropped and the secret
     deleted with no recovery window in the same cleanup as the scratch databases."""
-    client, secrets = _mysql(tmp_path, cred, monkeypatch, calls={"`f`(": [1]})
+    client, secrets = _mysql(tmp_path, cred, monkeypatch, calls={"`f`(": [1]},
+                             bound_password_ok=True)  # fmt: skip
     code, out = _run(tmp_path, "proof-target-run", "--approve", capsys=capsys)
     assert code == 0, out
     assert out["runner"] == "a restricted user granted the scratch database only"
@@ -223,7 +229,7 @@ def test_the_mysql_proof_is_refused_while_the_event_scheduler_is_on(
 def test_a_change_the_run_left_outside_the_scratch_databases_is_reported(
     tmp_path, capsys, cred, monkeypatch
 ):
-    client, _ = _mysql(tmp_path, cred, monkeypatch, calls={"`f`(": [1]})
+    client, _ = _mysql(tmp_path, cred, monkeypatch, calls={"`f`(": [1]}, bound_password_ok=True)
     real = client.execute_statement
 
     def leaves_a_database(**kw: Any) -> dict[str, Any]:
@@ -243,8 +249,74 @@ def test_the_mysql_proof_stops_when_its_runner_user_cannot_be_made(
 ):
     """Found on the real cluster: the Data API takes no bound password in CREATE USER. The
     proof never falls back to the master user: it stops, and the secret is deleted."""
-    client, secrets = _mysql(tmp_path, cred, monkeypatch, fail_on={"CREATE USER": "42000"})
+    client, secrets = _mysql(tmp_path, cred, monkeypatch)  # the real API's 1064
     code, out = _run(tmp_path, "proof-target-run", "--approve", capsys=capsys)
     assert code == 1 and "could not be created through the RDS Data API" in out["message"]
+    assert "its secret was deleted" in out["message"] and out["left_on_cluster"] == []
     assert not secrets.secrets and secrets.deleted and secrets.deleted[0][1] is True
     assert not [s for s in client.sent if s.sql.startswith(("CREATE DATABASE", "CREATE DEFINER"))]
+
+
+def test_the_refusal_says_when_the_runner_secret_could_not_be_deleted(
+    tmp_path, capsys, cred, monkeypatch
+):
+    """Review round 2 of #2297: the refusal never claims a deletion that failed; what is
+    left is named in ``left_on_cluster``."""
+    _, secrets = _mysql(tmp_path, cred, monkeypatch, secrets=FakeSecrets(delete_fails=True))
+    code, out = _run(tmp_path, "proof-target-run", "--approve", capsys=capsys)
+    assert code == 1 and "its secret was deleted" not in out["message"]
+    assert "could not be deleted" in out["message"]
+    assert out["left_on_cluster"] and all("secret" in x for x in out["left_on_cluster"])
+    assert secrets.secrets  # it is still there, and the line says so
+
+
+def test_a_killed_runs_runner_user_and_secret_are_swept(tmp_path, capsys, cred, monkeypatch):
+    """Review round 2 of #2297: a run killed between the runner's creation and its drop
+    leaves the user and its secret; the next run sweeps both by the job's prefixes, and
+    nothing of another job."""
+    from src.tools.routines import data_api_target as dat
+
+    stale = dat.runner_prefix("job1") + "0f0f0f0f"
+    other_job = dat.runner_prefix("job2") + "0f0f0f0f"
+    secrets = FakeSecrets()
+    secrets.create_secret(Name=dat.runner_secret_name("job1", stale), SecretString="{}")
+    secrets.create_secret(Name=dat.runner_secret_name("job2", other_job), SecretString="{}")
+    client, _ = _mysql(tmp_path, cred, monkeypatch, secrets=secrets, calls={"`f`(": [1]},
+                       bound_password_ok=True)  # fmt: skip
+    client.users |= {stale, other_job}
+    code, out = _run(tmp_path, "proof-target-run", "--approve", capsys=capsys)
+    assert code == 0, out
+    assert stale not in client.users and other_job in client.users
+    assert [kw["Name"] for kw in secrets.secrets.values()] == [
+        dat.runner_secret_name("job2", other_job)]  # fmt: skip
+    assert out["left_on_cluster"] == []
+
+
+def test_run_proof_refuses_a_mysql_job_before_any_data_api_call(tmp_path, monkeypatch):
+    """The library refuses it too, while the MySQL proof cannot run (#2298): a caller that
+    skips the script's check still sends nothing."""
+    from src.tools.data_movement import proof_target as pt
+    from src.tools.routines.proof_run import run_proof
+
+    monkeypatch.setattr(pt, "MYSQL_PROOF_AVAILABLE", False)
+    _job(tmp_path)
+    _with_mysql_routine(tmp_path)
+    client, secrets = FakeDataApi("mysql"), FakeSecrets()
+    cluster = {"engine": "aurora-mysql", "data_api": True, "arn": "arn:c",
+               "master_user_secret_arn": "arn:s"}  # fmt: skip  # pragma: allowlist secret
+    out = run_proof(LocalArtifactStore(base_dir=str(tmp_path)), "shop", "job1", data_api=client,
+                    cluster=cluster, secrets_client=secrets)  # fmt: skip
+    assert out["reason_code"] == "mysql_proof_not_available" and "#2298" in out["message"]
+    assert client.sent == [] and not secrets.secrets
+
+
+def test_a_killed_runs_secret_the_sweep_cannot_delete_is_named(tmp_path, capsys, cred, monkeypatch):
+    from src.tools.routines import data_api_target as dat
+
+    stale = dat.runner_prefix("job1") + "0f0f0f0f"
+    secrets = FakeSecrets(delete_fails=True)
+    secrets.create_secret(Name=dat.runner_secret_name("job1", stale), SecretString="{}")
+    _mysql(tmp_path, cred, monkeypatch, secrets=secrets)
+    code, out = _run(tmp_path, "proof-target-run", "--approve", capsys=capsys)
+    assert code == 1
+    assert f"secret {dat.runner_secret_name('job1', stale)}" in out["left_on_cluster"]

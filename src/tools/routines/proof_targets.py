@@ -143,6 +143,12 @@ class ProofTargetError(RuntimeError):
         self.sqlstate = sqlstate
 
 
+class RoleChanged(ProofTargetError):
+    """A call left the role it was confined to (``current_user`` is no longer the runner
+    role, or ``session_user`` changed), read after the call and before its rollback (#1945):
+    the routine is refused, and the call is neither counted nor run again."""
+
+
 class CreateRefused(ValueError):
     """A ``CREATE`` the target refuses before running it; the message names no text."""
 
