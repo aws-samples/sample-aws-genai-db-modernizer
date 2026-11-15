@@ -5,7 +5,8 @@ Description: |
   proof-target-deploy deploys it after the customer's approval, with the engine and version of
   the planned Aurora target; proof-target-teardown deletes it. The proof reaches it through
   the RDS Data API (HTTPS, signed with the caller's IAM credentials), so its security group
-  allows no inbound traffic at all. Deleting the stack takes no final snapshot.
+  allows no inbound traffic at all. The cluster exports no logs, so the stack is all it
+  creates. Deleting the stack takes no final snapshot.
 
 Parameters:
   JobId:
@@ -67,10 +68,6 @@ Conditions:
     Fn::Equals:
       - Ref: MinCapacity
       - '0'
-  IsPostgreSQL:
-    Fn::Equals:
-      - Ref: Engine
-      - aurora-postgresql
 
 Resources:
   SubnetGroup:
@@ -111,6 +108,14 @@ Resources:
     # Throwaway: deleting the stack deletes the cluster with no final snapshot.
     DeletionPolicy: Delete
     UpdateReplacePolicy: Delete
+    Metadata:
+      checkov:
+        skip:
+          - id: CKV_AWS_162
+            comment: >-
+              The proof signs in only through the RDS Data API with the managed master secret;
+              IAM database authentication would add a second sign-in path nothing uses, on a
+              cluster no network can reach
     Properties:
       Engine:
         Ref: Engine
@@ -124,14 +129,11 @@ Resources:
       StorageEncrypted: true
       DeletionProtection: false
       EnableHttpEndpoint: true
-      EnableIAMDatabaseAuthentication: true
       BackupRetentionPeriod: 1
       CopyTagsToSnapshot: true
-      EnableCloudwatchLogsExports:
-        Fn::If:
-          - IsPostgreSQL
-          - - postgresql
-          - - error
+      # No EnableCloudwatchLogsExports: RDS would create /aws/rds/cluster/<id>/... log groups
+      # outside the stack, which outlive teardown and keep failed statements. The proof reads
+      # every error through the Data API.
       DBSubnetGroupName:
         Ref: SubnetGroup
       VpcSecurityGroupIds:

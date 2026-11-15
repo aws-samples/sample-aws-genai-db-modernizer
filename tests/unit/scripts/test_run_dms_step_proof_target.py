@@ -191,8 +191,13 @@ def test_an_inputs_file_with_one_subnet_or_a_bad_id_is_refused(tmp_path, capsys,
     assert cred.asked_for == []
 
 
-def test_a_region_without_the_data_api_is_refused_before_any_aws_call(tmp_path, capsys, cred):
-    _job(tmp_path, region="il-central-1")
+@pytest.mark.parametrize("region", ["il-central-1", "cn-north-1", "ap-newregion-9"])
+def test_a_region_without_the_data_api_is_refused_before_any_aws_call(
+    tmp_path, capsys, cred, region
+):
+    """Only the regions the Data API page lists pass: a region added later is refused until
+    it is listed, never assumed to have the Data API."""
+    _job(tmp_path, region=region)
     code, out = _run(tmp_path, "proof-target-plan", capsys=capsys)
     assert code == 1 and "Data API" in out.get("message", "")
     assert cred.asked_for == []
@@ -218,6 +223,22 @@ def test_plan_picks_the_newest_version_of_the_targets_line_with_auto_pause(tmp_p
     assert STACK in out["teardown_question"] and "no final snapshot" in out["teardown_question"]
     assert cred.asked_for == ["rds"]  # read-only: no CloudFormation call at all
     _no_pending(cred)
+
+
+def test_aurora_mysql_in_govcloud_is_refused_and_postgresql_is_not(tmp_path, capsys, cred):
+    _job(tmp_path, region="us-gov-west-1")
+    code, out = _run(tmp_path, "proof-target-plan", capsys=capsys)
+    assert code == 1 and "Data API" in out["message"]
+    pg = tmp_path / "pg"
+    _job(pg, engine="postgresql", region="us-gov-west-1")
+    _versions(cred, "aurora-postgresql", [("16.15", 0.0)])
+    code, out = _run(pg, "proof-target-plan", capsys=capsys)
+    assert code == 0 and out["engine_version"] == "16.15", out
+
+
+def test_auto_says_it_is_read_only_by_the_proof_target_commands() -> None:
+    action = next(a for a in script._parser()._actions if "--auto" in a.option_strings)
+    assert "proof-target" in (action.help or "") and "only" in (action.help or "")
 
 
 def test_a_line_without_auto_pause_runs_at_half_an_acu(tmp_path, capsys, cred):
@@ -445,6 +466,17 @@ def test_a_complete_stack_with_a_gone_cluster_still_needs_the_stack_tags(tmp_pat
     _no_pending(cred)
 
 
+@pytest.mark.parametrize(
+    "status", ["CREATE_IN_PROGRESS", "UPDATE_IN_PROGRESS", "UPDATE_ROLLBACK_IN_PROGRESS"]
+)
+def test_teardown_refuses_a_stack_cloudformation_is_still_changing(tmp_path, capsys, cred, status):
+    _job(tmp_path)
+    _stack(cred, status=status)
+    code, out = _run(tmp_path, "proof-target-teardown", "--approve", capsys=capsys)
+    assert code == 1 and status in out["message"] and "proof-target-status" in out["message"]
+    _no_pending(cred)  # no delete_stack was queued, so none could be sent
+
+
 def test_teardown_respects_termination_protection_and_never_turns_it_off(tmp_path, capsys, cred):
     _job(tmp_path)
     _stack(cred, protected=True)
@@ -487,3 +519,46 @@ def test_the_commands_make_no_call_but_cloudformation_and_rds(tmp_path, capsys, 
     assert set(cred.asked_for) == {"cloudformation", "rds"}
     source = REPO_ROOT / "src" / "tools" / "data_movement" / "proof_target.py"
     assert source.is_file() and "get_secret_value" not in source.read_text()
+
+
+def _readme_section() -> str:
+    text = (
+        REPO_ROOT / "infrastructure" / "cloudformation" / "data-movement" / "README.md"
+    ).read_text()
+    start = text.index("### Routine proof test cluster")
+    return text[start : text.index("\n### ", start + 1)]
+
+
+def _called_actions() -> set[str]:
+    """``service:Action`` for every CloudFormation and RDS call proof_target.py makes."""
+    import re
+
+    source = (REPO_ROOT / "src" / "tools" / "data_movement" / "proof_target.py").read_text()
+    calls = set(
+        re.findall(r"\b(cloudformation|rds)\.(?:get_paginator\(\"(\w+)\"\)|(\w+)\()", source)
+    )
+    actions = {
+        f"{svc}:{''.join(w.title() for w in (pag or op).split('_'))}" for svc, pag, op in calls
+    }
+    return {a.replace("Db", "DB") for a in actions}
+
+
+def test_the_readme_lists_every_aws_call_the_commands_make() -> None:
+    """The least-privilege sets name each call the code makes, with read-only calls in the
+    read set (plan and status) and the writes only in the write set."""
+    section = _readme_section()
+    called = _called_actions()
+    assert {"cloudformation:CreateStack", "cloudformation:DeleteStack",
+            "rds:DescribeDBEngineVersions", "rds:DescribeDBClusters"} <= called  # fmt: skip
+    read = section[section.index("**Read set**") : section.index("**Write set**")]
+    write = section[section.index("**Write set**") :]
+    for action in called:
+        assert f"`{action}`" in write, action
+        reads = action.split(":")[1].startswith(("Describe", "List"))
+        assert (f"`{action}`" in read) == reads, action
+    # What CloudFormation does as the caller for the template's resources, and no IAM role.
+    for action in ("rds:CreateDBCluster", "rds:CreateDBInstance", "rds:EnableHttpEndpoint",
+                   "rds:DeleteDBCluster", "ec2:CreateSecurityGroup", "ec2:DeleteSecurityGroup",
+                   "secretsmanager:CreateSecret"):  # fmt: skip
+        assert f"`{action}`" in write, action
+    assert "iam:PassRole" not in section and "logs:" not in write

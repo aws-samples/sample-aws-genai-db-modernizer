@@ -615,7 +615,7 @@ obvious entries lives here instead:
   `tests/graph/test_graph_query_cli.py`). It prints one JSON line.
 - `Bash(uv run python scripts/run_transformation_contract.py *)`, `...run_data_movement_plan.py *)`,
   `...render_dms_step.py *)`, `...run_dms_step.py *)` (#1886): `/move`; the sandbox refuses
-  AWS writes (`tests/unit/scripts/test_run_dms_step.py`).
+  AWS writes; `deny` holds its `proof-target-*` commands, both argument orders (#1946).
 - `TaskStop` (#2175): stops a subagent the Stop hook names as hung (30 minutes, no
   report) before the `failed` line, so the session ends at once.
 - `Bash(rm *)`, `Bash(sudo *)`, `Bash(wget *)`, `Bash(nc *)` in `deny`: nothing

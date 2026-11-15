@@ -61,12 +61,20 @@ DATA_API_MINIMUM: dict[str, dict[str, str]] = {
     "aurora_postgresql": {"14": "14.8", "15": "15.3", "16": "16.1", "17": "17.4", "18": "18.3"},
     "aurora_mysql": {"8.0": "8.0.mysql_aurora.3.07.0", "8.4": "8.4.mysql_aurora.8.4.7"},
 }  # fmt: skip
-#: Regions the same page lists without the Data API, per engine.
-DATA_API_UNAVAILABLE: dict[str, frozenset[str]] = {
-    "aurora_postgresql": frozenset({"cn-north-1", "cn-northwest-1", "il-central-1"}),
-    "aurora_mysql": frozenset({"cn-north-1", "cn-northwest-1", "il-central-1", "us-gov-east-1",
-                               "us-gov-west-1"}),
-}  # fmt: skip
+#: The regions the same page lists with the Data API, per engine: a region not listed (one AWS
+#: adds later, say) is refused until it is added here, never assumed to have it.
+_DATA_API_COMMERCIAL = frozenset({
+    "us-east-1", "us-east-2", "us-west-1", "us-west-2", "af-south-1", "ap-east-1", "ap-east-2",
+    "ap-south-1", "ap-south-2", "ap-southeast-1", "ap-southeast-2", "ap-southeast-3",
+    "ap-southeast-4", "ap-southeast-5", "ap-southeast-6", "ap-southeast-7", "ap-northeast-1",
+    "ap-northeast-2", "ap-northeast-3", "ca-central-1", "ca-west-1", "eu-central-1",
+    "eu-central-2", "eu-west-1", "eu-west-2", "eu-west-3", "eu-south-1", "eu-south-2",
+    "eu-north-1", "me-south-1", "me-central-1", "mx-central-1", "sa-east-1",
+})  # fmt: skip
+DATA_API_REGIONS: dict[str, frozenset[str]] = {
+    "aurora_postgresql": _DATA_API_COMMERCIAL | {"us-gov-east-1", "us-gov-west-1"},
+    "aurora_mysql": _DATA_API_COMMERCIAL,
+}
 #: A plain release (16.4, 8.0.mysql_aurora.3.08.0): no "-limitless" or other variant.
 _RELEASE = re.compile(r"^\d+\.\d+(\.mysql_aurora\.\d+\.\d+\.\d+)?$")
 DEFAULT_MAX_CAPACITY = 2
@@ -166,9 +174,9 @@ def planned_target(store: Any, db: str, job_id: str) -> Target:
 
 
 def check_region(engine: str, region: str) -> None:
-    if region in DATA_API_UNAVAILABLE[engine]:
-        raise ProofTargetError(f"{display_engine(engine)} has no RDS Data API in {region}, and the proof "
-                               "reaches the test cluster only through it: choose another region")  # fmt: skip
+    if region not in DATA_API_REGIONS[engine]:
+        raise ProofTargetError(f"{display_engine(engine)} has no RDS Data API listed for {region}, and "
+                               "the proof reaches the test cluster only through it: choose another region")  # fmt: skip
 
 
 def _numbers(version: str) -> tuple[int, ...]:

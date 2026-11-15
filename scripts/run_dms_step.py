@@ -433,8 +433,8 @@ def _parser() -> argparse.ArgumentParser:
     p.add_argument("--artifact-root", default=os.environ.get("ARTIFACT_DIR", "./artifacts"))
     p.add_argument("--inputs", help="the inputs file (default: the step's inputs.json)")
     p.add_argument("--approve", action="store_true", help="the customer approved this AWS write")
-    p.add_argument("--auto", action="store_true", help="a headless /move --auto run: the "
-                   "proof-target commands refuse it")  # fmt: skip
+    p.add_argument("--auto", action="store_true", help="a headless /move --auto run; only the "
+                   "proof-target-* commands read it, and they refuse it (the others ignore it)")  # fmt: skip
     p.add_argument("--change-set", help="execute: the change set deploy created; status: the "
                    "change set just executed, so a stack still in review is waited on")  # fmt: skip
     p.add_argument("--confirm", action="append", default=[], metavar="CHECK_ID",
