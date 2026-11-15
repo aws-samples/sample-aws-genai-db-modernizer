@@ -202,12 +202,16 @@ def _documented_run_dms_step_calls() -> list[str]:
     return sorted(found)
 
 
+@pytest.mark.passes_on_main  # the documented calls on main hold no proof-target call; #1945 adds them, refused by design
 def test_every_documented_run_dms_step_call_still_passes_the_hook(run_hook) -> None:
     """The character rule must never refuse a call the pipeline makes: a new command that does
     not fit it fails here, not in a headless run."""
     calls = _documented_run_dms_step_calls()
     assert len(calls) >= 30, calls
     refused = [c for c in calls if hook.is_proof_target_call(c)]
-    assert refused == []
+    # /move's routine proof (#1945) documents the proof-target-* calls: a headless run is meant
+    # to be refused them, and nothing else.
+    assert refused == [c for c in calls if " proof-target-" in c]
+    calls = [c for c in calls if c not in refused]
     for call in calls[:3]:  # and through the hook itself, end to end
         assert run_hook("enforce_tool_use_rule.py", bash(call)).code == 0, call

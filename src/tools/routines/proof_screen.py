@@ -28,7 +28,8 @@ holds routine text.
   PostgreSQL every name the statement binds is read again from the parser's tree, which
   decodes and folds names as the server does;
 - a text that changes the role it runs as (``SET [LOCAL|SESSION] ROLE``, ``SET SESSION
-  AUTHORIZATION``).
+  AUTHORIZATION``, ``RESET ROLE``, ``RESET ALL``, ``DISCARD ALL``), since the test cluster's
+  proof (#1945) confines each call with ``SET LOCAL ROLE``.
 
 What it does not refuse, as known limits: ``SECURITY DEFINER`` (on a disposable engine
 every routine runs as one role), and anything inside a statement built at run time,
@@ -423,7 +424,11 @@ def create_refusal(text: str, engine: str, kind: str, namespace: str) -> str | N
             return f"its name is qualified with a schema other than the target's ({namespace})"
     words = [t.text.upper() for t in deep]
     for i, word in enumerate(words):
-        if word == "ROLE" and i and words[i - 1] in ("SET", "LOCAL", "SESSION"):
+        if word == "ROLE" and i and words[i - 1] in ("SET", "LOCAL", "SESSION", "RESET"):
+            return "it changes the role it runs as"
+        if word == "ALL" and i and words[i - 1] == "RESET":  # RESET ALL resets the role too
+            return "it changes the role it runs as"
+        if word == "ALL" and i and words[i - 1] == "DISCARD":  # resets the role and the session
             return "it changes the role it runs as"
         if word == "AUTHORIZATION" and i and words[i - 1] == "SESSION":
             return "it changes the role it runs as"

@@ -27,6 +27,13 @@ procedure, trigger and event the collection lists, with:
   before the rewrites (``rules_passed`` counts the rest; a rewrite's rule says which
   check it resolves).
 
+After the routine proof on the throwaway Aurora test cluster (#1945, ADR-034 Decision 5),
+a carried row also has its ``proof`` (:class:`RoutineProofEntry`) and the artifact its
+``proof_run`` (:class:`RoutineProofRun`): a routine carried as it is was loaded and called
+there; a rewritten or repaired one was compared side by side with the original on a
+disposable engine of the source. Both are optional: an artifact the proof has not run on
+has neither.
+
 No row holds a routine's text, a diff of it or a hash of it: the exact text, literals
 included, stays only in the job's routine sources (ADR-034 Decision 4), which the
 artifact names by ``(kind, schema_name, specific_name)``. ``source_text`` says whether that text was there
@@ -38,6 +45,7 @@ Version History:
 
 from __future__ import annotations
 
+from datetime import datetime
 from typing import Literal
 
 from pydantic import BaseModel, Field, model_validator
@@ -120,6 +128,77 @@ class RoutineRewriteEntry(BaseModel):
     rule_id: str = Field(..., min_length=1, description="The routine rewrite rule's id")
     rewrite: Literal["definer", "owner", "search_path"] = Field(
         ..., description="What the rewrite changes"
+    )
+
+
+_OUTCOMES = ("proved", "needs_attention", "not_proved")
+
+
+class RoutineProofEntry(BaseModel):
+    """What the routine proof on the test cluster found for one carried routine (#1945)."""
+
+    mode: Literal["load_and_run", "side_by_side"] = Field(
+        ...,
+        description=(
+            "load_and_run: carried as it is, loaded and called on the test cluster alone; "
+            "side_by_side: rewritten or repaired (or naming such a routine), compared with the "
+            "original on a disposable engine of the source"
+        ),
+    )
+    outcome: Literal["proved", "needs_attention", "not_proved"] = Field(
+        ...,
+        description=(
+            "proved: it loaded, the strict check found no error, and its calls ran (at least "
+            "one succeeded) or, side by side, no difference was found on them; "
+            "needs_attention: it did not load, the strict check found an error, or a call "
+            "behaved differently; not_proved: it could not be run or compared (reason)"
+        ),
+    )
+    reason: str = Field(..., min_length=1, description="Why, with no routine or table text")
+    reason_code: str | None = Field(None, description="The fixed code of a reason, if any")
+    calls_run: int = Field(0, ge=0, description="Generated calls run on the test cluster")
+    calls_succeeded: int = Field(0, ge=0, description="Calls that returned without an error")
+    mismatches: int = Field(0, ge=0, description="Side by side: the differences found")
+    error_states: list[str] = Field(
+        default_factory=list, description="The SQLSTATEs of the calls that failed"
+    )
+    strict_check: Literal["passed", "failed", "not_available", "not_applicable"] = Field(
+        "not_applicable",
+        description=(
+            "PostgreSQL PL/pgSQL: the strict check's result (passed, failed); not_available "
+            "when none ran; not_applicable for a routine it does not check"
+        ),
+    )
+    strict_check_errors: list[str] = Field(
+        default_factory=list, description="The SQLSTATE of each strict-check error"
+    )
+
+
+class RoutineProofRun(BaseModel):
+    """Where and when the routine proof ran (#1945)."""
+
+    target: str = Field(..., min_length=1, description="The test cluster, by engine and version")
+    source: str | None = Field(
+        None, description="The disposable source engine of the side-by-side comparisons"
+    )
+    strict_check: Literal[
+        "plpgsql_check", "plpgsql_extra_errors", "not_available", "not_applicable"
+    ] = Field(
+        ...,
+        description=(
+            "The PostgreSQL strict check that ran: plpgsql_check where the cluster offers it, "
+            "else plpgsql_extra_errors (each PL/pgSQL routine compiled again with "
+            "plpgsql.extra_errors = 'all'); not_applicable on MySQL"
+        ),
+    )
+    proved_at: datetime = Field(..., description="When the proof ended")
+    seconds: float = Field(..., ge=0, description="How long it ran")
+    counts: dict[Literal["proved", "needs_attention", "not_proved"], int] = Field(
+        ..., description="Carried routines per outcome"
+    )
+    not_carried: int = Field(0, ge=0, description="Routines not proved because not carried")
+    coverage_limits: list[str] = Field(
+        default_factory=list, description="What a proved routine's result does not cover"
     )
 
 
@@ -216,6 +295,9 @@ class RoutineMigration(BaseModel):
         ),
     )
     rules_passed: int = Field(..., ge=0, description="How many check rules passed")
+    proof: RoutineProofEntry | None = Field(
+        None, description="The routine proof's result on the test cluster (#1945); None: not run"
+    )
 
     @model_validator(mode="after")
     def _status_fits_reasons(self) -> RoutineMigration:
@@ -289,6 +371,9 @@ class RoutineMigrationContract(BaseModel):
     routines: list[RoutineMigration] = Field(
         default_factory=list, description="One row per routine, in deploy order"
     )
+    proof_run: RoutineProofRun | None = Field(
+        None, description="The routine proof on the test cluster (#1945); None: not run"
+    )
 
     @model_validator(mode="after")
     def _consistent(self) -> RoutineMigrationContract:
@@ -308,6 +393,13 @@ class RoutineMigrationContract(BaseModel):
             raise ValueError("counts do not match the routines' statuses")
         if [r.deploy_order for r in self.routines] != list(range(1, len(self.routines) + 1)):
             raise ValueError("routines are not in deploy order 1..total")
+        if self.proof_run is not None:
+            proved = {o: 0 for o in _OUTCOMES}
+            for row in self.routines:
+                if row.proof is not None:
+                    proved[row.proof.outcome] += 1
+            if dict(self.proof_run.counts) != proved:
+                raise ValueError("proof_run counts do not match the routines' proofs")
         for members in self.cycles:
             for ref in members:
                 if (ref.kind, ref.routine_id) not in seen:

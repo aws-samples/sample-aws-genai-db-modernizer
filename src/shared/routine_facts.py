@@ -84,6 +84,9 @@ from src.shared.cutover_message import CUTOVER_MESSAGE
 #: What every routine verdict rests on until the load-and-run proof (#1945); the step 1
 #: gate's routines check uses the same label.
 PROOF_LABEL = "checked, not load-tested"
+#: What the verdicts rest on once the routine proof ran on a test cluster (#1945).
+PROOF_RUN_LABEL = "load-tested on a test Aurora"
+PROOF_OUTCOMES = ("proved", "needs_attention", "not_proved")
 
 #: A routine risk class -> its severity, in the order the risks are raised.
 ROUTINE_RISK_SEVERITY: dict[str, str] = {
@@ -242,6 +245,26 @@ def proof_sentence(carried: int, unknown: int) -> str:
     return f"{head}; the other {rest} {'is' if rest == 1 else 'are'} {PROOF_LABEL}."
 
 
+def proof_run_sentence(counts: Mapping[str, int]) -> str:
+    """What the routine proof on a throwaway Aurora test cluster found (#1945), counts
+    only: within the calls made, never a claim about every input."""
+    proved, attention, unproved = (int(counts.get(k, 0)) for k in PROOF_OUTCOMES)
+    total = proved + attention + unproved
+    if not total:
+        return ""
+    parts = [
+        (
+            f"{proved} loaded and ran, or showed no differences side by side, on the calls made"
+            if proved
+            else ""
+        ),
+        f"{attention} {'needs' if attention == 1 else 'need'} attention" if attention else "",
+        f"{unproved} could not be tested" if unproved else "",
+    ]
+    head = f"On a test Aurora, of {_n(total, 'carried routine', 'carried routines')}"
+    return f"{head}: " + "; ".join(p for p in parts if p) + "."
+
+
 def target_wave(target_engine: str, migration_waves: Iterable[Any] | None) -> int | None:
     """The first numbered wave whose engines include ``target_engine``, else None."""
     numbered = []
@@ -320,6 +343,12 @@ def routine_facts(
             }
         )
     named = {r for row in rows for r in (*row["reasons"], *row["rewrites"], *row["unknown_checks"])}
+    run = data.get("proof_run")
+    proved = (
+        {k: int((run.get("counts") or {}).get(k, 0)) for k in PROOF_OUTCOMES}
+        if isinstance(run, Mapping)
+        else None
+    )
     total = int(data.get("total") or 0)
     text = _line(counts, total, classes_n["behaves_differently"])
     wave = target_wave(str(data["target_engine"]), migration_waves)
@@ -341,13 +370,18 @@ def routine_facts(
         "migrate_yourself_step": step,
         "counts_by_kind": dict(sorted(kinds.items())),
         "reason_counts": dict(sorted(reasons.items())),
-        "proof": PROOF_LABEL,
+        "proof": PROOF_LABEL if proved is None else PROOF_RUN_LABEL,
+        "proof_counts": proved,
         "line": " ".join(
             p
             for p in (
                 text,
-                proof_sentence(
-                    counts["as_is"] + counts["rewritten"] + counts["repaired"], unknown_carried
+                (
+                    proof_sentence(
+                        counts["as_is"] + counts["rewritten"] + counts["repaired"], unknown_carried
+                    )
+                    if proved is None
+                    else proof_run_sentence(proved)
                 ),
             )
             if p

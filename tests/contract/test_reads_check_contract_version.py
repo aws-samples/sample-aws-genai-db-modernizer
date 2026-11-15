@@ -51,6 +51,11 @@ HELPERS = {"load_contract", "check_contract_version", "check_artifact", "carries
 _BUILT = "built in memory from the offline upload's fields, not read from a file"
 _ANSWER = "a model's answer, parsed before it becomes an artifact"
 NOT_ARTIFACT_READS: dict[tuple[str, str, str], str] = {
+    # The routine proof (#1945) builds the artifact it writes from the one it read with
+    # load_contract (latest_routine_migration), its rows and the proof's results.
+    ("src/tools/routines/proof_run.py", "apply_proof", "RoutineMigrationContract"): (
+        "built in memory from an artifact already read with load_contract, not read from a file"
+    ),
     ("src/agents/collector/handler.py", "run_collector", "CollectorInput"): (
         "built in memory from the task's environment, not read from a file"
     ),

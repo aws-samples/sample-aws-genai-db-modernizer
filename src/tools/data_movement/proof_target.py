@@ -236,6 +236,7 @@ def plan(clients: ProofTargetClients, inputs: ProofTargetInputs, target: Target,
         "template": f"infrastructure/cloudformation/data-movement/{TEMPLATE_NAME}",
         "parameters": params, "tags": stack_tags(job_id),
         "question": deploy_question(name, inputs, target, picked),
+        "run_question": run_question(name, inputs.region),
         "teardown_question": teardown_question(name, inputs.region),
         "data": DATA_NOTE, "cost": COST,
     }  # fmt: skip
@@ -251,6 +252,13 @@ def deploy_question(name: str, inputs: ProofTargetInputs, target: Target,
             f"{', '.join(inputs.subnet_ids)} of {inputs.vpc_id}, with no public access and no "
             "inbound rule (the proof uses the RDS Data API)? It holds synthetic rows and the "
             "carried routines only.")  # fmt: skip
+
+
+def run_question(name: str, region: str) -> str:
+    """The question to ask before the routine proof (#1945) runs on the test cluster."""
+    return (f"Run the routine proof on the test cluster of stack {name} in {region}? It creates a "
+            "scratch database there, loads synthetic rows and the carried routines, calls them "
+            "and drops the database.")  # fmt: skip
 
 
 def teardown_question(name: str, region: str) -> str:
@@ -440,6 +448,7 @@ def status(clients: ProofTargetClients, inputs: ProofTargetInputs, job_id: str,
             "storage_encrypted": bool(cluster.get("StorageEncrypted")),
             "master_user_secret_arn": (cluster.get("MasterUserSecret") or {}).get("SecretArn"),
             "database_name": cluster.get("DatabaseName"),
+            "master_username": cluster.get("MasterUsername"),
         }  # fmt: skip
     return out
 

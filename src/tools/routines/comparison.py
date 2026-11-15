@@ -190,6 +190,7 @@ __all__ = [
     "ComparisonReport",
     "Difference",
     "RoutineComparison",
+    "RoutineRun",
     "ValueGuard",
     "call_seed",
     "compare_call",
@@ -197,6 +198,7 @@ __all__ = [
     "frozen_at",
     "normalise",
     "plan_batches",
+    "run_routines",
 ]
 
 #: Routines per batch: each batch gets fresh targets on both sides.
@@ -221,6 +223,12 @@ COVERAGE_LIMITS = (
     "concurrency, locking and performance are not compared",
     "a routine runs as one role on each side: SECURITY DEFINER and the privileges a "
     "routine needs or grants are not compared",
+)
+#: Added to a result whose target reports no error detail, hint or constraint (the RDS
+#: Data API, #1945).
+ERROR_FIELDS_LIMIT = (
+    "the target reports an error's SQLSTATE, error number and first message line only, so "
+    "two errors were matched on those, not on their detail, hint or the constraint they name"
 )
 _FROZEN_BASE = datetime.datetime(2024, 6, 1, 12, 0, tzinfo=datetime.UTC)
 _NEAR = datetime.timedelta(days=7)  # a clock value: within a week of the call's now
@@ -612,21 +620,25 @@ def _digest(text: str | None) -> str | None:
     return hashlib.sha256(" ".join(text.split()).encode("utf-8", "replace")).hexdigest()
 
 
-def _error_key(r: de.CallResult) -> tuple[Any, ...] | None:
+def _error_key(r: de.CallResult, fields: bool = True) -> tuple[Any, ...] | None:
     """What two errors must share to be the same: the full SQLSTATE, MySQL's error
     number, a digest of the message (whitespace collapsed) and the constraint. None when
-    the error lacks a SQLSTATE or a message: such an error never matches."""
+    the error lacks a SQLSTATE or a message: such an error never matches. With ``fields``
+    False (a side that reports no detail, hint or constraint, such as the RDS Data API),
+    only the SQLSTATE, the error number and the message's first line count."""
     if not r.sqlstate or r.message is None or r.timed_out:
         return None
+    if not fields:
+        return (r.sqlstate, r.errno, _digest(r.message.split("\n", 1)[0]))
     return (r.sqlstate, r.errno, _digest(r.message), r.constraint)
 
 
-def _same_error(a: de.CallResult, b: de.CallResult) -> bool:
+def _same_error(a: de.CallResult, b: de.CallResult, fields: bool = True) -> bool:
     """No error on both sides, or two errors with the same :func:`_error_key`."""
     if a.error is None or b.error is None:
         return a.error is None and b.error is None
-    key = _error_key(a)
-    return key is not None and key == _error_key(b)
+    key = _error_key(a, fields)
+    return key is not None and key == _error_key(b, fields)
 
 
 def _typed(value: Any) -> Any:
@@ -753,6 +765,7 @@ def compare_call(
     tables: Sequence[str],
     keys: Mapping[str, Sequence[str]] | None = None,
     guard: ValueGuard | None = None,
+    error_fields: bool = True,
 ) -> list[Difference]:
     """Every difference between the two sides' runs of one call (empty: the same).
 
@@ -760,7 +773,8 @@ def compare_call(
     in order, after :func:`normalise`, with a MySQL procedure's result-set sizes; table
     changes as multisets of normalised rows (``tables`` and any table only the call
     created), paired by the table's key (``keys``) for column-level differences; a
-    commit on one side only is a ``transaction`` difference."""
+    commit on one side only is a ``transaction`` difference. ``error_fields`` False: a side
+    reports no error detail, hint or constraint (:func:`_error_key`)."""
     guard = guard or ValueGuard((), frozenset())
     generated = guard.generated
     keys = keys or {}
@@ -771,7 +785,7 @@ def compare_call(
             Difference(aspect="transaction", call=call, call_index=index,
                        source=source.transaction, target=target.transaction)
         )  # fmt: skip
-    if not _same_error(a, b):
+    if not _same_error(a, b, error_fields):
         source_state, target_state = _state(a), _state(b)
         if a.error is not None and b.error is not None and source_state == target_state:
             source_state += " (one message)"
@@ -1207,6 +1221,7 @@ class _Batchwide:
     dialect: str = "postgresql"
     random_seeded: bool = False
     named_time_zones: bool = True
+    error_fields: bool = True
     unseeded: Mapping[str, str] = field(default_factory=dict)
     reached: Callable[[ComparedRoutine], list[ComparedRoutine]] = lambda r: [r]
 
@@ -1265,6 +1280,7 @@ def _compare_batch(
             names={"source": src.description, "target": tgt.description}, dialect=dialect,
             random_seeded=src.random_seeded and tgt.random_seeded and src.version == tgt.version,
             named_time_zones=src.named_time_zones and tgt.named_time_zones,
+            error_fields=getattr(src, "error_fields", True) and getattr(tgt, "error_fields", True),
             reached=lambda r: _reached(r, members, by_id, order, dialect),
         )  # fmt: skip
         out: dict[str, RoutineComparison] = {}
@@ -1430,6 +1446,7 @@ def _compare_one(routine: ComparedRoutine, shared: _Batchwide) -> RoutineCompari
         found = compare_call(
             runs["source"], runs["target"], call=call.label, index=index,
             tables=sides["source"].tables, keys=shared.keys, guard=shared.guard,
+            error_fields=shared.error_fields,
         )  # fmt: skip
         if found:
             differing += 1
@@ -1449,6 +1466,8 @@ def _compare_one(routine: ComparedRoutine, shared: _Batchwide) -> RoutineCompari
         return not_compared("mostly_errors", f"{errored} of its {_calls(n)} failed on both "
                             "sides, so the match rests mostly on errors", n, succeeded)  # fmt: skip
     limits = COVERAGE_LIMITS + _routine_limits(texts, shared.dialect, unread_session)
+    if not shared.error_fields:
+        limits += (ERROR_FIELDS_LIMIT,)
     return RoutineComparison(**base, outcome="no_differences_found", calls_compared=n,
                              calls_succeeded=succeeded, coverage_limits=limits,
                              reason=f"no differences found on {_calls(n)} ({succeeded} "
@@ -1546,3 +1565,167 @@ def compare_routines(
         if on_batch is not None:
             on_batch(done, len(batches))
     return ComparisonReport(results=tuple(results[r.routine_id] for r in routines))
+
+
+# --------------------------------------------------------------------------- load and run
+
+RunReasonCode = Literal[
+    "outside_namespace",
+    "does_not_load",
+    "dependency_not_loaded",
+    "dynamic_sql",
+    "no_calls",
+    "target_unavailable",
+    "engine_failed",
+    "call_refused",
+]
+
+
+class RoutineRun(BaseModel):
+    """One routine loaded and called on the target alone (#1945): ``ran`` (it loaded and
+    its generated calls ran: ``calls_run``, of which ``calls_succeeded`` returned without
+    an error; ``error_states`` the SQLSTATEs of the others, ``timed_out`` the ones past
+    the time limit), ``does_not_load`` (its ``CREATE`` failed: ``error_states`` holds the
+    SQLSTATE) or ``not_run`` (why in ``reason_code``). Nothing is compared: no source side
+    runs. No reason quotes routine text."""
+
+    model_config = _HIDDEN
+
+    routine_id: str
+    outcome: Literal["ran", "does_not_load", "not_run"]
+    reason: str
+    reason_code: RunReasonCode | None = None
+    calls_run: int = 0
+    calls_succeeded: int = 0
+    timed_out: int = 0
+    error_states: tuple[str, ...] = ()
+    target: str | None = None
+
+
+def _run_one(
+    routine: ComparedRoutine, side: _Side, calls: Mapping[str, list[ProofCall]],
+    skipped: Mapping[str, str], texts: Sequence[str], dialect: str, seed: int, where: str,
+) -> RoutineRun:  # fmt: skip
+    rid = routine.routine_id
+    base: dict[str, Any] = {"routine_id": rid, "target": where}
+
+    def not_run(code: RunReasonCode, reason: str, **kw: Any) -> RoutineRun:
+        return RoutineRun(**base, outcome="not_run", reason_code=code, reason=reason, **kw)
+
+    if side.target is None:
+        side.open()
+    if rid in side.refused:
+        return not_run("outside_namespace", f"it was not created on {where}: {side.refused[rid]}")
+    if rid in side.failed:
+        state = side.failed[rid]
+        return RoutineRun(**base, outcome="does_not_load", reason_code="does_not_load",
+                          reason=f"it does not load on {where}: SQLSTATE {state} "
+                          f"({_class_name(state)})", error_states=(state,))  # fmt: skip
+    for dep in routine.depends_on:
+        if dep in side.failed or dep in side.refused:
+            return not_run("dependency_not_loaded", f"it depends on {dep}, which does not load")
+    if dynamic_sql(texts, dialect):
+        return not_run("dynamic_sql", "it runs a statement built at run time, which the screen "
+                       "cannot read, so it is not called")  # fmt: skip
+    mine = calls.get(rid, [])
+    if not mine:
+        return not_run("no_calls", "no call to run: "
+                       + skipped.get(rid, "no call or row change was generated for it"))  # fmt: skip
+    ran = ok = late = 0
+    states: list[str] = []
+    for index, call in enumerate(mine, start=1):
+        try:
+            run = _run_side(side, call, index, seed)
+        except ValueError:
+            return not_run("call_refused", f"call {index} ({call.label}) was refused before it ran",
+                           calls_run=ran, calls_succeeded=ok)  # fmt: skip
+        result = run.result
+        ran += 1
+        if result.timed_out or result.sqlstate in _TIMEOUTS:
+            late += 1
+            side.open()  # an interrupted call may leave its side anywhere
+        elif run.committed:
+            side.open()  # its transaction, and maybe its rows, are not as seeded
+        if result.error is None:
+            ok += 1
+        else:
+            states.append(result.sqlstate or "?????")
+    failed = ran - ok
+    reason = f"loaded and ran {_calls(ran)}: {ok} succeeded"
+    if failed:
+        reason += f", {failed} failed (SQLSTATE {', '.join(sorted(set(states)))})"
+    return RoutineRun(**base, outcome="ran", reason=reason, calls_run=ran, calls_succeeded=ok,
+                      timed_out=late, error_states=tuple(sorted(set(states))))  # fmt: skip
+
+
+def run_routines(
+    routines: Sequence[ComparedRoutine],
+    tables: Sequence[Mapping[str, Any]],
+    *,
+    target: TargetFactory,
+    dialect: Literal["postgresql", "mysql"],
+    seed: int = 0,
+    batch_size: int = BATCH_SIZE,
+    extensions: Collection[str] = (),
+    on_batch: Callable[[int, int], None] | None = None,
+) -> tuple[RoutineRun, ...]:
+    """Load each routine's carried text on ``target`` and run its generated calls there,
+    with nothing to compare against (#1945: the routines carried as they are). The same
+    batches, inputs, screens and per-call rollback as :func:`compare_routines`, on one
+    side only; a routine or a batch that fails never stops the others."""
+    if batch_size < 1:
+        raise ValueError("batch_size must be at least 1")
+    order = {r.routine_id: i for i, r in enumerate(routines)}
+    if len(order) != len(routines):
+        raise ValueError("routine ids must be unique")
+    by_id = {r.routine_id: r for r in routines}
+    out: dict[str, RoutineRun] = {}
+    batches = plan_batches(routines, batch_size=batch_size, dialect=dialect)
+    for done, batch in enumerate(batches, start=1):
+        side: _Side | None = None
+        try:
+            members = _closure(batch, by_id, order)
+            index = TableIndex({str(t["table_id"]): t for t in tables})
+            inputs = build_proof_inputs(
+                [_with_text_tables(m, index, dialect) for m in members], tables,  # type: ignore[arg-type]
+                dialect=dialect, seed=seed, extensions=extensions,
+            )  # fmt: skip
+            names, _, _ = _table_names(inputs, tables)
+            side = _Side("target", target, inputs,
+                         [(m.routine_id, s) for m in members for s in m.carried], names)  # fmt: skip
+            why = _open(side)
+            if why is not None:
+                code: RunReasonCode = (
+                    "target_unavailable" if why[0] == "target_unavailable" else "engine_failed"
+                )
+                for r in batch:
+                    out[r.routine_id] = RoutineRun(routine_id=r.routine_id, outcome="not_run",
+                                                   reason_code=code, reason=why[1])  # fmt: skip
+                continue
+            where = side.target.description if side.target else "the target"
+            calls: dict[str, list[ProofCall]] = {}
+            for call in inputs.calls:
+                calls.setdefault(call.routine_id, []).append(call)
+            skipped = {s.routine_id: s.reason for s in inputs.skipped}
+            for routine in batch:
+                texts = [s.create_sql for m in _reached(routine, members, by_id, order, dialect)
+                         for s in m.carried]  # fmt: skip
+                try:
+                    out[routine.routine_id] = _run_one(routine, side, calls, skipped, texts,
+                                                       dialect, seed, where)  # fmt: skip
+                except Exception as exc:  # noqa: BLE001 - one routine never stops the others
+                    out[routine.routine_id] = RoutineRun(
+                        routine_id=routine.routine_id, outcome="not_run", reason_code="engine_failed",
+                        reason=f"the run failed ({type(exc).__name__})", target=where,
+                    )  # fmt: skip
+        except Exception as exc:  # noqa: BLE001 - one batch never stops the others
+            for r in batch:
+                out.setdefault(r.routine_id, RoutineRun(
+                    routine_id=r.routine_id, outcome="not_run", reason_code="engine_failed",
+                    reason=f"the batch failed ({type(exc).__name__})"))  # fmt: skip
+        finally:
+            if side is not None:
+                side.close()
+        if on_batch is not None:
+            on_batch(done, len(batches))
+    return tuple(out[r.routine_id] for r in routines)

@@ -16,6 +16,8 @@ import re
 import shlex
 from pathlib import Path
 
+import pytest
+
 from scripts import run_dms_step, validate_skills
 from src.shared.cutover_message import CUTOVER_MESSAGE
 from src.tools.data_movement.dms_step import CUSTOMER_RESPONSIBILITY
@@ -79,9 +81,11 @@ def test_every_helper_example_parses_with_the_helpers_own_parser() -> None:
         args = run_dms_step._parser().parse_args(_helper_argv(command))
         used.add(args.command)
         assert "--artifact-root" not in command and "--inputs" not in command, command
-    assert used == set(run_dms_step.LOCAL) | set(run_dms_step.READS) | set(run_dms_step.WRITES)
+    assert used == (set(run_dms_step.LOCAL) | set(run_dms_step.READS) | set(run_dms_step.WRITES)
+                    | set(run_dms_step.PROOF_TARGET))  # fmt: skip
 
 
+@pytest.mark.passes_on_main  # main's /move has no proof-target write; #1945 adds them to Prove, each with --approve
 def test_every_aws_write_passes_approve_and_only_in_the_move_stage() -> None:
     move, ending = _section("Stage 3: Move"), _section("Ending the step")
     prove = _section("Stage 4: Prove")
@@ -102,6 +106,9 @@ def test_every_aws_write_passes_approve_and_only_in_the_move_stage() -> None:
         elif args.command in run_dms_step.WRITES:
             assert args.approve, command
             assert command in move, f"an AWS write outside Move: {command}"
+        elif args.command in run_dms_step.PROOF_WRITES:  # the routine proof's test cluster (#1945)
+            assert args.approve, command
+            assert command in prove, f"{args.command} outside Prove: {command}"
         else:
             assert not args.approve, command
 
@@ -722,3 +729,37 @@ def test_the_result_line_forms_are_unchanged() -> None:
         "MOVE_RESULT: stopped stage=prove reason=validation not running: <validation_check>",
     }
     assert "`MOVE_RESULT: complete job_id={job_id} step=1 gate=<the gate line's status>`" in _text()
+
+
+def _proof_section() -> str:
+    return _text().split("**Routine proof (optional).**", 1)[1].split("**Routines.**", 1)[0]
+
+
+def test_every_proof_target_call_passes_auto_in_an_auto_run_and_is_refused_there(
+    tmp_path, capsys, monkeypatch
+) -> None:
+    """#1945 (the note from #1946): the scripts refuse ``--auto`` only when their caller passes
+    it, so the command passes it to every ``proof-target-*`` call of an ``--auto`` run. Each
+    call written with ``{--auto}`` set to ``--auto`` is refused before any AWS call."""
+    import json
+
+    calls = [c for c in _bash_commands() if "proof-target-" in c]
+    assert {shlex.split(c)[4] for c in calls} == set(run_dms_step.PROOF_TARGET)
+    assert calls and all(c in _proof_section() and c.endswith(" {--auto}") for c in calls), calls
+    flat = _flat(_proof_section())
+    assert "`{--auto}` stands for `--auto` in an `--auto` run and for nothing otherwise" in flat
+    assert "Never offer it under `--auto`" in flat
+    assert "`--auto` never offers or runs the routine proof" in _flat(
+        _section("Headless (`--auto`)")
+    )
+    asked: list[str] = []
+    monkeypatch.setattr("src.tools.aws.credentials.AWSCredentialManager",
+                        lambda *a, **k: asked.append("aws"))  # fmt: skip
+    for command in calls:
+        argv = [a.replace("job_id", "job1").replace("db", "shop") if a in ("job_id", "db") else a
+                for a in _helper_argv(command)]  # fmt: skip
+        assert "--auto" in argv, command
+        code = run_dms_step.main([*argv, "--artifact-root", str(tmp_path)])
+        out = json.loads(capsys.readouterr().out.splitlines()[-1])
+        assert code == 1 and "never runs under --auto" in out["message"], command
+    assert asked == []

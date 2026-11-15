@@ -33,6 +33,7 @@
     "source_text_not_exact": 1
   },
   "proof": "checked, not load-tested",
+  "proof_counts": null,
   "line": "3 of 10 routines carry over: 2 as they are, 1 rewritten. 7 were not carried automatically: 4 need repair (1 of them behaves differently), 1 was rebuilt around a literal, 1 has no code collected, 1 was not readable. For 2 carried routines not every check could run; the other 1 is checked, not load-tested.",
   "routines": [
     {
