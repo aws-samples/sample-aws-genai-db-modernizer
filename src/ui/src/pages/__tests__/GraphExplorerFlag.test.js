@@ -11,7 +11,7 @@
  *   an unknown path, and renders the page with its notice when on.
  *
  * Cloudscape ships ESM this repo's Jest config cannot transform, so its
- * components are mocked as plain DOM elements (as in PatternAnalysisFacts.test.js).
+ * components are mocked as plain DOM elements (as in SankeyClickToResults.test.js).
  */
 import fs from 'fs';
 import path from 'path';
@@ -412,7 +412,7 @@ test('the explorer, and only the explorer, uses the full width', async () => {
   mockExecute.mockImplementation(async (calls) => answer(calls));
   await render(<GraphExplorer />);
   expect(mockLayoutProps.maxContentWidth).toBe(Number.MAX_VALUE);
-  ['AnalysisResults.js', 'AssignmentGate.js', 'Dashboard.js', 'JobMonitoringSummary.js', 'PatternAnalysis.js', 'CreateAnalysis.js'].forEach((page) => {
+  ['AnalysisResults.js', 'AssignmentGate.js', 'Dashboard.js', 'JobMonitoringSummary.js', 'CreateAnalysis.js'].forEach((page) => {
     // `page` comes from the fixed list above, in this test file itself -- not user
     // input, so this is not a path-traversal vector despite the generic pattern.
     // nosemgrep: javascript.lang.security.audit.path-traversal.path-join-resolve-traversal.path-join-resolve-traversal

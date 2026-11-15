@@ -10,10 +10,9 @@ bookmarks keep working, each covered below: `/analysis/results-v2/:jobId` (the
 page's name until its version suffix was dropped, #957) and `/analysis/report/:jobId`
 (the earlier, orange-styled report, removed in #356). The job-monitoring page
 (`/analysis/monitor/:jobId`) and the engine-analysis page were removed (#957); their
-URLs fall through to the dashboard. `/analysis/patterns/:jobId` is exercised only with
-its required `?target=` query param, since every real link to that route supplies one
-(src/ui/src/pages/PatternAnalysis.js reads `target` from `useSearchParams` with no
-default; a bare visit fetches `.../analysis/null` and 404s).
+URLs fall through to the dashboard. The pattern-analysis page was removed (#2300);
+`/analysis/patterns/:jobId?target=<engine>` redirects to that engine in the results
+page's explorer (covered below).
 """
 
 from __future__ import annotations
@@ -299,25 +298,26 @@ def test_removed_job_pages_fall_through_to_the_dashboard(
     assert ev == {"console": [], "pageerror": [], "failed": []}, (route, ev)
 
 
-def test_pattern_analysis_page_renders_for_a_selected_engine(
+def test_old_pattern_analysis_link_lands_on_the_engine_in_the_results_page(
     page: Page, ui: str, all_runs: list[PipelineResult]
 ) -> None:
-    """Both samples route 'key value lookups' queries to dynamodb, so it is always
-    a valid, non-empty ``target`` regardless of which sample is loaded."""
+    """#2300: the pattern-analysis page is gone; its old URL redirects to the results
+    page's access pattern explorer, filtered to the engine in ``target``. Both samples
+    route 'key value lookups' queries to dynamodb, so it is always a non-empty engine."""
     for r in all_runs:
         ev = _watch(page)
         page.goto(f"{ui}/analysis/patterns/{r.job_id}?target=dynamodb")
-        # "Key Value Lookups" is a pattern name the page draws only from the fetched pattern
-        # analysis (the loading state shows "0 patterns detected" and "Loading patterns..."),
-        # and both samples route key value lookups to dynamodb, so it marks the loaded page.
-        # innerText, not textContent: a hidden SVG label carries the same words.
-        expect(page.locator("body")).to_contain_text(
-            "Key Value Lookups", use_inner_text=True, timeout=READY_MS
+        section = page.locator("#access-patterns-section")
+        expect(section).to_be_visible(timeout=READY_MS)
+        assert page.url.endswith(
+            f"/analysis/results/{r.job_id}?engine=dynamodb#access-patterns-section"
+        ), (r.db, page.url)
+        # The explorer's engine filter holds the linked engine, as a token.
+        expect(section.locator("[class*=token]").first).to_contain_text(
+            "DynamoDB", use_inner_text=True, timeout=READY_MS
         )
         text = page.inner_text("body")
         assert "undefined" not in text and "NaN" not in text, r.db
-        assert "patterns detected for dynamodb" in text, (r.db, "pattern analysis body missing")
-        assert "Key Value Lookups" in text, (r.db, "expected signal missing")
         assert ev == {"console": [], "pageerror": [], "failed": []}, (r.db, ev)
 
 

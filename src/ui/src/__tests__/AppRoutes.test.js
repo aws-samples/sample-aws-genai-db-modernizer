@@ -27,7 +27,6 @@ function mockPage(name) {
 jest.mock('../pages/Dashboard', () => mockPage('Dashboard'));
 jest.mock('../pages/CreateAnalysis', () => mockPage('CreateAnalysis'));
 jest.mock('../pages/JobMonitoringSummary', () => mockPage('JobMonitoringSummary'));
-jest.mock('../pages/PatternAnalysis', () => mockPage('PatternAnalysis'));
 jest.mock('../pages/AssignmentGate', () => mockPage('AssignmentGate'));
 jest.mock('../pages/AnalysisResults', () => mockPage('AnalysisResults'));
 jest.mock('../pages/GraphExplorer', () => mockPage('GraphExplorer'));
@@ -103,10 +102,26 @@ test('/analysis/assignments/:jobId renders the assignment gate', () => {
   });
 });
 
-test('/analysis/patterns/:jobId renders pattern analysis (with its required ?target=)', () => {
+// #2300: the pattern-analysis page is gone; its old URL sends the visitor to the
+// engine's part of the results page (the same tab, no history entry), so saved links work.
+test('old /analysis/patterns/:jobId?target=<engine> links redirect to that engine on the results page (#2300)', () => {
   expect(renderAt('/analysis/patterns/job-42?target=dynamodb')).toEqual({
-    page: 'PatternAnalysis', jobId: 'job-42', pathname: '/analysis/patterns/job-42',
+    page: 'AnalysisResults', jobId: 'job-42', pathname: '/analysis/results/job-42',
   });
+  expect(location.search).toBe('?engine=dynamodb');
+  expect(location.hash).toBe('#access-patterns-section');
+});
+
+test('an old /analysis/patterns/:jobId link without a target redirects to the results page (#2300)', () => {
+  expect(renderAt('/analysis/patterns/job-42')).toEqual({
+    page: 'AnalysisResults', jobId: 'job-42', pathname: '/analysis/results/job-42',
+  });
+  expect(location.search).toBe('');
+  expect(location.hash).toBe('#access-patterns-section');
+});
+
+test('the removed pattern-analysis page module is gone (#2300)', () => {
+  expect(() => jest.requireActual('../pages/PatternAnalysis')).toThrow();
 });
 
 test('/analysis/results/:jobId renders the results page directly', () => {

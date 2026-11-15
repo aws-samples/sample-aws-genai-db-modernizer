@@ -4,7 +4,7 @@
 //##-- React Events
 import { useState, useEffect, memo, useCallback, useRef, useMemo } from 'react';
 import { useTranslation } from 'react-i18next';
-import { useParams } from 'react-router-dom';
+import { useParams, useNavigate } from 'react-router-dom';
 
 //##-- AWS UI Objects
 import AppLayoutToolbar from "@cloudscape-design/components/app-layout";
@@ -32,6 +32,7 @@ import ApiManager from "../classes/ApiManager";
 import ProgressState from "../components/ProgressState";
 import ChartSankey from "../components/ChartSankey";
 import { getCacheOverlay, addCacheOverlayNode } from "../utils/cacheLayer";
+import { resultsEngineHref } from "../utils/resultsLinks";
 import { engineHex } from "../utils/engineColors";
 import { collectorRowTotals, totalRowsText } from '../utils/collectorRowTotals';
 
@@ -49,6 +50,7 @@ const JobMonitoringSummaryPage = memo(() => {
 
   //##-- Get jobId from URL parameters
   const { jobId } = useParams();
+  const navigate = useNavigate();
 
   const { t } = useTranslation();
 
@@ -325,10 +327,10 @@ const JobMonitoringSummaryPage = memo(() => {
   //##-- Handle Sankey node click
   const handleSankeyNodeClick = useCallback((nodeId) => {
     if (nodeId && nodeId !== 'patterns') {
-      // Open pattern analysis in new tab
-      window.open(`/analysis/patterns/${jobId}?target=${nodeId}`, '_blank');
+      // #2300: the engine's part of the results page, in this tab.
+      navigate(resultsEngineHref(jobId, nodeId));
     }
-  }, [jobId]);
+  }, [jobId, navigate]);
 
 
 

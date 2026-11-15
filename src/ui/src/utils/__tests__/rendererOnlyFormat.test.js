@@ -93,18 +93,14 @@ const COMPARISONS = new Set(['<', '<=', '>', '>=', '===', '!==', '==', '!=']);
 const ASSIGN_ARITHMETIC = new Set(['+=', '-=', '*=', '/=']);
 const PRAGMA = /\/\/\s*facts:\s*presentation\b(?:\s*\(([^)]*)\))?/;
 
-// Every `// facts: presentation` exemption in use, by file and reason.
-const PINNED_EXEMPTIONS = new Set([
-  'src/ui/src/pages/PatternAnalysis.js|sort order of the signals, no figure shown',
-  'src/ui/src/pages/PatternAnalysis.js|chart colour hue, not a figure',
-]);
+// Every `// facts: presentation` exemption in use, by file and reason (none today).
+const PINNED_EXEMPTIONS = new Set([]);
 
 // The files the guard covers: every non-test UI source file that renders or
 // reads report.json.
 // Files not listed here must not read an owned key (checked below).
 const GUARDED_UI_FILES = [
   'pages/AnalysisResults.js',
-  'pages/PatternAnalysis.js',
   'pages/JobMonitoringSummary.js',
   'utils/reportFacts.js',
   'utils/riskAssessment.js',
@@ -1111,11 +1107,6 @@ function render(synthesis, loaded) {
       ['src/ui/src/pages/AnalysisResults.js', 'count: resolvedRiskCountOf(synthesis, resolvedRisksList)', 'count: resolvedRisksList.length'],
       ['src/ui/src/pages/AnalysisResults.js', 'const explorerTotal = patternTotals.listed;', 'const explorerTotal = totalAccessPatterns + cachePatternCount;'],
       ['src/ui/src/pages/AnalysisResults.js', 'const totalAccessPatterns = patternTotals.owned;', 'const totalAccessPatterns = patternTotals.owned + patternTotals.cacheLayer;'],
-      ['src/ui/src/pages/PatternAnalysis.js', 'avgConfidence: facts.avg_confidence_score ?? 0,', 'avgConfidence: Math.round((analysisData.table_recommendations || []).reduce((a, r) => a + r.confidence_score, 0) / analysisData.table_recommendations.length),'],
-      ['src/ui/src/pages/PatternAnalysis.js', 'tablesAnalyzed: facts.tables_analyzed ?? 0,', 'tablesAnalyzed: (analysisData.table_recommendations || []).length,'],
-      ['src/ui/src/pages/PatternAnalysis.js', 'count: engineMetrics?.signalCount ?? 0, target })', 'count: filteredSignals.length, target })'],
-      ['src/ui/src/pages/PatternAnalysis.js', 'innerMetricValue={engineMetrics.signalQueryTotal.toString()}', 'innerMetricValue={filteredSignals.reduce((sum, s) => sum + (s.query_count || 0), 0).toString()}'],
-      ['src/ui/src/pages/PatternAnalysis.js', '{analysisData?.facts?.anti_pattern_query_counts?.[index] ?? 0}', '{antiPattern.query_ids?.length || 0}'],
       ['src/ui/src/pages/JobMonitoringSummary.js', 'queryCount: s.query_count ?? 0,', 'queryCount: s.query_ids?.length || 0,'],
       ['src/ui/src/pages/JobMonitoringSummary.js', 'signalCount: triageFacts.signal_count ?? 0,', 'signalCount: (res.triage.signals || []).length,'],
       ['src/ui/src/utils/cacheLayer.js', 'finite(facts?.projected_monthly_cost_usd);', 'finite(facts?.projected_monthly_cost_usd) ?? items.reduce((s, cb) => s + cb.monthly_cost_usd, 0);'],
