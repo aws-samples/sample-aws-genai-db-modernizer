@@ -8,6 +8,7 @@ import {
   linkedEngineTarget,
   activeDesignEngine,
   awaitsApproval,
+  synthesisRan,
   RESULTS_ENGINE_SECTION_ID,
 } from '../resultsLinks';
 
@@ -66,6 +67,19 @@ describe('where a linked engine lands on the results page', () => {
     expect(linkedEngineTarget('no-such-engine', [], [])).toBe('absent');
   });
 
+  test('an engine with queries routed to it but no design yet is not absent: its design has not been made', () => {
+    expect(linkedEngineTarget('dynamodb', [], designs, ['dynamodb'])).toBe('not-designed');
+  });
+
+  test('an engine in the plan with rows or a design stays the explorer or the design, routed or not', () => {
+    expect(linkedEngineTarget('dynamodb', explorer, designs, ['dynamodb'])).toBe('explorer');
+    expect(linkedEngineTarget('aurora_mysql', explorer, designs, ['aurora_mysql'])).toBe('design');
+  });
+
+  test('a routed list that omits the engine leaves it absent', () => {
+    expect(linkedEngineTarget('opensearch', [], designs, ['dynamodb'])).toBe('absent');
+  });
+
   test('a link without an engine asks for nothing', () => {
     expect(linkedEngineTarget(null, explorer, designs)).toBe('none');
   });
@@ -100,5 +114,22 @@ describe('a decision pending at the gate', () => {
     expect(awaitsApproval(job('RunSchemaDesign', 'running'))).toBe(false);
     expect(awaitsApproval({})).toBe(false);
     expect(awaitsApproval(null)).toBe(false);
+  });
+});
+
+describe('results that can exist for a job', () => {
+  const job = (...stages) => ({ progress: { stages: stages.map(([name, status]) => ({ name, status })) } });
+
+  test('exist once synthesis has completed, also while a new decision is pending', () => {
+    expect(synthesisRan(job(['RunRefereeSynthesis', 'completed']))).toBe(true);
+    expect(synthesisRan(job(['LoadSynthesisOutput', 'completed']))).toBe(true);
+    expect(synthesisRan(job(['LoadSynthesisOutput', 'completed'], ['WaitForAssignmentApproval', 'running']))).toBe(true);
+  });
+
+  test('cannot exist before: a first gate, a synthesis still running, or a job without stages', () => {
+    expect(synthesisRan(job(['RunCollector', 'completed'], ['WaitForAssignmentApproval', 'running']))).toBe(false);
+    expect(synthesisRan(job(['RunRefereeSynthesis', 'running']))).toBe(false);
+    expect(synthesisRan({})).toBe(false);
+    expect(synthesisRan(null)).toBe(false);
   });
 });

@@ -37,7 +37,7 @@ test('no UI source imports it or names its pattern-analysis locale keys', () => 
 test('no locale file keeps a pattern-analysis key', () => {
   const dir = path.join(SRC, 'locales');
   fs.readdirSync(dir).filter((f) => f.endsWith('.json')).forEach((file) => {
-    // `file` is a name listed from src/locales, not user input.
+    // The file name is listed from src/locales, not user input.
     // nosemgrep: javascript.lang.security.audit.path-traversal.path-join-resolve-traversal.path-join-resolve-traversal
     const json = JSON.parse(fs.readFileSync(path.join(dir, file), 'utf8'));
     expect(Object.keys(json).filter((k) => k.startsWith('pattern-analysis'))).toEqual([]);
