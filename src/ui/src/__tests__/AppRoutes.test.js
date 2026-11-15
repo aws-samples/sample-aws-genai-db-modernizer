@@ -31,6 +31,19 @@ jest.mock('../pages/AssignmentGate', () => mockPage('AssignmentGate'));
 jest.mock('../pages/AnalysisResults', () => mockPage('AnalysisResults'));
 jest.mock('../pages/GraphExplorer', () => mockPage('GraphExplorer'));
 
+// The job routes look the assessment up before mounting their page (#2307).
+const mockExecute = jest.fn();
+jest.mock('../classes/ApiManager', () => ({
+  __esModule: true,
+  default: function ApiManager() {
+    this.execute = mockExecute;
+  },
+}));
+jest.mock('../components/AssessmentNotFound', () => ({
+  __esModule: true,
+  default: ({ jobId }) => <div data-page="AssessmentNotFound" data-job-id={jobId} />,
+}));
+
 global.IS_REACT_ACT_ENVIRONMENT = true;
 
 let container;
@@ -42,8 +55,8 @@ function LocationProbe() {
   return null;
 }
 
-function renderAt(path) {
-  act(() => {
+async function renderAt(path) {
+  await act(async () => {
     root.render(
       <MemoryRouter initialEntries={[path]}>
         <AppRoutes />
@@ -51,6 +64,7 @@ function renderAt(path) {
       </MemoryRouter>,
     );
   });
+  await act(async () => {});
   const page = container.querySelector('[data-page]');
   return {
     page: page && page.getAttribute('data-page'),
@@ -60,6 +74,8 @@ function renderAt(path) {
 }
 
 beforeEach(() => {
+  mockExecute.mockReset();
+  mockExecute.mockResolvedValue({ job: { success: true, status: 200 } });
   container = document.createElement('div');
   document.body.appendChild(container);
   root = createRoot(container);
@@ -70,50 +86,50 @@ afterEach(() => {
   container.remove();
 });
 
-test('/ redirects to the dashboard', () => {
-  expect(renderAt('/')).toEqual({ page: 'Dashboard', jobId: '', pathname: '/dashboard' });
+test('/ redirects to the dashboard', async () => {
+  expect(await renderAt('/')).toEqual({ page: 'Dashboard', jobId: '', pathname: '/dashboard' });
 });
 
-test('/dashboard renders the dashboard directly', () => {
-  expect(renderAt('/dashboard')).toEqual({ page: 'Dashboard', jobId: '', pathname: '/dashboard' });
+test('/dashboard renders the dashboard directly', async () => {
+  expect(await renderAt('/dashboard')).toEqual({ page: 'Dashboard', jobId: '', pathname: '/dashboard' });
 });
 
-test('/analysis/create renders the create-analysis page', () => {
-  expect(renderAt('/analysis/create')).toEqual({
+test('/analysis/create renders the create-analysis page', async () => {
+  expect(await renderAt('/analysis/create')).toEqual({
     page: 'CreateAnalysis', jobId: '', pathname: '/analysis/create',
   });
 });
 
-test('a job route renders its page with :jobId from the URL', () => {
-  expect(renderAt('/analysis/assignments/job-7')).toEqual({
+test('a job route renders its page with :jobId from the URL', async () => {
+  expect(await renderAt('/analysis/assignments/job-7')).toEqual({
     page: 'AssignmentGate', jobId: 'job-7', pathname: '/analysis/assignments/job-7',
   });
 });
 
-test('/analysis/monitor/summary/:jobId renders the assessment summary', () => {
-  expect(renderAt('/analysis/monitor/summary/job-42')).toEqual({
+test('/analysis/monitor/summary/:jobId renders the assessment summary', async () => {
+  expect(await renderAt('/analysis/monitor/summary/job-42')).toEqual({
     page: 'JobMonitoringSummary', jobId: 'job-42', pathname: '/analysis/monitor/summary/job-42',
   });
 });
 
-test('/analysis/assignments/:jobId renders the assignment gate', () => {
-  expect(renderAt('/analysis/assignments/job-42')).toEqual({
+test('/analysis/assignments/:jobId renders the assignment gate', async () => {
+  expect(await renderAt('/analysis/assignments/job-42')).toEqual({
     page: 'AssignmentGate', jobId: 'job-42', pathname: '/analysis/assignments/job-42',
   });
 });
 
 // #2300: the pattern-analysis page is gone; its old URL sends the visitor to the
 // engine's part of the results page (the same tab, no history entry), so saved links work.
-test('old /analysis/patterns/:jobId?target=<engine> links redirect to that engine on the results page (#2300)', () => {
-  expect(renderAt('/analysis/patterns/job-42?target=dynamodb')).toEqual({
+test('old /analysis/patterns/:jobId?target=<engine> links redirect to that engine on the results page (#2300)', async () => {
+  expect(await renderAt('/analysis/patterns/job-42?target=dynamodb')).toEqual({
     page: 'AnalysisResults', jobId: 'job-42', pathname: '/analysis/results/job-42',
   });
   expect(location.search).toBe('?engine=dynamodb');
   expect(location.hash).toBe('#access-patterns-section');
 });
 
-test('an old /analysis/patterns/:jobId link without a target redirects to the results page (#2300)', () => {
-  expect(renderAt('/analysis/patterns/job-42')).toEqual({
+test('an old /analysis/patterns/:jobId link without a target redirects to the results page (#2300)', async () => {
+  expect(await renderAt('/analysis/patterns/job-42')).toEqual({
     page: 'AnalysisResults', jobId: 'job-42', pathname: '/analysis/results/job-42',
   });
   expect(location.search).toBe('');
@@ -124,20 +140,20 @@ test('the removed pattern-analysis page module is gone (#2300)', () => {
   expect(() => jest.requireActual('../pages/PatternAnalysis')).toThrow();
 });
 
-test('/analysis/results/:jobId renders the results page directly', () => {
-  expect(renderAt('/analysis/results/job-42')).toEqual({
+test('/analysis/results/:jobId renders the results page directly', async () => {
+  expect(await renderAt('/analysis/results/job-42')).toEqual({
     page: 'AnalysisResults', jobId: 'job-42', pathname: '/analysis/results/job-42',
   });
 });
 
-test('old /analysis/results-v2/:jobId bookmarks redirect to /analysis/results, keeping the job id', () => {
-  expect(renderAt('/analysis/results-v2/job-42')).toEqual({
+test('old /analysis/results-v2/:jobId bookmarks redirect to /analysis/results, keeping the job id', async () => {
+  expect(await renderAt('/analysis/results-v2/job-42')).toEqual({
     page: 'AnalysisResults', jobId: 'job-42', pathname: '/analysis/results/job-42',
   });
 });
 
-test('legacy /analysis/report/:jobId redirects to /analysis/results, keeping the job id (#356)', () => {
-  expect(renderAt('/analysis/report/job-42')).toEqual({
+test('legacy /analysis/report/:jobId redirects to /analysis/results, keeping the job id (#356)', async () => {
+  expect(await renderAt('/analysis/report/job-42')).toEqual({
     page: 'AnalysisResults', jobId: 'job-42', pathname: '/analysis/results/job-42',
   });
 });
@@ -146,22 +162,22 @@ test('the version-suffixed results page module is gone', () => {
   expect(() => jest.requireActual('../pages/AnalysisResults')).toThrow();
 });
 
-test('the removed job-monitoring page and its /analysis/monitor/:jobId route are gone', () => {
+test('the removed job-monitoring page and its /analysis/monitor/:jobId route are gone', async () => {
   expect(() => jest.requireActual('../pages/JobMonitoring')).toThrow();
-  expect(renderAt('/analysis/monitor/job-42')).toEqual({ page: 'Dashboard', jobId: '', pathname: '/dashboard' });
+  expect(await renderAt('/analysis/monitor/job-42')).toEqual({ page: 'Dashboard', jobId: '', pathname: '/dashboard' });
 });
 
-test('the removed engine-analysis page and its route are gone', () => {
+test('the removed engine-analysis page and its route are gone', async () => {
   expect(() => jest.requireActual('../pages/EngineAnalysis')).toThrow();
   expect(() => jest.requireActual('../hooks/useEngineAnalysis')).toThrow();
-  expect(renderAt('/analysis/engine-analysis/job-42')).toEqual({ page: 'Dashboard', jobId: '', pathname: '/dashboard' });
+  expect(await renderAt('/analysis/engine-analysis/job-42')).toEqual({ page: 'Dashboard', jobId: '', pathname: '/dashboard' });
 });
 
 // #437: the Settings page never saved or tested anything, and its fields belonged to
 // the retired hosted deployment; the page, its route and its API are gone.
-test('the removed Settings page and its /settings route are gone (#437)', () => {
+test('the removed Settings page and its /settings route are gone (#437)', async () => {
   expect(() => jest.requireActual('../pages/Settings')).toThrow();
-  expect(renderAt('/settings')).toEqual({ page: 'Dashboard', jobId: '', pathname: '/dashboard' });
+  expect(await renderAt('/settings')).toEqual({ page: 'Dashboard', jobId: '', pathname: '/dashboard' });
 });
 
 test('the side nav no longer links to Settings (#437)', () => {
@@ -172,14 +188,14 @@ test('the retired ReportResults page module is gone (#356)', () => {
   expect(() => jest.requireActual('../pages/ReportResults')).toThrow();
 });
 
-test('the removed /debug page and route are gone (#357)', () => {
+test('the removed /debug page and route are gone (#357)', async () => {
   expect(() => jest.requireActual('../pages/Debug')).toThrow();
-  expect(renderAt('/debug')).toEqual({ page: 'Dashboard', jobId: '', pathname: '/dashboard' });
+  expect(await renderAt('/debug')).toEqual({ page: 'Dashboard', jobId: '', pathname: '/dashboard' });
 });
 
-test('the removed /analysis/local page and route are gone (#357)', () => {
+test('the removed /analysis/local page and route are gone (#357)', async () => {
   expect(() => jest.requireActual('../pages/LocalAnalysis')).toThrow();
-  expect(renderAt('/analysis/local')).toEqual({ page: 'Dashboard', jobId: '', pathname: '/dashboard' });
+  expect(await renderAt('/analysis/local')).toEqual({ page: 'Dashboard', jobId: '', pathname: '/dashboard' });
 });
 
 test('the unused, unrouted LandingPage module is gone (#357)', () => {
@@ -192,13 +208,13 @@ test('the unused, unrouted LandingPage module is gone (#357)', () => {
 // deliberate redirect).
 test.each(SideNavigationConfigurations.items.filter(item => item.type === 'link' && item.href !== '/'))(
   'the side-nav "$text" link ($href) opens its own route',
-  ({ href }) => {
-    expect(renderAt(href).pathname).toBe(href);
+  async ({ href }) => {
+    expect((await renderAt(href)).pathname).toBe(href);
   },
 );
 
-test('unknown paths fall through * to / and then the dashboard', () => {
-  expect(renderAt('/no/such/route')).toEqual({ page: 'Dashboard', jobId: '', pathname: '/dashboard' });
+test('unknown paths fall through * to / and then the dashboard', async () => {
+  expect(await renderAt('/no/such/route')).toEqual({ page: 'Dashboard', jobId: '', pathname: '/dashboard' });
 });
 
 // #308: the experimental explorer has its own job route; the page itself
@@ -231,4 +247,23 @@ test('/analysis/explore/:jobId renders the experimental explorer page', async ()
 
 test('the side nav has no explorer entry (#308)', () => {
   expect(SideNavigationConfigurations.items.map(item => item.href).join(' ')).not.toMatch(/explore/);
+});
+
+// #2307: an unknown id shows one not-found state on every job route.
+test.each([
+  '/analysis/results/doesnotexist',
+  '/analysis/monitor/summary/doesnotexist',
+  '/analysis/assignments/doesnotexist',
+])('%s shows the not-found state, not the page (#2307)', async (path) => {
+  mockExecute.mockResolvedValue({ job: { success: false, status: 404 } });
+  expect(await renderAt(path)).toEqual({
+    page: 'AssessmentNotFound', jobId: 'doesnotexist', pathname: path,
+  });
+});
+
+test('the graph explorer route is not behind the job lookup (#2307)', async () => {
+  mockExecute.mockResolvedValue({ job: { success: false, status: 404 } });
+  expect(await renderLazyAt('/analysis/explore/job-42')).toEqual({
+    page: 'GraphExplorer', jobId: 'job-42', pathname: '/analysis/explore/job-42',
+  });
 });

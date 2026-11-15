@@ -10,6 +10,7 @@ import CreateAnalysis from "./pages/CreateAnalysis";
 import JobMonitoringSummary from "./pages/JobMonitoringSummary";
 import AssignmentGate from "./pages/AssignmentGate";
 import AnalysisResults from "./pages/AnalysisResults";
+import JobRouteGuard from "./components/JobRouteGuard";
 import { resultsEngineHref } from "./utils/resultsLinks";
 // Experimental (#308): renders only when the server flag is on, otherwise it
 // redirects home like an unknown path. Loaded on demand, so its graph library
@@ -41,13 +42,13 @@ export default function AppRoutes() {
     <Routes>
       <Route path="/" element={<Navigate to="/dashboard" replace />} />
       <Route path="/dashboard" element={<Dashboard />} />
-      <Route path="/analysis/results/:jobId" element={<AnalysisResults />} />
+      <Route path="/analysis/results/:jobId" element={<JobRouteGuard><AnalysisResults /></JobRouteGuard>} />
       <Route path="/analysis/results-v2/:jobId" element={<LegacyResultsRedirect />} />
       <Route path="/analysis/report/:jobId" element={<LegacyResultsRedirect />} />
       <Route path="/analysis/create" element={<CreateAnalysis />} />
-      <Route path="/analysis/monitor/summary/:jobId" element={<JobMonitoringSummary />} />
+      <Route path="/analysis/monitor/summary/:jobId" element={<JobRouteGuard><JobMonitoringSummary /></JobRouteGuard>} />
       <Route path="/analysis/patterns/:jobId" element={<LegacyPatternsRedirect />} />
-      <Route path="/analysis/assignments/:jobId" element={<AssignmentGate />} />
+      <Route path="/analysis/assignments/:jobId" element={<JobRouteGuard><AssignmentGate /></JobRouteGuard>} />
       <Route
         path="/analysis/explore/:jobId"
         element={
