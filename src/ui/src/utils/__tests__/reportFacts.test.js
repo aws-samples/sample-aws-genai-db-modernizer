@@ -469,3 +469,28 @@ describe('rateWindowRiskNoteOf (#1991)', () => {
     expect(rateWindowRiskNoteOf(null)).toBeNull();
   });
 });
+
+describe('defaultRiskSeverity (#2303)', () => {
+  const { defaultRiskSeverity } = require('../reportFacts');
+  const order = ['CRITICAL', 'HIGH', 'MEDIUM', 'LOW'];
+
+  it('opens on the highest severity that has an open risk', () => {
+    expect(defaultRiskSeverity(null, { MEDIUM: [{}, {}], LOW: [{}] }, order)).toBe('MEDIUM');
+    expect(defaultRiskSeverity(null, { HIGH: [{}], MEDIUM: [{}] }, order)).toBe('HIGH');
+    expect(defaultRiskSeverity(null, { CRITICAL: [{}] }, order)).toBe('CRITICAL');
+  });
+
+  it('reads the stored count when a severity shows nothing but the facts say it has risks', () => {
+    const synthesis = { facts: { open_risks_by_severity: { HIGH: 2 } } };
+    expect(defaultRiskSeverity(synthesis, {}, order)).toBe('HIGH');
+  });
+
+  it('keeps the first tab when no severity has an open risk', () => {
+    expect(defaultRiskSeverity(null, {}, order)).toBe('CRITICAL');
+    expect(defaultRiskSeverity(null, { LOW: [] }, order)).toBe('CRITICAL');
+  });
+
+  it('skips an empty higher severity', () => {
+    expect(defaultRiskSeverity(null, { CRITICAL: [], HIGH: [], MEDIUM: [{}] }, order)).toBe('MEDIUM');
+  });
+});
