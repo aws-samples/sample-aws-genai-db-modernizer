@@ -93,6 +93,10 @@ CREATE TABLE "orders" (
 --
 -- The DMS user, after the tables and the schema its grants name (YOUR RESPONSIBILITY, as above;
 -- uncomment to run):
+-- A DMS user created from an earlier step-1.ddl.sql needs only the GRANT USAGE, CREATE ON
+-- SCHEMA "awsdms_control" line below, with its own name: this file creates awsdms_control and
+-- the user who runs it owns it, so without that grant DMS cannot create its control tables
+-- there.
 -- CREATE USER dms_user WITH PASSWORD '<password>';
 -- GRANT CONNECT, CREATE ON DATABASE "shop" TO dms_user;
 -- GRANT USAGE, CREATE ON SCHEMA "public" TO dms_user;

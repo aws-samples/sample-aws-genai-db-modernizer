@@ -34,6 +34,18 @@ KNOWN = [
      "Failed to run load command. Cannot allocate memory", "instance_class"),
     ("out_of_memory", "Stop Reason STOPPED_DUE_TO_LOW_MEMORY", "instance_class"),
     ("low_disk", "Stop Reason STOPPED_DUE_TO_LOW_DISK", "allocated_storage"),
+    # #2133: the control schema step 1's DDL creates, which the administrator owns.
+    ("postgresql_control_schema",
+     "ERROR:  permission denied for schema awsdms_control", 'ON SCHEMA "awsdms_control"'),
+    ("postgresql_control_schema",
+     'RetCode: SQL_ERROR SqlState: 42501 NativeError: 1 Message: ERROR: permission denied for '
+     'schema "awsdms_control"', "USAGE, CREATE"),
+    ("mysql_control_database",
+     "Access denied for user 'dms_user'@'%' to database 'awsdms_control'",
+     "GRANT ALL PRIVILEGES ON `awsdms_control`.*"),
+    ("mysql_control_database",
+     "CREATE command denied to user 'dms_user'@'10.0.0.1' for table "
+     "'awsdms_control.awsdms_apply_exceptions'", "GRANT ALL PRIVILEGES ON `awsdms_control`.*"),
 ]  # fmt: skip
 
 UNKNOWN = [
@@ -61,6 +73,11 @@ UNKNOWN = [
     "permission denied for schema public; CREATE TABLE public.awsdms_heartbeat",  # the schema's
     "could not fork autovacuum worker process: Cannot allocate memory",  # the source's memory
     "Cannot allocate memory",
+    # #2133 counter-examples: another schema or database, or the name only in passing.
+    "permission denied for schema awsdms_control_archive",
+    "permission denied for schema public",
+    "Access denied for user 'dms_user'@'%' to database 'wordpress'",
+    "Cannot create ValidationFailure table for owner awsdms_control",
 ]
 
 
