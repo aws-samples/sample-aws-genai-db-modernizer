@@ -86,6 +86,7 @@ from pathlib import Path
 from typing import Any, Protocol
 
 from src.tools.database import disposable_engine as de
+from src.tools.database.mysql_grants import grant_database
 from src.tools.routines.proof_inputs import ProofCall, ProofSetup, run_call
 from src.tools.routines.proof_targets import (
     CALL_TIMEOUT_S,
@@ -666,7 +667,7 @@ class _DataApiBackend(de._Backend):
                 continue
             col = de._quote(str(column), '"')
             highest = f"SELECT max({col}) AS m FROM {quoted}"  # nosec B608 - quoted identifiers
-            self._guarded(f"SELECT setval(CAST(%s AS regclass), m, true) FROM ({highest}) s "  # nosec B608 - quoted identifiers, the row a bound parameter
+            self._guarded(f"SELECT pg_catalog.setval(CAST(%s AS regclass), m, true) FROM ({highest}) s "  # nosec B608 - quoted identifiers, the row a bound parameter
                           "WHERE m IS NOT NULL", [sequence])  # fmt: skip
 
     def _make_event_runner(self, event: str) -> None:
@@ -750,7 +751,7 @@ class _DataApiBackend(de._Backend):
                     out[table] = []
                     continue
                 select = ", ".join(
-                    (f"to_jsonb(q.{de._quote_table(n, '"')})::text" if cat == "A"
+                    (f"pg_catalog.to_jsonb(q.{de._quote_table(n, '"')})::text" if cat == "A"
                      else f"q.{de._quote_table(n, '"')}::text")
                     for n, _, cat in columns
                 )  # fmt: skip
@@ -822,7 +823,7 @@ class _DataApiBackend(de._Backend):
         for name, value, start in state:
             if self.engine == "postgresql":
                 called = value is not None
-                self._guarded("SELECT setval(CAST(%s AS regclass), %s, %s)",
+                self._guarded("SELECT pg_catalog.setval(CAST(%s AS regclass), %s, %s)",
                               [name, value if called else start, called])  # fmt: skip
             else:
                 target = de._quote_table(name, "`")
@@ -912,7 +913,8 @@ class DataApiTarget(DisposableEngineTarget):
                 self._backend._guarded("REVOKE ALL ON SCHEMA public FROM PUBLIC")
             elif self._runner is not None:
                 self._admin._guarded(
-                    f"GRANT ALL PRIVILEGES ON {db}.* TO {self._runner.account_sql}"
+                    f"GRANT ALL PRIVILEGES ON {grant_database(self.database)}.* TO "
+                    f"{self._runner.account_sql}"
                 )
         except de.EngineError as exc:
             raise ProofTargetError(f"the scratch database was not created on {self.description}",

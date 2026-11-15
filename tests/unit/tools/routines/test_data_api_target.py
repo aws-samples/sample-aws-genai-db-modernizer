@@ -133,7 +133,8 @@ def test_a_mysql_target_uses_its_scratch_database_as_the_namespace():
     assert t.namespace == t.database and client.sent[0].sql == f"CREATE DATABASE `{t.database}`"
     runner = _runner()
     assert (
-        client.sent[1].sql == f"GRANT ALL PRIVILEGES ON `{t.database}`.* TO '{runner.username}'@'%'"
+        client.sent[1].sql
+        == f"GRANT ALL PRIVILEGES ON `{t.database.replace('_', chr(92) + '_')}`.* TO '{runner.username}'@'%'"
     )
     t.close()
     assert client.sent[-1].sql == f"DROP DATABASE IF EXISTS `{t.database}`" and not client.databases

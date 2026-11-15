@@ -13,6 +13,9 @@ from __future__ import annotations
 
 import datetime
 import os
+import re
+from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 
@@ -23,7 +26,7 @@ from src.tools.routines.proof_inputs import (
     build_proof_inputs,
 )
 from src.tools.routines.proof_screen import create_refusal
-from src.tools.routines.proof_targets import ProofTargetError, disposable_target
+from src.tools.routines.proof_targets import CreateRefused, ProofTargetError, disposable_target
 from tests.unit.tools.routines.fake_data_api import FakeDataApi
 from tests.unit.tools.routines.test_data_api_target import _factory
 
@@ -129,8 +132,16 @@ def test_a_trigger_on_a_setup_schema_table_passes_the_screen_but_its_function_st
 
 
 def test_a_setup_schema_never_lets_a_routine_be_created_in_it():
-    text = BODY.replace("FUNCTION f", "FUNCTION sales.f")
-    assert create_refusal(text, "postgresql", "function", "public", ("sales",)) is not None
+    """On a target loaded with the setup, a body that names the schema's table loads, and a
+    routine created in that schema is refused: the first fails on main, which refuses both."""
+    target = _factory(FakeDataApi())()
+    target.load_setup(_sales_setup())
+    assert target.create(de.SourceRoutine("f", "function", BODY)) is None
+    with pytest.raises(CreateRefused, match="schema other than"):
+        target.create(
+            de.SourceRoutine("sales.f", "function", BODY.replace("FUNCTION f", "FUNCTION sales.f"))
+        )
+    target.close()
 
 
 def test_a_mysql_body_names_a_setup_database_exactly():
@@ -327,4 +338,263 @@ def test_the_data_api_row_change_names_the_schema_of_its_table():
     assert any('INSERT INTO "sales"."orders"' in s.sql or '"sales"."orders"' in s.sql
                for s in client.sent if s.op == "execute" and "json_populate" in s.sql)  # fmt: skip
     target.end_call()
+    target.close()
+
+
+# --------------------------------------------------------------------------- review of #2335
+
+PG_SCHEMAS = ("sales",)
+MY_SCHEMAS = ("inventory",)
+
+
+def _pg(body, schemas=PG_SCHEMAS, header="CREATE FUNCTION f() RETURNS integer LANGUAGE plpgsql AS"):
+    return create_refusal(
+        f"{header} $$ BEGIN {body} RETURN 1; END $$", "postgresql", "function", "public", schemas
+    )
+
+
+def _my(body, schemas=MY_SCHEMAS):
+    return create_refusal(
+        f"CREATE PROCEDURE p() BEGIN {body} END", "mysql", "procedure", "src", schemas
+    )
+
+
+@pytest.mark.parametrize(
+    "body",
+    [
+        "CREATE TABLE inventory.evil (a int);",
+        "CREATE VIEW inventory.v AS SELECT 1;",
+        "CREATE TABLE src.x LIKE inventory.stock;",
+        "ALTER TABLE inventory.stock ADD COLUMN x int;",
+        "DROP TABLE inventory.stock;",
+        "DROP TABLE `inventory`.`stock`;",
+        "RENAME TABLE inventory.stock TO inventory.s2;",
+        "TRUNCATE TABLE inventory.stock;",
+        "TRUNCATE inventory.stock;",
+        "CREATE INDEX i ON inventory.stock (id);",
+        "SELECT id FROM inventory.stock INTO OUTFILE '/tmp/x';",
+        "SELECT id FROM inventory.stock INTO DUMPFILE '/tmp/x';",
+        "USE inventory;",
+        "SELECT 1; DROP TABLE inventory.stock;",
+    ],
+)
+def test_a_mysql_body_never_changes_or_writes_out_a_setup_database(body):
+    assert _my(body) is not None, body
+
+
+@pytest.mark.parametrize(
+    "body",
+    [
+        "SELECT COUNT(*) FROM inventory.stock;",
+        "UPDATE inventory.stock SET qty = 1 WHERE id = 1;",
+        "INSERT INTO inventory.stock (id, qty) VALUES (9, 1);",
+        "DELETE FROM inventory.stock WHERE id = 1;",
+        "SELECT id FROM inventory.stock INTO @x;",
+        "DROP TEMPORARY TABLE IF EXISTS t; SELECT COUNT(*) FROM inventory.stock;",
+        "CREATE TEMPORARY TABLE t (a int); INSERT INTO t SELECT id FROM inventory.stock;",
+    ],
+)
+def test_a_mysql_body_may_read_and_write_rows_of_a_setup_database(body):
+    assert _my(body) is None, body
+
+
+def test_a_mysql_call_or_function_into_a_setup_database_is_refused():
+    assert _my("CALL inventory.p();") is not None
+    assert _my("SELECT inventory.f();") is not None
+    assert _my("CALL inventory.p();", ()) is not None
+
+
+def test_a_postgresql_call_or_function_into_a_setup_schema_is_refused():
+    """Review of #2335: ``schemas`` allows a table of a setup schema, never a call into it."""
+    plain = create_refusal(
+        "CREATE FUNCTION f() RETURNS integer LANGUAGE sql AS $$ SELECT sales.g() $$",
+        "postgresql",
+        "function",
+        "public",
+        PG_SCHEMAS,
+    )
+    assert plain is not None
+    for body in ("CALL sales.p();", "PERFORM sales.g(1);", "PERFORM * FROM sales.g();",
+                 'PERFORM "sales".g();', "PERFORM x FROM sales.g(1) x;",
+                 "SELECT sales.g() INTO v;"):  # fmt: skip
+        assert _pg(body) is not None, body
+
+
+def test_a_postgresql_body_may_still_read_and_write_a_setup_schemas_tables():
+    for body in ("PERFORM * FROM sales.orders;", "INSERT INTO sales.orders (id) VALUES (1);",
+                 "UPDATE sales.orders SET qty = 1;", "DELETE FROM sales.orders;",
+                 "PERFORM count(*) FROM sales.orders o JOIN sales.lines l ON (l.id = o.id);"):  # fmt: skip
+        assert _pg(body) is None, body
+
+
+def test_a_postgresql_trigger_when_clause_cannot_call_into_a_setup_schema():
+    base = ("CREATE TRIGGER t AFTER UPDATE ON sales.orders FOR EACH ROW WHEN ({when}) "
+            "EXECUTE FUNCTION f()")  # fmt: skip
+    ok = create_refusal(
+        base.format(when="NEW.qty > 1"), "postgresql", "trigger", "public", PG_SCHEMAS
+    )
+    assert ok is None
+    bad = create_refusal(
+        base.format(when="sales.f(NEW.id)"), "postgresql", "trigger", "public", PG_SCHEMAS
+    )
+    assert bad is not None
+
+
+@pytest.mark.parametrize(
+    "body",
+    [
+        "CREATE FUNCTION public.lower(varchar) RETURNS text LANGUAGE sql AS $f$ SELECT 'x' $f$;",
+        "CREATE OR REPLACE FUNCTION lower(varchar) RETURNS text LANGUAGE sql AS $f$ SELECT 'x' $f$;",
+        "CREATE PROCEDURE q() LANGUAGE sql AS $f$ SELECT 1 $f$;",
+        "CREATE OPERATOR === (LEFTARG = int, RIGHTARG = int, FUNCTION = int4eq);",
+        "CREATE AGGREGATE a(int) (SFUNC = int4pl, STYPE = int);",
+    ],
+)
+def test_a_postgresql_body_never_creates_a_function_or_an_operator(body):
+    """The same signature never wins over ``pg_catalog``, but a more specific one does, so
+    no function, procedure, operator or aggregate is created from a body, schema or not."""
+    assert _pg(body, ()) is not None, body
+    assert _pg(body) is not None, body
+
+
+def test_the_screen_still_accepts_the_routines_own_header_whatever_its_words():
+    assert (
+        create_refusal(
+            "CREATE OR REPLACE FUNCTION f() RETURNS integer LANGUAGE sql AS $$ SELECT 1 $$",
+            "postgresql",
+            "function",
+            "public",
+            PG_SCHEMAS,
+        )
+        is None
+    )
+
+
+def test_a_table_in_a_reserved_schema_is_left_out_with_its_reason_not_the_whole_setup():
+    proof = _proof(
+        "public.f()",
+        "function",
+        "f",
+        returns="integer",
+        tables=("sales.orders", "information_schema.tables"),
+    )
+    odd = _orders("information_schema", "tables")
+    inputs = build_proof_inputs([proof], [_orders("sales"), odd], dialect="postgresql")
+    assert inputs.setup.schemas == ("sales",)
+    assert "reserved" in dict(inputs.setup.unseeded)["information_schema.tables"]
+    assert not any("tables" in d for d in inputs.setup.ddl)
+    my = _proof("src.p", "procedure", "p", tables=("mysql.user",))
+    mine = build_proof_inputs([my], [_orders("mysql", "user")], dialect="mysql")
+    assert mine.setup.schemas == () and mine.setup.ddl == ()
+    assert "reserved" in dict(mine.setup.unseeded)["mysql.user"]
+
+
+def test_a_plain_identifier_ends_with_its_last_character_not_a_newline():
+    assert de._IDENT.match("sales\n") is None and de._IDENT.match("sales") is not None
+    from src.tools.routines import proof_inputs
+
+    assert proof_inputs._IDENT.match("sales\n") is None
+    with pytest.raises(ValueError, match="plain schema name"):
+        de.create_namespaces(SimpleNamespace(stopped=False, _backend=None), ["sales\n"])
+
+
+def test_the_harness_reads_sequences_and_types_through_pg_catalog():
+    """A function named ``quote_ident`` planted in ``public`` must not run in a harness query,
+    which on the test cluster is run by the master user outside the role's transaction."""
+    for sql in (
+        de._PG_SEQUENCE_STATE,
+        de._PG_COLUMN_TYPES,
+        de._PG_TABLE_SEQUENCES,
+        de._PG_SET_SEQUENCE,
+    ):
+        for word in re.findall(
+            r"(?<![\w.])(quote_ident|format_type|pg_get_serial_sequence|setval)\(", sql
+        ):
+            raise AssertionError(f"{word} is not qualified with pg_catalog in: {sql}")
+
+
+@needs_pg
+def test_a_function_planted_in_public_never_runs_in_a_harness_query_on_postgresql_16():
+    if _skip_as_root():
+        return
+    handle = de.start("postgresql", "16")
+    try:
+        de.load(
+            handle,
+            ["CREATE SEQUENCE planted_seq"],
+            {},
+            [
+                de.SourceRoutine(
+                    "quote_ident",
+                    "function",
+                    "CREATE FUNCTION quote_ident(n name) RETURNS text LANGUAGE sql AS $$ SELECT 'HIJACKED' $$",
+                )
+            ],
+        )
+        names = [name for name, _, _ in de.counters(handle)]
+        assert names == ["public.planted_seq"], names
+    finally:
+        de.stop(handle)
+
+
+# --------------------------------------------------------------------------- MySQL grants
+
+
+def test_grant_database_escapes_the_wildcards_and_the_quote():
+    from src.tools.database.mysql_grants import grant_database
+
+    assert grant_database("my_ql") == "`my\\_ql`"
+    assert grant_database("sales%") == "`sales\\%`"
+    assert grant_database("a`b") == "`a``b`"
+    assert grant_database("a\\b") == "`a\\\\b`"
+    assert grant_database("plain") == "`plain`"
+
+
+def test_every_grant_on_a_database_in_the_source_goes_through_the_escaping_helper():
+    """MySQL reads ``_`` and ``%`` in the database part of a GRANT as wildcards, so a
+    grant written any other way gives rights on every look-alike database (``my_ql`` on
+    ``mysql``)."""
+    pattern = re.compile(r"GRANT[^\n]*\bON\b[^\n]*\.\*|GRANT ALL PRIVILEGES ON \{")
+    bad = []
+    for path in sorted(Path("src").rglob("*.py")):
+        if path.name == "mysql_grants.py":
+            continue
+        lines = path.read_text().splitlines()
+        for i, line in enumerate(lines):
+            window = " ".join(lines[max(0, i - 1) : i + 2])
+            if pattern.search(line) and "grant_database(" not in window:
+                bad.append(f"{path}:{i + 1}")
+    assert not bad, bad
+
+
+@pytest.mark.integration
+@needs_mysql
+def test_a_database_named_with_an_underscore_gives_the_runner_nothing_on_mysql_the_system_one():
+    if _skip_as_root():
+        return
+    handle = de.start("mysql", de.available_majors("mysql")[0])
+    try:
+        de.create_namespaces(handle, ["inventory", "my_ql"])
+        grants = " ".join(
+            str(r[0]) for r in de.execute(handle, "SHOW GRANTS FOR CURRENT_USER()").rows
+        )
+        assert "`my\\_ql`" in grants and "`my_ql`.*" not in grants  # the escaping itself
+        assert de.execute(handle, "SELECT user FROM mysql.user").error is not None
+        assert de.execute(handle, "CREATE TABLE mysql.planted (a int)").error is not None
+        assert de.execute(handle, "INSERT INTO mysql.db (Host) VALUES ('x')").error is not None
+        assert de.execute(handle, "CREATE TABLE my_ql.ok (a int)").error is None  # its own is fine
+    finally:
+        de.stop(handle)
+
+
+def test_the_dms_user_grants_and_the_runner_grant_on_the_test_cluster_escape_the_wildcards():
+    from src.tools.data_movement.dms_step import _dms_user_lines
+
+    lines = " ".join(_dms_user_lines("aurora_mysql", "8.0", "my_ql", "public"))
+    assert "`my\\_ql`.*" in lines and "`awsdms\\_control`.*" in lines
+    assert "`my_ql`" not in lines and "`awsdms_control`" not in lines
+    client = FakeDataApi("mysql")
+    target = _factory(client, engine="mysql")()
+    grant = next(s.sql for s in client.sent if s.sql.startswith("GRANT ALL PRIVILEGES ON"))
+    assert target.database.replace("_", "\\_") in grant and f"`{target.database}`" not in grant
     target.close()

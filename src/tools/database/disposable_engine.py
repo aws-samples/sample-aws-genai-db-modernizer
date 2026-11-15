@@ -155,6 +155,7 @@ from pathlib import Path
 from typing import Any, Literal
 
 from src.contracts.aurora_design_delta import validate_aurora_type
+from src.tools.database.mysql_grants import grant_database
 
 logger = logging.getLogger(__name__)
 
@@ -186,7 +187,7 @@ _OWNER_FILE = "owner.txt"  # who created the folder, and which servers run from 
 _SWEEP_MIN_AGE_S = 120.0  # a folder younger than this is never swept
 _RUNNER = "routine_runner"  # the non-superuser role every routine runs as
 _DATABASE = "src"
-_IDENT = re.compile(r"^[A-Za-z_][A-Za-z0-9_$]*$")
+_IDENT = re.compile(r"^[A-Za-z_][A-Za-z0-9_$]*\Z")
 #: The schema every loaded table and routine lives in (PostgreSQL schema, MySQL database).
 NAMESPACE = {"postgresql": "public", "mysql": _DATABASE}
 _LOG_TAIL_BYTES = 4000
@@ -200,7 +201,7 @@ _PG_CREATE_DB = f"CREATE DATABASE {_DATABASE} OWNER {_RUNNER}"
 _MY_CREATE_DB = f"CREATE DATABASE `{_DATABASE}`"
 _MY_CREATE_USER = f"CREATE USER '{_RUNNER}'@'localhost' IDENTIFIED BY %s"
 # Only this one schema: no FILE, no SUPER, no other global privilege.
-_MY_GRANT = f"GRANT ALL PRIVILEGES ON `{_DATABASE}`.* TO '{_RUNNER}'@'localhost'"
+_MY_GRANT = f"GRANT ALL PRIVILEGES ON {grant_database(_DATABASE)}.* TO '{_RUNNER}'@'localhost'"
 _MY_GRANT_USER_VARIABLES = (
     f"GRANT SELECT ON performance_schema.user_variables_by_thread TO '{_RUNNER}'@'localhost'"
 )
@@ -208,16 +209,18 @@ _MY_ARG_VAR = "@modernizer_arg_%d"  # the session variable an OUT or INOUT argum
 # A loaded table's identity and serial columns, with their sequences (the table twice:
 # pg_get_serial_sequence takes its name as text, the filter as a regclass).
 _PG_TABLE_SEQUENCES = (
-    "SELECT attname, seq FROM (SELECT a.attname, pg_get_serial_sequence(%s, a.attname) AS seq "
+    "SELECT attname, seq FROM (SELECT a.attname, "
+    "pg_catalog.pg_get_serial_sequence(%s, a.attname) AS seq "
     "FROM pg_attribute a WHERE a.attrelid = %s::regclass AND a.attnum > 0 "
     "AND NOT a.attisdropped) s WHERE seq IS NOT NULL ORDER BY attname"
 )
 # Every sequence of the database with its state, and how to put one back (#1944).
 _PG_SEQUENCE_STATE = (
-    "SELECT quote_ident(schemaname) || '.' || quote_ident(sequencename), last_value, "
+    "SELECT pg_catalog.quote_ident(schemaname) || '.' || pg_catalog.quote_ident(sequencename), "
+    "last_value, "
     "start_value FROM pg_sequences ORDER BY 1"
 )
-_PG_SET_SEQUENCE = "SELECT setval(%s::regclass, %s, %s)"
+_PG_SET_SEQUENCE = "SELECT pg_catalog.setval(%s::regclass, %s, %s)"
 _MY_STATS_NOW = "SET SESSION information_schema_stats_expiry = 0"  # 8.0+: no cached counter
 _MY_AUTO_INCREMENTS = (
     "SELECT TABLE_NAME, AUTO_INCREMENT FROM information_schema.TABLES "
@@ -253,7 +256,7 @@ _MY_COLUMN_TYPES_IN = (
     "WHERE TABLE_SCHEMA = %s AND TABLE_NAME = %s ORDER BY ORDINAL_POSITION"
 )
 _PG_COLUMN_TYPES = (
-    "SELECT attname, format_type(atttypid, atttypmod) FROM pg_attribute "
+    "SELECT attname, pg_catalog.format_type(atttypid, atttypmod) FROM pg_attribute "
     "WHERE attrelid = %s::regclass AND attnum > 0 AND NOT attisdropped ORDER BY attnum"
 )
 _MY_COLUMN_TYPES = (
@@ -1277,7 +1280,7 @@ class _PostgresBackend(_Backend):
             highest = f"SELECT max({col}) AS m FROM {quoted}"  # nosec B608 - see _SQL_NOTE
             _execute(
                 cur,
-                f"SELECT setval(%s, m, true) FROM ({highest}) s WHERE m IS NOT NULL",  # nosec B608 - see _SQL_NOTE
+                f"SELECT pg_catalog.setval(%s, m, true) FROM ({highest}) s WHERE m IS NOT NULL",  # nosec B608 - see _SQL_NOTE
                 [sequence],
             )
 
@@ -1627,7 +1630,8 @@ class _MySQLBackend(_Backend):
             for name in fresh:
                 quoted = _quote(name, "`")
                 _execute(cur, f"CREATE DATABASE {quoted}")
-                _execute(cur, f"GRANT ALL PRIVILEGES ON {quoted}.* TO '{_RUNNER}'@'localhost'")
+                granted = grant_database(name)  # `_` and `%` are wildcards in a GRANT
+                _execute(cur, f"GRANT ALL PRIVILEGES ON {granted}.* TO '{_RUNNER}'@'localhost'")
                 made.append(name)
             cur.close()
         except self._mc.Error as exc:
