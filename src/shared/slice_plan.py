@@ -286,7 +286,13 @@ def _step_dict(
         "unit_count": sum(s["unit_count"] for s in stages),
         "query_count": sum(s["query_count"] for s in stages),
         "owned_table_count": sum(s["owned_table_count"] for s in stages),
-        "call_share_percent": round(min(100.0, sum(s["call_share_percent"] for s in stages)), 1),
+        # One rounding of the slice's own calls: a sum of rounded stage shares can sit a
+        # tenth off the figures table's share, which reads the same value (#2285).
+        "call_share_percent": (
+            metrics["value_call_share_percent"]
+            if metrics
+            else round(min(100.0, sum(s["call_share_percent"] for s in stages)), 1)
+        ),
         "metrics": metrics,
         "table_classes": table_classes,
     }

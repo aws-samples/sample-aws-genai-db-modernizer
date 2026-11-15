@@ -127,6 +127,30 @@ def test_each_step_s_sentence_is_the_engineering_report_s_alone(run: PipelineRes
         assert normalize(sentence) not in pages, (run.db, sentence)
 
 
+def test_each_step_s_share_in_the_figures_table_is_the_share_in_its_sentence(
+    run: PipelineResult,
+) -> None:
+    """#2285: a slice step's share of calls is one figure: the engineering report's
+    figures table and the step's own sentence print the same percent."""
+    plan = _plan(_report(run))
+    md = run.deliverable("engineering-report.md").read_text(encoding="utf-8")
+    rows = {
+        line.split("|")[1].strip(): [c.strip() for c in line.split("|")[2:-1]]
+        for line in md.splitlines()
+        if line.startswith("| Step ")
+    }
+    checked = 0
+    for step in plan["plan_steps"]:
+        if not isinstance(step.get("metrics"), dict):
+            continue
+        row = rows[f"Step {step['step_number']}"]
+        shares = [c for c in row if c.endswith("%")]
+        assert len(shares) == 1, (run.db, step["step_number"], row)
+        assert f", {shares[0]} of calls" in step["why"], (run.db, shares, step["why"])
+        checked += 1
+    assert checked or plan["step_basis"] == "engine_waves", run.db
+
+
 def test_every_moving_query_is_in_one_unit_and_no_group_is_split(run: PipelineResult) -> None:
     report = _report(run)
     plan = _plan(report)
