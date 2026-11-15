@@ -1018,14 +1018,19 @@ const AnalysisResultsPage = memo(() => {
   // the explorer to that engine (only when it has rows there) and scroll to the
   // section. Done once per page load, so the user's own filter changes stand.
   const linkedEngineHandled = useRef(false);
+  const [designTab, setDesignTab] = useState(null);
   useEffect(() => {
     if (loading || linkedEngineHandled.current) return;
     linkedEngineHandled.current = true;
     const engine = engineFromSearch(locationSearch);
+    let sectionId = locationHash.replace(/^#/, '');
     if (engine && explorerPatterns.some(ap => ap.engine === engine)) {
       setEngineFilter([{ label: ENGINE_LABELS[engine] || engine, value: engine }]);
+    } else if (engine && auroraDesigns.some(d => d.engine === engine)) {
+      // A relational engine has no explorer rows; its part is its Table design tab.
+      setDesignTab(engine);
+      sectionId = 'table-design-section';
     }
-    const sectionId = locationHash.replace(/^#/, '');
     if (sectionId) {
       // Wait a frame so the sections the data just unlocked are in the DOM.
       requestAnimationFrame(() => {
@@ -1033,7 +1038,7 @@ const AnalysisResultsPage = memo(() => {
         if (el) el.scrollIntoView({ block: 'start' });
       });
     }
-  }, [loading, locationSearch, locationHash, explorerPatterns]);
+  }, [loading, locationSearch, locationHash, explorerPatterns, auroraDesigns]);
 
   // ============================================
   // Handlers
@@ -2907,6 +2912,8 @@ const AnalysisResultsPage = memo(() => {
                 }
               >
                 <Tabs
+                  activeTabId={designTab || undefined}
+                  onChange={({ detail }) => setDesignTab(detail.activeTabId)}
                   tabs={auroraDesigns.map(design => {
                     const queryCount = design.queryGroups.reduce((sum, g) => sum + g.queries.length, 0);
                     return {
