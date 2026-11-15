@@ -569,7 +569,11 @@ def test_the_databases_the_triggers_enable_script_creates_get_the_carried_collat
     bundle = make_bundle("aurora_mysql")
     ddl = render_ddl(rebuilt(bundle, bundle.contract.rules, target=target))
     # The clause step-1.ddl.sql writes for the same contract, whatever its text (#2276).
-    (clause,) = {line.split("`shop`", 1)[1] for line in _lines(ddl, "CREATE DATABASE")}
+    (clause,) = {
+        line.split("`shop`", 1)[1]
+        for line in _lines(ddl, "CREATE DATABASE")
+        if "`awsdms_control`" not in line
+    }  # DMS's control database (#2133)
     assert " COLLATE utf8mb4_unicode_ci" in clause
     assert _lines(text, "CREATE DATABASE") == [f"CREATE DATABASE IF NOT EXISTS `jobs`{clause}"]
     # For a database that already exists, right after its CREATE DATABASE.

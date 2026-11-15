@@ -67,6 +67,7 @@ from src.tools.data_movement.collations import (
     database_sentence,
     table_options,
 )
+from src.tools.data_movement.dms_control import CONTROL_SCHEMA, control_tables_settings
 from src.tools.data_movement.dms_sizing import (
     DMS_MAX_LOB_KB,
     LOB_SIZES_COMMAND,
@@ -733,6 +734,9 @@ def task_settings(inputs: Step1Inputs) -> dict[str, Any]:
             "ThreadCount": 5,
         },
         "Logging": {"EnableLogging": True},
+        # One known schema for DMS's control and validation failure tables on both engines
+        # (#2133): the failure queries step 1 prints read it (dms_control).
+        "ControlTablesSettings": control_tables_settings(),
     }
 
 
@@ -1391,12 +1395,13 @@ def _dms_user_lines(engine: str, line: str | None, database: str, schema: str) -
             f"CREATE USER 'dms_user'@'%' {auth} '<password>';",
             "GRANT ALTER, CREATE, DROP, INDEX, INSERT, UPDATE, DELETE, SELECT, CREATE TEMPORARY TABLES "
             f"ON {grant_database(database)}.* TO 'dms_user'@'%';",
-            f"GRANT ALL PRIVILEGES ON {grant_database('awsdms_control')}.* TO 'dms_user'@'%';",
+            f"GRANT ALL PRIVILEGES ON {grant_database(CONTROL_SCHEMA)}.* TO 'dms_user'@'%';",
         ]
     return [
         "CREATE USER dms_user WITH PASSWORD '<password>';",
         f'GRANT CONNECT, CREATE ON DATABASE "{database}" TO dms_user;',
         f'GRANT USAGE, CREATE ON SCHEMA "{schema}" TO dms_user;',
+        f'GRANT USAGE, CREATE ON SCHEMA "{CONTROL_SCHEMA}" TO dms_user;',
         f'GRANT UPDATE, INSERT, SELECT, DELETE, TRUNCATE ON ALL TABLES IN SCHEMA "{schema}" TO dms_user;',
         f'ALTER DEFAULT PRIVILEGES IN SCHEMA "{schema}" GRANT UPDATE, INSERT, SELECT, DELETE, TRUNCATE '
         "ON TABLES TO dms_user;",
@@ -1757,6 +1762,13 @@ def render_ddl(inputs: Step1Inputs) -> str:
         f"- {_collation_sentence(inputs.contract.target)}",
         "- The indexes of a saved schema design are not in this file: it creates the keys, the source's "
         "indexes and the foreign keys between moved tables only. Add the design's indexes when you choose.",
+        f"- DMS keeps its control tables in {CONTROL_SCHEMA} (the task's ControlSchema): the apply "
+        "exceptions, the replication status, history and suspended tables, and the records that did "
+        "not validate (awsdms_validation_failures_v1"
+        + (", or _v2 from DMS 3.6.1" if pg else "")
+        + f"). This file creates the {CONTROL_SCHEMA} "
+        + ("schema" if pg else "database")
+        + " if it is missing; the DMS user's grants below cover it.",
     ]
     if pg:
         head.append("- The DMS target endpoint sets session_replication_role = replica to skip foreign keys "
@@ -1792,7 +1804,8 @@ def render_ddl(inputs: Step1Inputs) -> str:
     out = with_header("", head, "--")
     if pg:
         out += (
-            f'\nCREATE SCHEMA IF NOT EXISTS "{schemas[0]}";\nSET search_path TO "{schemas[0]}";\n'
+            f'\nCREATE SCHEMA IF NOT EXISTS "{CONTROL_SCHEMA}";\n'
+            f'CREATE SCHEMA IF NOT EXISTS "{schemas[0]}";\nSET search_path TO "{schemas[0]}";\n'
         )
         for e in required_extensions(inputs):
             out += f"CREATE EXTENSION IF NOT EXISTS {_pg_ident(e.name)};\n"
@@ -1803,7 +1816,10 @@ def render_ddl(inputs: Step1Inputs) -> str:
         alter = "".join(
             f"{line}\n" for line in alter_comment(database, target.collation, target.engine_line)
         )
-        out += f"\nCREATE DATABASE IF NOT EXISTS `{db}`{options};\n{alter}USE `{db}`;\n"
+        out += (
+            f"\nCREATE DATABASE IF NOT EXISTS `{CONTROL_SCHEMA}`;\n"
+            f"CREATE DATABASE IF NOT EXISTS `{db}`{options};\n{alter}USE `{db}`;\n"
+        )
     out += _enum_type_block(inputs)
     out += "\n" + inputs.ddl.strip() + "\n"
     replication = _replication(inputs)

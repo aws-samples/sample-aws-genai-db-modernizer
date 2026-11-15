@@ -15,6 +15,7 @@ import pytest
 from src.agents.collector.routine_sources import write_routine_sources
 from src.contracts.transformation_contract import NOT_MOVED, Finding, TargetSpec
 from src.storage.local_store import LocalArtifactStore
+from src.tools.data_movement.dms_control import CONTROL_SCHEMA
 from src.tools.data_movement.dms_step import render_ddl
 from src.tools.data_movement.routine_scripts import (
     CHECK_FILE,
@@ -420,7 +421,13 @@ def _flat_comments(text: str) -> str:
 
 def _database_clauses(text: str) -> set[str]:
     """What follows the name in each ``CREATE DATABASE IF NOT EXISTS`` (its options)."""
-    return set(re.findall(r"^CREATE DATABASE IF NOT EXISTS `(?:[^`]|``)+`(.*);$", text, re.M))
+    return {
+        options
+        for name, options in re.findall(
+            r"^CREATE DATABASE IF NOT EXISTS `((?:[^`]|``)+)`(.*);$", text, re.M
+        )
+        if name != CONTROL_SCHEMA  # DMS's own control database (#2133), not a tables' one
+    }
 
 
 def test_a_routine_database_is_created_as_the_step_ddl_creates_the_tables_database(tmp_path):

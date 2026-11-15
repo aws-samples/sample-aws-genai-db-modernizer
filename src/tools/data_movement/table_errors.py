@@ -36,6 +36,8 @@ import shlex
 from collections.abc import Mapping
 from typing import Any
 
+from src.tools.data_movement.dms_control import CONTROL_SCHEMA, failure_table, rerun_note
+
 TABLES_SHOWN = 10  # tables named on a line; the line counts the rest
 RELOAD_BATCH = 10  # tables per ReloadTables call, as the DMS console revalidates at most 10
 # DescribeTableStatistics' TableState values that mean the table did not load (case-folded).
@@ -200,27 +202,35 @@ def _version(text: str | None) -> tuple[int, ...] | None:
 
 
 def failures_table(family: str | None, dms_version: str | None) -> str:
-    """Where DMS lists the records that did not validate, in the default control schema (the
-    task settings set no ``ControlSchema``): on PostgreSQL ``public``, ``_v2`` from DMS 3.6.1
-    and ``_v1`` before; on MySQL ``awsdms_control.awsdms_validation_failures_v1`` (AWS DMS User
-    Guide, AWS DMS data validation and Control table task settings)."""
+    """Where DMS lists the records that did not validate, in the control schema the task
+    settings name (``ControlSchema``, :mod:`dms_control`, #2133): on PostgreSQL ``_v2`` from
+    DMS 3.6.1 and ``_v1`` before, on MySQL ``_v1`` (AWS DMS User Guide, AWS DMS data
+    validation and Control table task settings)."""
     version = _version(dms_version)
-    pg = ("public.awsdms_validation_failures_v1" if version is not None and version < V2_FROM
-          else "public.awsdms_validation_failures_v2")  # fmt: skip
-    return {"postgresql": pg, "mysql": "awsdms_control.awsdms_validation_failures_v1"}.get(
-        family or "", f"{pg} (Aurora PostgreSQL) or awsdms_control.awsdms_validation_failures_v1 "
-                      "(Aurora MySQL)")  # fmt: skip
+    pg = failure_table("awsdms_validation_failures_v1" if version is not None and version < V2_FROM
+                       else "awsdms_validation_failures_v2")  # fmt: skip
+    mysql = failure_table("awsdms_validation_failures_v1")
+    return {"postgresql": pg, "mysql": mysql}.get(
+        family or "", f"{pg} (Aurora PostgreSQL) or {mysql} (Aurora MySQL)")  # fmt: skip
 
 
 def failures_check(
-    family: str | None, task_arn: str, dms_version: str | None = None
+    family: str | None,
+    task_arn: str,
+    dms_version: str | None = None,
+    task_schema: str | None = None,
 ) -> dict[str, Any]:
     """Where DMS lists the records that did not validate, with read-only SQL the customer runs
     on Aurora (the target), never the modernizer: a lookup of the table DMS made first, then a
     count per table. ``TASK_NAME`` holds the task's external resource id, the ARN's last
-    segment (AWS DMS User Guide, AWS DMS data validation)."""
+    segment (AWS DMS User Guide, AWS DMS data validation). ``task_schema`` is the live task's
+    ``ControlSchema`` (``dms_control.task_control_schema``; None when unknown): a task whose
+    settings name another one, deployed from an older bundle, gets a first line that says
+    DMS may not have recorded the failures and how to rerun (#2133)."""
     task = _task_name(task_arn)  # allowlisted: letters, digits and hyphens only
-    steps = ["On the Aurora cluster (the target), in a read-only session, run the first query "
+    note = ([] if task_schema is None or task_schema == CONTROL_SCHEMA
+            else [rerun_note(task_schema)])  # fmt: skip
+    steps = [*note, "On the Aurora cluster (the target), in a read-only session, run the first query "
              "(it names the failure table DMS made; when it names another one than the next "
              "query reads, use that name), then the next:"]  # fmt: skip
     if family != "mysql":
@@ -229,13 +239,16 @@ def failures_check(
                   f'SELECT "TABLE_OWNER", "TABLE_NAME", "FAILURE_TYPE", COUNT(*) AS failures FROM {pg} '  # nosec B608 -- read-only SQL for the customer; the task id is allowlisted
                   f'WHERE "TASK_NAME" = {task} GROUP BY 1, 2, 3 ORDER BY 1, 2, 3;']  # fmt: skip
     if family != "postgresql":
+        mysql = failures_table("mysql", dms_version)
         steps += ["On Aurora MySQL:", _TABLES_QUERY,
                   "SELECT TABLE_OWNER, TABLE_NAME, FAILURE_TYPE, COUNT(*) AS failures FROM "  # nosec B608 -- read-only SQL for the customer; the task id is allowlisted
-                  f"awsdms_control.awsdms_validation_failures_v1 WHERE TASK_NAME = {task} "
+                  f"{mysql} WHERE TASK_NAME = {task} "
                   "GROUP BY 1, 2, 3 ORDER BY 1, 2, 3;"]  # fmt: skip
     steps.append("Each row's KEY and DETAILS columns hold the key and the column values that "
                  "differ: read them on your side; never paste them into this session.")  # fmt: skip
-    return {"failures_table": failures_table(family, dms_version), "check_on_target": steps}
+    found = {} if task_schema is None else {"task_control_schema": task_schema}
+    return {"failures_table": failures_table(family, dms_version), "check_on_target": steps,
+            **found}  # fmt: skip
 
 
 def lob_hints(lob_tables: list[Any], failed: list[str]) -> list[str]:

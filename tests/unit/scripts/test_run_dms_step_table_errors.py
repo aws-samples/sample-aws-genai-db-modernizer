@@ -221,8 +221,8 @@ def test_validation_failures_are_named_with_counts_and_point_at_dms_failure_tabl
     assert not any(s.split()[0] in ("UPDATE", "DELETE", "INSERT", "TRUNCATE") for s in sql)
 
 
-@pytest.mark.parametrize("version, table", [("3.6.1", "public.awsdms_validation_failures_v2"),
-                                            ("3.5.4", "public.awsdms_validation_failures_v1")])  # fmt: skip
+@pytest.mark.parametrize("version, table", [("3.6.1", "awsdms_control.awsdms_validation_failures_v2"),
+                                            ("3.5.4", "awsdms_control.awsdms_validation_failures_v1")])  # fmt: skip
 def test_a_postgresql_step_picks_the_failure_table_from_the_dms_engine_version(
     tmp_path, capsys, version, table
 ):
@@ -242,13 +242,13 @@ def test_a_postgresql_step_picks_the_failure_table_from_the_dms_engine_version(
     assert any("information_schema.tables" in s for s in check["check_on_target"])  # the lookup
 
 
-@pytest.mark.passes_on_main  # guards the settings the failure table names rely on
-def test_the_task_settings_keep_dms_control_tables_in_their_default_schema() -> None:
-    # The failure tables named above are DMS's defaults: no ControlSchema may move them.
+@pytest.mark.parametrize("engine", ["aurora_mysql", "aurora_postgresql"])
+def test_the_task_settings_keep_dms_control_tables_in_the_control_schema(engine) -> None:
+    # The failure tables named above are in the ControlSchema the task sets (#2133).
     from src.tools.data_movement.dms_step import bundle_inputs, task_settings
 
-    settings = task_settings(bundle_inputs(make_bundle()))
-    assert "ControlTablesSettings" not in settings and "ControlSchema" not in json.dumps(settings)
+    settings = task_settings(bundle_inputs(make_bundle(engine)))
+    assert settings["ControlTablesSettings"] == {"ControlSchema": "awsdms_control"}
 
 
 def test_a_table_that_errors_then_recovers_goes_back_to_loading(tmp_path, capsys):
@@ -572,9 +572,9 @@ def test_prove_shows_the_failure_table_sql_for_the_customer_never_runs_it() -> N
     assert "read-only SQL the customer runs on Aurora, never you" in prove
 
 
-@pytest.mark.parametrize("version, table", [("3.6.0", "public.awsdms_validation_failures_v1"),
-                                            ("3.6.1", "public.awsdms_validation_failures_v2"),
-                                            ("3.6.2", "public.awsdms_validation_failures_v2")])  # fmt: skip
+@pytest.mark.parametrize("version, table", [("3.6.0", "awsdms_control.awsdms_validation_failures_v1"),
+                                            ("3.6.1", "awsdms_control.awsdms_validation_failures_v2"),
+                                            ("3.6.2", "awsdms_control.awsdms_validation_failures_v2")])  # fmt: skip
 def test_the_v2_failure_table_starts_at_dms_3_6_1(version, table):
     from src.tools.data_movement.table_errors import failures_table
 
