@@ -50,7 +50,7 @@ import {
 import { sourceEngineOf } from "../utils/sqlLocking";
 import { ENGINE_STYLES, engineHex } from "../utils/engineColors";
 import EngineBadge from "../components/EngineBadge";
-import { resultsEngineHref, awaitsApproval } from "../utils/resultsLinks";
+import { resultsEngineHref, awaitsApproval, synthesisRan } from "../utils/resultsLinks";
 import { getCacheOverlay, ownerDistribution, getQueryCacheInfo, formatCacheLayerLine, formatCacheReadLine, formatCacheReadsMore, formatCachedByLine, isCacheEngine, buildOverrideList, addCacheOverlayNode } from "../utils/cacheLayer";
 import { summaryFallbackInfo } from "../utils/summaryFallback";
 import { reroutedQueryIds, rowMoveKind } from "../utils/postSchemaReroutes";
@@ -199,7 +199,10 @@ const AssignmentGatePage = memo(() => {
         { id: 'phases', path: `assessments/${jobId}/phases`, method: 'GET', params: {} },
         { id: 'triage', path: `assessments/${jobId}/triage`, method: 'GET', params: {} },
         { id: 'collector', path: `assessments/${jobId}/collector`, method: 'GET', params: {} },
-        { id: 'results', path: `assessments/${jobId}/results`, method: 'GET', params: {} },
+        // Results can exist only once synthesis has run; asking earlier is a failing request.
+        ...(synthesisRan(jobResult['job'])
+          ? [{ id: 'results', path: `assessments/${jobId}/results`, method: 'GET', params: {} }]
+          : []),
       ]);
       setResultsExist(!!results['results']?.success);
 
@@ -853,6 +856,12 @@ const AssignmentGatePage = memo(() => {
             onNodeClick={resultsExist ? handleSankeyNodeClick : undefined}
             unavailableTitle={t('assignment-gate.query-flow.details-after-completion')}
           />
+          {/* #2300: the reason the nodes are not links, as text (a title shows on hover only). */}
+          {!resultsExist && (
+            <Box padding={{ top: 's' }} textAlign="center" color="text-body-secondary" fontSize="body-s">
+              {t('assignment-gate.query-flow.details-after-completion')}
+            </Box>
+          )}
           {/* #2300: a decision is pending, so results that exist are an earlier version's. */}
           {resultsExist && decisionPending && (
             <Box padding={{ top: 's' }} textAlign="center" color="text-body-secondary" fontSize="body-s">

@@ -365,10 +365,41 @@ def test_a_link_to_an_engine_the_plan_has_no_part_for_says_so(
         ev = _watch(page)
         page.goto(f"{ui}/analysis/patterns/{r.job_id}?target=no-such-engine")
         expect(page.locator("#executive-summary-section")).to_be_visible(timeout=READY_MS)
-        expect(
-            page.get_by_text("no-such-engine has no access patterns or table design")
-        ).to_be_visible(timeout=READY_MS)
+        expect(page.get_by_text("no-such-engine is not in this plan")).to_be_visible(
+            timeout=READY_MS
+        )
         assert ev == {"console": [], "pageerror": [], "failed": []}, (r.job_id, ev)
+
+
+def test_a_link_to_a_routed_engine_without_a_design_says_its_design_has_not_been_made(
+    page: Page, ui: str, all_runs: list[PipelineResult]
+) -> None:
+    """#2300: queries are routed to an engine (its node is in the Sankey) but no schema
+    design exists for it, as on a job whose design did not run. The link says that, not
+    that the engine is missing from the plan."""
+    checked = 0
+    for r in all_runs:
+        page.goto(f"{ui}/analysis/results/{r.job_id}")
+        expect(page.locator("#executive-summary-section")).to_be_visible(timeout=READY_MS)
+        routed = page.locator("[data-sankey-node]").evaluate_all(
+            "nodes => nodes.map(n => n.getAttribute('data-sankey-node'))"
+        )
+        designed = {p.parent.parent.name.removeprefix("schema-") for p in real_designs(r.job_dir())}
+        engines = [
+            e
+            for e in routed
+            if e in ENGINE_LABELS and not e.startswith("aurora_") and e not in designed
+        ]
+        for engine in engines[:1]:
+            ev = _watch(page)
+            page.goto(f"{ui}/analysis/patterns/{r.job_id}?target={engine}")
+            expect(page.locator("#executive-summary-section")).to_be_visible(timeout=READY_MS)
+            notice = f"Queries are routed to {ENGINE_LABELS[engine]}, but its schema design has not been made"
+            expect(page.get_by_text(notice)).to_be_visible(timeout=READY_MS)
+            assert "is not in this plan" not in page.inner_text("body"), (r.job_id, engine)
+            assert ev == {"console": [], "pageerror": [], "failed": []}, (r.job_id, ev)
+            checked += 1
+    assert checked, "no job routes queries to an engine that has no design"
 
 
 def test_a_link_opens_the_linked_table_design_tab_when_it_is_not_the_first(

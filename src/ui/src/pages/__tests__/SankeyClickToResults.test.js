@@ -166,6 +166,8 @@ const COMPLETE = {
 
 let DATA = BASE;
 
+const mockRequested = [];
+
 let container;
 let root;
 let openSpy;
@@ -175,10 +177,14 @@ beforeEach(() => {
   document.body.appendChild(container);
   root = createRoot(container);
   mockNavigate.mockClear();
+  mockRequested.length = 0;
   DATA = BASE;
   openSpy = jest.spyOn(window, 'open').mockImplementation(() => null);
   ApiManager.mockImplementation(() => ({
-    execute: async (requests) => Object.fromEntries(requests.map((r) => [r.id, DATA[r.id]])),
+    execute: async (requests) => {
+      requests.forEach((r) => mockRequested.push(r.id));
+      return Object.fromEntries(requests.map((r) => [r.id, DATA[r.id]]));
+    },
   }));
 });
 
@@ -203,6 +209,11 @@ async function clickNode(Page, nodeId) {
   });
 }
 
+const SYNTHESIS_RAN = {
+  database_name: 'discourse',
+  progress: { stages: [{ name: 'LoadSynthesisOutput', status: 'completed' }] },
+};
+
 const withData = (overrides) => {
   DATA = { ...BASE, ...overrides };
 };
@@ -211,6 +222,7 @@ describe('the job monitoring summary', () => {
   test('a complete job: a Sankey engine click goes to that engine on the results page, in this tab', async () => {
     withData({ 'get-job-details': { ...BASE['get-job-details'], ...COMPLETE } });
     await clickNode(JobMonitoringSummary, 'dynamodb');
+    expect(container.textContent).not.toContain('job-summary.query-flow.details-after-completion');
     expect(mockNavigate).toHaveBeenCalledTimes(1);
     expect(mockNavigate).toHaveBeenCalledWith('/analysis/results/job-1?engine=dynamodb#access-patterns-section');
     expect(openSpy).not.toHaveBeenCalled();
@@ -221,6 +233,8 @@ describe('the job monitoring summary', () => {
     expect(container.querySelectorAll('.sankey-node')).toHaveLength(0);
     const off = container.querySelector('.sankey-node-off[data-node="dynamodb"]');
     expect(off.getAttribute('title')).toBe('job-summary.query-flow.details-after-completion');
+    // Visible text too: a title shows on mouse hover only.
+    expect(container.textContent).toContain('job-summary.query-flow.details-after-completion');
     expect(mockNavigate).not.toHaveBeenCalled();
     expect(openSpy).not.toHaveBeenCalled();
   });
@@ -228,7 +242,7 @@ describe('the job monitoring summary', () => {
 
 describe('the assignment gate', () => {
   test('with results: a click opens that engine on the results page in a new tab, never this one', async () => {
-    withData({ results: { success: true, synthesis: {} } });
+    withData({ results: { success: true, synthesis: {} }, job: SYNTHESIS_RAN });
     await clickNode(AssignmentGate, 'dynamodb');
     expect(openSpy).toHaveBeenCalledTimes(1);
     expect(openSpy).toHaveBeenCalledWith(
@@ -236,6 +250,7 @@ describe('the assignment gate', () => {
     );
     expect(mockNavigate).not.toHaveBeenCalled();
     expect(container.textContent).not.toContain('assignment-gate.query-flow.older-version-note');
+    expect(container.textContent).not.toContain('assignment-gate.query-flow.details-after-completion');
   });
 
   test('without results: no node is a link, and each says the details come with the completed assessment', async () => {
@@ -243,6 +258,7 @@ describe('the assignment gate', () => {
     expect(container.querySelectorAll('.sankey-node')).toHaveLength(0);
     const off = container.querySelector('.sankey-node-off[data-node="dynamodb"]');
     expect(off.getAttribute('title')).toBe('assignment-gate.query-flow.details-after-completion');
+    expect(container.textContent).toContain('assignment-gate.query-flow.details-after-completion');
     expect(openSpy).not.toHaveBeenCalled();
     expect(mockNavigate).not.toHaveBeenCalled();
   });
@@ -252,11 +268,30 @@ describe('the assignment gate', () => {
       results: { success: true, synthesis: {} },
       job: {
         database_name: 'discourse',
-        progress: { stages: [{ name: 'WaitForAssignmentApproval', status: 'running' }] },
+        progress: {
+          stages: [
+            { name: 'LoadSynthesisOutput', status: 'completed' },
+            { name: 'WaitForAssignmentApproval', status: 'running' },
+          ],
+        },
       },
     });
     await clickNode(AssignmentGate, 'dynamodb');
     expect(openSpy).toHaveBeenCalledTimes(1);
     expect(container.textContent).toContain('assignment-gate.query-flow.older-version-note');
+  });
+
+  test('a first gate, where synthesis has not run, does not ask for results (no failing request)', async () => {
+    withData({ results: { success: true, synthesis: {} } });
+    await renderPage(AssignmentGate);
+    expect(mockRequested).toContain('reality-check');
+    expect(mockRequested).not.toContain('results');
+    expect(container.querySelectorAll('.sankey-node')).toHaveLength(0);
+  });
+
+  test('a gate whose job has had its synthesis asks for results', async () => {
+    withData({ results: { success: true, synthesis: {} }, job: SYNTHESIS_RAN });
+    await renderPage(AssignmentGate);
+    expect(mockRequested).toContain('results');
   });
 });

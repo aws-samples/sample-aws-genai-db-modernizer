@@ -16,13 +16,14 @@ export function engineFromSearch(search) {
   return new URLSearchParams(search || '').get('engine') || null;
 }
 
-// Where a linked engine lands: its explorer rows, its Table design tab, or nowhere
-// ('absent': the plan has no part for it, and the page says so). 'none' when the link
-// names no engine.
-export function linkedEngineTarget(engine, explorerEngines, designEngines) {
+// Where a linked engine lands: its explorer rows, its Table design tab, 'not-designed'
+// (queries are routed to it but its schema design has not been made for this job), or
+// 'absent' (the plan has no part for it). 'none' when the link names no engine.
+export function linkedEngineTarget(engine, explorerEngines, designEngines, routedEngines = []) {
   if (!engine) return 'none';
   if (explorerEngines.includes(engine)) return 'explorer';
   if (designEngines.includes(engine)) return 'design';
+  if (routedEngines.includes(engine)) return 'not-designed';
   return 'absent';
 }
 
@@ -38,4 +39,13 @@ export function awaitsApproval(job) {
   const stages = job?.progress?.stages;
   const last = Array.isArray(stages) ? stages[stages.length - 1] : null;
   return last?.name === 'WaitForAssignmentApproval' && last?.status !== 'completed';
+}
+
+// Results can exist for the job: synthesis has completed (also while a new decision is
+// pending, when they are an earlier version's). Before that a request for them fails.
+export function synthesisRan(job) {
+  const stages = job?.progress?.stages;
+  return Array.isArray(stages) && stages.some(
+    (st) => (st?.name === 'RunRefereeSynthesis' || st?.name === 'LoadSynthesisOutput') && st?.status === 'completed',
+  );
 }

@@ -825,6 +825,12 @@ const JobMonitoringSummaryPage = memo(() => {
                     onNodeClick={isJobComplete ? handleSankeyNodeClick : undefined}
                     unavailableTitle={t('job-summary.query-flow.details-after-completion')}
                   />
+                  {/* #2300: the reason as text too (a title shows on hover only). */}
+                  {!isJobComplete && (
+                    <Box padding={{ top: 's' }} textAlign="center" color="text-body-secondary" fontSize="body-s">
+                      {t('job-summary.query-flow.details-after-completion')}
+                    </Box>
+                  )}
                 </Container>
               </div>
             )}

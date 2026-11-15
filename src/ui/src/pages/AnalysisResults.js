@@ -1700,6 +1700,7 @@ const AnalysisResultsPage = memo(() => {
       engine,
       explorerPatterns.map(ap => ap.engine),
       auroraDesigns.map(d => d.engine),
+      Object.keys(afterDist || {}),
     );
     let sectionId = locationHash.replace(/^#/, '');
     if (target === 'explorer') {
@@ -1708,10 +1709,10 @@ const AnalysisResultsPage = memo(() => {
       setEngineFilter([{ label: option?.label || ENGINE_LABELS[engine] || engine, value: engine }]);
     } else if (target === 'design') {
       sectionId = 'table-design-section';
-    } else if (target === 'absent') {
+    } else if (target === 'absent' || target === 'not-designed') {
       addFlashbarMessage({
         type: 'info',
-        header: t('analysis-results.engine-link.absent', { engine: ENGINE_LABELS[engine] || engine }),
+        header: t(`analysis-results.engine-link.${target}`, { engine: ENGINE_LABELS[engine] || engine }),
         dismissible: true,
         id: `engine-link-${engine}`,
       });
@@ -1728,7 +1729,7 @@ const AnalysisResultsPage = memo(() => {
         }
       });
     }
-  }, [loading, locationSearch, locationHash, explorerPatterns, auroraDesigns, engineOptions, addFlashbarMessage, t]);
+  }, [loading, locationSearch, locationHash, explorerPatterns, auroraDesigns, afterDist, engineOptions, addFlashbarMessage, t]);
 
   const enginePieData = useMemo(() => {
     const engines = Object.entries(filteredEngineDist);
