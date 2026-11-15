@@ -202,6 +202,35 @@ def n_distinct_count(n_distinct: object, reltuples: object) -> int | None:
     return None
 
 
+# #2082: the offline script's section 7 fields, for the ``public`` schema the live collector
+# reads its tables from (tests/unit/tools/database/test_postgres_views_live_server.py keeps
+# the two in step).
+_VIEWS_SQL = """
+SELECT
+  iv.table_name AS view_name,
+  iv.table_schema AS schema_name,
+  iv.view_definition AS definition,
+  iv.is_updatable,
+  iv.check_option,
+  coalesce((SELECT bool_or(o.option_value::boolean) FROM pg_options_to_table(c.reloptions) o
+            WHERE o.option_name = 'security_barrier'), false) AS security_barrier,
+  coalesce((SELECT bool_or(o.option_value::boolean) FROM pg_options_to_table(c.reloptions) o
+            WHERE o.option_name = 'security_invoker'), false) AS security_invoker,
+  EXISTS (SELECT 1 FROM pg_depend d WHERE d.classid = 'pg_class'::regclass
+          AND d.objid = c.oid AND d.deptype = 'e') AS extension_owned,
+  (SELECT json_agg(json_build_object('name', a.attname, 'position', a.attnum,
+                   'data_type', format_type(a.atttypid, a.atttypmod)) ORDER BY a.attnum)
+     FROM pg_attribute a
+    WHERE a.attrelid = c.oid AND a.attnum > 0 AND NOT a.attisdropped) AS columns,
+  to_json(current_schemas(false)) AS search_path
+FROM information_schema.views iv
+JOIN pg_namespace n ON n.nspname = iv.table_schema
+JOIN pg_class c ON c.relnamespace = n.oid AND c.relname = iv.table_name AND c.relkind = 'v'
+WHERE iv.table_schema = 'public'
+ORDER BY iv.table_name
+"""
+
+
 class PostgreSQLRemoteCollector:
     """Collects PostgreSQL metadata via SSM Run Command."""
 
@@ -431,10 +460,9 @@ class PostgreSQLRemoteCollector:
     # -------------------------------------------------------------------
 
     def collect_views(self) -> list[dict]:
-        return self._query("""
-            SELECT viewname AS view_name, definition, viewowner AS owner
-            FROM pg_views WHERE schemaname = 'public' ORDER BY viewname
-        """)
+        """The ``public`` schema's views (the tables' schema), with the fields the offline
+        script's section 7 reads (#2082): step 1 creates each one again from them."""
+        return self._query(_VIEWS_SQL)
 
     def collect_procedures(self, include_bodies: bool = True) -> list[dict]:
         """Every function and procedure in every user schema with its whole CREATE (#1652),

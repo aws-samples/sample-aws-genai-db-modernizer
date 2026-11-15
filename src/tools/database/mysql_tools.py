@@ -535,12 +535,36 @@ class MySQLRemoteCollector:
     # -------------------------------------------------------------------
 
     def collect_views(self) -> list[dict]:
-        return self._query("""
-            SELECT table_name AS view_name, view_definition AS definition, is_updatable
+        """The database's views with the fields the offline script's section 7 reads
+        (#2082): step 1 creates each one again from them. The columns are read apart and
+        joined here, in their order."""
+        rows = self._text_rows("""
+            SELECT table_name AS view_name, table_schema AS schema_name,
+                   view_definition AS definition, is_updatable, check_option, security_type,
+                   character_set_client, collation_connection
             FROM information_schema.views
             WHERE table_schema = DATABASE()
             ORDER BY table_name
         """)
+        if not rows:
+            return rows
+        columns: dict[str, list[dict]] = {}
+        for c in self._query("""
+            SELECT c.table_name AS view_name, c.column_name AS name,
+                   c.ordinal_position AS position, c.column_type AS data_type
+            FROM information_schema.columns c
+            JOIN information_schema.views v
+              ON v.table_schema = c.table_schema AND v.table_name = c.table_name
+            WHERE c.table_schema = DATABASE()
+            ORDER BY c.table_name, c.ordinal_position
+        """):
+            columns.setdefault(str(c.get("view_name")), []).append(
+                {"name": c.get("name"), "position": c.get("position"),
+                 "data_type": c.get("data_type")}  # fmt: skip
+            )
+        for row in rows:
+            row["columns"] = columns.get(str(row.get("view_name")), [])
+        return rows
 
     def _text_rows(self, sql: str) -> list[dict]:
         """``sql``'s rows with each routine text column as the server holds it (#1652):

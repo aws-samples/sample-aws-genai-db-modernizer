@@ -50,6 +50,11 @@ Every subcommand prints one JSON line, its result (exit 1 only on ``"status": "e
   print one progress line per poll on stderr. ``teardown``'s line carries ``source_reminder``
   and ``source_followups``: what is left on the source (on PostgreSQL, the replication slot DMS
   leaves behind, with the read-only query to find it and the statement that drops it; #2060).
+- ``views`` (#2082): once ``status`` reads the full load at 100% (read-only), write step 1's
+  view scripts for the customer to run before the routine scripts: ``views-deploy.sql`` (the
+  carried views in dependency order), the read-only ``views-check.sql`` and ``views.md``.
+  ``views-check`` (no AWS call): read the customer's ``views-check.tsv`` strictly and write
+  ``views-check.json``, which the gate's views check reads. Neither connects to a database.
 - ``routines`` (#1947): once ``status`` reads the full load at 100% (read-only), write step 1's
   routine scripts for the customer to run: ``routines-deploy.sql`` (the carried routines in
   dependency order; PostgreSQL triggers created disabled; MySQL triggers and events left to
@@ -203,7 +208,9 @@ WRITES = ("deploy", "execute", "test", "start", RESTART, *RECOVER, *TABLE_RECOVE
 WAITS = (*ENDING, RESTART, *RECOVER)  # the writes that wait, by default up to MAX_WAIT_SECONDS
 ROUTINES = "routines"  # writes step 1's routine scripts once the full load is done (#1947)
 ROUTINES_CHECK = "routines-check"  # reads the customer's check output; no AWS call (#1947)
-READS = ("preflight", "gate", "status", ROUTINES)
+VIEWS = "views"  # writes step 1's view scripts once the full load is done (#2082)
+VIEWS_CHECK = "views-check"  # reads the customer's view check output; no AWS call (#2082)
+READS = ("preflight", "gate", "status", VIEWS, ROUTINES)
 VERIFY_SCRIPTS, VERIFY = "verify-scripts", "verify"  # optional, no AWS call (#1998)
 TRIGGERS_SCRIPTS, TRIGGERS_CHECK = "triggers-scripts", "triggers-check"  # no AWS call (#1948)
 # The routine-proof test cluster (#1946): never in a CI sandbox or an --auto run.
@@ -221,8 +228,8 @@ LEGACY_COMMANDS = {
     "cutover-scripts": TRIGGERS_SCRIPTS,  # legacy alias
     "cutover-check": TRIGGERS_CHECK,  # legacy alias
 }
-LOCAL = ("steps", "summary", "plan", VERIFY_SCRIPTS, VERIFY, ROUTINES_CHECK, TRIGGERS_SCRIPTS,
-         TRIGGERS_CHECK, LOB_SIZES)  # fmt: skip
+LOCAL = ("steps", "summary", "plan", VERIFY_SCRIPTS, VERIFY, VIEWS_CHECK, ROUTINES_CHECK,
+         TRIGGERS_SCRIPTS, TRIGGERS_CHECK, LOB_SIZES)  # fmt: skip
 MAX_TEMPLATE_BODY = 51_200  # CloudFormation's TemplateBody limit (a TemplateURL takes 1 MB)
 MAX_WAIT_SECONDS = 540  # under the 600 s Bash timeout a command runs with
 TASK_STOPPED = {"failed", "stopped", "failed-move"}
@@ -2173,6 +2180,89 @@ def routines_check(root: str, db: str, job_id: str, inputs: MoveInputs) -> dict[
             "result": str(Path(root) / key)}  # fmt: skip
 
 
+# --- Views (#2082): the customer's scripts; /move never runs them -----------------------
+
+
+def _view_rows(rows: Any) -> list[dict[str, Any]]:
+    from src.tools.data_movement.step1_views import why
+
+    return [{"view_id": v.view_id, "reasons": v.reasons, "why": why(v.reasons)}
+            for v in rows][:ROUTINES_SHOWN]  # fmt: skip
+
+
+def views(clients: MoveClients, root: str, db: str, job_id: str, inputs: MoveInputs,
+          name: str) -> dict[str, Any]:  # fmt: skip
+    """Write step 1's view scripts (``view_scripts``) once the task's full load is at 100%:
+    the deploy script, the read-only check script and their instructions, for the customer
+    to run before the routines deploy script. Read-only in AWS (the task's status); it never
+    connects to a database."""
+    from src.storage.local_store import LocalArtifactStore
+    from src.tools.data_movement.dms_step import load_step1
+    from src.tools.data_movement.view_scripts import REFUSED_WHY, write_view_scripts
+
+    store = LocalArtifactStore(base_dir=root)
+    step = load_step1(store, db, job_id, with_ddl=False)
+    section = step.contract.views_section
+    if section is None:
+        raise MoveError("the step 1 contract has no views section (written before #2082): run "
+                        "Prepare's three commands again")  # fmt: skip
+    not_carried = [v for v in section.views if v.carry == "not_carried"]
+    base = {"carried": section.carried, "not_carried": len(not_carried),
+            "not_carried_views": _view_rows(not_carried)}  # fmt: skip
+    if section.carried == 0:
+        write_view_scripts(store, db, job_id, step.contract, step.contract_sha256,
+                           _step_dir(root, db, job_id))  # removes an earlier run's scripts  # fmt: skip
+        return {"status": "nothing_to_deploy", **base}
+    now = status(clients, name)
+    if now.get("full_load_percent") != 100:
+        raise MoveError(f"the views are created after the full load; the full load is at "
+                        f"{now.get('full_load_percent')}% ({now.get('phase')}): run this again when "
+                        "status shows full_load_percent 100")  # fmt: skip
+    scripts = write_view_scripts(store, db, job_id, step.contract, step.contract_sha256,
+                                 _step_dir(root, db, job_id),
+                                 target_database=inputs.target_database_name)  # fmt: skip
+    refused = [
+        {"view_id": i, "reason": c, "why": REFUSED_WHY.get(c, "")} for i, c in scripts.refused
+    ]
+    return {"status": "ready", **base, "in_script": scripts.in_script, "refused": len(refused),
+            "refused_views": refused[:ROUTINES_SHOWN], "files": scripts.files,
+            "runs_it": "the customer, before routines-deploy.sql; /move never runs it"}  # fmt: skip
+
+
+def views_check(root: str, db: str, job_id: str, inputs: MoveInputs) -> dict[str, Any]:
+    """Read the customer's output of the view check script (``views-check.tsv``), strictly,
+    and write ``views-check.json`` for the gate. No AWS call. A refused file removes an
+    earlier result, so the gate never reads a check the file contradicts."""
+    from src.contracts.view_check import ViewCheckResult
+    from src.storage.local_store import LocalArtifactStore
+    from src.tools.data_movement.dms_step import load_step1
+    from src.tools.data_movement.routine_check import RoutineCheckOutputError
+    from src.tools.data_movement.view_check import read_view_check
+    from src.tools.data_movement.view_scripts import CHECK_OUTPUT
+
+    store = LocalArtifactStore(base_dir=root)
+    step = load_step1(store, db, job_id, with_ddl=False)
+    output = _step_dir(root, db, job_id) / CHECK_OUTPUT
+    key = f"{db}/{job_id}/data-movement/step-1/views-check.json"
+    try:
+        result = read_view_check(output, step.contract, job_id=job_id, database_name=db,
+                                 contract_sha=step.contract_sha256,
+                                 target_database=inputs.target_database_name)  # fmt: skip
+    except RoutineCheckOutputError as exc:
+        store.delete(key)
+        raise MoveError(f"{output}: refused: {exc}") from None
+    if result is None:
+        store.delete(key)
+        return {"status": "no_output", "expected": str(output)}
+    checked: ViewCheckResult = result
+    store.write_json(key, checked.model_dump(mode="json"))
+    return {"status": result.status, "carried": result.carried, "confirmed": result.confirmed,
+            "mismatches": [m.model_dump(mode="json") for m in result.mismatches[:ROUTINES_SHOWN]],
+            "mismatch_count": len(result.mismatches), "not_carried": len(result.not_carried),
+            "not_carried_views": [m.model_dump(mode="json") for m in result.not_carried[:ROUTINES_SHOWN]],
+            "result": str(Path(root) / key)}  # fmt: skip
+
+
 # --- LOB sizes (#2123): the customer's run of lob-sizes.sql; /move never runs it ----------
 
 
@@ -2630,6 +2720,8 @@ def main(argv: list[str] | None = None, *, clients: MoveClients | None = None,
                          "empty_target": empty_target(args.artifact_root, db, job_id)})  # fmt: skip
         if args.command in (VERIFY_SCRIPTS, VERIFY):
             return emit(verify_step(args.command, args.artifact_root, db, job_id, inputs))
+        if args.command == VIEWS_CHECK:
+            return emit(views_check(args.artifact_root, db, job_id, inputs))
         if args.command == ROUTINES_CHECK:
             return emit(routines_check(args.artifact_root, db, job_id, inputs))
         if args.command == TRIGGERS_SCRIPTS:
@@ -2671,6 +2763,8 @@ def main(argv: list[str] | None = None, *, clients: MoveClients | None = None,
                                         retention=retention, change_set=args.change_set,
                                         steps=_status_context(args.artifact_root, db, job_id,
                                                               inputs.region), seen=seen))  # fmt: skip
+        if args.command == VIEWS:
+            return emit(views(clients, args.artifact_root, db, job_id, inputs, name))
         if args.command == ROUTINES:
             return emit(routines(clients, args.artifact_root, db, job_id, inputs, name,
                                  target_user=args.target_user))  # fmt: skip

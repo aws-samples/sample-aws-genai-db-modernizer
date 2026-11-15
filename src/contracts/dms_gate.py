@@ -41,6 +41,14 @@ NOT_VALIDATED = f"{NOT_VALIDATED_PREFIX}no primary or unique key"
 _ORDER = ("load", "lag", "parity")
 # A contract with a routines section (#1947) adds the routines check after the three.
 _ORDER_WITH_ROUTINES = (*_ORDER, "routines")
+# A contract with a views section (#2082) adds the views check after parity, before routines.
+_ORDERS = (_ORDER, _ORDER_WITH_ROUTINES, (*_ORDER, "views"), (*_ORDER, "views", "routines"))
+#: A carried view's exception reason (#2082): it holds no rows; the views scripts carry it.
+VIEW_CARRIED = (
+    "no rows to validate: views-deploy.sql creates it and views-check.sql checks its columns"
+)
+#: How a view step 1 does not create starts its reason (#2082), then its codes and what to do.
+VIEW_NOT_CARRIED_PREFIX = "not carried: "
 _STATUS_ORDER = ("pass", "pending", "fail")  # best to worst
 
 
@@ -48,8 +56,8 @@ class GateCheck(BaseModel):
     """One of the checks the gate runs: load, lag, parity and, for a contract with a
     routines section, routines (#1947)."""
 
-    id: Literal["load", "lag", "parity", "routines"] = Field(
-        ..., description="Which check: load, lag, parity or routines"
+    id: Literal["load", "lag", "parity", "views", "routines"] = Field(
+        ..., description="Which check: load, lag, parity, views (#2082) or routines"
     )
     status: GateStatus = Field(..., description="pass, pending (not yet decidable) or fail")
     summary: str = Field(..., min_length=1, description="One plain line a customer can read")
@@ -82,7 +90,9 @@ class GateException(BaseModel):
     """A table, view, field or rule the gate names because it cannot vouch for it.
 
     ``table`` and ``view`` are tables and views DMS does not validate. A view has the fixed
-    ``NOT_VALIDATED`` reason; a table's reason starts ``not validated: `` and says which key
+    ``NOT_VALIDATED`` reason in a contract without a views section; with one (#2082),
+    ``VIEW_CARRIED`` when step 1 creates it, else ``not carried: `` with its reasons and
+    what to do; a table's reason starts ``not validated: `` and says which key
     limit applies (#2042): ``NOT_VALIDATED`` for a table with no primary or unique key, or the
     contract's words for a unique index that allows NULLs or a key on a type DMS cannot
     validate on. ``keyless_lob`` is a keyless table with LOB columns (DMS
@@ -109,8 +119,15 @@ class GateException(BaseModel):
 
     @model_validator(mode="after")
     def _consistent(self) -> "GateException":
-        if self.kind == "view" and self.reason != NOT_VALIDATED:
-            raise ValueError(f"reason for a view must be {NOT_VALIDATED!r}")
+        if (
+            self.kind == "view"
+            and self.reason not in (NOT_VALIDATED, VIEW_CARRIED)
+            and not (self.reason.startswith(VIEW_NOT_CARRIED_PREFIX))
+        ):
+            raise ValueError(
+                f"reason for a view must be {NOT_VALIDATED!r}, {VIEW_CARRIED!r} or start with "
+                f"{VIEW_NOT_CARRIED_PREFIX!r}"
+            )
         if self.kind == "table" and not self.reason.startswith(NOT_VALIDATED_PREFIX):
             raise ValueError(f"reason for a table must start with {NOT_VALIDATED_PREFIX!r}")
         if (self.kind == "unsupported_field") != (self.column is not None):
@@ -149,15 +166,20 @@ class DmsGate(BaseModel):
     )
     checks: list[GateCheck] = Field(
         ...,
-        description="load, lag and parity, in that order, then routines when the contract has them",
+        description=(
+            "load, lag and parity, in that order, then views and routines when the contract has "
+            "them"
+        ),
     )
     tables: list[GateTable] = Field(default_factory=list, description="Sorted by table")
     exceptions: list[GateException] = Field(default_factory=list, description="Sorted by table")
 
     @model_validator(mode="after")
     def _consistent(self) -> "DmsGate":
-        if tuple(c.id for c in self.checks) not in (_ORDER, _ORDER_WITH_ROUTINES):
-            raise ValueError(f"checks must be {_ORDER}, in order, then optionally routines")
+        if tuple(c.id for c in self.checks) not in _ORDERS:
+            raise ValueError(
+                f"checks must be {_ORDER}, in order, then optionally views and routines"
+            )
         worst = max((c.status for c in self.checks), key=_STATUS_ORDER.index)
         if self.status != worst:
             raise ValueError(f"status {self.status} disagrees with the checks ({worst})")

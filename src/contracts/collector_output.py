@@ -945,6 +945,17 @@ class Table(BaseModel):
     )
 
 
+class ViewColumn(BaseModel):
+    """One column of a view, in its order (#2082): what step 1's view check compares."""
+
+    name: str = Field(..., min_length=1, description="The column's name")
+    data_type: str | None = Field(
+        None,
+        max_length=512,
+        description=("Its type as the source spells it: PostgreSQL format_type, MySQL COLUMN_TYPE"),
+    )
+
+
 class View(BaseModel):
     view_id: str = Field(
         ..., description="Unique identifier for this view (format: {schema}.{view})"
@@ -984,6 +995,31 @@ class View(BaseModel):
     )
     lineage_reason: str | None = Field(
         None, description="Why lineage_status is not resolved, in plain words (#1875)"
+    )
+    # #2082: what step 1 needs to create the view again on Aurora. Its CREATE statement
+    # (literals included) is kept apart, in the job's routine sources, as a routine's is.
+    columns: list[ViewColumn] | None = Field(
+        None,
+        description=(
+            "The view's columns in order, with their types (#2082); None for a collection "
+            "that does not read them"
+        ),
+    )
+    body_status: RoutineBodyStatus | None = Field(
+        None,
+        description=(
+            "Whether the view's CREATE statement was collected into the routine sources "
+            "(#2082): collected, not_readable (the collection user may not read its "
+            "definition), opted_out (include_routine_bodies = 0) or not_supported; None for "
+            "a collection that predates it"
+        ),
+    )
+    extension_owned: bool | None = Field(
+        None,
+        description=(
+            "PostgreSQL: the view belongs to an extension (CREATE EXTENSION creates it), "
+            "so step 1 never creates it (#2082); None when not reported"
+        ),
     )
 
 

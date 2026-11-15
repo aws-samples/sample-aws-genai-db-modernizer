@@ -406,7 +406,7 @@ def _parse_offline_collection(
         "collected_database_name": collected,
         "tables": tables,
         # #1625: string literals in stored definitions are redacted too.
-        "views": _redacted_definitions(data.get("views", []), source_engine),
+        "views": _redacted_definitions(_view_rows(data, source_engine), source_engine),
         "procedures": routines["procedures"],
         # #1651: one row per trigger, with every event (PostgreSQL writes one per event).
         "triggers": routines["triggers"],
@@ -579,6 +579,19 @@ def _merged_triggers(rows: object) -> object:
     """The trigger rows merged to one per trigger (:func:`merge_trigger_rows`, #1651);
     a section that is not a list is left for the collection check to report."""
     return merge_trigger_rows(rows) if isinstance(rows, list) else rows
+
+
+def _view_rows(data: Mapping, source_engine: str) -> object:
+    """The view rows, each marked with whether its CREATE went to the routine sources
+    (#2082, ``body_status``); a copy, so the raw file's rows stay as read."""
+    from src.agents.collector.routine_sources import collection_includes_bodies, mark_view_statuses
+
+    views = data.get("views", [])
+    if not isinstance(views, list):
+        return views
+    rows = [dict(v) if isinstance(v, dict) else v for v in views]
+    mark_view_statuses(source_engine, rows, include_bodies=collection_includes_bodies(data))
+    return rows
 
 
 def _redacted_definitions(items: object, source_engine: str) -> object:

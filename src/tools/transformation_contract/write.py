@@ -9,6 +9,7 @@ from typing import Any
 
 from src.tools.data_movement.plan import load_inputs
 from src.tools.data_movement.step1_routines import attach_step_routines
+from src.tools.data_movement.step1_views import attach_step_views
 from src.tools.transformation_contract.hashing import canonical_json, contract_sha256
 from src.tools.transformation_contract.shape_check import shape_check
 from src.tools.transformation_contract.step1 import build_step1
@@ -24,6 +25,8 @@ def write_step1(store: Any, db: str, job_id: str) -> dict[str, Any]:
     if not inputs.report.get("migration_waves"):
         return {"status": "skipped", "reason": "no migration waves in the report", "paths": []}
     contract = shape_check(validate_step1(build_step1(inputs), inputs), inputs)
+    # #2082: the views step 1 creates, first: a routine that names a carried view is carried.
+    contract = attach_step_views(store, db, job_id, contract)
     # #1947: the routines step 1 carries, from the job's routine-migration artifact.
     contract = attach_step_routines(store, db, job_id, contract)
     digest = contract_sha256(contract)

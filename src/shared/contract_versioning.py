@@ -659,6 +659,8 @@ _ARTIFACT_CONTRACTS: tuple[tuple[str, str], ...] = (
         r"data-movement/step-\d+/routines-check\.json",
         "src.contracts.routine_check:RoutineCheckResult",
     ),
+    # #2082: what the customer's run of step 1's view check script shows.
+    (r"data-movement/step-\d+/views-check\.json", "src.contracts.view_check:ViewCheckResult"),
     # #2123: the LOB sizes the customer's run of step 1's lob-sizes.sql measured (or skipped).
     (r"data-movement/step-\d+/lob-sizes\.json", "src.contracts.lob_sizes:LobSizes"),
     # #1948: what the customer's run of the triggers-enable check script shows.
@@ -975,10 +977,7 @@ def _aurora_design_on_read(engine: str) -> _ReadTransform:
     refused (:class:`UnsafeArtifactError`), never read."""
 
     def on_read(payload: Mapping[str, Any], artifact: str) -> Mapping[str, Any]:
-        from src.contracts.aurora_design_delta import (
-            SavedDesignError,
-            check_design_column_types,
-        )
+        from src.contracts.aurora_design_delta import SavedDesignError, check_design_column_types
         from src.shared.engine_names import display_engine
         from src.tools.schema.aurora_common.saved_design import check_design_ddl
 

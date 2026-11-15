@@ -347,15 +347,34 @@ primary_keys_data AS (
 ),
 
 -- ===================== 7. Views =====================
+-- #2082: what step 1 needs to create each view again on Aurora: its schema, check option,
+-- security_barrier and security_invoker, its columns in order with their types, whether an
+-- extension owns it, and the search path its definition was printed for (pg_get_viewdef
+-- leaves a name it finds there unqualified).
 views_data AS (
-  SELECT coalesce(json_agg(v ORDER BY v.view_name), '[]'::json) AS data
+  SELECT coalesce(json_agg(v ORDER BY v.view_name, v.schema_name), '[]'::json) AS data
   FROM (
     SELECT
-      table_name AS view_name,
-      view_definition AS definition,
-      is_updatable
-    FROM information_schema.views
-    WHERE table_schema NOT IN ('pg_catalog', 'information_schema')
+      iv.table_name AS view_name,
+      iv.table_schema AS schema_name,
+      iv.view_definition AS definition,
+      iv.is_updatable,
+      iv.check_option,
+      coalesce((SELECT bool_or(o.option_value::boolean) FROM pg_options_to_table(c.reloptions) o
+                WHERE o.option_name = 'security_barrier'), false) AS security_barrier,
+      coalesce((SELECT bool_or(o.option_value::boolean) FROM pg_options_to_table(c.reloptions) o
+                WHERE o.option_name = 'security_invoker'), false) AS security_invoker,
+      EXISTS (SELECT 1 FROM pg_depend d WHERE d.classid = 'pg_class'::regclass
+              AND d.objid = c.oid AND d.deptype = 'e') AS extension_owned,
+      (SELECT json_agg(json_build_object('name', a.attname, 'position', a.attnum,
+                       'data_type', format_type(a.atttypid, a.atttypmod)) ORDER BY a.attnum)
+         FROM pg_attribute a
+        WHERE a.attrelid = c.oid AND a.attnum > 0 AND NOT a.attisdropped) AS columns,
+      to_json(current_schemas(false)) AS search_path
+    FROM information_schema.views iv
+    JOIN pg_namespace n ON n.nspname = iv.table_schema
+    JOIN pg_class c ON c.relnamespace = n.oid AND c.relname = iv.table_name AND c.relkind = 'v'
+    WHERE iv.table_schema NOT IN ('pg_catalog', 'information_schema')
   ) v
 ),
 

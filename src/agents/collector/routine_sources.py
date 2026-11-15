@@ -262,9 +262,11 @@ def iter_routine_sources(
     parameters: object = (),
     notes: RoutineSourcesBuild | None = None,
     event_triggers: object = (),
+    views: object = (),
 ) -> Iterator[RoutineSource]:
     """The CREATE statement of each row whose ``body_status`` is ``collected``, one at a
-    time. A row with any other status, or none (a collection before #1652), has no
+    time; and of each view whose CREATE can be built (#2082,
+    :func:`~src.agents.collector.view_sources.view_create`), whatever its row says. A row with any other status, or none (a collection before #1652), has no
     source. Only PostgreSQL and MySQL are carried; any other engine has none.
 
     MySQL: a row a live collector read SHOW CREATE for (``show_create``) carries that
@@ -323,6 +325,7 @@ def iter_routine_sources(
             mysql_create.rebuild_exactness(row.get("definition"), row.get("sql_mode")),
         )
 
+    view_engine = engine  # views are carried within one family: never MariaDB's (#2082)
     if engine in _MYSQL_FAMILY:
         engine = "mysql"
     cut = engine == "mysql" and not isinstance(parameters, list | tuple)
@@ -380,6 +383,8 @@ def iter_routine_sources(
             if made is not None:
                 yield made
 
+    yield from _view_sources(view_engine, views, seen)
+
     if engine == "mysql":
         for row in _rows(events):
             if row.get("body_status") != "collected":
@@ -395,6 +400,51 @@ def iter_routine_sources(
                 yield made
 
 
+def _search_path(value: object) -> list[str] | None:
+    if isinstance(value, str):
+        try:
+            value = json.loads(value)
+        except ValueError:
+            return None
+    if not isinstance(value, list) or len(value) > 64:
+        return None
+    if not all(isinstance(v, str) and v and len(v) <= 128 for v in value):
+        return None
+    return list(value)
+
+
+def _view_sources(engine: str, views: object, seen: set[RoutineKey]) -> Iterator[RoutineSource]:
+    """Each view's CREATE (#2082): ``origin`` is the definition's own source, exact."""
+    from src.agents.collector.view_sources import view_create
+
+    for row in _rows(views):
+        text = view_create(engine, row)
+        if text is None:
+            continue
+        key: RoutineKey = ("view", _schema(row), str(row.get("view_name") or ""))
+        if key in seen:
+            continue
+        seen.add(key)
+        session = (
+            RoutineSession(search_path=_search_path(row.get("search_path")))
+            if engine == "postgresql"
+            else RoutineSession(
+                character_set_client=_setting(row, "character_set_client"),
+                collation_connection=_setting(row, "collation_connection"),
+            )
+        )
+        yield RoutineSource(
+            kind="view",
+            routine_id=key[2],
+            schema_name=key[1] or None,
+            specific_name=key[2],
+            create_statement=text,
+            origin="pg_get_viewdef" if engine == "postgresql" else "information_schema",
+            exact=True,
+            session=session,
+        )
+
+
 def build_routine_sources(
     engine: str,
     *,
@@ -403,6 +453,7 @@ def build_routine_sources(
     events: object = (),
     parameters: object = (),
     event_triggers: object = (),
+    views: object = (),
 ) -> RoutineSourcesBuild:
     """:func:`iter_routine_sources`, gathered: every source, status and exactness."""
     notes = RoutineSourcesBuild()
@@ -415,6 +466,7 @@ def build_routine_sources(
             parameters=parameters,
             notes=notes,
             event_triggers=event_triggers,
+            views=views,
         )
     )
     return RoutineSourcesBuild(
@@ -481,6 +533,7 @@ def iter_collection_sources(raw: object) -> Iterator[RoutineSource]:
         events=raw.get("events") or [],
         parameters=raw.get("routine_parameters"),
         event_triggers=raw.get("event_triggers") or [],
+        views=raw.get("views") or [],
     )
 
 
@@ -495,7 +548,20 @@ def routine_sources_from_collection(raw: object) -> RoutineSourcesBuild:
         events=raw.get("events") or [],
         parameters=raw.get("routine_parameters"),
         event_triggers=raw.get("event_triggers") or [],
+        views=raw.get("views") or [],
     )
+
+
+def mark_view_statuses(engine: str, views: object, *, include_bodies: bool) -> None:
+    """Each view row's ``body_status`` (#2082,
+    :func:`~src.agents.collector.view_sources.view_body_status`), in place; a row it
+    records nothing for is left as it is."""
+    from src.agents.collector.view_sources import view_body_status
+
+    for row in _rows(views):
+        status = view_body_status(engine, row, include_bodies=include_bodies)
+        if status is not None:
+            row["body_status"] = status
 
 
 def apply_body_statuses(
