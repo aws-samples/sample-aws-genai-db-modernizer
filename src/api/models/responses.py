@@ -88,6 +88,6 @@ class DashboardStats(BaseModel):
     total_assessments: int
     active_jobs: int
     success_rate_percent: float
-    average_duration_hours: float
+    average_duration_hours: float | None = None
     completed_today: int
     last_analysis_at: str | None = None
