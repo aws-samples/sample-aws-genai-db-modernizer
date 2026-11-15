@@ -349,36 +349,75 @@ SECRETS_REVIEWED: dict[str, tuple[frozenset[str], str]] = {
     ),
     "src/tools/aws/rds_tools.py": (
         frozenset({"client", "read"}),
-        "the collector's sign-in to " "the customer's source database; the move never calls it",
+        "the collector's sign-in to the customer's source database; no move or proof module "
+        "imports it (test_no_move_or_proof_module_imports_the_collectors_secret_reader)",
     ),
     "src/agents/load_test/documentdb/provisioner.py": (
         frozenset({"client"}),
-        "the load test's " "own DocumentDB cluster secret",
+        "the load test's own DocumentDB cluster secret",
+    ),
+    "src/tools/data_movement/debezium_connector.py": (
+        frozenset({"client"}),
+        "names Kafka Connect's secretsmanager config provider; the connector resolves its "
+        "secret, the code never reads one",
     ),
 }
-_SECRET_READS = {"get_secret_value", "batch_get_secret_value"}
+_SECRET_READS = {"get_secret_value", "batch_get_secret_value", "GetSecretValue",
+                 "BatchGetSecretValue"}  # fmt: skip
+
+
+def _folded(node: ast.AST) -> str | None:
+    """A string an expression spells out of literals: a constant, ``"a" + "b"``, or
+    ``"".join(["a", "b"])``; None for anything else."""
+    if isinstance(node, ast.Constant) and isinstance(node.value, str):
+        return node.value
+    if isinstance(node, ast.BinOp) and isinstance(node.op, ast.Add):
+        left, right = _folded(node.left), _folded(node.right)
+        return left + right if left is not None and right is not None else None
+    if (isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute)
+            and node.func.attr == "join" and len(node.args) == 1
+            and isinstance(node.args[0], (ast.List, ast.Tuple))):  # fmt: skip
+        sep = _folded(node.func.value)
+        parts = [_folded(e) for e in node.args[0].elts]
+        if sep is not None and all(p is not None for p in parts):
+            return sep.join(p for p in parts if p is not None)
+    return None
 
 
 def _secrets_use(tree: ast.AST) -> set[str]:
-    """``client`` for a Secrets Manager client (``x.client("secretsmanager")``, either quote,
-    ``service_name=``, ``boto3.client``), ``read`` for any secret-value read: an attribute
-    or a string naming it (``getattr(c, "get_" "secret_value")`` is one string)."""
+    """``client`` for anything naming the Secrets Manager service (the string
+    ``secretsmanager`` however it is spelled out of literals, so ``client("secrets" +
+    "manager")`` and ``svc = "secretsmanager"`` both count), ``read`` for any secret-value
+    read: an attribute or a string naming the call (``get_secret_value``, the API's
+    ``GetSecretValue`` and their batch forms). The IAM action string
+    ``secretsmanager:GetSecretValue`` is neither."""
     found: set[str] = set()
     for node in ast.walk(tree):
-        if isinstance(node, ast.Call):
-            func = node.func
-            name = func.attr if isinstance(func, ast.Attribute) else getattr(func, "id", None)
-            if name in ("client", "resource"):
-                values = [a.value for a in node.args[:1] if isinstance(a, ast.Constant)]
-                values += [k.value.value for k in node.keywords
-                           if k.arg == "service_name" and isinstance(k.value, ast.Constant)]  # fmt: skip
-                if "secretsmanager" in values:
-                    found.add("client")
         if isinstance(node, ast.Attribute) and node.attr in _SECRET_READS:
             found.add("read")
-        if isinstance(node, ast.Constant) and node.value in _SECRET_READS:
+        value = _folded(node)
+        if value == "secretsmanager":
+            found.add("client")
+        elif value in _SECRET_READS:
             found.add("read")
     return found
+
+
+def _imports_rds_tools(tree: ast.AST) -> bool:
+    """Whether a module imports ``src.tools.aws.rds_tools`` in any form (``from ... import``,
+    ``import ... as``, a relative import, ``importlib.import_module("...")``)."""
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Import) and any(a.name.endswith("rds_tools") for a in node.names):
+            return True
+        if isinstance(node, ast.ImportFrom):
+            module = node.module or ""
+            if module.endswith("rds_tools") or any(a.name == "rds_tools" for a in node.names):
+                return True
+        if isinstance(node, ast.Call) and node.args:
+            named = _folded(node.args[0])
+            if named is not None and named.endswith("rds_tools"):
+                return True
+    return False
 
 
 def test_only_cloudformation_dms_s3_and_sts_clients_exist_so_no_secret_is_read() -> None:
@@ -408,9 +447,29 @@ def test_only_cloudformation_dms_s3_and_sts_clients_exist_so_no_secret_is_read()
 def test_the_secrets_guard_sees_every_spelling() -> None:
     for text in ('c.client("secretsmanager")', "c.client('secretsmanager')",
                  'boto3.client(service_name="secretsmanager")', "c.get_secret_value(SecretId=a)",
-                 'getattr(c, "get_" "secret_value")(SecretId=a)', "c.batch_get_secret_value()"):  # fmt: skip
+                 'getattr(c, "get_" "secret_value")(SecretId=a)', "c.batch_get_secret_value()",
+                 'c.client("secrets" + "manager")', 'svc = "secretsmanager"\nc.client(svc)',
+                 'getattr(c, "get_" + "secret_value")(SecretId=a)',
+                 'c._make_api_call("GetSecretValue", {})', 'c._make_api_call("BatchGetSecretValue", {})',
+                 '"".join(["secrets", "manager"])'):  # fmt: skip
         assert _secrets_use(ast.parse(text)), text
     assert not _secrets_use(ast.parse('policy = "secretsmanager:GetSecretValue"'))
+
+
+@pytest.mark.passes_on_main  # a guard: no move or proof module imports it on main either
+def test_no_move_or_proof_module_imports_the_collectors_secret_reader() -> None:
+    """Review round 3 of #2297: ``rds_tools.get_database_credentials`` is the one reviewed
+    reader of a secret's value; nothing under the move or the proof may import it."""
+    roots = [*(REPO_ROOT / "src/tools/routines").rglob("*.py"),
+             *(REPO_ROOT / "src/tools/data_movement").rglob("*.py"),
+             REPO_ROOT / "scripts" / "run_dms_step.py"]  # fmt: skip
+    for path in roots:
+        assert not _imports_rds_tools(ast.parse(path.read_text())), path
+    for text in ("from src.tools.aws.rds_tools import get_database_credentials",
+                 "from src.tools.aws import rds_tools", "import src.tools.aws.rds_tools as r",
+                 "from .rds_tools import get_database_credentials",
+                 'importlib.import_module("src.tools.aws.rds_tools")'):  # fmt: skip
+        assert _imports_rds_tools(ast.parse(text)), text
 
 
 # --- deploy / execute ----------------------------------------------------------------------

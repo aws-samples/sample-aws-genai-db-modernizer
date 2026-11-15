@@ -435,12 +435,50 @@ def test_every_spelling_of_a_role_change_is_refused(body):
     assert create_refusal(text, "postgresql", "function", "public") is not None, body
 
 
+HEADER = "CREATE FUNCTION public.g() RETURNS text LANGUAGE {lang} {clause} AS $$ {body} $$"
+
+
+@pytest.mark.parametrize(
+    "text",
+    [HEADER.format(lang="sql", clause="SET role = 'master'", body="SELECT current_user::text"),
+     HEADER.format(lang="sql", clause="SET role TO master", body="SELECT current_user::text"),
+     HEADER.format(lang="sql STABLE", clause="SET role = 'master'", body="SELECT 1"),
+     HEADER.format(lang="plpgsql", clause="SET session_authorization = 'master'",
+                   body="BEGIN RETURN 1; END"),
+     HEADER.format(lang="sql", clause="SET SESSION AUTHORIZATION master", body="SELECT 1"),
+     "CREATE PROCEDURE public.p() LANGUAGE sql SET role = 'master' AS $$ SELECT 1 $$",
+     "CREATE PROCEDURE public.p() LANGUAGE plpgsql SECURITY INVOKER SET role TO master "
+     "AS $$ BEGIN NULL; END $$",
+     HEADER.format(lang="plpgsql", clause="", body="BEGIN ALTER FUNCTION public.f() SET role = "
+                   "'master'; RETURN 1; END"),
+     HEADER.format(lang="plpgsql", clause="", body="BEGIN SET role = 'master'; RAISE EXCEPTION "
+                   "'boom'; END"),
+     "CREATE FUNCTION public.g(\"update\" int) RETURNS int LANGUAGE sql SET role = 'master' "
+     "AS $$ VALUES (1) $$",
+     "CREATE FUNCTION public.g(\"do\" \"update\") RETURNS int LANGUAGE sql SET role = 'master' "
+     "AS $$ VALUES (1) $$"],
+)  # fmt: skip
+def test_a_role_switch_inside_a_call_is_refused_wherever_it_is_written(text):
+    """Review round 3 of #2297: a function's own ``SET role`` clause switches the role on
+    entry and back on return, so the read after the call never sees it, and a call that
+    switches and then fails is rolled back to its savepoint before any read can run (the
+    transaction is aborted until then). The screen refuses the clause wherever it is
+    written: a header clause after LANGUAGE or STABLE, ``SET role TO``, a procedure header,
+    ``ALTER FUNCTION ... SET role`` in a body, and a switch followed by an error."""
+    from src.tools.routines.proof_screen import create_refusal
+
+    assert create_refusal(text, "postgresql", "function", "public") is not None, text
+
+
 def test_a_column_named_role_is_not_a_role_change():
     from src.tools.routines.proof_screen import create_refusal
 
     text = ("CREATE FUNCTION f() RETURNS void LANGUAGE plpgsql AS $$ BEGIN "
             "UPDATE t SET role = 'x' WHERE id = 1; END $$")  # fmt: skip
     assert create_refusal(text, "postgresql", "function", "public") is None
+    upsert = ("CREATE FUNCTION f() RETURNS void LANGUAGE sql AS $$ INSERT INTO t (id, role) "
+              "VALUES (1, 'x') ON CONFLICT (id) DO UPDATE SET role = EXCLUDED.role $$")  # fmt: skip
+    assert create_refusal(upsert, "postgresql", "function", "public") is None
     mysql = "CREATE PROCEDURE p() BEGIN UPDATE t SET password = 'x', user = 'y' WHERE id = 1; END"
     assert create_refusal(mysql, "mysql", "procedure", "src") is None
 
@@ -647,6 +685,23 @@ def test_a_call_that_leaves_the_runner_role_is_refused_whatever_the_spelling(bod
     assert check and all(s.transaction == tx for s in check)
     target.end_call()
     assert client.sent[-1].op == "rollback" and client.sent[-1].transaction == tx
+    target.close()
+
+
+def test_a_failing_call_is_read_too_right_after_its_savepoint_rollback():
+    """A failing call's transaction is aborted until ``ROLLBACK TO SAVEPOINT``, so the role
+    is read right after that rollback, in the same transaction, and a call that left the
+    role is still refused (a switch the rollback undoes is the screen's to refuse)."""
+    from src.tools.routines.proof_targets import RoleChanged
+
+    client = FakeDataApi(fail_on={'"public"."f"(': "22012"}, role_reset_on=('"public"."f"(',))
+    target, call = _one_call(client, "NULL")
+    with pytest.raises(RoleChanged):
+        target.run(call)
+    sent = [s.sql for s in client.sent]
+    back = sent.index("ROLLBACK TO SAVEPOINT modernizer_call")
+    assert sent[back + 1] == "SELECT current_user::text, session_user::text"
+    target.end_call()
     target.close()
 
 

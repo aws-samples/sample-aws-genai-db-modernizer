@@ -634,3 +634,15 @@ def test_the_postgresql_proof_is_still_planned(tmp_path, capsys, cred, monkeypat
     _versions(cred, "aurora-postgresql", [("16.15", 0.0)])
     code, out = _run(tmp_path, "proof-target-plan", capsys=capsys)
     assert code == 0 and out.get("reason_code") != "mysql_proof_not_available", out
+
+
+def test_proof_target_run_refuses_when_the_planned_target_cannot_be_read(tmp_path, capsys, cred):
+    """Review round 3 of #2297: the run's MySQL refusal comes before the status describe
+    calls, so a run whose planned target cannot be read is refused before any AWS call
+    rather than going on to describe the stack."""
+    path = tmp_path / "shop" / "job1" / "data-movement" / "routine-proof" / "inputs.json"
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps(INPUTS))  # no step 1 plan: the planned target cannot be read
+    code, out = _run(tmp_path, "proof-target-run", "--approve", capsys=capsys)
+    assert code == 1 and "planned target" in out["message"], out
+    assert cred.asked_for == [] and cred.regions == []

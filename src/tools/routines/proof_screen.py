@@ -29,13 +29,14 @@ holds routine text.
   decodes and folds names as the server does;
 - a text that changes the role it runs as (``SET [LOCAL|SESSION] ROLE``, ``SET SESSION
   AUTHORIZATION``, ``RESET ROLE``, ``RESET ALL``, ``RESET SESSION AUTHORIZATION``, the
-  ``session_authorization`` parameter set or reset, ``DISCARD ALL``): each token is read as
-  one word, its comments dropped, a quoted name unquoted and the word upper-cased, so
-  ``RESET "role"`` and ``RESET/*x*/role`` are ``RESET ROLE``. The screen is a first line
-  only: matching words can miss a spelling, so the test cluster's proof (#1945), which
-  confines each call with ``SET LOCAL ROLE``, also reads ``current_user`` and
-  ``session_user`` after every call and refuses a call that left the role
-  (``data_api_target``; ``set_config`` is refused below);
+  ``session_authorization`` parameter set or reset, ``DISCARD ALL``), wherever it is
+  written: a routine header's ``SET role`` clause after ``LANGUAGE`` or ``STABLE`` too, since
+  it switches the role on entry and back on return; only an UPDATE's SET list names a column.
+  Each token is read as one word, its comments dropped, a quoted name unquoted and the word
+  upper-cased, so ``RESET "role"`` and ``RESET/*x*/role`` are ``RESET ROLE``. Matching words
+  can miss a spelling: the test cluster's proof (#1945), which confines each call with ``SET
+  LOCAL ROLE``, also reads ``current_user`` and ``session_user`` after every call, which sees
+  the role a call ends with (``data_api_target``; ``set_config`` is refused below);
 - a text that acts outside the scratch database: ``CREATE``, ``ALTER`` or ``DROP`` of a
   user, role, database or schema, ``RENAME USER``, ``GRANT``, ``REVOKE``, ``SET
   GLOBAL``/``PERSIST`` (or an ``@@GLOBAL.`` assignment), ``SET PASSWORD``, ``INSTALL`` and
@@ -421,6 +422,29 @@ _ACCOUNT_CHANGES: tuple[tuple[str, ...], ...] = (
 _STATEMENT_AFTER = {";", "BEGIN", "THEN", "ELSE", "LOOP", "DO", "AS", "$$"}
 
 
+#: Words that make a statement a routine header, whose ``SET`` clauses set the routine's own
+#: configuration (a ``SET role`` there switches the role on entry and back on return).
+_HEADER_WORDS = {"FUNCTION", "PROCEDURE", "ROUTINE", "TRIGGER"}
+
+
+def _in_update(words: Sequence[str], i: int) -> bool:
+    """Whether the ``SET`` at ``i`` is an UPDATE's SET list: the statement it is in (back to
+    the last statement boundary) has ``UPDATE`` before it, as ``UPDATE t SET role = ...`` and
+    ``ON CONFLICT ... DO UPDATE SET role = ...`` do, and no routine header word stands
+    between the last ``;`` and it (a parameter or type named ``"update"`` reads as UPDATE)."""
+    j = i - 1
+    while j >= 0 and words[j] not in _STATEMENT_AFTER:
+        j -= 1
+    if "UPDATE" not in words[j + 1 : i]:
+        return False
+    k = i - 1
+    while k >= 0 and words[k] != ";":
+        if words[k] in _HEADER_WORDS:
+            return False
+        k -= 1
+    return True
+
+
 def _role_or_account_change(text: str, engine: str) -> str | None:
     """Why ``text`` may change its role or act outside the scratch database, or None."""
     try:
@@ -438,11 +462,15 @@ def _role_or_account_change(text: str, engine: str) -> str | None:
                 return "it changes a global setting of the server"
             if tuple(words[i : i + 2]) == ("SESSION", "AUTHORIZATION"):
                 return "it changes the role it runs as"
-            if i and words[i - 1] not in _STATEMENT_AFTER:
-                continue  # UPDATE t SET role = ... sets a column, not the role
+            # A role change anywhere, not only at a statement's start: a function's own
+            # ``SET role`` clause (after LANGUAGE, STABLE, ...) switches the role on entry and
+            # back on return, so no read after the call sees it. Only an UPDATE's SET list
+            # (``UPDATE t SET role = ...``, ``DO UPDATE SET role``) sets a column instead.
             for pattern in _ROLE_CHANGES:
-                if tuple(words[i : i + len(pattern)]) == pattern:
+                if tuple(words[i : i + len(pattern)]) == pattern and not _in_update(words, i):
                     return "it changes the role it runs as"
+            if i and words[i - 1] not in _STATEMENT_AFTER:
+                continue  # an account word mid-statement names a column, not an account
             for pattern in _ACCOUNT_CHANGES:
                 if tuple(words[i : i + len(pattern)]) == pattern:
                     return "it changes accounts, privileges, databases or global settings"

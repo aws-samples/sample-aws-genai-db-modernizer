@@ -112,6 +112,7 @@ class FakeDataApi:
         self.sent.append(
             Sent("execute", sql, db, kw.get("parameters", []), tx, kw.get("secretArn", ""))
         )
+        self._track_role(sql, tx)  # a failing statement can leave the role too
         self._maybe_fail(sql)
         if "plpgsql.extra_errors" in sql and tx:
             self._strict_tx.add(tx)
@@ -121,6 +122,17 @@ class FakeDataApi:
         return self._answer(sql, db, tx, kw.get("parameters", []))
 
     # ---- helpers
+    def _track_role(self, sql: str, tx: str | None) -> None:
+        if tx is None:
+            return
+        set_role = re.match(r'SET LOCAL ROLE "(\w+)"', sql)
+        if set_role:
+            self._tx_role[tx] = set_role.group(1)
+        if any(m in sql for m in self.role_reset_on):
+            self._tx_role[tx] = MASTER
+        if any(m in sql for m in self.session_reset_on):
+            self._tx_session[tx] = "someone_else"
+
     def _maybe_fail(self, sql: str) -> None:
         if any(marker in sql for marker in self.internal_on):
             raise ClientError(
@@ -142,14 +154,6 @@ class FakeDataApi:
                     for i in range(width)]  # fmt: skip
             return {"records": records, "columnMetadata": meta}
 
-        if tx is not None:
-            set_role = re.match(r'SET LOCAL ROLE "(\w+)"', sql)
-            if set_role:
-                self._tx_role[tx] = set_role.group(1)
-            if any(m in sql for m in self.role_reset_on):
-                self._tx_role[tx] = MASTER
-            if any(m in sql for m in self.session_reset_on):
-                self._tx_session[tx] = "someone_else"
         if sql.startswith("SELECT current_user::text, session_user::text"):
             current = self._tx_role.get(tx or "", MASTER)
             return rows([current, self._tx_session.get(tx or "", MASTER)], types=("text", "text"))
