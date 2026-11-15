@@ -348,6 +348,13 @@ DDL_WRITERS = {
     # and every identifier it builds goes through _parts (test_routine_names_are_checked_
     # before_they_reach_sql); it never writes to Aurora.
     "src/tools/database/disposable_engine.py",
+    # The routine proof's Data API side (#1945): the synthetic setup and the carried text run
+    # only in a scratch database of the throwaway test cluster, as a role (PostgreSQL) or
+    # user (MySQL) confined to it; its own statements (the scratch database, the role and
+    # user, ALTER TABLE ... AUTO_INCREMENT, the event runner procedure) are built from
+    # names matching the scratch pattern or quoted with _quote/_quote_table, and every value
+    # is bound; tests/unit/tools/routines/test_data_api_target.py.
+    "src/tools/routines/data_api_target.py",
     # A routine's rewritten header (#1937): the pinned SET search_path clause (each schema
     # name double-quoted with its quotes doubled) and the DEFINER clause (user and host
     # backticked with backticks doubled); a control or line-separator character in any

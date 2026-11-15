@@ -218,7 +218,8 @@ def test_plan_picks_the_newest_version_of_the_targets_line_with_auto_pause(tmp_p
     assert out["parameters"] == {"JobId": "job1", "Engine": "aurora-mysql",
                                  "EngineVersion": "8.0.mysql_aurora.3.10.0", "MinCapacity": "0",
                                  "MaxCapacity": "2", "VpcId": "vpc-0abc",
-                                 "SubnetIds": "subnet-0aa,subnet-0bb"}  # fmt: skip
+                                 "SubnetIds": "subnet-0aa,subnet-0bb",
+                                 "ParameterGroupFamily": "aurora-mysql8.0"}  # fmt: skip
     assert STACK in out["question"] and REGION in out["question"]
     assert STACK in out["teardown_question"] and "no final snapshot" in out["teardown_question"]
     assert cred.asked_for == ["rds"]  # read-only: no CloudFormation call at all
@@ -281,7 +282,7 @@ def test_deploy_creates_the_tagged_stack_and_waits_until_it_is_created(tmp_path,
         "Parameters": [{"ParameterKey": k, "ParameterValue": v} for k, v in {
             "JobId": "job1", "Engine": "aurora-mysql", "EngineVersion": "8.0.mysql_aurora.3.10.0",
             "MinCapacity": "0", "MaxCapacity": "2", "VpcId": "vpc-0abc",
-            "SubnetIds": "subnet-0aa,subnet-0bb"}.items()],
+            "SubnetIds": "subnet-0aa,subnet-0bb", "ParameterGroupFamily": "aurora-mysql8.0"}.items()],
         "Tags": THIS_JOB})  # fmt: skip
     _poll(cred, "CREATE_IN_PROGRESS")
     _poll(cred, "CREATE_COMPLETE")
@@ -563,3 +564,16 @@ def test_the_readme_lists_every_aws_call_the_commands_make() -> None:
                    "ec2:DescribeInternetGateways"):  # fmt: skip
         assert f"`{action}`" in write, action
     assert "iam:PassRole" not in section and "logs:" not in write
+
+
+def test_a_mysql_stack_holds_its_parameter_group_and_still_passes_the_ownership_check():
+    """#1945: an Aurora MySQL stack also holds the cluster parameter group that turns the event
+    scheduler off; a PostgreSQL stack holding one is not this template's."""
+    from src.tools.data_movement import proof_target as pt
+
+    mysql = {"Parameters": [{"ParameterKey": "Engine", "ParameterValue": "aurora-mysql"}]}
+    pg = {"Parameters": [{"ParameterKey": "Engine", "ParameterValue": "aurora-postgresql"}]}
+    assert pt.resources_for(mysql)["ClusterParameters"] == "AWS::RDS::DBClusterParameterGroup"
+    assert "ClusterParameters" not in pt.resources_for(pg)
+    assert pt.parameter_group_family("aurora_mysql", "8.4.mysql_aurora.8.4.10") == "aurora-mysql8.4"
+    assert pt.parameter_group_family("aurora_mysql", "8.0.mysql_aurora.3.14.0") == "aurora-mysql8.0"

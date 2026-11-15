@@ -38,6 +38,7 @@ class Sent:
     database: str = ""
     parameters: list[Any] = field(default_factory=list)
     transaction: str | None = None
+    secret: str = ""
 
 
 class FakeDataApi:
@@ -52,7 +53,8 @@ class FakeDataApi:
                  fail_on: dict[str, str] | None = None, plpgsql_check: bool = False,
                  strict: dict[str, list[tuple[str, str]]] | None = None,
                  extra_errors_fail: dict[str, str] | None = None,
-                 internal_on: tuple[str, ...] = ()) -> None:  # fmt: skip
+                 internal_on: tuple[str, ...] = (), scheduler: str = "OFF",
+                 drop_fails: tuple[str, ...] = ()) -> None:  # fmt: skip
         self.engine = engine
         self.sent: list[Sent] = []
         self.databases: set[str] = set()
@@ -64,6 +66,9 @@ class FakeDataApi:
         self.strict = strict or {}
         self.extra_errors_fail = extra_errors_fail or {}
         self.internal_on = internal_on
+        self.scheduler = scheduler
+        self.drop_fails = drop_fails
+        self.users: set[str] = set()
         self._strict_tx: set[str] = set()
         self._tx = 0
 
@@ -83,13 +88,16 @@ class FakeDataApi:
 
     def batch_execute_statement(self, **kw: Any) -> dict[str, Any]:
         self.sent.append(Sent("batch", kw["sql"], kw.get("database", ""),
-                              kw.get("parameterSets", []), kw.get("transactionId")))  # fmt: skip
+                              kw.get("parameterSets", []), kw.get("transactionId"),
+                              kw.get("secretArn", "")))  # fmt: skip
         self._maybe_fail(kw["sql"])
         return {"updateResults": [{}] * len(kw.get("parameterSets", []))}
 
     def execute_statement(self, **kw: Any) -> dict[str, Any]:
         sql, db, tx = kw["sql"], kw.get("database", ""), kw.get("transactionId")
-        self.sent.append(Sent("execute", sql, db, kw.get("parameters", []), tx))
+        self.sent.append(
+            Sent("execute", sql, db, kw.get("parameters", []), tx, kw.get("secretArn", ""))
+        )
         self._maybe_fail(sql)
         if "plpgsql.extra_errors" in sql and tx:
             self._strict_tx.add(tx)
@@ -120,6 +128,25 @@ class FakeDataApi:
                     for i in range(width)]  # fmt: skip
             return {"records": records, "columnMetadata": meta}
 
+        if any(name in sql for name in self.drop_fails) and sql.startswith("DROP"):
+            raise db_error("55006", "ERROR: database is being accessed by other users")
+        user = re.match(r"(CREATE|DROP) USER (?:IF EXISTS )?'(\w+)'@'%'", sql)
+        if user:
+            (self.users.add if user.group(1) == "CREATE" else self.users.discard)(user.group(2))
+            return {}
+        if "@@GLOBAL.event_scheduler" in sql:
+            return rows([self.scheduler], types=("VARCHAR",))
+        if "FROM mysql.user" in sql:
+            return rows(*[[f"{u}@%"] for u in sorted(self.users | {"proofadmin"})])
+        if "FROM pg_roles ORDER BY" in sql:
+            return rows(*[[r] for r in sorted(self.roles | {"proofadmin"})])
+        if "FROM pg_database ORDER BY" in sql or "SCHEMATA ORDER BY" in sql:
+            return rows(*[[d] for d in sorted(self.databases | {"routine_proof"})])
+        if "information_schema.EVENTS ORDER BY" in sql:
+            return rows()
+        if "FROM pg_roles WHERE" in sql:
+            prefix = params[-1]["value"]["stringValue"]
+            return rows(*[[r] for r in sorted(self.roles) if r.startswith(prefix)])
         created = re.match(r'CREATE DATABASE [`"](\w+)[`"]', sql)
         if created:
             self.databases.add(created.group(1))
@@ -186,3 +213,22 @@ class FakeDataApi:
         if isinstance(value, int):
             return {"longValue": value}
         return {"stringValue": str(value)}
+
+
+class FakeSecrets:
+    """A fake Secrets Manager client: the secrets created, and the ones deleted with no
+    recovery window."""
+
+    def __init__(self) -> None:
+        self.secrets: dict[str, dict[str, Any]] = {}
+        self.deleted: list[tuple[str, bool]] = []
+
+    def create_secret(self, **kw: Any) -> dict[str, Any]:
+        arn = f"arn:aws:secretsmanager:us-east-1:111122223333:secret:{kw['Name']}"  # pragma: allowlist secret
+        self.secrets[arn] = kw
+        return {"ARN": arn, "Name": kw["Name"]}
+
+    def delete_secret(self, **kw: Any) -> dict[str, Any]:
+        self.deleted.append((kw["SecretId"], bool(kw.get("ForceDeleteWithoutRecovery"))))
+        self.secrets.pop(kw["SecretId"], None)
+        return {}

@@ -55,6 +55,27 @@ RESOURCES: dict[str, str] = {
     "Cluster": "AWS::RDS::DBCluster",
     "Writer": "AWS::RDS::DBInstance",
 }
+#: Aurora MySQL's stack also holds its cluster parameter group (the event scheduler off, #1945).
+MYSQL_RESOURCES: dict[str, str] = {
+    **RESOURCES,
+    "ClusterParameters": "AWS::RDS::DBClusterParameterGroup",
+}
+
+
+def resources_for(stack: dict[str, Any]) -> dict[str, str]:
+    """The resources a stack of this template holds, by the engine it was created with."""
+    engine = next((p.get("ParameterValue") for p in stack.get("Parameters") or []
+                   if p.get("ParameterKey") == "Engine"), None)  # fmt: skip
+    return MYSQL_RESOURCES if engine == "aurora-mysql" else RESOURCES
+
+
+def parameter_group_family(engine: str, version: str) -> str:
+    """The parameter group family of an engine version (``aurora-mysql8.0``)."""
+    if engine == "aurora_mysql":
+        return "aurora-mysql8.4" if version.startswith("8.4") else "aurora-mysql8.0"
+    return f"aurora-postgresql{version.split('.')[0]}"
+
+
 #: The lowest version of each line with RDS Data API on Serverless v2 (Amazon Aurora User Guide,
 #: "Supported Regions and Aurora DB engines for RDS Data API", checked 2026-11-14).
 DATA_API_MINIMUM: dict[str, dict[str, str]] = {
@@ -80,9 +101,10 @@ _RELEASE = re.compile(r"^\d+\.\d+(\.mysql_aurora\.\d+\.\d+\.\d+)?$")
 DEFAULT_MAX_CAPACITY = 2
 DATA_NOTE = ("The test cluster holds only synthetic rows and the carried routines, never "
              "customer data.")  # fmt: skip
-DELETED = ("the stack's four resources: the cluster with every row in it (no final snapshot), "
+DELETED = ("the stack's resources: the cluster with every row in it (no final snapshot), "
            "its writer, its master secret (RDS deletes it with the cluster), its subnet group "
-           "and its security group; the VPC and subnets are yours and stay")  # fmt: skip
+           "and its security group, and on Aurora MySQL its cluster parameter group; the VPC and "
+           "subnets are yours and stay")  # fmt: skip
 COST = ("Aurora Serverless v2 bills ACU-hours while the cluster runs, plus storage and the "
         "master secret; a cluster at MinCapacity 0 pauses after SecondsUntilAutoPause idle "
         "seconds and then bills storage and the secret only. At MinCapacity 0.5 it never pauses: "
@@ -227,7 +249,8 @@ def plan(clients: ProofTargetClients, inputs: ProofTargetInputs, target: Target,
     params = {"JobId": job_id, "Engine": _engine_id(target.engine),
               "EngineVersion": picked["engine_version"], "MinCapacity": str(picked["min_capacity"]),
               "MaxCapacity": str(inputs.max_capacity), "VpcId": inputs.vpc_id,
-              "SubnetIds": ",".join(inputs.subnet_ids)}  # fmt: skip
+              "SubnetIds": ",".join(inputs.subnet_ids),
+              "ParameterGroupFamily": parameter_group_family(target.engine, picked["engine_version"])}  # fmt: skip
     return {
         "status": "plan", "stack_name": name, "region": inputs.region,
         "engine": target.engine, "version_line": target.line, "version_line_source": target.line_source,
@@ -310,13 +333,14 @@ def owned_resources(clients: ProofTargetClients, name: str, stack: dict[str, Any
     # A deployed stack holds all four; any other (a create in progress or never completed, a
     # delete in progress or failed, a failed update) may hold fewer, never another.
     partial = stack["StackStatus"] not in DEPLOYED
-    expected = {k: v for k, v in RESOURCES.items() if k in kinds} if partial else RESOURCES
+    allowed = resources_for(stack)
+    expected = {k: v for k, v in allowed.items() if k in kinds} if partial else allowed
     if kinds != expected:
-        extra = sorted(f"{k} ({v})" for k, v in kinds.items() if RESOURCES.get(k) != v)
+        extra = sorted(f"{k} ({v})" for k, v in kinds.items() if allowed.get(k) != v)
         missing = sorted(k for k in expected if kinds.get(k) != expected[k])
         parts = [f"unexpected: {', '.join(extra)}"] if extra else []
         parts += [f"missing: {', '.join(missing)}"] if missing else []
-        raise _not_ours(name, f"its resources are not the four of {TEMPLATE_NAME} "
+        raise _not_ours(name, f"its resources are not the {len(allowed)} of {TEMPLATE_NAME} "
                               f"({'; '.join(parts)})")  # fmt: skip
     cluster = _cluster(clients, found.get("Cluster"))
     if cluster is not None:

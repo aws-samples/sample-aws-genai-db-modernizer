@@ -24,20 +24,32 @@ Each routine's result goes into its row's ``proof`` and the artifact's ``proof_r
 the routine facts read (``src.shared.routine_facts``). A failing routine, or a batch that
 fails, never stops the others. Every scratch database the run creates is dropped, also when
 it fails: each target drops its own when it closes, and :func:`prove_routines` sweeps the
-job's prefix in a ``finally`` block. No routine text, row value or server message is logged
-or written into the artifact: only ids, counts, SQLSTATEs and fixed reasons.
+job's prefix in a ``finally`` block.
+
+Load and run's rule: a routine is ``proved`` only when every call succeeded. When a call
+fails, the same calls run on the disposable source engine with the original text (when the
+source's version is there), and a call that fails with the same SQLSTATE there is left out:
+it is the synthetic input, not the target. Any other failure leaves the routine
+``not_proved``, ``target_gap`` when its SQLSTATE says Aurora lacks a feature or a function.
+
+Nothing is logged, and no routine text is written into the artifact. A failed call's first
+message line is kept in that routine's ``failed_calls`` (the job folder only, never a
+deliverable), since it can quote a name or a synthetic value; the command's line carries
+ids, counts, SQLSTATEs and fixed reasons only.
 """
 
 from __future__ import annotations
 
+import contextlib
 import re
 import time
 from collections.abc import Callable, Iterable, Mapping, Sequence
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from datetime import UTC, datetime
 from typing import Any
 
 from src.contracts.routine_migration import (
+    ProofCallFailure,
     RoutineMigration,
     RoutineMigrationContract,
     RoutineProofEntry,
@@ -71,6 +83,13 @@ __all__ = [
     "prove_routines",
 ]
 
+#: Why the MySQL proof stops when its restricted runner user cannot be made.
+RUNNER_REFUSED = (
+    "the MySQL proof runs its routines only as a restricted user granted the scratch database, "
+    "and that user could not be created through the RDS Data API (it takes no bound password in "
+    "CREATE USER, and the password is never written into SQL text): nothing ran, and its "
+    "secret was deleted"
+)
 #: The statuses a routine is carried with.
 CARRIED = ("as_is", "rewritten", "model_repaired")
 _COMPARED = ("rewritten", "model_repaired")
@@ -263,25 +282,62 @@ def _entry_of_comparison(c: RoutineComparison) -> RoutineProofEntry:
                              calls_succeeded=c.calls_succeeded, mismatches=c.differences_total)  # fmt: skip
 
 
-def _entry_of_run(r: RoutineRun) -> RoutineProofEntry:
+#: SQLSTATE classes and codes that point at a gap on the target rather than at the routine:
+#: a feature Aurora does not support, a function it does not have.
+TARGET_GAP_CLASSES = ("0A",)
+TARGET_GAP_STATES = {"42883"}
+
+
+def _target_gap(state: str) -> bool:
+    return state[:2] in TARGET_GAP_CLASSES or state in TARGET_GAP_STATES
+
+
+def _entry_of_run(r: RoutineRun, source: RoutineRun | None = None) -> RoutineProofEntry:
+    """Load and run's outcome: ``proved`` only when every call succeeded, leaving out a call
+    that failed with the same SQLSTATE on the disposable source engine when one ran the same
+    inputs. A call that fails on the target alone leaves it ``not_proved``, with each
+    failing call's SQLSTATE and first message line; a feature Aurora does not support or a
+    function it does not have (``0A``, ``42883``) says so. A routine that does not load needs
+    attention."""
+    both = {(i, state) for i, _, state, _ in source.failures} if source is not None else set()
+    failures = [f for f in r.failures if (f[0], f[2]) not in both]
+    on_both = len(r.failures) - len(failures)
+    failed = [
+        ProofCallFailure(call=label, call_index=i, error_state=state, message=message or None)
+        for i, label, state, message in failures
+    ]  # fmt: skip
+    code: str | None = r.reason_code
+    reason = r.reason
     if r.outcome == "does_not_load":
         outcome = "needs_attention"
-    elif r.outcome == "ran" and r.calls_succeeded and not r.timed_out:
-        outcome = "proved"
-    else:
+    elif r.outcome != "ran":
         outcome = "not_proved"
-    reason = r.reason
-    code: str | None = r.reason_code
-    if r.outcome == "ran" and not r.calls_succeeded:
-        reason, code = (
-            reason + "; every call failed, so nothing ran to the end",
-            "no_successful_call",
-        )
-    elif r.outcome == "ran" and r.timed_out:
-        reason, code = reason + f"; {r.timed_out} ran past the time limit", "timeout"
+    elif r.timed_out:
+        outcome, code = "not_proved", "timeout"
+        reason += f"; {r.timed_out} ran past the time limit"
+    elif failures:
+        states = sorted({f[2] for f in failures})
+        outcome = "not_proved"
+        if any(_target_gap(st) for st in states):
+            code = "target_gap"
+            reason += ("; Aurora does not support what a call needs (SQLSTATE "
+                       f"{', '.join(st for st in states if _target_gap(st))})")  # fmt: skip
+        else:
+            code = "calls_failed"
+            reason += (
+                f"; {len(failures)} failed on the test cluster only (SQLSTATE {', '.join(states)})"
+            )
+    elif r.calls_succeeded == 0:
+        outcome, code = "not_proved", "no_successful_call"
+        reason += "; every call failed the same way on the source, so nothing ran to the end"
+    else:
+        outcome = "proved"
+    if on_both and r.outcome == "ran":
+        reason += f"; {on_both} failed the same way on the source engine, so they are left out"
     return RoutineProofEntry(mode="load_and_run", outcome=outcome, reason=reason,  # type: ignore[arg-type]
                              reason_code=code, calls_run=r.calls_run, calls_succeeded=r.calls_succeeded,
-                             error_states=list(r.error_states))  # fmt: skip
+                             calls_failed_on_both=on_both, error_states=list(r.error_states),
+                             failed_calls=failed)  # fmt: skip
 
 
 def _inherit(
@@ -331,19 +387,33 @@ def prove_routines(
                     if c.routine_id in plan.side_by_side:
                         out[c.routine_id] = _entry_of_comparison(c)
         if plan.load_and_run:
-            for r in run_routines(_with_deps(plan, plan.load_and_run), tables, target=target,
-                                  dialect=dialect, seed=seed, extensions=extensions):  # fmt: skip
-                if r.routine_id in plan.load_and_run:
-                    out[r.routine_id] = _entry_of_run(r)
+            runs = {r.routine_id: r for r in run_routines(
+                _with_deps(plan, plan.load_and_run), tables, target=target, dialect=dialect,
+                seed=seed, extensions=extensions) if r.routine_id in plan.load_and_run}  # fmt: skip
+            failing = {rid for rid, r in runs.items() if r.failures}
+            on_source: dict[str, RoutineRun] = {}
+            if failing and source is not None:
+                # The same inputs on the source's own engine, the original text: a call that
+                # fails there the same way is no gap of the target's.
+                originals = [replace(r, carried=r.original) for r in _with_deps(plan, failing)]
+                on_source = {r.routine_id: r for r in run_routines(
+                    originals, tables, target=source, dialect=dialect, seed=seed,
+                    extensions=extensions) if r.outcome == "ran"}  # fmt: skip
+            for rid, r in runs.items():
+                out[rid] = _entry_of_run(r, on_source.get(rid))
     finally:
-        cleanup()
+        # never hides the original error or a finished proof: the cleanup reports what it left
+        with contextlib.suppress(Exception):
+            cleanup()
     out = _inherit(out, plan.trigger_of)
     tool = strict_check[0] if strict_check else "not_available"
     for rid, entry in list(out.items()):
-        findings = list(strict.get(rid, []))
+        findings = [f for f in strict.get(rid, []) if f[0] != "unchecked"]
         update: dict[str, Any] = {}
         if dialect == "postgresql":
-            if rid in strict:
+            if rid in strict and any(f[0] == "unchecked" for f in strict[rid]):
+                update["strict_check"] = "not_available"  # the check could not run on it
+            elif rid in strict:
                 update["strict_check"] = "failed" if findings else "passed"
             else:
                 update["strict_check"] = (
@@ -367,7 +437,7 @@ def prove_routines(
 
 
 def apply_proof(migration: RoutineMigrationContract, entries: Mapping[str, RoutineProofEntry], *,
-                target: str, source: str | None, strict_check: str, started: float,
+                target: str, source: str | None, strict_check: str, seconds: float,
                 error_fields: bool = False) -> RoutineMigrationContract:  # fmt: skip
     """``migration`` with each carried row's ``proof`` and the ``proof_run``, validated."""
     rows = []
@@ -386,7 +456,7 @@ def apply_proof(migration: RoutineMigrationContract, entries: Mapping[str, Routi
     run = RoutineProofRun(
         target=target, source=source,
         strict_check=strict_check if migration.source_engine == "postgresql" else "not_applicable",  # type: ignore[arg-type]
-        proved_at=datetime.now(UTC), seconds=round(time.monotonic() - started, 1),
+        proved_at=datetime.now(UTC), seconds=round(seconds, 1),
         counts=counts, not_carried=sum(r.status not in CARRIED for r in migration.routines),
         coverage_limits=limits,
     )  # fmt: skip
@@ -410,6 +480,7 @@ def run_proof(
     data_api: Any,
     cluster: Mapping[str, Any],
     source_factory: Callable[[str, str], TargetFactory] | None = None,
+    secrets_client: Any = None,
 ) -> dict[str, Any]:
     """The routine proof of the job's newest routine-migration artifact on the test
     cluster ``cluster`` (``proof-target-status``'s ``cluster``), written back into that
@@ -417,7 +488,6 @@ def run_proof(
     from src.agents.collector.routine_sources import read_routine_sources
     from src.storage.assignment_versioning import resolve_downstream_assignment_version
     from src.storage.routine_migration_store import latest_routine_migration, routine_migration_path
-    from src.tools.routines.data_api_target import data_api_target, drop_scratch
     from src.tools.routines.proof_targets import disposable_target
 
     started = time.monotonic()
@@ -448,63 +518,112 @@ def run_proof(
             "status": "error",
             "message": "the test cluster has no Data API or no master secret ARN",
         }
-    collector = store.read_json(f"{db}/{job_id}/collector/output.json")
-    user = str(cluster.get("master_username") or "proofadmin")
-    plan = plan_proof(
-        migration, read_routine_sources(store, db, job_id), collector, target_user=user
-    )
-    strict: dict[str, list[tuple[str, str]]] = {}
-    strict_check: list[str] = []
+    if engine == "mysql" and secrets_client is None:
+        return {"status": "error", "message": "the MySQL proof needs Secrets Manager for its "
+                "restricted runner user's secret"}  # fmt: skip
+    from src.tools.routines import data_api_target as dat
+
     arns = {
         "cluster_arn": str(cluster["arn"]),
         "secret_arn": str(cluster["master_user_secret_arn"]),
     }
     admin = str(cluster.get("database_name") or "") or None
-    from src.tools.routines.data_api_target import text_key
-
-    ids = {r.routine_id: r.routine_id for r in plan.routines}
-    ids.update({text_key(s.create_sql): r.routine_id for r in plan.routines for s in r.carried})
-    target = data_api_target(data_api, cluster_arn=arns["cluster_arn"], secret_arn=arns["secret_arn"],
-                             engine=engine, version=str(cluster.get("engine_version") or ""),
-                             job_id=job_id, admin_database=admin, strict=strict,
-                             strict_check=strict_check, routine_ids=ids)  # fmt: skip
-    major = _major(engine, migration.source_version)
-    make_source = source_factory or (lambda e, v: disposable_target(e, v))
-    source = make_source(engine, major) if major else None
+    if engine == "mysql":
+        scheduler = dat.mysql_event_scheduler(data_api, **arns, admin_database=admin)
+        if scheduler == "ON":
+            return {"status": "error", "message": "the test cluster's event_scheduler is ON, so a "
+                    "loaded event could fire outside every call's rollback and change rows "
+                    "between a call and its snapshot: refused. Deploy the stack again from "
+                    "routine-proof-target.yaml, whose parameter group sets it OFF"}  # fmt: skip
+    before = dat.cluster_baseline(data_api, **arns, engine=engine, admin_database=admin)
+    left: list[str] = []
     dropped: list[str] = []
-
-    def cleanup() -> None:
-        dropped.extend(
-            drop_scratch(data_api, **arns, engine=engine, job_id=job_id, admin_database=admin)
+    runner: Any = None
+    try:
+        if engine == "mysql":
+            try:
+                runner = dat.create_runner(data_api, secrets_client, **arns, job_id=job_id,
+                                           admin_database=admin, tags=_tags(job_id))  # fmt: skip
+            except de.EngineError as exc:
+                # Never a fallback to the master user: the MySQL proof stops here.
+                return {"status": "error", "sqlstate": exc.sqlstate, "message": RUNNER_REFUSED}
+        collector = store.read_json(f"{db}/{job_id}/collector/output.json")
+        user = runner.definer if runner else str(cluster.get("master_username") or "proofadmin")
+        plan = plan_proof(migration, read_routine_sources(store, db, job_id), collector,
+                          target_user=user)  # fmt: skip
+        strict: dict[str, list[tuple[str, str]]] = {}
+        strict_check: list[str] = []
+        ids = {r.routine_id: r.routine_id for r in plan.routines}
+        ids.update(
+            {dat.text_key(s.create_sql): r.routine_id for r in plan.routines for s in r.carried}
         )
+        target = dat.data_api_target(
+            data_api, cluster_arn=arns["cluster_arn"], secret_arn=arns["secret_arn"], engine=engine,
+            version=str(cluster.get("engine_version") or ""), job_id=job_id, admin_database=admin,
+            strict=strict, strict_check=strict_check, routine_ids=ids, runner=runner,
+        )  # fmt: skip
+        major = _major(engine, migration.source_version)
+        make_source = source_factory or (lambda e, v: disposable_target(e, v))
+        source = make_source(engine, major) if major else None
 
-    schema = collector.get("database_schema") or {}
-    entries = prove_routines(plan, schema.get("tables") or [], target=target, source=source,
-                             cleanup=cleanup, strict=strict, strict_check=strict_check)  # fmt: skip
+        def cleanup() -> None:
+            done, missed = dat.drop_scratch(data_api, **arns, engine=engine, job_id=job_id,
+                                            admin_database=admin)  # fmt: skip
+            dropped.extend(done)
+            left.extend(missed)
+
+        schema = collector.get("database_schema") or {}
+        entries = prove_routines(plan, schema.get("tables") or [], target=target, source=source,
+                                 cleanup=cleanup, strict=strict, strict_check=strict_check)  # fmt: skip
+    finally:
+        if runner is not None:
+            left.extend(dat.drop_runner(data_api, secrets_client, **arns, admin_database=admin,
+                                        account=runner))  # fmt: skip
+    try:
+        changes = dat.baseline_changes(
+            before, dat.cluster_baseline(data_api, **arns, engine=engine, admin_database=admin)
+        )
+    except Exception as exc:  # noqa: BLE001 - reported; the proof's result is still written
+        changes = {
+            "baseline": {"added": [], "removed": [f"could not be read ({type(exc).__name__})"]}
+        }
     where = (f"an Aurora {'PostgreSQL' if engine == 'postgresql' else 'MySQL'} "
              f"{cluster.get('engine_version') or ''} test cluster").replace("  ", " ")  # fmt: skip
     written = apply_proof(migration, entries, target=where,
                           source=f"a disposable {engine} {major} engine" if plan.side_by_side and major else None,
                           strict_check=(strict_check[0] if strict_check else "not_available"),
-                          started=started)  # fmt: skip
+                          seconds=time.monotonic() - started)  # fmt: skip
     key = routine_migration_path(db, job_id, version)
     store.write_json(key, written.model_dump(mode="json"))
     run = written.proof_run
     assert run is not None  # nosec B101 - apply_proof sets it
+    clean = not left and not changes
     return {
-        "status": "proved" if run.counts["needs_attention"] == 0 and run.counts["not_proved"] == 0 else "done",
+        "status": ("proved" if run.counts["needs_attention"] == 0 and run.counts["not_proved"] == 0
+                   and clean else "done"),
         "artifact": key,
         "target": run.target,
         "source": run.source,
         "strict_check": run.strict_check,
         "counts": run.counts,
         "seconds": run.seconds,
+        "runner": "a restricted user granted the scratch database only" if runner else
+        "a NOLOGIN role that owns the scratch database's public schema",
         "leftover_scratch_dropped": len(dropped),
+        "left_on_cluster": left,
+        "cluster_changes": changes,
         "routines": [
             {"routine_id": r.routine_id, "kind": r.kind, "status": r.status, "mode": r.proof.mode,
              "outcome": r.proof.outcome, "reason": r.proof.reason, "calls_run": r.proof.calls_run,
              "calls_succeeded": r.proof.calls_succeeded, "mismatches": r.proof.mismatches,
-             "strict_check": r.proof.strict_check}
+             "strict_check": r.proof.strict_check,
+             "failed_calls": [f"{f.call} (SQLSTATE {f.error_state})" for f in r.proof.failed_calls]}
             for r in written.routines if r.proof is not None
         ],  # fmt: skip
     }
+
+
+def _tags(job_id: str) -> list[dict[str, str]]:
+    from src.tools.data_movement.proof_target import JOB_TAG, PURPOSE, PURPOSE_TAG
+
+    return [{"Key": JOB_TAG, "Value": job_id}, {"Key": PURPOSE_TAG, "Value": PURPOSE}]

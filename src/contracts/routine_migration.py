@@ -134,6 +134,19 @@ class RoutineRewriteEntry(BaseModel):
 _OUTCOMES = ("proved", "needs_attention", "not_proved")
 
 
+class ProofCallFailure(BaseModel):
+    """One call that failed on the test cluster (#1945): its label and index, its SQLSTATE,
+    and the engine's first message line, which can quote a name or a synthetic value. It
+    stays in the job's artifact: no deliverable prints it."""
+
+    call: str = Field(..., min_length=1, description="The generated call's label")
+    call_index: int = Field(..., ge=1, description="Its place among the routine's calls")
+    error_state: str = Field(..., min_length=1, max_length=16, description="The error's SQLSTATE")
+    message: str | None = Field(
+        None, max_length=300, description="The engine's first message line, job folder only"
+    )
+
+
 class RoutineProofEntry(BaseModel):
     """What the routine proof on the test cluster found for one carried routine (#1945)."""
 
@@ -148,10 +161,12 @@ class RoutineProofEntry(BaseModel):
     outcome: Literal["proved", "needs_attention", "not_proved"] = Field(
         ...,
         description=(
-            "proved: it loaded, the strict check found no error, and its calls ran (at least "
-            "one succeeded) or, side by side, no difference was found on them; "
+            "proved: it loaded, the strict check found no error, and every call succeeded (a "
+            "call failing the same way on the source left out) or, side by side, no difference "
+            "was found on them; "
             "needs_attention: it did not load, the strict check found an error, or a call "
-            "behaved differently; not_proved: it could not be run or compared (reason)"
+            "behaved differently; not_proved: a call failed on the test cluster only (with a "
+            "feature Aurora does not support: target_gap), or it could not be run or compared"
         ),
     )
     reason: str = Field(..., min_length=1, description="Why, with no routine or table text")
@@ -161,6 +176,18 @@ class RoutineProofEntry(BaseModel):
     mismatches: int = Field(0, ge=0, description="Side by side: the differences found")
     error_states: list[str] = Field(
         default_factory=list, description="The SQLSTATEs of the calls that failed"
+    )
+    calls_failed_on_both: int = Field(
+        0,
+        ge=0,
+        description=(
+            "Load and run: calls that failed with the same SQLSTATE on the disposable source "
+            "engine as well, left out of the failures"
+        ),
+    )
+    failed_calls: list[ProofCallFailure] = Field(
+        default_factory=list,
+        description="Load and run: each call that failed on the test cluster only",
     )
     strict_check: Literal["passed", "failed", "not_available", "not_applicable"] = Field(
         "not_applicable",

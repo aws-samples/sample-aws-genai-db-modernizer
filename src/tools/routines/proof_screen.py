@@ -28,8 +28,15 @@ holds routine text.
   PostgreSQL every name the statement binds is read again from the parser's tree, which
   decodes and folds names as the server does;
 - a text that changes the role it runs as (``SET [LOCAL|SESSION] ROLE``, ``SET SESSION
-  AUTHORIZATION``, ``RESET ROLE``, ``RESET ALL``, ``DISCARD ALL``), since the test cluster's
-  proof (#1945) confines each call with ``SET LOCAL ROLE``.
+  AUTHORIZATION``, ``RESET ROLE``, ``RESET ALL``, ``RESET SESSION AUTHORIZATION``,
+  ``DISCARD ALL``), whatever the spelling: each token is read as one word, a quoted name
+  unquoted and every word upper-cased, so ``RESET "role"`` is ``RESET ROLE``; the test
+  cluster's proof (#1945) confines each call with ``SET LOCAL ROLE`` (``set_config`` is
+  refused below);
+- a text that acts outside the scratch database: ``CREATE``, ``ALTER``, ``DROP`` or
+  ``RENAME`` of a user, role, database or schema, ``GRANT``, ``REVOKE``, and ``SET
+  GLOBAL``/``PERSIST`` (or an ``@@GLOBAL.`` assignment), since such a statement commits on its
+  own on MySQL and outlives the call's rollback.
 
 What it does not refuse, as known limits: ``SECURITY DEFINER`` (on a disposable engine
 every routine runs as one role), and anything inside a statement built at run time,
@@ -362,6 +369,64 @@ def _after_definer(tokens: Sequence[RoutineToken], i: int) -> int | None:
     return None
 
 
+def _word(tok: RoutineToken) -> str:
+    """A token as one normalised word: a quoted identifier (``"role"``, a MySQL backticked
+    name) unquoted, then upper-cased, so ``RESET "role"`` reads as ``RESET ROLE``."""
+    text = tok.text
+    if len(text) >= 2 and text[0] == text[-1] and text[0] in ('"', "`"):
+        text = text[1:-1].replace(text[0] * 2, text[0])
+    return text.upper()
+
+
+#: Statements that change the role a call runs as, or act outside the scratch database
+#: (accounts, privileges, other databases, the server's global settings): as normalised
+#: word sequences, each matched at any place of any level of the text.
+_ROLE_CHANGES: tuple[tuple[str, ...], ...] = (
+    ("SET", "ROLE"), ("SET", "LOCAL", "ROLE"), ("SET", "SESSION", "ROLE"),
+    ("RESET", "ROLE"), ("RESET", "ALL"), ("RESET", "SESSION"), ("DISCARD", "ALL"),
+    ("SESSION", "AUTHORIZATION"),
+)  # fmt: skip
+_ACCOUNT_CHANGES: tuple[tuple[str, ...], ...] = (
+    ("CREATE", "USER"), ("ALTER", "USER"), ("DROP", "USER"), ("RENAME", "USER"),
+    ("CREATE", "ROLE"), ("ALTER", "ROLE"), ("DROP", "ROLE"), ("GRANT",), ("REVOKE",),
+    ("CREATE", "DATABASE"), ("DROP", "DATABASE"), ("ALTER", "DATABASE"),
+    ("CREATE", "SCHEMA"), ("DROP", "SCHEMA"), ("ALTER", "SCHEMA"),
+    ("SET", "GLOBAL"), ("SET", "PERSIST"), ("SET", "PERSIST_ONLY"),
+)  # fmt: skip
+
+
+#: The words a statement of a body can follow.
+_STATEMENT_AFTER = {";", "BEGIN", "THEN", "ELSE", "LOOP", "DO", "AS", "$$"}
+
+
+def _role_or_account_change(text: str, engine: str) -> str | None:
+    """Why ``text`` may change its role or act outside the scratch database, or None."""
+    try:
+        levels = list(_levels(text, engine))
+    except RoutineTokenError:
+        return "its text could not be read"
+    for tokens in levels:
+        words = [_word(t) for t in tokens]
+        for i in range(len(words)):
+            if (
+                words[i] == "@@"
+                and i + 1 < len(words)
+                and words[i + 1] in ("GLOBAL", "PERSIST", "PERSIST_ONLY")
+            ):
+                return "it changes a global setting of the server"
+            if tuple(words[i : i + 2]) == ("SESSION", "AUTHORIZATION"):
+                return "it changes the role it runs as"
+            if i and words[i - 1] not in _STATEMENT_AFTER:
+                continue  # UPDATE t SET role = ... sets a column, not the role
+            for pattern in _ROLE_CHANGES:
+                if tuple(words[i : i + len(pattern)]) == pattern:
+                    return "it changes the role it runs as"
+            for pattern in _ACCOUNT_CHANGES:
+                if tuple(words[i : i + len(pattern)]) == pattern:
+                    return "it changes accounts, privileges, databases or global settings"
+    return None
+
+
 def create_refusal(text: str, engine: str, kind: str, namespace: str) -> str | None:
     """Why ``text`` (one ``CREATE`` of ``kind``) may not be created in ``namespace`` for a
     comparison, or None (see the module docstring for what is refused)."""
@@ -422,16 +487,9 @@ def create_refusal(text: str, engine: str, kind: str, namespace: str) -> str | N
             return "its header is not in the expected form"
         if any(sch is not None and sch != namespace for sch in parsed):
             return f"its name is qualified with a schema other than the target's ({namespace})"
-    words = [t.text.upper() for t in deep]
-    for i, word in enumerate(words):
-        if word == "ROLE" and i and words[i - 1] in ("SET", "LOCAL", "SESSION", "RESET"):
-            return "it changes the role it runs as"
-        if word == "ALL" and i and words[i - 1] == "RESET":  # RESET ALL resets the role too
-            return "it changes the role it runs as"
-        if word == "ALL" and i and words[i - 1] == "DISCARD":  # resets the role and the session
-            return "it changes the role it runs as"
-        if word == "AUTHORIZATION" and i and words[i - 1] == "SESSION":
-            return "it changes the role it runs as"
+    why = _role_or_account_change(text, engine)
+    if why is not None:
+        return why
     if any(t.text.casefold() == "search_path" for t in deep):
         return "it sets search_path, so names would not resolve in the target's schema"
     if any(t.text.casefold() == "set_config" for t in deep):

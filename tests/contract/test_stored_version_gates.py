@@ -44,8 +44,9 @@ REVIEWED: dict[str, tuple[int, str]] = {
     "src/agents/schema_design/group_merger.py": (1, "a version fallback for sorting"),
     "src/tools/data_movement/dms_step.py": (1, "a source database engine version"),
     "src/tools/data_movement/proof_target.py": (
-        7,
-        "the lowest Aurora engine version of each line with the RDS Data API (#1946)",
+        8,
+        "the lowest Aurora engine version of each line with the RDS Data API (#1946), and the "
+        "Aurora MySQL 8.4 line's parameter group family (#1945)",
     ),
     "src/tools/routines/proof_inputs.py": (1, "a numeric test value, not a version"),
     "src/tools/schema/aurora_common/delta_merge.py": (1, "a delta version fallback"),

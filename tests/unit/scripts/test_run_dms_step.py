@@ -11,6 +11,7 @@ import dataclasses
 import functools
 import json
 import os
+import re
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
@@ -336,7 +337,16 @@ def test_only_cloudformation_dms_s3_and_sts_clients_exist_so_no_secret_is_read()
     assert [f.name for f in dataclasses.fields(script.MoveClients)] == [
         "cloudformation", "dms", "s3", "sts"]  # fmt: skip
     source = (REPO_ROOT / "scripts" / "run_dms_step.py").read_text()
-    assert "get_secret_value" not in source and 'client("secretsmanager")' not in source
+    # The one Secrets Manager client is the MySQL routine proof's (#1945): it creates and
+    # deletes that run's own runner secret, and nothing in the move reads any secret's value.
+    assert source.count('client("secretsmanager")') == 1
+    assert "def _secrets(cred" in source and "_secrets(cred) if" in source
+    for path in ("scripts/run_dms_step.py", "src/tools/routines/data_api_target.py",
+                 "src/tools/routines/proof_run.py"):  # fmt: skip
+        text = (REPO_ROOT / path).read_text()
+        assert "get_secret_value" not in text and "GetSecretValue" not in text, path
+    target = (REPO_ROOT / "src/tools/routines/data_api_target.py").read_text()
+    assert set(re.findall(r"secrets_client\.(\w+)\(", target)) == {"create_secret", "delete_secret"}
 
 
 # --- deploy / execute ----------------------------------------------------------------------

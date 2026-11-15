@@ -7,19 +7,19 @@ The comparison (:mod:`src.tools.routines.comparison`) runs the same generated ca
 two engines: the original routines on a disposable engine of the source's engine and
 version, and the carried routines on the test target. It talks to both through
 :class:`ProofTarget`, so where a side runs is pluggable. :class:`DisposableEngineTarget`
-is the one implementation today, for both sides. A scratch schema on the customer's
-migration Aurora (#1945) and a test Aurora the pipeline deploys (#1946) are later
-implementations of the same protocol; nothing here talks to AWS.
+is the source side's implementation; the carried side on the throwaway Aurora test cluster
+(#1945, #1946) is :class:`~src.tools.routines.data_api_target.DataApiTarget`, a scratch
+database reached through the RDS Data API. Nothing here talks to AWS.
 
 Namespace. Every target owns one schema, ``namespace`` (on a disposable engine
-PostgreSQL ``public`` and the MySQL database; on a customer Aurora, its scratch
-schema). Tables and routines are loaded into it, and ``create`` refuses, before running
+PostgreSQL ``public`` and the MySQL database; on the test cluster, the scratch database's
+``public`` schema on PostgreSQL and the scratch database on MySQL). Tables and routines are loaded into it, and ``create`` refuses, before running
 it, any text :func:`~src.tools.routines.proof_screen.create_refusal` refuses: more than
 one statement, a header or ``DEFINER`` outside the expected form, a name qualified with
 another schema, a ``search_path`` setting, a body naming another schema's objects. So a
-carried ``CREATE FUNCTION app.f`` never writes outside the scratch schema. A dynamic
-statement in a body is not read: on a customer Aurora, #1945 has to run the routines as
-a role that can write only to the scratch schema.
+carried ``CREATE FUNCTION app.f`` never writes outside the target's schema. A dynamic
+statement in a body is not read: on the test cluster the routines run as a role (PostgreSQL)
+or a user (MySQL) that can write only to the scratch database.
 
 What a target does, in the order the comparison calls it:
 

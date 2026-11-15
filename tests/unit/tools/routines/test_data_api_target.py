@@ -40,7 +40,19 @@ def _mod(name: str) -> Any:
     return importlib.import_module("src.tools.routines.data_api_target")
 
 
+RUNNER_ARN = (
+    "arn:aws:secretsmanager:us-east-1:111122223333:secret:runner"  # pragma: allowlist secret
+)
+
+
+def _runner() -> Any:
+    dat = _mod("data_api_target")
+    return dat.RunnerAccount(dat.runner_prefix(JOB) + "0a0b0c0d", RUNNER_ARN)
+
+
 def _factory(client: FakeDataApi, engine: str = "postgresql", **kw: Any) -> Any:
+    if engine == "mysql":
+        kw.setdefault("runner", _runner())
     return _mod("data_api_target").data_api_target(
         client,
         **ARNS,
@@ -119,7 +131,10 @@ def test_a_mysql_target_uses_its_scratch_database_as_the_namespace():
     target = _factory(client, engine="mysql")
     t = target()
     assert t.namespace == t.database and client.sent[0].sql == f"CREATE DATABASE `{t.database}`"
-    assert not client.roles  # no role switch on MySQL through the Data API
+    runner = _runner()
+    assert (
+        client.sent[1].sql == f"GRANT ALL PRIVILEGES ON `{t.database}`.* TO '{runner.username}'@'%'"
+    )
     t.close()
     assert client.sent[-1].sql == f"DROP DATABASE IF EXISTS `{t.database}`" and not client.databases
 
@@ -154,9 +169,10 @@ def test_drop_scratch_drops_only_this_jobs_scratch_databases():
         "routine_proof",
         dat.scratch_prefix(JOB) + "nothex!",
     }
-    dropped = dat.drop_scratch(
+    dropped, left = dat.drop_scratch(
         client, **ARNS, engine="postgresql", job_id=JOB, admin_database="routine_proof"
     )
+    assert left == []
     assert (
         dropped == [mine] and mine not in client.databases and "routine_proof" in client.databases
     )
@@ -399,3 +415,145 @@ def test_a_mysql_value_read_as_text_is_converted_by_its_type_as_the_driver_does(
         text("00FF", "varbinary") == "00ff"
         and text("2024-01-01 12:00:00", "datetime") == "2024-01-01T12:00:00"
     )
+
+
+@pytest.mark.parametrize(
+    "body",
+    ['RESET "role"', 'RESET "ROLE"', 'SET "role" TO DEFAULT', 'SET LOCAL "Role" = postgres',
+     "SET SESSION AUTHORIZATION DEFAULT", 'SET SESSION "authorization" DEFAULT',
+     "RESET SESSION AUTHORIZATION", "PERFORM set_config('role', 'postgres', true)"],
+)  # fmt: skip
+def test_every_spelling_of_a_role_change_is_refused(body):
+    """Review of #2297: the screen reads each token as one normalised word, so a quoted or
+    otherwise spelled role change is refused like the plain one."""
+    from src.tools.routines.proof_screen import create_refusal
+
+    text = f"CREATE FUNCTION f() RETURNS text LANGUAGE plpgsql AS $$ BEGIN {body}; RETURN 1; END $$"
+    assert create_refusal(text, "postgresql", "function", "public") is not None, body
+
+
+def test_a_column_named_role_is_not_a_role_change():
+    from src.tools.routines.proof_screen import create_refusal
+
+    text = ("CREATE FUNCTION f() RETURNS void LANGUAGE plpgsql AS $$ BEGIN "
+            "UPDATE t SET role = 'x' WHERE id = 1; END $$")  # fmt: skip
+    assert create_refusal(text, "postgresql", "function", "public") is None
+
+
+@pytest.mark.parametrize(
+    "body",
+    ["CREATE USER 'x'@'%' IDENTIFIED BY 'y'", "GRANT ALL ON *.* TO 'x'@'%'",
+     "REVOKE ALL ON *.* FROM 'x'@'%'", "CREATE DATABASE evil", "DROP DATABASE other",
+     "CREATE SCHEMA evil", "SET GLOBAL event_scheduler = ON", "SET PERSIST max_connections = 10",
+     "SET @@GLOBAL.event_scheduler = ON", "DROP USER 'x'@'%'"],
+)  # fmt: skip
+def test_a_mysql_body_that_acts_outside_the_scratch_database_is_refused(body):
+    """Review of #2297: a MySQL DDL or account statement commits on its own and outlives
+    the call's rollback, so the screen refuses it (defence in depth; the calls also run as
+    a user granted the scratch database only)."""
+    from src.tools.routines.proof_screen import create_refusal
+
+    text = f"CREATE PROCEDURE p() BEGIN {body}; END"
+    assert create_refusal(text, "mysql", "procedure", "src") is not None, body
+
+
+def test_a_mysql_target_runs_everything_but_its_own_database_as_the_restricted_runner():
+    """Review of #2297: on MySQL the setup, the routines and the calls run as the run's
+    restricted user, through its own secret; the master user only creates, grants and drops
+    the scratch database."""
+    client = FakeDataApi("mysql", calls={"`f`(": [1]})
+    t = _factory(client, engine="mysql")()
+    t.load_setup(
+        ProofSetup(dialect="mysql", ddl=("CREATE TABLE `t` (`id` int PRIMARY KEY)",), rows=())
+    )
+    t.create(de.SourceRoutine("f", "function", "CREATE FUNCTION f() RETURNS int RETURN 1"))
+    t.prepare_calls()
+    t.close()
+    master = [s.sql for s in client.sent if s.op == "execute" and s.secret == ARNS["secret_arn"]]
+    assert [m.split()[0] for m in master] == ["CREATE", "GRANT", "DROP"]
+    assert all(s.secret == RUNNER_ARN for s in client.sent
+               if s.op in ("execute", "batch") and s.sql not in master)  # fmt: skip
+
+
+def test_a_mysql_target_needs_a_runner():
+    dat = _mod("data_api_target")
+    with pytest.raises(ValueError, match="restricted runner"):
+        dat.DataApiTarget(FakeDataApi("mysql"), **ARNS, engine="mysql", version="8.0", job_id=JOB,
+                          admin_database=None)  # fmt: skip
+
+
+def test_the_runner_user_and_its_secret_are_made_and_both_removed():
+    """Review of #2297: the runner user is created with a generated password bound into
+    CREATE USER and kept only in its own secret, tagged with the job id; dropping it drops
+    the user and deletes the secret with no recovery window."""
+    from tests.unit.tools.routines.fake_data_api import FakeSecrets
+
+    dat = _mod("data_api_target")
+    client, secrets = FakeDataApi("mysql"), FakeSecrets()
+    tags = [{"Key": "modernizer:job-id", "Value": JOB}]
+    runner = dat.create_runner(client, secrets, **ARNS, job_id=JOB, admin_database=None, tags=tags)
+    assert runner.username in client.users and runner.username.startswith(dat.runner_prefix(JOB))
+    stored = secrets.secrets[runner.secret_arn]
+    password = json.loads(stored["SecretString"])["password"]
+    assert stored["Tags"] == tags and stored["Name"] == dat.runner_secret_name(JOB, runner.username)
+    create = next(s for s in client.sent if s.sql.startswith("CREATE USER"))
+    assert password not in create.sql and create.parameters[0]["value"] == {"stringValue": password}
+    assert dat.drop_runner(client, secrets, **ARNS, admin_database=None, account=runner) == []
+    assert not client.users and secrets.deleted == [(runner.secret_arn, True)]
+
+
+def test_a_runner_user_that_cannot_be_made_leaves_no_secret():
+    from tests.unit.tools.routines.fake_data_api import FakeSecrets
+
+    dat = _mod("data_api_target")
+    client, secrets = FakeDataApi("mysql", fail_on={"CREATE USER": "HY000"}), FakeSecrets()
+    with pytest.raises(de.EngineError):
+        dat.create_runner(client, secrets, **ARNS, job_id=JOB, admin_database=None, tags=[])
+    assert not secrets.secrets and secrets.deleted and secrets.deleted[0][1] is True
+
+
+def test_the_sweep_keeps_going_past_a_failed_drop_and_drops_an_orphaned_role():
+    """Review of #2297: one drop that fails never stops the others, and a ``_runner`` role
+    whose database is gone is dropped too."""
+    dat = _mod("data_api_target")
+    stuck, other = dat.scratch_name(JOB), dat.scratch_name(JOB)
+    client = FakeDataApi(drop_fails=(stuck,))
+    client.databases |= {stuck, other}
+    client.roles |= {dat.scratch_name(JOB) + "_runner"}
+    dropped, left = dat.drop_scratch(client, **ARNS, engine="postgresql", job_id=JOB,
+                                     admin_database="routine_proof")  # fmt: skip
+    assert left == [stuck] and other in dropped and not client.roles
+
+
+def test_the_baseline_names_what_a_run_left_outside_the_scratch_databases():
+    dat = _mod("data_api_target")
+    client = FakeDataApi("mysql")
+    before = dat.cluster_baseline(client, **ARNS, engine="mysql", admin_database=None)
+    client.users.add("evil")
+    client.databases.add("evil_db")
+    after = dat.cluster_baseline(client, **ARNS, engine="mysql", admin_database=None)
+    assert dat.baseline_changes(before, before) == {}
+    assert dat.baseline_changes(before, after) == {
+        "databases": {"added": ["evil_db"], "removed": []},
+        "users": {"added": ["evil@%"], "removed": []},
+    }
+
+
+def test_a_signed_64_bit_integer_is_bound_as_a_long_and_a_bigger_one_as_text():
+    param = _mod("data_api_target")._param
+    assert param("p", 2**63 - 1)["value"] == {"longValue": 2**63 - 1}
+    assert param("p", -(2**63))["value"] == {"longValue": -(2**63)}
+    assert param("p", 2**63)["value"] == {"stringValue": str(2**63)}
+    assert param("p", float("nan"))["value"] == {"stringValue": "nan"}
+
+
+def test_a_plpgsql_check_that_cannot_be_created_is_not_available():
+    strict: dict[str, list[tuple[str, str]]] = {}
+    ran: list[str] = []
+    client = FakeDataApi(plpgsql_check=True, fail_on={"CREATE EXTENSION": "42501"},
+                         strict={"public.f(integer)": [("error", "42703")]})  # fmt: skip
+    target = _factory(client, strict=strict, strict_check=ran)()
+    target.load_setup(ProofSetup(dialect="postgresql", ddl=(), rows=()))
+    target.prepare_calls()
+    target.close()
+    assert ran == ["not_available"] and strict == {}
