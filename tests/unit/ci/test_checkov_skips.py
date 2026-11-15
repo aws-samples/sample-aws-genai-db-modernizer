@@ -55,7 +55,8 @@ EXPECTED_SKIPS = {
     ("automation.yaml", "AutomationInstance", "CKV_AWS_46"),
     ("debezium-plugin-bucket.yaml", "AccessLogBucket", "CKV_AWS_18"),
     # The throwaway routine-proof test cluster (#1946): one serverless writer, encrypted at the
-    # cluster, no monitoring role.
+    # cluster, no monitoring role; the Data API's managed secret is its only sign-in.
+    ("routine-proof-target.yaml", "Cluster", "CKV_AWS_162"),
     ("routine-proof-target.yaml", "Writer", "CKV_AWS_118"),
     ("routine-proof-target.yaml", "Writer", "CKV_AWS_16"),
     ("routine-proof-target.yaml", "Writer", "CKV_AWS_157"),

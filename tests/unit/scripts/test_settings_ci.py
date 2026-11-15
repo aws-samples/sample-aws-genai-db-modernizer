@@ -214,3 +214,38 @@ def test_the_headless_run_never_adds_a_directory() -> None:
     dontAsk allows with no rule; ci/e2e-llm.sh never passes it."""
     script = (REPO_ROOT / "ci" / "e2e-llm.sh").read_text()
     assert "--add-dir" not in script
+
+
+def _bash_rule_matches(command: str, rules: list[str]) -> bool:
+    """Claude Code's Bash rule glob: ``*`` matches any run of characters, spaces included."""
+    import fnmatch
+
+    patterns = [r[len("Bash(") : -1] for r in rules if r.startswith("Bash(") and r.endswith(")")]
+    return any(fnmatch.fnmatchcase(command, p) for p in patterns)
+
+
+@pytest.mark.parametrize(
+    "command",
+    [
+        "uv run python scripts/run_dms_step.py proof-target-plan --job-id j --db d",
+        "uv run python scripts/run_dms_step.py proof-target-deploy --job-id j --db d --approve",
+        "uv run python scripts/run_dms_step.py proof-target-status --job-id j --db d",
+        "uv run python scripts/run_dms_step.py proof-target-teardown --job-id j --db d --approve",
+        # argparse takes the options before the subcommand too
+        "uv run python scripts/run_dms_step.py --job-id j --db d proof-target-deploy --approve",
+    ],
+)
+def test_a_headless_run_is_denied_every_proof_target_command(command: str) -> None:
+    """#1946: the routine-proof test cluster is never deployed, read or deleted headless. A deny
+    wins over the ``run_dms_step.py *`` allow, whatever the caller passes (``--auto`` or not)."""
+    permissions = _load_settings()["permissions"]
+    assert _bash_rule_matches(command, permissions["allow"])  # the allow alone would let it run
+    assert _bash_rule_matches(command, permissions["deny"])
+
+
+@pytest.mark.parametrize("subcommand", ["status --until stack", "plan", "routines", "teardown"])
+def test_the_other_run_dms_step_subcommands_stay_allowed(subcommand: str) -> None:
+    permissions = _load_settings()["permissions"]
+    command = f"uv run python scripts/run_dms_step.py {subcommand} --job-id j --db d"
+    assert _bash_rule_matches(command, permissions["allow"])
+    assert not _bash_rule_matches(command, permissions["deny"])

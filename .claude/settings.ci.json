@@ -70,7 +70,9 @@
       "Bash(sudo *)",
       "Bash(curl *)",
       "Bash(wget *)",
-      "Bash(nc *)"
+      "Bash(nc *)",
+      "Bash(uv run python scripts/run_dms_step.py proof-target-*)",
+      "Bash(uv run python scripts/run_dms_step.py * proof-target-*)"
     ]
   },
   "hooks": {

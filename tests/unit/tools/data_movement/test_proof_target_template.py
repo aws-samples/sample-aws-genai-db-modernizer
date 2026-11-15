@@ -95,6 +95,17 @@ def test_the_cluster_is_encrypted_with_a_managed_secret_and_the_data_api(templat
     assert cluster["ManageMasterUserPassword"] is True
     assert "MasterUserPassword" not in cluster
     assert cluster["EnableHttpEndpoint"] is True
+    # The Data API signs in with the managed secret; IAM database authentication is not used.
+    assert "EnableIAMDatabaseAuthentication" not in cluster
+
+
+def test_no_log_group_is_created_outside_the_stack(template) -> None:
+    """Log exports make RDS create /aws/rds/cluster/<id>/... log groups outside the stack, which
+    teardown would leave behind, holding failed statements (routine text). The proof reads
+    errors through the Data API, so the cluster exports none."""
+    cluster = _of_type(template, "AWS::RDS::DBCluster")["Properties"]
+    assert "EnableCloudwatchLogsExports" not in cluster
+    assert "CloudwatchLogs" not in json.dumps(template)
 
 
 def test_it_is_throwaway_with_no_final_snapshot(template) -> None:
