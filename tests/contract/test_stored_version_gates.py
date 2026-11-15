@@ -43,6 +43,10 @@ REVIEWED: dict[str, tuple[int, str]] = {
     "src/agents/load_test/elasticache/provisioner.py": (1, "an ElastiCache engine version"),
     "src/agents/schema_design/group_merger.py": (1, "a version fallback for sorting"),
     "src/tools/data_movement/dms_step.py": (1, "a source database engine version"),
+    "src/tools/data_movement/proof_target.py": (
+        7,
+        "the lowest Aurora engine version of each line with the RDS Data API (#1946)",
+    ),
     "src/tools/routines/proof_inputs.py": (1, "a numeric test value, not a version"),
     "src/tools/schema/aurora_common/delta_merge.py": (1, "a delta version fallback"),
 }

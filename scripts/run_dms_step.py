@@ -56,6 +56,14 @@ Every subcommand prints one JSON line, its result (exit 1 only on ``"status": "e
   the triggers-enable script), the read-only ``routines-check.sql`` and ``routines.md``.
   ``routines-check`` (no AWS call): read the customer's ``routines-check.tsv`` strictly and write
   ``routines-check.json``, which the gate's routines check reads. Neither connects to a database.
+- ``proof-target-plan``, ``proof-target-status`` (read-only) and ``proof-target-deploy --approve``,
+  ``proof-target-teardown --approve`` (AWS writes; #1946): the throwaway Aurora Serverless v2 test
+  cluster the routine proof runs on (``src/tools/data_movement/proof_target.py``), from their own
+  inputs file (``data-movement/routine-proof/inputs.json``: region, VPC and private subnet ids).
+  All four are refused under ``MODERNIZER_CI_SANDBOX=1`` and with ``--auto`` before any AWS call;
+  the plan's ``question`` and ``teardown_question`` name the stack and region. Deploy and
+  teardown act only on this job's stack (its ``modernizer:job-id`` and ``modernizer:purpose``
+  tags, exactly the template's four resources, and the cluster's ``modernizer:job-id`` tag).
 - ``triggers-scripts`` (#1948, renamed in #2113, no AWS call): write the triggers-enable
   script, which turns on the triggers and events step 1 left off, for the customer to run
   (``triggers-enable.sql``: PostgreSQL ``ENABLE TRIGGER`` for each trigger step 1 created
@@ -136,6 +144,10 @@ Usage:
     uv run python scripts/run_dms_step.py resume --job-id <id> --db <db> --approve
     uv run python scripts/run_dms_step.py retry --job-id <id> --db <db> --approve
     uv run python scripts/run_dms_step.py teardown --job-id <id> --db <db> --approve
+    uv run python scripts/run_dms_step.py proof-target-plan --job-id <id> --db <db>
+    uv run python scripts/run_dms_step.py proof-target-deploy --job-id <id> --db <db> --approve
+    uv run python scripts/run_dms_step.py proof-target-status --job-id <id> --db <db> --wait-seconds 540
+    uv run python scripts/run_dms_step.py proof-target-teardown --job-id <id> --db <db> --approve
 """
 
 from __future__ import annotations
@@ -162,6 +174,7 @@ import yaml  # noqa: E402
 from pydantic import BaseModel, ConfigDict, Field, ValidationError  # noqa: E402
 
 from src.contracts.dms_preflight import CHECK_ORDER  # noqa: E402
+from src.tools.data_movement.proof_target import RESOURCES as _PROOF_RESOURCES  # noqa: E402
 
 if TYPE_CHECKING:
     from src.tools.data_movement.dms_gate import ValidatedTables
@@ -185,6 +198,12 @@ ROUTINES_CHECK = "routines-check"  # reads the customer's check output; no AWS c
 READS = ("preflight", "gate", "status", ROUTINES)
 VERIFY_SCRIPTS, VERIFY = "verify-scripts", "verify"  # optional, no AWS call (#1998)
 TRIGGERS_SCRIPTS, TRIGGERS_CHECK = "triggers-scripts", "triggers-check"  # no AWS call (#1948)
+# The routine-proof test cluster (#1946): never in a CI sandbox or an --auto run.
+PROOF_PLAN, PROOF_DEPLOY = "proof-target-plan", "proof-target-deploy"
+PROOF_STATUS, PROOF_TEARDOWN = "proof-target-status", "proof-target-teardown"
+PROOF_TARGET = (PROOF_PLAN, PROOF_DEPLOY, PROOF_STATUS, PROOF_TEARDOWN)
+PROOF_WRITES = (PROOF_DEPLOY, PROOF_TEARDOWN)
+PROOF_TARGET_RESOURCES = _PROOF_RESOURCES  # the stack the ownership check accepts
 LOB_SIZES = (
     "lob-sizes"  # reads the customer's lob-sizes.tsv, or applies a skip; no AWS call (#2123)
 )
@@ -406,7 +425,7 @@ class MoveError(Exception):
 
 def _parser() -> argparse.ArgumentParser:
     p = argparse.ArgumentParser(description=(__doc__ or "").splitlines()[0])
-    shown = [*LOCAL, *READS, *WRITES]
+    shown = [*LOCAL, *READS, *WRITES, *PROOF_TARGET]
     p.add_argument("command", choices=[*shown, *LEGACY_COMMANDS],
                    metavar="{" + ",".join(shown) + "}")  # fmt: skip
     p.add_argument("--job-id", required=True)
@@ -414,6 +433,8 @@ def _parser() -> argparse.ArgumentParser:
     p.add_argument("--artifact-root", default=os.environ.get("ARTIFACT_DIR", "./artifacts"))
     p.add_argument("--inputs", help="the inputs file (default: the step's inputs.json)")
     p.add_argument("--approve", action="store_true", help="the customer approved this AWS write")
+    p.add_argument("--auto", action="store_true", help="a headless /move --auto run: the "
+                   "proof-target commands refuse it")  # fmt: skip
     p.add_argument("--change-set", help="execute: the change set deploy created; status: the "
                    "change set just executed, so a stack still in review is waited on")  # fmt: skip
     p.add_argument("--confirm", action="append", default=[], metavar="CHECK_ID",
@@ -2424,6 +2445,77 @@ def _delegate(command: str, args: argparse.Namespace, inputs: MoveInputs) -> int
     return check_dms_step_preflight.main(argv)
 
 
+def _proof_target(args: argparse.Namespace, sleep: Callable[[float], None]) -> dict[str, Any]:
+    """The routine-proof test cluster's commands (#1946): refused under the CI sandbox and with
+    ``--auto`` before anything is read, and the writes without ``--approve`` before any AWS
+    call; the refusal names the stack and the region the question asks about."""
+    from scripts._sandbox import SANDBOX_ENV
+    from src.shared.database_name import validate_database_name
+    from src.shared.job_id import validate_job_id
+    from src.tools.data_movement import proof_target as pt
+
+    command = args.command
+    if os.environ.get(SANDBOX_ENV) == "1":
+        return {"status": "error", "message": f"{command} acts on the routine-proof test cluster "
+                f"in AWS: refused under {SANDBOX_ENV}=1 (a headless CI run makes no AWS call here)"}  # fmt: skip
+    if args.auto:
+        return {"status": "error", "message": f"{command} never runs under --auto: the "
+                "routine-proof test cluster is deployed, read and deleted only in a run the "
+                "customer attends, after their approval"}  # fmt: skip
+    writes = command in PROOF_WRITES
+    wait = (
+        args.wait_seconds if args.wait_seconds is not None else (MAX_WAIT_SECONDS if writes else 0)
+    )
+    if not 0 <= wait <= MAX_WAIT_SECONDS or not 10 <= args.interval_seconds <= 300:
+        return {"status": "error", "message": f"--wait-seconds must be 0 to {MAX_WAIT_SECONDS}, "
+                "--interval-seconds 10 to 300"}  # fmt: skip
+    try:
+        db, job_id = validate_database_name(args.db), validate_job_id(args.job_id)
+        path = (Path(args.inputs) if args.inputs
+                else Path(args.artifact_root) / db / job_id / pt.INPUTS_DIR / "inputs.json")  # fmt: skip
+        if not path.is_file():
+            raise MoveError(f"no inputs file at {path}: write the region, vpc_id and subnet_ids "
+                            "(private subnets in two Availability Zones) there first")  # fmt: skip
+        try:
+            inputs = pt.ProofTargetInputs.model_validate_json(path.read_text())
+        except ValidationError as exc:
+            raise MoveError(f"{path}: " + "; ".join(
+                f"{'.'.join(str(x) for x in e['loc']) or 'inputs'}: {e['msg']}"
+                for e in exc.errors())) from None  # fmt: skip
+        name = pt.stack_name(inputs, job_id)
+        if writes and not args.approve:
+            question = (pt.teardown_question(name, inputs.region) if command == PROOF_TEARDOWN
+                        else f"Deploy the routine-proof test cluster stack {name} in {inputs.region}?")  # fmt: skip
+            return {"status": "error", "message": f"{command} is an AWS write: pass --approve only "
+                    f"after the customer approved it ({question})"}  # fmt: skip
+        from src.storage.local_store import LocalArtifactStore
+        from src.tools.aws.credentials import AWSCredentialManager
+
+        # The planned target, read before any AWS call (plan and deploy only).
+        store = LocalArtifactStore(base_dir=args.artifact_root)
+        target = (pt.planned_target(store, db, job_id) if command in (PROOF_PLAN, PROOF_DEPLOY)
+                  else None)  # fmt: skip
+        if target is not None:
+            pt.check_region(target.engine, inputs.region)
+        _use_profile(inputs.write_profile if writes else inputs.read_profile)
+        cred = AWSCredentialManager(region=inputs.region)
+        if command == PROOF_PLAN and target is not None:
+            return pt.plan(pt.ProofTargetClients(None, cred.client("rds")), inputs, target, job_id)
+        clients = pt.ProofTargetClients(cred.client("cloudformation"), cred.client("rds"))
+        if command == PROOF_DEPLOY and target is not None:
+            return pt.deploy(clients, inputs, target, job_id, wait, args.interval_seconds,
+                             sleep=sleep)  # fmt: skip
+        if command == PROOF_STATUS:
+            return pt.status(clients, inputs, job_id, wait, args.interval_seconds, sleep=sleep)
+        return pt.teardown(clients, inputs, job_id, wait, args.interval_seconds, sleep=sleep)
+    except (MoveError, ValueError) as exc:
+        return {"status": "error", "message": str(exc)}
+    except Exception as exc:  # noqa: BLE001 - this script must always print JSON
+        if _credential_error(exc):
+            return credentials_error(exc, [])
+        return {"status": "error", "message": f"{type(exc).__name__}: {exc}"}
+
+
 def main(argv: list[str] | None = None, *, clients: MoveClients | None = None,
          sleep: Callable[[float], None] = time.sleep, cloudwatch: Any = None) -> int:  # fmt: skip
     args = _parser().parse_args(argv)
@@ -2439,6 +2531,8 @@ def main(argv: list[str] | None = None, *, clients: MoveClients | None = None,
     violation = sandbox_violation(args, path_args=(*PATH_ARGS, "inputs"))
     if violation:
         return emit({"status": "error", "message": violation})
+    if args.command in PROOF_TARGET:
+        return emit(_proof_target(args, sleep))
     if args.command in WRITES and os.environ.get(SANDBOX_ENV) == "1":
         return emit({"status": "error", "message": f"{args.command} is an AWS write: refused under "
                      f"{SANDBOX_ENV}=1 (a headless CI run makes no AWS write)"})  # fmt: skip

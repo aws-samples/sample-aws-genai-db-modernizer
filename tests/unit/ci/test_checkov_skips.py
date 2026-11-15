@@ -33,6 +33,7 @@ TEMPLATES = [
     REPO_ROOT / "infrastructure" / "cloudformation" / "automation.yaml",
     REPO_ROOT / "infrastructure" / "cloudformation" / "bedrock-guardrail.yaml",
     PLUGIN_BUCKET_STACK,
+    REPO_ROOT / "infrastructure" / "cloudformation" / "data-movement" / "routine-proof-target.yaml",
     REPO_ROOT / "pipeline" / "iam-roles.yaml",
     # The rendered data-movement examples CI scans too.
     *sorted(
@@ -53,6 +54,11 @@ DOCKERFILES = [
 EXPECTED_SKIPS = {
     ("automation.yaml", "AutomationInstance", "CKV_AWS_46"),
     ("debezium-plugin-bucket.yaml", "AccessLogBucket", "CKV_AWS_18"),
+    # The throwaway routine-proof test cluster (#1946): one serverless writer, encrypted at the
+    # cluster, no monitoring role.
+    ("routine-proof-target.yaml", "Writer", "CKV_AWS_118"),
+    ("routine-proof-target.yaml", "Writer", "CKV_AWS_16"),
+    ("routine-proof-target.yaml", "Writer", "CKV_AWS_157"),
     ("iam-roles.yaml", "AgentCoreExecutionRole", "CKV_AWS_111"),
     ("Dockerfile", "-", "CKV_DOCKER_2"),
 }
