@@ -130,4 +130,4 @@ class TestDashboardStats:
         assert data["total_assessments"] == 0
         assert data["active_jobs"] == 0
         assert data["success_rate_percent"] == 0
-        assert data["average_duration_hours"] == 0
+        assert data["average_duration_hours"] is None

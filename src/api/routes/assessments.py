@@ -16,6 +16,7 @@ from src.api.dependencies import (
     require_json_content_type,
     validated_filename,
 )
+from src.api.durations import duration_seconds
 from src.api.models.requests import (
     DETECT_FROM_FILE,
     AssessmentRequest,
@@ -335,11 +336,7 @@ async def list_assessments(
 
     assessments = []
     for ex in page:
-        duration = None
-        if ex["started_at"] and ex["stopped_at"]:
-            start = datetime.fromisoformat(ex["started_at"])
-            end = datetime.fromisoformat(ex["stopped_at"])
-            duration = int((end - start).total_seconds())
+        duration = duration_seconds(ex["started_at"], ex["stopped_at"])
 
         assessments.append(
             AssessmentSummary(
@@ -375,13 +372,7 @@ async def get_assessment(job_id: str = Depends(job_id_param)):
     current_stage = None
 
     for stage in history:
-        duration = None
-        if stage.get("started_at") and stage.get("completed_at"):
-            from datetime import datetime as dt
-
-            start = dt.fromisoformat(stage["started_at"])
-            end = dt.fromisoformat(stage["completed_at"])
-            duration = int((end - start).total_seconds())
+        duration = duration_seconds(stage.get("started_at"), stage.get("completed_at"))
 
         stages.append(
             StageProgress(
@@ -557,13 +548,7 @@ async def get_agent_statuses(job_id: str = Depends(job_id_param)):
 
     agents = []
     for stage in history:
-        duration = None
-        if stage.get("started_at") and stage.get("completed_at"):
-            from datetime import datetime as dt
-
-            start = dt.fromisoformat(stage["started_at"])
-            end = dt.fromisoformat(stage["completed_at"])
-            duration = int((end - start).total_seconds())
+        duration = duration_seconds(stage.get("started_at"), stage.get("completed_at"))
 
         # Check S3 for output size and summary if completed
         output_size = None

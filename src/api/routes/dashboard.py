@@ -5,6 +5,7 @@
 
 from fastapi import APIRouter, HTTPException
 
+from src.api.durations import duration_seconds
 from src.api.models.responses import DashboardStats
 from src.api.services.local_execution import LocalExecutionService
 
@@ -32,17 +33,13 @@ async def get_dashboard_stats():
     success_count = len(succeeded)
     success_rate = (success_count / total * 100) if total > 0 else 0
 
-    # Compute average duration from completed jobs
-    durations = []
-    for ex in succeeded:
-        if ex.get("started_at") and ex.get("stopped_at"):
-            from datetime import datetime as dt
-
-            start = dt.fromisoformat(ex["started_at"])
-            end = dt.fromisoformat(ex["stopped_at"])
-            durations.append((end - start).total_seconds() / 3600)
-
-    avg_duration = sum(durations) / len(durations) if durations else 0
+    # Average over jobs with a known, non-negative duration; unknown otherwise.
+    durations = [
+        d / 3600
+        for d in (duration_seconds(ex.get("started_at"), ex.get("stopped_at")) for ex in succeeded)
+        if d is not None
+    ]
+    avg_duration = round(sum(durations) / len(durations), 1) if durations else None
 
     # Last analysis timestamp
     last_at = all_executions[0]["started_at"] if all_executions else None
@@ -51,7 +48,7 @@ async def get_dashboard_stats():
         total_assessments=total,
         active_jobs=active,
         success_rate_percent=round(success_rate, 1),
-        average_duration_hours=round(avg_duration, 1),
+        average_duration_hours=avg_duration,
         completed_today=0,  # TODO: filter by today's date
         last_analysis_at=last_at,
     )

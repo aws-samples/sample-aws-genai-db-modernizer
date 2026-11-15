@@ -32,6 +32,7 @@ import CustomTable from "../components/CustomTable";
 import { getStatusType as sharedGetStatusType, getStatusText as sharedGetStatusText, isAlreadyFinishedMessage } from "../utils/jobStatus";
 import { buildDashboardActionItems } from "../utils/dashboardActions";
 import { assessmentHref, copyJobIdLabel, databaseLabel } from "../utils/assessmentRows";
+import { formatDuration, UNKNOWN_DURATION } from "../utils/duration";
 
 
 
@@ -79,7 +80,7 @@ const ComponentPage = memo(() => {
     total_assessments: 0,
     active_jobs: 0,
     success_rate_percent: 0,
-    average_duration_hours: 0,
+    average_duration_hours: null,
     completed_today: 0,
     last_analysis_at: null
   });
@@ -220,7 +221,7 @@ const ComponentPage = memo(() => {
                 total_assessments: stats.total_assessments || 0,
                 active_jobs: stats.active_jobs || 0,
                 success_rate_percent: stats.success_rate_percent || 0,
-                average_duration_hours: stats.average_duration_hours || 0,
+                average_duration_hours: stats.average_duration_hours ?? null,
                 completed_today: stats.completed_today || 0,
                 last_analysis_at: stats.last_analysis_at || null
               });
@@ -516,16 +517,6 @@ const ComponentPage = memo(() => {
 
 
 
-  const formatDuration = useCallback((seconds) => {
-          if (!seconds) return '-';
-          const hours = Math.floor(seconds / 3600);
-          const minutes = Math.floor((seconds % 3600) / 60);
-          return `${hours}h ${minutes}m`;
-  }, []);
-
-
-
-
   const formatTimeAgo = useCallback((dateString) => {
           if (!dateString) return 'N/A';
           const date = new Date(dateString);
@@ -584,7 +575,7 @@ const ComponentPage = memo(() => {
                                                     created: formatDateTime(assessment.created_at),
                                                     duration: formatDuration(assessment.duration_seconds),
                     }))
-  , [assessments, getStatusText, formatDateTime, formatDuration]);
+  , [assessments, getStatusText, formatDateTime]);
 
 
   //-- Action items for ButtonDropdown
@@ -700,7 +691,7 @@ const ComponentPage = memo(() => {
                         { label: t("dashboard.status.total-analyses"), type: "pair", value: (<Link fontSize="display-l" variant="awsui-value-large">{dashboardStats.total_assessments}</Link>)},
                         { label: t("dashboard.status.active-jobs"), type: "pair", value: (<Link fontSize="display-l" variant="awsui-value-large">{dashboardStats.active_jobs}</Link>) },
                         { label: t("dashboard.status.success-rate"), type: "pair", value: (<Box fontSize="display-l" fontWeight="light">{dashboardStats.success_rate_percent.toFixed(1)}%</Box>) },
-                        { label: t("dashboard.status.average-time"), type: "pair", value: (<Box fontSize="display-l" fontWeight="light">{dashboardStats.average_duration_hours.toFixed(1)}h</Box>) },
+                        { label: t("dashboard.status.average-time"), type: "pair", value: (<Box fontSize="display-l" fontWeight="light">{dashboardStats.average_duration_hours === null ? UNKNOWN_DURATION : `${dashboardStats.average_duration_hours.toFixed(1)}h`}</Box>) },
                       ]} />
                     </Container>
 
