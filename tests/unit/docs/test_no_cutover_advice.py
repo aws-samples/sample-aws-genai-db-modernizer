@@ -103,6 +103,8 @@ ALLOWED = {
     ("src/tools/data_movement/routine_scripts.py", '        status="ready",'),
     ("src/tools/data_movement/triggers_scripts.py", 'status: str  # "ready" or "nothing_to_do"'),
     ("src/tools/data_movement/triggers_scripts.py", '            status="ready",'),
+    ("src/tools/data_movement/view_scripts.py", 'status: str  # "ready" or "nothing_to_deploy"'),
+    ("src/tools/data_movement/view_scripts.py", 'status="ready",'),
     # The disclaimer, split over two string literals in its source.
     (
         "src/tools/data_movement/dms_step.py",
@@ -113,6 +115,10 @@ ALLOWED = {
     (".claude/commands/move.md", "(Move or Prove for `ready`, Prove for `moving`)"),
     (".claude/commands/move.md", '`"status": "ready"`: show `carried`, `in_script`, `deferred`'),
     (".claude/commands/move.md", 'on `"status": "ready"`, show `expected`, `in_script`'),
+    (
+        ".claude/commands/move.md",
+        '`"status": "ready"`: show `carried`, `in_script`, every entry of `not_carried_views`',
+    ),
     # The Debezium handoff of later waves (#1427), not step 1: its Readiness API.
     ("src/tools/data_movement/initial_load.py", "stay not ready (safe, but it stalls)"),
     ("src/tools/data_movement/initial_load.py", "    ready: bool"),

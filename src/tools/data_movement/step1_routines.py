@@ -12,10 +12,11 @@ artifact's deploy order:
 
 1. A routine that needs attention (or is anything but ``as_is`` or ``rewritten``) is
    not carried, with the artifact's reasons.
-2. A routine that names a view is not carried (``depends_on_view:<schema.view>``, one
-   per view): step 1 creates no views. The artifact records a view as a table
-   dependency, so views are told apart by the collection's view list (and the
-   contract's).
+2. A routine that names a view step 1 does not create is not carried
+   (``depends_on_view:<schema.view>``, one per view); a view the contract's views section
+   carries (#2082) holds nothing back, since the views deploy script runs first. The
+   artifact records a view as a table dependency, so views are told apart by the
+   collection's view list (and the contract's).
 3. A routine that names a table step 1 does not create (a blocked rule, or a table
    outside the step), or a trigger on such a table, is not carried
    (``depends_on_table_not_in_step``).
@@ -147,11 +148,13 @@ def build_step_routines(
     version: int | None,
     views: set[str] | None = None,
     triggers: dict[TriggerKey, dict[str, Any]] | None = None,
+    carried_views: set[str] | None = None,
 ) -> StepRoutines:
     """The routines section for ``contract`` from ``migration`` (module docstring);
     ``source="none"`` when there is no artifact (no routine this pipeline carries).
     ``views`` are the collection's views as lower-case ``schema.name``; the contract's
-    views count too. ``triggers`` are the collection's triggers by :func:`_trigger_key`."""
+    views count too. ``triggers`` are the collection's triggers by :func:`_trigger_key`.
+    ``carried_views``: the views step 1 creates, by the same names (#2082)."""
     if migration is None or not migration.routines:
         return StepRoutines(source="none")
     engine = contract.target.engine
@@ -174,7 +177,8 @@ def build_step_routines(
             own = _trigger_table(row)
             if own is not None:
                 named.add(own)
-            reasons += [f"{VIEW_DEPENDENCY}:{v}" for v in sorted(named & view_names)]
+            held = (named & view_names) - (carried_views or set())
+            reasons += [f"{VIEW_DEPENDENCY}:{v}" for v in sorted(held)]
             if named - tables - view_names:
                 reasons.append(TABLE_NOT_IN_STEP)
             if any(
@@ -250,6 +254,7 @@ def attach_step_routines(
     routine-migration artifact at all gets it written for the contract's version first."""
     if contract.step != 1 or contract.target.engine not in DEFERRED_KINDS or not contract.rules:
         return contract
+    from src.tools.data_movement.step1_views import carried_view_names
     from src.tools.routines.migration import latest_routine_migration
 
     found = latest_routine_migration(store, database_name, job_id, contract.assignment_version)
@@ -267,6 +272,7 @@ def attach_step_routines(
         version=None if found is None else found[0],
         views=_collection_views(schema),
         triggers=_collection_triggers(schema, contract.target.engine),
+        carried_views=carried_view_names(contract),
     )
     # The section is validated on its own; nothing else of the contract changes.
     return contract.model_copy(update={"routines": section})

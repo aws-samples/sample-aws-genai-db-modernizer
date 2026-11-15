@@ -48,6 +48,7 @@ from src.agents.collector.routine_sources import (
     attach_to_contract,
     build_routine_sources,
     event_fields,
+    mark_view_statuses,
     procedure_fields,
     routine_capture,
     routine_capture_model,
@@ -711,7 +712,9 @@ def _collect_routine_creates_raw(db: MySQLRemoteCollector, include_bodies: bool)
     CREATE``, exact) where the user may run it; elsewhere it is rebuilt from the catalog.
     ``parameters`` stays None when they could not be read: no CREATE is then rebuilt
     from them. Nothing is read when the caller opted out."""
-    out: dict[str, Any] = {"procedures": [], "triggers": [], "events": [], "parameters": None}
+    out: dict[str, Any] = {
+        "procedures": [], "triggers": [], "events": [], "parameters": None, "views": []
+    }  # fmt: skip
     if not include_bodies:
         return out
     reads = (
@@ -719,6 +722,7 @@ def _collect_routine_creates_raw(db: MySQLRemoteCollector, include_bodies: bool)
         ("triggers", lambda: db.collect_triggers(include_bodies=True)),
         ("events", lambda: db.collect_events(include_bodies=True)),
         ("parameters", db.collect_routine_parameters),
+        ("views", lambda: db.collect_views()),  # #2082: each view's CREATE, built from its pieces
     )
     for key, read in reads:
         try:
@@ -756,6 +760,7 @@ def _live_routines(
         triggers=schema_raw.get("triggers") or [],
         events=schema_raw.get("events") or [],
     )
+    mark_view_statuses(engine, schema_raw.get("views"), include_bodies=include_bodies)
     return build.sources
 
 
@@ -1558,12 +1563,16 @@ def _build_metrics(
 def _build_views(raw: list[dict]) -> list[View] | None:
     if not raw:
         return None
+    from src.agents.collector.view_sources import view_fields
+
     return [
         View(
             view_id=f"{v.get('view_name', '')}",
             view_name=v.get("view_name", ""),
             definition=v.get("definition") or "",
             is_updatable=v.get("is_updatable", "NO") == "YES",
+            # #2082: what step 1 needs to create the view again (its CREATE is kept apart)
+            **view_fields(v),
         )
         for v in raw
     ]

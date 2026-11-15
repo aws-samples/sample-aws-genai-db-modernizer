@@ -224,6 +224,16 @@ ENGINE_OR_PATTERN_TABLES: dict[str, tuple[frozenset[str], str]] = {
         "the routine kinds each same-family Aurora target leaves to the triggers-enable script "
         "(ADR-034 Decision 6): plumbing for step 1's routines section, no routing rule (#1947)",
     ),
+    "src/tools/data_movement/step1_views.py": (
+        frozenset({"FAMILY"}),
+        "the source family each same-family Aurora target creates views from: plumbing for "
+        "step 1's views section, no routing rule (#2082)",
+    ),
+    "src/tools/data_movement/view_check.py": (
+        frozenset({"_KINDS", "_VIEW"}),
+        "the relation kinds each Aurora target's view check output may name, and the one that "
+        "is a view: plumbing for reading step 1's view check, no routing rule (#2082)",
+    ),
     "src/tools/data_movement/routine_check.py": (
         frozenset({"_KINDS"}),
         "the routine kinds each Aurora target's check output may name: plumbing for reading "

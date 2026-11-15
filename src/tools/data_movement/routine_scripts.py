@@ -357,20 +357,31 @@ def routine_schemas(
 
 
 def schema_statements(
-    engine: str, schemas: list[str], target: TargetSpec | None = None, *, triggers: bool = False
+    engine: str,
+    schemas: list[str],
+    target: TargetSpec | None = None,
+    *,
+    triggers: bool = False,
+    views: bool = False,
 ) -> list[str]:
     """The ``CREATE SCHEMA`` (``CREATE DATABASE``) statements for ``schemas``. On Aurora
     MySQL each database gets what step-1.ddl.sql gives the tables' database (#2276): the
     source's character set and collation that ``target`` carries, else none (the server
-    defaults), with the same sentence. ``triggers``: the triggers-enable script's (#2273)."""
+    defaults), with the same sentence. ``triggers``: the triggers-enable script's (#2273);
+    ``views``: the views deploy script's (#2082)."""
     if not schemas:
         return []
     if engine == "aurora_postgresql":
+        what, grant = (
+            ("views", "USAGE on each schema, and SELECT on its views,")
+            if views
+            else ("routines", "USAGE on each schema")
+        )
         return [
-            "-- The schemas the routines live in that step 1's DDL does not create (the user that "
+            f"-- The schemas the {what} live in that step 1's DDL does not create (the user that "
             "runs this script needs CREATE on the database).",
             "-- Each is owned by the user that runs this script, and the script grants nothing: "
-            "USAGE on each schema for the application user is yours to add.",
+            f"{grant} for the application user is yours to add.",
             *(f"CREATE SCHEMA IF NOT EXISTS {_pg_ident(s)};" for s in schemas),
             "",
         ]
@@ -406,11 +417,12 @@ def schema_statements(
             "",
         ]
 
+    what, grant = ("views", "SELECT") if views else ("routines", "EXECUTE")
     return [
-        "-- The databases the routines live in that step 1's DDL does not create (the user that "
+        f"-- The databases the {what} live in that step 1's DDL does not create (the user that "
         "runs this script needs CREATE on them).",
         "-- Each is created by the user that runs this script, and the script grants nothing: "
-        "EXECUTE on each database for the application user is yours to add.",
+        f"{grant} on each database for the application user is yours to add.",
         f"-- Each CREATE DATABASE here is like step-1.ddl.sql's. {sentence}",
         *statements,
         "",
@@ -692,12 +704,13 @@ def _instructions(
     lines += [
         "- Checked, not load-tested: the routines passed the static checks; no load-and-run "
         "proof ran yet.",
-        "- Step 1 does not create views: a routine that depends on a view is not carried in "
-        "step 1.",
+        "- Views: run views-deploy.sql (views.md) before this script. A routine that depends "
+        "on a view step 1 does not create is not carried in step 1.",
         "",
         "## Order",
         "",
-        "1. Wait until the DMS full load is complete (`/move` shows it at 100%).",
+        "1. Wait until the DMS full load is complete (`/move` shows it at 100%), and run "
+        "`views-deploy.sql` first when step 1 wrote one (`views.md`).",
         f"2. Run the deploy script once, as the user the routines should belong to:\n\n"
         f"   ```\n   {deploy}\n   ```",
         f"3. Run the read-only check script and save its output next to these files, at "

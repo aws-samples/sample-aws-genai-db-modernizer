@@ -47,6 +47,7 @@ from src.agents.collector.routine_sources import (
     apply_body_statuses,
     attach_to_contract,
     build_routine_sources,
+    mark_view_statuses,
     non_dml_triggers,
     procedure_fields,
     routine_capture,
@@ -463,13 +464,16 @@ def _collect_routine_creates_raw(
     """The routine rows again, bodies included, read outside every checkpoint (#1652):
     a checkpoint stage is redacted (#1625), and a CREATE must keep its literals. Nothing
     is read when the caller opted out."""
-    out: dict[str, list[dict]] = {"procedures": [], "triggers": [], "event_triggers": []}
+    out: dict[str, list[dict]] = {
+        "procedures": [], "triggers": [], "event_triggers": [], "views": []
+    }  # fmt: skip
     if not include_bodies:
         return out
     reads = (
         ("procedures", lambda: db.collect_procedures(include_bodies=True)),
         ("triggers", lambda: db.collect_triggers(include_bodies=True)),
         ("event_triggers", lambda: db.collect_event_triggers(include_bodies=True)),
+        ("views", lambda: db.collect_views()),  # #2082: each view's CREATE, built from its pieces
     )
     for key, read in reads:
         try:
@@ -493,6 +497,7 @@ def _live_routines(db, schema_raw: object, *, include_bodies: bool) -> list[Rout
         triggers=schema_raw.get("triggers") or [],
         event_triggers=schema_raw.get("event_triggers") or [],
     )
+    mark_view_statuses("postgresql", schema_raw.get("views"), include_bodies=include_bodies)
     return build.sources
 
 
@@ -591,11 +596,15 @@ def _build_tables(schema_raw: dict) -> list[Table]:
 def _build_views(raw: list[dict]) -> list[View] | None:
     if not raw:
         return None
+    from src.agents.collector.view_sources import view_fields
+
     return [
         View(
             view_id=v.get("view_name", ""),
             view_name=v.get("view_name", ""),
             definition=v.get("definition") or "",
+            # #2082: what step 1 needs to create the view again (its CREATE is kept apart)
+            **view_fields(v),
         )
         for v in raw
     ]

@@ -62,18 +62,29 @@ class RoutineSession(BaseModel):
     time_zone: str | None = Field(
         None, max_length=64, description="MySQL: an event's time zone, which its times are in"
     )
+    search_path: list[str] | None = Field(
+        None,
+        max_length=64,
+        description=(
+            "PostgreSQL view (#2082): the schemas on the collection's search_path, in order "
+            "(current_schemas(false)): pg_get_viewdef leaves a name it finds there unqualified"
+        ),
+    )
 
 
 class RoutineSource(BaseModel):
-    kind: Literal["function", "procedure", "trigger", "event", "event_trigger"] = Field(
+    kind: Literal["function", "procedure", "trigger", "event", "event_trigger", "view"] = Field(
         ...,
-        description="What the routine is; event_trigger: a PostgreSQL event trigger (#2023)",
+        description=(
+            "What the routine is; event_trigger: a PostgreSQL event trigger (#2023); view: a "
+            "PostgreSQL or MySQL view, which step 1 creates again (#2082)"
+        ),
     )
     routine_id: str = Field(
         ...,
         min_length=1,
         description=(
-            "The collector output's procedure_id, trigger_id or event_id (an event "
+            "The collector output's procedure_id, trigger_id, event_id or view_id (an event "
             "trigger's is its non_dml_triggers trigger_id)"
         ),
     )
@@ -83,7 +94,8 @@ class RoutineSource(BaseModel):
         min_length=1,
         description=(
             "Unique per kind and schema: PostgreSQL '<name>_<oid>', a trigger "
-            "'<table>.<trigger>', an event trigger its name, MySQL the routine or event name"
+            "'<table>.<trigger>', an event trigger or a view its name, MySQL the routine or "
+            "event name"
         ),
     )
     create_statement: str = Field(
@@ -93,6 +105,7 @@ class RoutineSource(BaseModel):
         "pg_get_functiondef",
         "pg_get_triggerdef",
         "pg_event_trigger",
+        "pg_get_viewdef",
         "show_create",
         "information_schema",
     ] = Field(
@@ -100,8 +113,9 @@ class RoutineSource(BaseModel):
         description=(
             "Where the statement comes from: PostgreSQL's own text, a PostgreSQL event "
             "trigger rebuilt from pg_event_trigger with the server's own quoting (as "
-            "pg_dump does: exact), MySQL's SHOW CREATE (a live collector), or rebuilt from "
-            "MySQL's information_schema (the script)"
+            "pg_dump does: exact), a PostgreSQL view's CREATE built around its pg_get_viewdef "
+            "text (#2082), MySQL's SHOW CREATE (a live collector), or rebuilt from MySQL's "
+            "information_schema (the script, and every MySQL view)"
         ),
     )
     exact: bool = Field(
@@ -192,8 +206,8 @@ class RoutineSecretFlag(BaseModel):
     the kinds found, never a value. A hard-coded public address is not a credential: it
     is listed apart, in ``address_kinds``."""
 
-    kind: Literal["function", "procedure", "trigger", "event", "event_trigger"] = Field(
-        ..., description="What the routine is"
+    kind: Literal["function", "procedure", "trigger", "event", "event_trigger", "view"] = Field(
+        ..., description="What the routine is (view: #2082)"
     )
     schema_name: str | None = Field(None, description="The routine's schema or database")
     specific_name: str = Field(..., min_length=1, description="As in its RoutineSource")

@@ -364,6 +364,94 @@ class StepRoutines(BaseModel):
         return self
 
 
+class StepViewColumn(BaseModel):
+    """One column a carried view has on the source, in its order (#2082)."""
+
+    name: str = Field(..., min_length=1, description="The column's name")
+    data_type: str | None = Field(
+        None, description="Its source type (format_type, COLUMN_TYPE); None when not collected"
+    )
+
+
+class StepView(BaseModel):
+    """One view of the step's source, and whether step 1 creates it (#2082).
+
+    Identifiers, columns and reason codes only, never the view's text: the exact
+    ``CREATE`` stays in the job's routine sources, and only the views deploy script step 1
+    generates holds it."""
+
+    view_id: str = Field(..., min_length=1, description="The collection's view_id")
+    schema_name: str | None = Field(None, description="The view's schema or database")
+    name: str = Field(..., min_length=1, description="The view's own name")
+    carry: Literal["carried", "not_carried"] = Field(
+        ...,
+        description=(
+            "carried: in views-deploy.sql; not_carried: a named exception of the gate, with "
+            "its reasons, that step 1 does not create"
+        ),
+    )
+    order: int | None = Field(
+        None, ge=1, description="Its place in the deploy script, from 1; set only when carried"
+    )
+    columns: list[StepViewColumn] = Field(
+        default_factory=list, description="Its columns on the source, in order, for the check"
+    )
+    reads: list[str] = Field(
+        default_factory=list,
+        description="The view ids of the section it reads, directly or through another view",
+    )
+    reasons: list[str] = Field(
+        default_factory=list,
+        description="Why it is not carried: reason codes and object ids, never text",
+    )
+
+    @model_validator(mode="after")
+    def _carry_fits(self) -> "StepView":
+        carried = self.carry == "carried"
+        if carried != (self.order is not None):
+            raise ValueError(f"view {self.view_id}: order is set when carried, only then")
+        if carried == bool(self.reasons):
+            raise ValueError(f"view {self.view_id}: reasons are given when not carried, only then")
+        if carried and not self.columns:
+            raise ValueError(f"view {self.view_id}: a carried view has its columns")
+        return self
+
+
+class StepViews(BaseModel):
+    """The views step 1 creates, in deploy order, and why each other one is not (#2082).
+
+    Step 1 generates the views deploy script from it; the customer runs that script after
+    the full load and before the routines deploy script, then the read-only views check
+    script; Prove reads the check's output."""
+
+    source: Literal["collection", "none"] = Field(
+        ...,
+        description="collection: read from the collector output's views; none: it has none",
+    )
+    total: int = Field(0, ge=0, description="Views in the section")
+    carried: int = Field(0, ge=0, description="Views in the deploy script")
+    not_carried: int = Field(0, ge=0, description="Views the gate names as exceptions")
+    views: list[StepView] = Field(
+        default_factory=list, description="Carried in deploy order, then the rest by id"
+    )
+
+    @model_validator(mode="after")
+    def _counts(self) -> "StepViews":
+        carried = sum(1 for v in self.views if v.carry == "carried")
+        if (self.total, self.carried, self.not_carried) != (
+            len(self.views),
+            carried,
+            len(self.views) - carried,
+        ):
+            raise ValueError("the views section's counts disagree with its rows")
+        orders = [v.order for v in self.views if v.order is not None]
+        if orders != list(range(1, len(orders) + 1)):
+            raise ValueError("carried views are not in deploy order 1..carried")
+        if self.source == "none" and self.views:
+            raise ValueError("source none has no rows")
+        return self
+
+
 class StepContract(BaseModel):
     """The transformation contract of one migration step."""
 
@@ -400,6 +488,16 @@ class StepContract(BaseModel):
         description=(
             "Step 1: the routines it carries in its deploy script, in order, and why each "
             "other one is not carried; None in a contract written before the section existed"
+        ),
+    )
+    # #2082: left out of the dump when None, so a contract written before it keeps its bytes.
+    views_section: StepViews | None = Field(
+        None,
+        exclude_if=lambda section: section is None,
+        description=(
+            "Step 1: the views it creates in its views deploy script, in dependency order, "
+            "and why each other one is not; None in a contract written before the section "
+            "existed"
         ),
     )
 

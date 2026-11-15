@@ -1277,5 +1277,15 @@
       "not_compared"
     ],
     "version": "1.0"
+  },
+  "view_check.ViewProblem": {
+    "module": "view_check",
+    "values": [
+      "column_types_differ",
+      "columns_differ",
+      "missing",
+      "not_a_view"
+    ],
+    "version": "1.0"
   }
 }

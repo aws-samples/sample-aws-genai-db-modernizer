@@ -772,3 +772,21 @@ def test_the_routine_proof_is_never_offered_on_aurora_mysql_until_2298() -> None
     assert "Offer it only when the step's `target_engine` is Aurora PostgreSQL" in flat
     assert "the routine proof on Aurora MySQL is not available yet (#2298)" in flat
     assert "`mysql_proof_not_available`" in flat
+
+
+def test_prove_writes_the_view_scripts_before_the_routine_scripts() -> None:
+    """#2082: Prove runs views, then views-check, before the routines; the customer runs
+    views-deploy.sql before routines-deploy.sql; --auto never waits for either."""
+    prove = _flat(_section("Stage 4: Prove"))
+    views = prove.index("**Views.**")
+    routines = prove.index("**Routines.**")
+    assert views < routines < prove.index("**Gate.**")
+    step = prove[views:routines]
+    for needed in ("run_dms_step.py views --job-id", "run_dms_step.py views-check --job-id",
+                   "views-deploy.sql` after the full load and before `routines-deploy.sql`",
+                   "under `--auto`, never wait", "`why` verbatim", "views.md"):  # fmt: skip
+        assert needed in step, needed
+    assert "`views:`" in prove[prove.index("**Gate.**") :]
+    assert "the gate's views and routines checks stay `pending`" in _flat(
+        _section("Headless (`--auto`)")
+    )

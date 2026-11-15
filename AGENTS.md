@@ -215,8 +215,11 @@ Local runs write under `artifacts/<db>/<job>/` (`ARTIFACT_DIR`, default
 - `routines/v<N>/routine_migration.json`: how each routine migrates (id, kind,
   dependencies, deploy order, status, rewrite rules, check results; no routine text),
   keyed on the assignment version, written after the reality check (#1934)
-- `data-movement/step-1/`: `/move`'s step 1 files; `routines-deploy.sql` (the one file
-  besides the routine sources that holds routine text) and the read-only
+- `data-movement/step-1/`: `/move`'s step 1 files; `views-deploy.sql` (view text), the
+  read-only `views-check.sql` and `views.md`, run before the routines, and
+  `views-check.json`, read from their check output (#2082); `routines-deploy.sql` (with
+  the triggers-enable scripts, the one file besides the routine sources that holds routine
+  text) and the read-only
   `routines-check.sql` the customer runs, and `routines-check.json`, read from their
   check output (#1947); `triggers-enable.sql` and `triggers-enable-resume.sql` (both hold
   MySQL routine text), which turn on the triggers and events step 1 left off, the read-only

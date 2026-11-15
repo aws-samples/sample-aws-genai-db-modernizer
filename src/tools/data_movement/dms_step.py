@@ -1507,6 +1507,11 @@ def not_moved(inputs: Step1Inputs) -> list[NotMoved]:
         if count and kind != "views" and section is not None and section.carried:
             note = ("after the full load, /move writes routines-deploy.sql for the routines step 1 "
                     "carries (its routines section names the rest); you run it")  # fmt: skip
+        views = inputs.contract.views_section
+        if count and kind == "views" and views is not None and views.carried:  # #2082
+            note = ("after the full load, /move writes views-deploy.sql for the views step 1 "
+                    "creates (its views section names the rest); you run it before "
+                    "routines-deploy.sql")  # fmt: skip
         out.append(NotMoved(kind, count, note))
     if inputs.plan.source.engine in ("mysql", "mariadb"):
         out.append(NotMoved("events", None, "not in the collection: list them on the source with "

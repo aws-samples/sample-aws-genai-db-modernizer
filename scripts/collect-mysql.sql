@@ -257,15 +257,28 @@ SELECT JSON_ARRAYAGG(pk_obj) INTO @primary_keys FROM (
 ) AS pk;
 
 -- ===================== 7. Views =====================
+-- #2082: what step 1 needs to create each view again on Aurora: its database, check
+-- option, SQL SECURITY, the client character set and collation it was created with, and
+-- its columns with their types (VIEW_DEFINITION loses a view's own column names).
+-- information_schema gives no ALGORITHM: step 1 leaves it to the server's default.
 SELECT JSON_ARRAYAGG(v_obj) INTO @views FROM (
   SELECT JSON_OBJECT(
-    'view_name', table_name,
-    'definition', view_definition,
-    'is_updatable', is_updatable
+    'view_name', vw.table_name,
+    'schema_name', vw.table_schema,
+    'definition', vw.view_definition,
+    'is_updatable', vw.is_updatable,
+    'check_option', vw.check_option,
+    'security_type', vw.security_type,
+    'character_set_client', vw.character_set_client,
+    'collation_connection', vw.collation_connection,
+    'columns', (SELECT JSON_ARRAYAGG(JSON_OBJECT('name', c.column_name, 'position',
+                       c.ordinal_position, 'data_type', c.column_type))
+                  FROM information_schema.columns c
+                 WHERE c.table_schema = vw.table_schema AND c.table_name = vw.table_name)
   ) AS v_obj
-  FROM information_schema.views
-  WHERE table_schema = @db
-  ORDER BY table_name
+  FROM information_schema.views vw
+  WHERE vw.table_schema = @db
+  ORDER BY vw.table_name
 ) AS v;
 
 -- ===================== 8. Procedures & Functions =====================

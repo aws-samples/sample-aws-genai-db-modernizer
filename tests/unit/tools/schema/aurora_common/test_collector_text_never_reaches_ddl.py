@@ -394,6 +394,13 @@ DDL_WRITERS = {
     # test_an_event_trigger_whose_create_cannot_be_rebuilt_is_not_supported and
     # test_an_event_trigger_piece_of_the_wrong_shape_gives_no_create.
     "src/agents/collector/routine_sources.py",
+    # A view's CREATE OR REPLACE VIEW built from its collected pieces (#2082), kept in the
+    # job's routine sources: the schema, name and every column backticked or double-quoted
+    # with the quote doubled, a name with a NUL refused, the check option and SQL SECURITY
+    # only from fixed lists; the body is the source catalog's own text.
+    # tests/unit/agents/test_view_sources.py::test_hostile_names_are_quoted_with_the_quote_doubled
+    # and test_a_row_that_is_not_a_whole_view_gives_no_statement.
+    "src/agents/collector/view_sources.py",
 }
 _DDL_START = re.compile(
     r"^\s*(?:-- )?(?:CREATE|ALTER|DROP|GRANT|TRUNCATE|USE|SET search_path)(?: |$)"
