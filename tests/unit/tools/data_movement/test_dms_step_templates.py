@@ -628,7 +628,7 @@ def test_the_mysql_ddl_gives_the_dms_user_its_grants_commented_out():
     assert ddl.index("-- CREATE USER") > _last_create_table(ddl)
     assert ("-- GRANT ALTER, CREATE, DROP, INDEX, INSERT, UPDATE, DELETE, SELECT, CREATE TEMPORARY TABLES "
             "ON `shop`.* TO 'dms_user'@'%';") in ddl  # fmt: skip
-    assert "-- GRANT ALL PRIVILEGES ON `awsdms_control`.* TO 'dms_user'@'%';" in ddl
+    assert "-- GRANT ALL PRIVILEGES ON `awsdms\\_control`.* TO 'dms_user'@'%';" in ddl
     assert ddl.index("YOUR RESPONSIBILITY") < ddl.index("-- CREATE USER")
     assert "\nCREATE USER" not in ddl and "\nGRANT" not in ddl
 

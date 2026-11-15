@@ -911,4 +911,4 @@ CREATE INDEX `tax_rate_state` ON `wp_woocommerce_tax_rates` (`tax_rate_state`(2)
 -- uncomment to run):
 -- CREATE USER 'dms_user'@'%' IDENTIFIED BY '<password>';
 -- GRANT ALTER, CREATE, DROP, INDEX, INSERT, UPDATE, DELETE, SELECT, CREATE TEMPORARY TABLES ON `wordpress`.* TO 'dms_user'@'%';
--- GRANT ALL PRIVILEGES ON `awsdms_control`.* TO 'dms_user'@'%';
+-- GRANT ALL PRIVILEGES ON `awsdms\_control`.* TO 'dms_user'@'%';

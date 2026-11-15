@@ -24,6 +24,11 @@ holds routine text.
 - a body whose tables or calls, as the parser reads them, name another schema
   (``pg_catalog`` and ``information_schema`` aside; a table of a schema the setup created
   its tables in, ``schemas``, may be named, #1970);
+  with such schemas, a call into one (also a ``CALL`` or ``PERFORM``, read from the tokens), a
+  MySQL statement naming one that creates, alters, drops, renames or truncates, writes a file
+  or runs ``USE``, and a function, procedure, operator or aggregate created from a body (on
+  PostgreSQL, whatever the schemas) are refused too, so only reads and row changes of a setup
+  schema's tables remain;
 - a name written so that the text and the server read it differently: a PostgreSQL
   ``U&"..."`` Unicode-escaped name, a MySQL ``/*! ... */`` versioned comment; and on
   PostgreSQL every name the statement binds is read again from the parser's tree, which
@@ -478,6 +483,114 @@ def _role_or_account_change(text: str, engine: str) -> str | None:
     return None
 
 
+#: What changes a MySQL database's own objects, or writes a file: refused in a statement that
+#: names a database the setup made, whose tables a body may only read and write rows of.
+_MY_CHANGES = {"CREATE", "ALTER", "DROP", "RENAME", "TRUNCATE", "OUTFILE", "DUMPFILE"}
+#: A word before ``schema.name (`` that makes it a table with a column list, not a call.
+_PG_TABLE_BEFORE = {"INTO", "ON", "TABLE", "COPY", "ANALYZE", "ANALYSE", "VACUUM", "ONLY"}
+_PG_CREATED = {"FUNCTION", "PROCEDURE", "OPERATOR", "AGGREGATE"}
+
+
+def _names_schema(
+    toks: Sequence[RoutineToken], i: int, schemas: Collection[str], engine: str
+) -> bool:
+    """Whether ``toks[i]`` is a setup schema written before a dot (``sales.``)."""
+    tok = toks[i]
+    return (
+        tok.kind in ("VAR", "IDENTIFIER")
+        and i + 1 < len(toks)
+        and toks[i + 1].kind == "DOT"
+        and any(_same_schema(tok, s, engine) for s in schemas)
+    )
+
+
+def _mysql_setup_refusal(
+    text: str, schemas: Collection[str], depth: int = 0, inherited: frozenset[str] = frozenset()
+) -> str | None:
+    """Statement by statement (a command's rest, and a string, read one level down with the
+    command's word kept): one that names a setup database and holds any of ``_MY_CHANGES``,
+    or is ``USE`` of it, is refused. The routine's own leading ``CREATE`` is not counted."""
+    try:
+        toks = routine_tokens(text, "mysql")
+    except RoutineTokenError:
+        return None if depth else "its text could not be read"
+    statement: list[int] = []
+    for i in [*range(len(toks)), len(toks)]:
+        if i < len(toks) and toks[i].kind != "SEMICOLON":
+            statement.append(i)
+            continue
+        words = set(inherited) | {
+            toks[j].text.upper()
+            for j in statement
+            if toks[j].kind not in ("IDENTIFIER", "STRING") and (depth, j) != (0, 0)
+        }
+        names = any(_names_schema(toks, j, schemas, "mysql") for j in statement)
+        for j in statement:
+            if toks[j].text.upper() == "USE" and toks[j].kind not in ("IDENTIFIER", "STRING"):
+                if j + 1 < len(toks) and any(
+                    _same_schema(toks[j + 1], s, "mysql") for s in schemas
+                ):
+                    names = True
+        if "USE" in inherited and statement:  # ``USE`` is a command: its rest is a string
+            names = names or any(_same_schema(toks[statement[0]], s, "mysql") for s in schemas)
+        if names and words & (_MY_CHANGES | {"USE"}):
+            return "its text changes or writes out a database the setup made"
+        if depth < _DEPTH:
+            for j in statement:
+                tok = toks[j]
+                if tok.command_rest or tok.kind.endswith("STRING"):
+                    kept = (
+                        frozenset({toks[j - 1].text.upper()})
+                        if tok.command_rest and j
+                        else frozenset()
+                    )
+                    why = _mysql_setup_refusal(
+                        tok.text,
+                        schemas,
+                        depth + 1,
+                        kept | (inherited if tok.command_rest else frozenset()),
+                    )
+                    if why is not None:
+                        return why
+        statement = []
+    return None
+
+
+def _setup_schema_refusal(text: str, engine: str, schemas: Collection[str]) -> str | None:
+    """What a body may not do with the schemas the setup made (#1970), read from the tokens
+    of the text and of every string in it. MySQL: a statement that names one of the
+    databases may not create, alter, drop, rename or truncate anything, write a file, or
+    ``USE`` it, so only reads and row changes of its tables remain. PostgreSQL: no call of a
+    function in one of the schemas (``sales.f(...)`` after any word but the few that put a
+    table before its column list), and, schema or not, no ``CREATE`` of a function,
+    procedure, operator or aggregate from a body: a more specific signature in ``public``
+    or a setup schema would win over ``pg_catalog``'s."""
+    try:
+        levels = list(_levels(text, engine))
+    except RoutineTokenError:
+        return "its text could not be read"
+    for depth, toks in enumerate(levels):
+        if engine == "postgresql":
+            for i, tok in enumerate(toks):
+                if (depth, i) != (0, 0) and tok.text.upper() == "CREATE":
+                    after = [t.text.upper() for t in toks[i + 1 : i + 4]]
+                    if after[:2] == ["OR", "REPLACE"]:
+                        after = after[2:]
+                    if after and after[0] in _PG_CREATED:
+                        return "its body creates a function, procedure, operator or aggregate"
+                if (
+                    _names_schema(toks, i, schemas, engine)
+                    and i + 3 < len(toks)
+                    and toks[i + 3].kind == "L_PAREN"
+                    and (i == 0 or toks[i - 1].text.upper() not in _PG_TABLE_BEFORE)
+                ):
+                    return "its text calls a function in a schema the setup made"
+            continue
+    if engine == "mysql" and schemas:
+        return _mysql_setup_refusal(text, schemas)
+    return None
+
+
 def create_refusal(
     text: str, engine: str, kind: str, namespace: str, schemas: Collection[str] = ()
 ) -> str | None:
@@ -486,8 +599,11 @@ def create_refusal(
 
     ``schemas`` are the source schemas (PostgreSQL) or databases (MySQL) the setup created
     its tables in (#1970): a body's table or a trigger's ``ON`` table may name one, since the
-    setup put it there; nothing is ever created in one, and a call to another schema's
-    routine is still refused."""
+    setup put it there. A routine is never created in one, and the tokens of the text are
+    read for the rest (:func:`_setup_schema_refusal`): no call into one, no MySQL statement
+    that changes or writes out one, no function or operator created from a body. A call to
+    another schema's routine is refused as before; a call the parser does not read (a
+    ``CALL`` or ``PERFORM`` in PL/pgSQL) is read from the tokens."""
     if engine == "postgresql" and _UNICODE_NAME.search(text):
         return "it writes a Unicode-escaped name (U&), which the screen does not read"
     if engine == "mysql" and "/*!" in text:
@@ -561,6 +677,9 @@ def create_refusal(
         return "it sets search_path, so names would not resolve in the target's schema"
     if any(t.text.casefold() == "set_config" for t in deep):
         return "it calls set_config, which may set search_path"
+    why = _setup_schema_refusal(text, engine, schemas)
+    if why is not None:
+        return why
     try:
         tables, calls = _references(text, engine, kind)
     except RoutineTokenError:

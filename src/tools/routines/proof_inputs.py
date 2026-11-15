@@ -80,7 +80,8 @@ the routines' own (the schema of the routine ids, and the engine's own database)
 database, so a body that names ``sales.orders`` finds it. ``ProofSetup.schemas`` lists those
 schemas; a target creates them first, and its rows, table names and snapshots carry the
 qualified name. A table of the routines' own MySQL database, or of ``public``, stays
-unqualified, as an unqualified body names it. Two tables of one name in different schemas
+unqualified, as an unqualified body names it. A table of a schema the engine keeps (``pg_*``, ``information_schema``; MySQL ``mysql``,
+``sys``, ``performance_schema``) is left out, with its reason. Two tables of one name in different schemas
 still collide (one is left out with its reason), as the DDL generator keeps one flat set of
 names.
 
@@ -151,7 +152,7 @@ PROOF_ROWS = 10
 #: Calls per routine at most; a routine with more edge values is cut, in order.
 MAX_CALLS_PER_ROUTINE = 64
 _HIDDEN = ConfigDict(extra="forbid", frozen=True, hide_input_in_errors=True)
-_IDENT = re.compile(r"^[A-Za-z_][A-Za-z0-9_$]*$")  # the engine's own plain identifier
+_IDENT = re.compile(r"^[A-Za-z_][A-Za-z0-9_$]*\Z")  # the engine's own plain identifier
 _EVENTS = ("INSERT", "UPDATE", "DELETE", "TRUNCATE")
 _NO_CALL_RETURNS = {"trigger", "event_trigger"}
 
@@ -682,6 +683,24 @@ def _source_schema(table: Mapping[str, Any], dialect: Dialect, own: Collection[s
     return None if schema in own else schema
 
 
+_RESERVED = {
+    "postgresql": ("pg_", "information_schema"),
+    "mysql": ("mysql", "sys", "information_schema", "performance_schema"),
+}
+
+
+def _reserved(schema: str | None, dialect: Dialect) -> bool:
+    """Whether ``schema`` is one the engine keeps for itself: a table of it is left out of
+    the setup (creating it would fail the whole load)."""
+    if not schema:
+        return False
+    low = schema.casefold()
+    names = _RESERVED[dialect]
+    if dialect == "postgresql":
+        return any(low.startswith(n) for n in names)
+    return low in names
+
+
 def _qname(table: Mapping[str, Any]) -> str:
     """The table's name as a statement writes it: ``schema.table`` when it sits in a
     schema other than the target's own."""
@@ -1085,6 +1104,10 @@ def build_proof_inputs(
     for tid in sorted(selected):
         if _name(selected[tid]) in lacking:
             skip[tid] = lacking[_name(selected[tid])]
+            del selected[tid]
+    for tid in sorted(selected):
+        if _reserved(selected[tid].get("proof_schema"), dialect):
+            skip[tid] = f"its schema {selected[tid]['proof_schema']} is reserved by the engine"
             del selected[tid]
     chosen = TableIndex(selected)
     reserve: dict[str, int] = {}

@@ -80,6 +80,7 @@ from src.tools.data_movement.dms_sizing import (
     task_lob_mode,
     unmeasured_lob_tables,
 )
+from src.tools.database.mysql_grants import grant_database
 from src.tools.transformation_contract.hashing import contract_sha256
 from src.tools.transformation_contract.pg_enums import (
     NOT_COLLECTED,
@@ -1385,13 +1386,12 @@ def _dms_user_lines(engine: str, line: str | None, database: str, schema: str) -
     except ValueError as e:
         raise DmsStepError(str(e)) from e
     if engine == "aurora_mysql":
-        db = database.replace("`", "``")
         auth = "IDENTIFIED WITH mysql_native_password BY" if line == "8.4" else "IDENTIFIED BY"
         return [
             f"CREATE USER 'dms_user'@'%' {auth} '<password>';",
             "GRANT ALTER, CREATE, DROP, INDEX, INSERT, UPDATE, DELETE, SELECT, CREATE TEMPORARY TABLES "
-            f"ON `{db}`.* TO 'dms_user'@'%';",
-            "GRANT ALL PRIVILEGES ON `awsdms_control`.* TO 'dms_user'@'%';",
+            f"ON {grant_database(database)}.* TO 'dms_user'@'%';",
+            f"GRANT ALL PRIVILEGES ON {grant_database('awsdms_control')}.* TO 'dms_user'@'%';",
         ]
     return [
         "CREATE USER dms_user WITH PASSWORD '<password>';",
