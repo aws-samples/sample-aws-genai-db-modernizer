@@ -73,6 +73,10 @@ FACT_MODULES: dict[str, str] = {
 
 # Modules with a SQL regex that is not a routing or analysis query fact.
 OTHER_SQL_MODULES: dict[str, str] = {
+    "src/tools/routines/data_api_target.py": (
+        "the routine proof's own harness (#1945): which carried CREATE is PL/pgSQL, for the "
+        "strict check; it reads no query fact"
+    ),
     "src/shared/secret_scan.py": (
         "the credential scan's own allow rule: a column note naming a SQL type is no "
         "credential (moved from ci/llm/private_scan.py, #1933); it reads no query fact"

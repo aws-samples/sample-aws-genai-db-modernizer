@@ -10,7 +10,6 @@ each test, so on a branch without them a test fails in its body."""
 from __future__ import annotations
 
 import importlib
-import time
 from typing import Any
 
 import pytest
@@ -174,13 +173,18 @@ def test_the_proof_lands_in_the_artifact_and_the_routine_facts():
     }  # fmt: skip
     written = pr.apply_proof(migration, entries, target="an Aurora PostgreSQL 16.15 test cluster",
                              source="a disposable postgresql 16 engine", strict_check="not_available",
-                             started=time.monotonic())  # fmt: skip
+                             seconds=12.0)  # fmt: skip
     again = RoutineMigrationContract.model_validate(written.model_dump(mode="json"))
-    assert again.proof_run is not None and again.proof_run.counts == {
-        "proved": 1,
-        "needs_attention": 1,
-        "not_proved": 0,
-    }
+    assert (
+        again.proof_run is not None
+        and again.proof_run.seconds == 12.0
+        and again.proof_run.counts
+        == {
+            "proved": 1,
+            "needs_attention": 1,
+            "not_proved": 0,
+        }
+    )
     assert [r.proof is not None for r in again.routines] == [True, True, False]
     facts = routine_facts(again, 2)
     assert facts["proof"] == "load-tested on a test Aurora"
@@ -207,3 +211,72 @@ def test_a_trigger_function_takes_its_triggers_outcome():
     merged = pr._inherit(entries, {"public.tf()": "public.t.trg"})
     assert merged["public.tf()"].outcome == "proved"
     assert "through its trigger public.t.trg" in merged["public.tf()"].reason
+
+
+def _run_of(failures=(), ok=3, ran=None, **kw: Any) -> Any:
+    from src.tools.routines.comparison import RoutineRun
+
+    ran = ran if ran is not None else ok + len(failures)
+    return RoutineRun(routine_id="r", outcome="ran", reason=f"loaded and ran {ran} calls",
+                      calls_run=ran, calls_succeeded=ok, failures=tuple(failures), **kw)  # fmt: skip
+
+
+def test_load_and_run_is_proved_only_when_every_call_succeeds():
+    """Review of #2297: one call failing on the test cluster alone leaves the routine not
+    proved, with that call's SQLSTATE and message; a call failing the same way on the source
+    engine is left out; a feature or function Aurora lacks says so."""
+    pr = _mod("proof_run")
+    assert pr._entry_of_run(_run_of()).outcome == "proved"
+    one = pr._entry_of_run(_run_of([(2, "p1=null", "22004", "null value not allowed")], ok=5))
+    assert (one.outcome, one.reason_code) == ("not_proved", "calls_failed")
+    assert [(f.call, f.error_state, f.message) for f in one.failed_calls] == [
+        ("p1=null", "22004", "null value not allowed")]  # fmt: skip
+    same = pr._entry_of_run(_run_of([(2, "p1=max", "22008", "timestamp out of range")], ok=4),
+                            _run_of([(2, "p1=max", "22008", "timestamp out of range")], ok=4))  # fmt: skip
+    assert (same.outcome, same.calls_failed_on_both, same.failed_calls) == ("proved", 1, [])
+    other = pr._entry_of_run(
+        _run_of([(2, "x", "22008", "")], ok=4), _run_of([(2, "x", "22012", "")], ok=4)
+    )
+    assert other.outcome == "not_proved"  # another SQLSTATE on the source is no excuse
+    for state in ("0A000", "42883"):
+        gap = pr._entry_of_run(_run_of([(1, "baseline", state, "")], ok=5))
+        assert (gap.outcome, gap.reason_code) == ("not_proved", "target_gap")
+        assert "Aurora does not support" in gap.reason
+    none = pr._entry_of_run(
+        _run_of([(1, "a", "22008", "")], ok=0), _run_of([(1, "a", "22008", "")], ok=0)
+    )
+    assert (none.outcome, none.reason_code) == ("not_proved", "no_successful_call")
+
+
+def test_a_failed_load_and_run_call_is_checked_against_the_source_engine():
+    """The same inputs run on the source's engine with the original text, only for a
+    routine with a failing call: a call failing the same way there is left out."""
+    pr = _mod("proof_run")
+    plan = pr.plan_proof(
+        _migration(_row("f", "as_is", 1)), _sources(), {}, target_user="proofadmin"
+    )
+    failing = {"fail_on": {'"public"."f"(CAST(:p0 AS integer))': "22008"}}
+    source = _Spy(_target(FakeDataApi(**failing)))
+    entries = pr.prove_routines(plan, TABLES, target=_target(FakeDataApi(**failing)), source=source,
+                                cleanup=lambda: None, strict={}, strict_check=[])  # fmt: skip
+    f = entries["public.f(integer)"]
+    assert source.opened >= 1 and f.calls_failed_on_both == f.calls_run
+    assert (f.outcome, f.reason_code) == ("not_proved", "no_successful_call")
+    clean = _Spy(_target(FakeDataApi(calls={'"public"."f"': [1]})))
+    pr.prove_routines(plan, TABLES, target=_target(FakeDataApi(calls={'"public"."f"': [1]})),
+                      source=clean, cleanup=lambda: None, strict={}, strict_check=[])  # fmt: skip
+    assert clean.opened == 0  # every call succeeded: the source is not run
+
+
+def test_a_cleanup_that_fails_never_hides_the_proof():
+    pr = _mod("proof_run")
+    plan = pr.plan_proof(
+        _migration(_row("f", "as_is", 1)), _sources(), {}, target_user="proofadmin"
+    )
+
+    def broken() -> None:
+        raise RuntimeError("the sweep failed")
+
+    entries = pr.prove_routines(plan, TABLES, target=_target(FakeDataApi(calls={'"public"."f"': [1]})),
+                                source=None, cleanup=broken, strict={}, strict_check=[])  # fmt: skip
+    assert entries["public.f(integer)"].outcome == "proved"

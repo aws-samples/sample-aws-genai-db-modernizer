@@ -130,8 +130,8 @@ statement built at run time is never read (such a routine is not compared); one 
 time zone; temporary tables a routine creates are not snapshot (its text names a table
 the setup lacks, so it is not compared); concurrency and locking are not compared; the
 namespace screen reads names as written and as PostgreSQL's parser reads them, and
-``SECURITY DEFINER`` is not refused (#1945 has to run routines as a role confined to
-its scratch schema).
+``SECURITY DEFINER`` is not refused (on the test cluster, #1945 runs routines as a role
+or user confined to its scratch database).
 
 Input. :class:`ComparedRoutine` is one routine: its proof metadata
 (:class:`~src.tools.routines.proof_inputs.RoutineProofInput`), its original ``CREATE``
@@ -1593,6 +1593,9 @@ class RoutineRun(BaseModel):
 
     routine_id: str
     outcome: Literal["ran", "does_not_load", "not_run"]
+    #: Each failed call: its index (from 1), label, SQLSTATE, and the engine's first message
+    #: line, which can quote a name or value: never in a deliverable.
+    failures: tuple[tuple[int, str, str, str], ...] = ()
     reason: str
     reason_code: RunReasonCode | None = None
     calls_run: int = 0
@@ -1633,6 +1636,7 @@ def _run_one(
                        + skipped.get(rid, "no call or row change was generated for it"))  # fmt: skip
     ran = ok = late = 0
     states: list[str] = []
+    failed_calls: list[tuple[int, str, str, str]] = []
     for index, call in enumerate(mine, start=1):
         try:
             run = _run_side(side, call, index, seed)
@@ -1650,12 +1654,15 @@ def _run_one(
             ok += 1
         else:
             states.append(result.sqlstate or "?????")
+            first = (result.message or result.error or "").split("\n", 1)[0][:300]
+            failed_calls.append((index, call.label, result.sqlstate or "?????", first))
     failed = ran - ok
     reason = f"loaded and ran {_calls(ran)}: {ok} succeeded"
     if failed:
         reason += f", {failed} failed (SQLSTATE {', '.join(sorted(set(states)))})"
     return RoutineRun(**base, outcome="ran", reason=reason, calls_run=ran, calls_succeeded=ok,
-                      timed_out=late, error_states=tuple(sorted(set(states))))  # fmt: skip
+                      timed_out=late, error_states=tuple(sorted(set(states))),
+                      failures=tuple(failed_calls))  # fmt: skip
 
 
 def run_routines(

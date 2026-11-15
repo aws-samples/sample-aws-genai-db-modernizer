@@ -63,11 +63,21 @@ Parameters:
     Default: routine_proof
     AllowedPattern: '^[a-z][a-z0-9_]{0,62}$'
 
+  ParameterGroupFamily:
+    Type: String
+    Description: The engine version's parameter group family (aurora-mysql8.0); read on Aurora MySQL only
+    Default: aurora-mysql8.0
+    AllowedPattern: '^aurora-(mysql|postgresql)[0-9.]+$'
+
 Conditions:
   AutoPause:
     Fn::Equals:
       - Ref: MinCapacity
       - '0'
+  IsMySQL:
+    Fn::Equals:
+      - Ref: Engine
+      - aurora-mysql
 
 Resources:
   SubnetGroup:
@@ -96,6 +106,26 @@ Resources:
         - IpProtocol: '-1'
           CidrIp: 127.0.0.1/32
           Description: No outbound traffic (replaces the default allow-all rule)
+      Tags:
+        - Key: modernizer:job-id
+          Value:
+            Ref: JobId
+        - Key: modernizer:purpose
+          Value: routine-proof
+
+  # Aurora MySQL only: the event scheduler off, as the disposable source engine runs it, so a
+  # loaded event never fires between a call and its snapshot, outside every rollback; the
+  # proof runs each event's body once, on demand, and refuses a cluster where it is ON.
+  ClusterParameters:
+    Type: AWS::RDS::DBClusterParameterGroup
+    Condition: IsMySQL
+    Properties:
+      Description:
+        Fn::Sub: Routine-proof test cluster, event scheduler off (job ${JobId})
+      Family:
+        Ref: ParameterGroupFamily
+      Parameters:
+        event_scheduler: 'OFF'
       Tags:
         - Key: modernizer:job-id
           Value:
@@ -136,6 +166,11 @@ Resources:
       # every error through the Data API.
       DBSubnetGroupName:
         Ref: SubnetGroup
+      DBClusterParameterGroupName:
+        Fn::If:
+          - IsMySQL
+          - Ref: ClusterParameters
+          - Ref: AWS::NoValue
       VpcSecurityGroupIds:
         - Ref: SecurityGroup
       ServerlessV2ScalingConfiguration:

@@ -63,7 +63,8 @@ Every subcommand prints one JSON line, its result (exit 1 only on ``"status": "e
   All four are refused under ``MODERNIZER_CI_SANDBOX=1`` and with ``--auto`` before any AWS call;
   the plan's ``question`` and ``teardown_question`` name the stack and region. Deploy and
   teardown act only on this job's stack (its ``modernizer:job-id`` and ``modernizer:purpose``
-  tags, exactly the template's four resources, and the cluster's ``modernizer:job-id`` tag).
+  tags, exactly the template's resources (four, and the cluster parameter group on Aurora MySQL),
+  and the cluster's ``modernizer:job-id`` tag).
 - ``proof-target-run --approve`` (#1945): the routine proof on that cluster, through the RDS Data
   API only (``src/tools/routines/proof_run.py``): a job-scoped scratch database, the synthetic rows
   and the carried routines, the calls (side by side with the original on a disposable engine of
@@ -2532,6 +2533,11 @@ def _data_api(cred: Any) -> Any:
     return cred.client("rds-data")
 
 
+def _secrets(cred: Any) -> Any:
+    """The Secrets Manager client for the MySQL proof's runner secret (a test replaces it)."""
+    return cred.client("secretsmanager")
+
+
 def _proof_run(store: Any, db: str, job_id: str, clients: Any, inputs: Any, cred: Any,
                sleep: Callable[[float], None]) -> dict[str, Any]:  # fmt: skip
     """``proof-target-run`` (#1945): the routine proof on this job's test cluster, through
@@ -2548,7 +2554,8 @@ def _proof_run(store: Any, db: str, job_id: str, clients: Any, inputs: Any, cred
                 f"deployed and available (stack {state.get('stack_name')} is "
                 f"{state.get('stack_status') or state.get('status')}, cluster "
                 f"{cluster.get('status') or 'none'}): run proof-target-deploy first"}  # fmt: skip
-    out = run_proof(store, db, job_id, data_api=_data_api(cred), cluster=cluster)
+    out = run_proof(store, db, job_id, data_api=_data_api(cred), cluster=cluster,
+                    secrets_client=_secrets(cred) if cluster.get("engine") == "aurora-mysql" else None)  # fmt: skip
     return {**out, "stack_name": state.get("stack_name"), "region": inputs.region,
             "teardown_question": state.get("teardown_question")}  # fmt: skip
 

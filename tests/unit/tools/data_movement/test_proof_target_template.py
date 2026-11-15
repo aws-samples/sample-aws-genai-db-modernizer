@@ -23,6 +23,7 @@ TEMPLATE = (
 OPEN = ("0.0.0.0/0", "::/0")
 #: The resource types the stack may create: no VPC, subnet, route, NAT or internet gateway.
 ALLOWED_TYPES = {
+    "AWS::RDS::DBClusterParameterGroup",  # Aurora MySQL only: the event scheduler off (#1945)
     "AWS::RDS::DBSubnetGroup",
     "AWS::EC2::SecurityGroup",
     "AWS::RDS::DBCluster",
@@ -140,5 +141,22 @@ def test_every_resource_carries_the_job_id_and_purpose_tags(template) -> None:
 
 
 def test_the_ownership_check_expects_exactly_the_templates_resources(template) -> None:
+    from src.tools.data_movement.proof_target import MYSQL_RESOURCES
+
     expected = getattr(script, "PROOF_TARGET_RESOURCES", {})
-    assert {k: r["Type"] for k, r in template["Resources"].items()} == expected
+    every = {k: r["Type"] for k, r in template["Resources"].items()}
+    assert every == MYSQL_RESOURCES
+    always = {k: t for k, t in every.items() if "Condition" not in template["Resources"][k]}
+    assert always == expected
+
+
+def test_aurora_mysql_runs_with_the_event_scheduler_off(template) -> None:
+    """#1945: a loaded event never fires between a call and its snapshot, as on the
+    disposable engine; the parameter group is MySQL's only, and the cluster uses it."""
+    group = template["Resources"]["ClusterParameters"]
+    assert group["Condition"] == "IsMySQL"
+    assert group["Properties"]["Parameters"] == {"event_scheduler": "OFF"}
+    cluster = _of_type(template, "AWS::RDS::DBCluster")["Properties"]
+    assert cluster["DBClusterParameterGroupName"] == {
+        "Fn::If": ["IsMySQL", {"Ref": "ClusterParameters"}, {"Ref": "AWS::NoValue"}]
+    }

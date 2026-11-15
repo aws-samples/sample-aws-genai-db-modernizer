@@ -541,6 +541,10 @@ NOT_CORPUS_MODULES: dict[str, str] = {
     ),
     "src/tools/data_movement/dms_step.py": "checks the step 1 DDL file it renders, not a workload query",
     "src/tools/data_movement/dms_preflight.py": "reads parameter values such as sql_mode, not a workload query",
+    "src/tools/routines/data_api_target.py": (
+        "the routine proof's own harness (#1945): it tells which carried CREATE is PL/pgSQL, "
+        "for the strict check, and reads no workload query"
+    ),
 }
 
 # The functions of a registered OTHER_SQL_MODULES module that run a regex but are not a
