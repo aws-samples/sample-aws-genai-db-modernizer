@@ -162,11 +162,12 @@ class RoutineProofEntry(BaseModel):
         ...,
         description=(
             "proved: it loaded, the strict check found no error, and every call succeeded (a "
-            "call failing the same way on the source left out) or, side by side, no difference "
-            "was found on them; "
-            "needs_attention: it did not load, the strict check found an error, or a call "
-            "behaved differently; not_proved: a call failed on the test cluster only (with a "
-            "feature Aurora does not support: target_gap), or it could not be run or compared"
+            "call failing exactly the same way on the source, on identical rows and calls, left "
+            "out) or, side by side, no difference was found on them; "
+            "needs_attention: it did not load, the strict check found an error, a call behaved "
+            "differently, or a call left the role it runs as (role_changed); not_proved: a "
+            "call failed on the test cluster (with a feature Aurora does not support: "
+            "target_gap), or it could not be run or compared"
         ),
     )
     reason: str = Field(..., min_length=1, description="Why, with no routine or table text")
@@ -181,13 +182,14 @@ class RoutineProofEntry(BaseModel):
         0,
         ge=0,
         description=(
-            "Load and run: calls that failed with the same SQLSTATE on the disposable source "
-            "engine as well, left out of the failures"
+            "Load and run: calls that failed exactly the same way on the disposable source "
+            "engine, on identical rows and calls (the same call, SQLSTATE, error number and "
+            "first message line, never a generic SQLSTATE), left out of the failures"
         ),
     )
     failed_calls: list[ProofCallFailure] = Field(
         default_factory=list,
-        description="Load and run: each call that failed on the test cluster only",
+        description="Load and run: each call that failed on the test cluster and was not left out",
     )
     strict_check: Literal["passed", "failed", "not_available", "not_applicable"] = Field(
         "not_applicable",

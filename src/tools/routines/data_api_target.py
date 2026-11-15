@@ -93,6 +93,7 @@ from src.tools.routines.proof_targets import (
     DisposableEngineTarget,
     ProofTarget,
     ProofTargetError,
+    RoleChanged,
     TargetFactory,
 )
 
@@ -882,6 +883,7 @@ class DataApiTarget(DisposableEngineTarget):
                                        self._backend)  # fmt: skip
         self._created = False
         self.drop_failed = False
+        self._session_user: str | None = None  # read in the first call's transaction
         self._role_sql = de._quote(self.database + "_runner", '"')
         self._strict_ready = False
         try:
@@ -1049,6 +1051,11 @@ class DataApiTarget(DisposableEngineTarget):
                                    getattr(exc, "sqlstate", None)) from None  # fmt: skip
         self._open = True
         if self.engine == "postgresql":
+            if self._session_user is None:
+                current, session = self._who()
+                if current != self._backend.role:
+                    raise ProofTargetError(f"{self.description} did not take the runner role")
+                self._session_user = session
             self._execute("SELECT setseed(%s)", [seed])
         else:
             self._execute("SET time_zone = '+05:47'")
@@ -1072,7 +1079,29 @@ class DataApiTarget(DisposableEngineTarget):
             return result
         if postgres and result.error is not None:
             self._execute("ROLLBACK TO SAVEPOINT modernizer_call")
+        if postgres:
+            self._check_role()
         return result
+
+    def _who(self) -> tuple[str, str]:
+        """``current_user`` and ``session_user``, in the call's transaction."""
+        got = self._backend._rows(
+            self._backend._guarded("SELECT current_user::text, session_user::text", meta=True),
+            as_text=True,
+        )[0]
+        return (str(got[0][0]), str(got[0][1])) if got else ("", "")
+
+    def _check_role(self) -> None:
+        """After the call and before its rollback: a call that left the runner role, by any
+        spelling the screen missed (dynamic SQL included), or changed ``session_user``, is
+        refused. The screen is a first line only; this read is what holds."""
+        try:
+            current, session = self._who()
+        except de.EngineError as exc:
+            raise ProofTargetError(f"{self.description} could not read the call's role",
+                                   exc.sqlstate) from None  # fmt: skip
+        if current != self._backend.role or session != self._session_user:
+            raise RoleChanged("the call changed the role it runs as")
 
     def _pg_row_change(self, call: ProofCall) -> de.CallResult:
         """A row change whose values each column reads by its own type
@@ -1238,11 +1267,79 @@ def create_runner(client: DataApiClient, secrets_client: Any, *, cluster_arn: st
                             CALL_TIMEOUT_S)  # fmt: skip
     try:
         admin._guarded(f"CREATE USER {account.account_sql} IDENTIFIED BY %s", [password])
+    except de.EngineError as exc:
+        left = drop_runner(client, secrets_client, cluster_arn=cluster_arn, secret_arn=secret_arn,
+                           admin_database=admin_database, account=account)  # fmt: skip
+        raise RunnerNotCreated(str(exc), exc.sqlstate, left) from None
     except BaseException:
         drop_runner(client, secrets_client, cluster_arn=cluster_arn, secret_arn=secret_arn,
                     admin_database=admin_database, account=account)  # fmt: skip
         raise
     return account
+
+
+class RunnerNotCreated(de.EngineError):
+    """``CREATE USER`` for the runner failed; ``left`` names what the cleanup that followed
+    could not remove (empty when the user and its secret are both gone)."""
+
+    def __init__(self, message: str, sqlstate: str | None, left: Sequence[str]) -> None:
+        super().__init__(message, sqlstate)
+        self.left = list(left)
+
+
+def sweep_runners(client: DataApiClient, secrets_client: Any, *, cluster_arn: str,
+                  secret_arn: str, job_id: str,
+                  admin_database: str | None) -> tuple[list[str], list[str]]:  # fmt: skip
+    """Drop every runner user of ``job_id`` the cluster still holds and delete every runner
+    secret under the job's name prefix: what a run killed between the runner's creation and
+    its drop left. Nothing of another job is touched (each name is checked against the
+    job's prefix and the runner pattern). Each removal is tried on its own; returns
+    ``(removed, left)``."""
+    prefix = runner_prefix(job_id)
+    removed: list[str] = []
+    left: list[str] = []
+    admin = _DataApiBackend(client, cluster_arn, secret_arn, "mysql", admin_database or "", None,
+                            CALL_TIMEOUT_S)  # fmt: skip
+    try:
+        users = [str(r[0]) for r in admin._rows(admin._guarded(
+            "SELECT User FROM mysql.user WHERE LEFT(User, %s) = %s ORDER BY 1",
+            [len(prefix), prefix], meta=True))[0]]  # fmt: skip
+    except Exception:  # noqa: BLE001 - reported, never raised
+        users, left = [], [f"the runner users of prefix {prefix} (could not be listed)"]
+    for user in users:
+        if not (user.startswith(prefix) and _RUNNER_NAME.fullmatch(user)):
+            continue
+        try:
+            admin._guarded(f"DROP USER IF EXISTS '{user}'@'%'")
+            removed.append(f"user {user}")
+        except Exception:  # noqa: BLE001 - the next one is still dropped
+            left.append(f"user {user}")
+    name_prefix = f"{RUNNER_SECRET_PREFIX}{job_id}/"
+    try:
+        found, token = [], None
+        while True:
+            page = secrets_client.list_secrets(
+                Filters=[{"Key": "name", "Values": [name_prefix]}],
+                **({"NextToken": token} if token else {}),
+            )
+            found += list(page.get("SecretList") or [])
+            token = page.get("NextToken")
+            if not token:
+                break
+    except Exception:  # noqa: BLE001 - reported, never raised
+        return removed, [*left, f"the runner secrets under {name_prefix} (could not be listed)"]
+    for secret in found:
+        name = str(secret.get("Name") or "")
+        user = name[len(name_prefix) :]
+        if not (name.startswith(name_prefix) and _RUNNER_NAME.fullmatch(user)):
+            continue
+        try:
+            secrets_client.delete_secret(SecretId=str(secret["ARN"]),
+                                         ForceDeleteWithoutRecovery=True)  # fmt: skip
+            removed.append(f"secret {name}")
+        except Exception:  # noqa: BLE001 - the next one is still deleted
+            left.append(f"secret {name}")
+    return removed, left
 
 
 def drop_runner(client: DataApiClient, secrets_client: Any, *, cluster_arn: str, secret_arn: str,

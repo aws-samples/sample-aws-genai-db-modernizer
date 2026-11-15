@@ -214,11 +214,15 @@ def test_a_trigger_function_takes_its_triggers_outcome():
 
 
 def _run_of(failures=(), ok=3, ran=None, **kw: Any) -> Any:
+    """A load-and-run result: each failure ``(index, label, SQLSTATE, message[, errno])``;
+    both sides of a pair ran the same rows and calls unless ``inputs_digest`` says not."""
     from src.tools.routines.comparison import RoutineRun
 
     ran = ran if ran is not None else ok + len(failures)
+    full = tuple((*f, None) if len(f) == 4 else tuple(f) for f in failures)
+    kw.setdefault("inputs_digest", "the same inputs")
     return RoutineRun(routine_id="r", outcome="ran", reason=f"loaded and ran {ran} calls",
-                      calls_run=ran, calls_succeeded=ok, failures=tuple(failures), **kw)  # fmt: skip
+                      calls_run=ran, calls_succeeded=ok, failures=full, **kw)  # fmt: skip
 
 
 def test_load_and_run_is_proved_only_when_every_call_succeeds():
@@ -235,7 +239,7 @@ def test_load_and_run_is_proved_only_when_every_call_succeeds():
                             _run_of([(2, "p1=max", "22008", "timestamp out of range")], ok=4))  # fmt: skip
     assert (same.outcome, same.calls_failed_on_both, same.failed_calls) == ("proved", 1, [])
     other = pr._entry_of_run(
-        _run_of([(2, "x", "22008", "")], ok=4), _run_of([(2, "x", "22012", "")], ok=4)
+        _run_of([(2, "x", "22008", "m")], ok=4), _run_of([(2, "x", "22012", "m")], ok=4)
     )
     assert other.outcome == "not_proved"  # another SQLSTATE on the source is no excuse
     for state in ("0A000", "42883"):
@@ -243,7 +247,7 @@ def test_load_and_run_is_proved_only_when_every_call_succeeds():
         assert (gap.outcome, gap.reason_code) == ("not_proved", "target_gap")
         assert "Aurora does not support" in gap.reason
     none = pr._entry_of_run(
-        _run_of([(1, "a", "22008", "")], ok=0), _run_of([(1, "a", "22008", "")], ok=0)
+        _run_of([(1, "a", "22008", "x")], ok=0), _run_of([(1, "a", "22008", "x")], ok=0)
     )
     assert (none.outcome, none.reason_code) == ("not_proved", "no_successful_call")
 
@@ -280,3 +284,101 @@ def test_a_cleanup_that_fails_never_hides_the_proof():
     entries = pr.prove_routines(plan, TABLES, target=_target(FakeDataApi(calls={'"public"."f"': [1]})),
                                 source=None, cleanup=broken, strict={}, strict_check=[])  # fmt: skip
     assert entries["public.f(integer)"].outcome == "proved"
+
+
+# --------------------------------------------------------------------------- review round 2
+
+OVERFLOW = (2, "p_days=max", "22008", "timestamp out of range")
+
+
+def test_a_call_that_fails_on_the_test_cluster_and_succeeds_on_the_source_is_not_left_out():
+    pr = _mod("proof_run")
+    e = pr._entry_of_run(_run_of([OVERFLOW], ok=4), _run_of([], ok=5))
+    assert (e.outcome, e.reason_code, e.calls_failed_on_both) == ("not_proved", "calls_failed", 0)
+    assert [f.call for f in e.failed_calls] == ["p_days=max"]
+
+
+def test_a_call_failing_on_both_with_another_message_is_not_left_out():
+    pr = _mod("proof_run")
+    e = pr._entry_of_run(
+        _run_of([OVERFLOW], ok=4), _run_of([(*OVERFLOW[:3], "interval out of range")], ok=4)
+    )
+    assert (e.outcome, e.calls_failed_on_both) == ("not_proved", 0)
+
+
+@pytest.mark.parametrize("other", [(3, "p_days=max", "22008", "timestamp out of range"),
+                                   (2, "p_days=min", "22008", "timestamp out of range")])  # fmt: skip
+def test_a_call_failing_on_both_at_another_call_is_not_left_out(other):
+    pr = _mod("proof_run")
+    e = pr._entry_of_run(_run_of([OVERFLOW], ok=4), _run_of([other], ok=4))
+    assert (e.outcome, e.calls_failed_on_both) == ("not_proved", 0)
+
+
+def test_a_mysql_failure_needs_the_same_error_number_too():
+    pr = _mod("proof_run")
+    mine, theirs = (1, "a", "42S22", "Unknown column", 1054), (
+        1,
+        "a",
+        "42S22",
+        "Unknown column",
+        1166,
+    )
+    assert pr._entry_of_run(_run_of([mine], ok=2), _run_of([theirs], ok=2)).outcome == "not_proved"
+    assert pr._entry_of_run(_run_of([mine], ok=2), _run_of([mine], ok=2)).outcome == "proved"
+
+
+@pytest.mark.parametrize("state", ["P0001", "XX000", "HY000", "22000"])
+def test_a_generic_sqlstate_never_matches(state):
+    """P0001 (any RAISE), XX000, HY000 (hundreds of MySQL errors) and 22000 name no one
+    failure, so two of them are never taken for the same one."""
+    pr = _mod("proof_run")
+    failure = (1, "baseline", state, "boom")
+    e = pr._entry_of_run(_run_of([failure], ok=2), _run_of([failure], ok=2))
+    assert (e.outcome, e.calls_failed_on_both) == ("not_proved", 0)
+
+
+@pytest.mark.parametrize("theirs", ["other rows and calls", None])
+def test_nothing_is_left_out_when_the_source_ran_other_inputs(theirs):
+    """The exclusion holds only when both sides ran this routine on identical rows and
+    calls: when they differ, nothing is left out and the reason says why."""
+    pr = _mod("proof_run")
+    e = pr._entry_of_run(_run_of([OVERFLOW], ok=4), _run_of([OVERFLOW], ok=4, inputs_digest=theirs))
+    assert (e.outcome, e.calls_failed_on_both) == ("not_proved", 0)
+    assert "ran other rows or calls" in e.reason
+
+
+def test_the_source_runs_the_same_batch_as_the_test_cluster():
+    """The source side gets every load-and-run routine of the target's batch, not only the
+    failing one, so the synthetic rows and calls are built alike; a failure shared exactly is
+    then left out."""
+    pr = _mod("proof_run")
+    plan = pr.plan_proof(_migration(_row("f", "as_is", 1), _row("h", "as_is", 2)), _sources(), {},
+                         target_user="proofadmin")  # fmt: skip
+    failing = {"fail_on": {'"public"."f"(CAST(:p0 AS integer))': "22008"},
+               "calls": {'"public"."h"': [2]}}  # fmt: skip
+    on_source = FakeDataApi(**failing)
+    entries = pr.prove_routines(plan, TABLES, target=_target(FakeDataApi(**failing)),
+                                source=_target(on_source), cleanup=lambda: None, strict={},
+                                strict_check=[])  # fmt: skip
+    created = [s for s in on_source.statements() if s.startswith("CREATE OR REPLACE FUNCTION")]
+    assert any("public.f(" in c for c in created) and any("public.h(" in c for c in created)
+    f = entries["public.f(integer)"]
+    assert f.calls_failed_on_both == f.calls_run and f.reason_code == "no_successful_call"
+    assert entries["public.h(integer)"].outcome == "proved"
+
+
+def test_a_role_change_needs_attention():
+    pr = _mod("proof_run")
+    from src.tools.routines.comparison import RoutineRun
+
+    refused = RoutineRun(routine_id="r", outcome="not_run", reason_code="role_changed",
+                         reason="call 1 (baseline) changed the role it runs as")  # fmt: skip
+    e = pr._entry_of_run(refused)
+    assert (e.outcome, e.reason_code) == ("needs_attention", "role_changed")
+    from src.tools.routines.comparison import RoutineComparison
+
+    compared = RoutineComparison(routine_id="r", outcome="could_not_compare", reason="x",
+                                 reason_code="role_changed")  # fmt: skip
+    side = pr._entry_of_comparison(compared)
+    assert (side.mode, side.outcome, side.reason_code) == (
+        "side_by_side", "needs_attention", "role_changed")  # fmt: skip

@@ -763,3 +763,12 @@ def test_every_proof_target_call_passes_auto_in_an_auto_run_and_is_refused_there
         out = json.loads(capsys.readouterr().out.splitlines()[-1])
         assert code == 1 and "never runs under --auto" in out["message"], command
     assert asked == []
+
+
+def test_the_routine_proof_is_never_offered_on_aurora_mysql_until_2298() -> None:
+    """Review round 2 of #2297: the MySQL proof cannot run yet (#2298), so /move never asks
+    the customer to approve a billed test cluster for it; the scripts refuse it too."""
+    flat = _flat(_proof_section())
+    assert "Offer it only when the step's `target_engine` is Aurora PostgreSQL" in flat
+    assert "the routine proof on Aurora MySQL is not available yet (#2298)" in flat
+    assert "`mysql_proof_not_available`" in flat
