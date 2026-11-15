@@ -29,6 +29,7 @@ from typing import Any
 
 from src.shared.dependency_graph import HUB_HEAVY
 from src.shared.engine_names import display_engine
+from src.shared.figure_format import fmt_num
 
 __all__ = [
     "METRIC_LABELS",
@@ -115,7 +116,8 @@ def _count(n: int, one: str, many: str) -> str:
 
 
 def _percent(value: float) -> str:
-    return f"{float(value):g}%"
+    """A share as the figures table states it: ``fmt_num``, the one figure rule (#2285)."""
+    return f"{fmt_num(float(value))}%"
 
 
 def _and(items: list[str]) -> str:

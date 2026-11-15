@@ -274,3 +274,31 @@ def test_a_run_with_no_schema_design_leaves_stage_d_empty() -> None:
     )
     # The same unit lands in its self-contained stage, as with no risk at all.
     assert plan == _plan_from_report_risks([])
+
+
+def test_a_step_s_call_share_is_its_slice_s_one_rounding_not_a_sum_of_rounded_stages() -> None:
+    """#2285: two stages at 6.4% each (each rounded from 6.35 to 6.44) sum to 12.8, but the
+    slice's calls are 12.7% of the total once; the sentence and the figures table must read
+    the same share, so the step states the slice's own figure."""
+    from src.shared.slice_plan import _step_dict
+
+    def stage(label: str) -> dict[str, Any]:
+        return {
+            "label": label,
+            "unit_count": 1,
+            "query_count": 1,
+            "owned_table_count": 1,
+            "call_share_percent": 6.4,
+        }
+
+    step = _step_dict(
+        3,
+        "slice",
+        "dynamodb",
+        [stage("3a"), stage("3b")],
+        new_engine=True,
+        movement="heterogeneous",
+        phase_wave=3,
+        metrics={"value_call_share_percent": 12.7},
+    )
+    assert step["call_share_percent"] == step["metrics"]["value_call_share_percent"] == 12.7

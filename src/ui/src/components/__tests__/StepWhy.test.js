@@ -184,3 +184,20 @@ test('the figures table prints large and tiny values as the reports do', () => {
   const row = [...all('step-metrics')[0].querySelectorAll('tbody tr')][1];
   expect([...row.children].map(td => td.textContent)).toEqual(['4', '0.62', '<0.01', '3', '1,234', '67.3%']);
 });
+
+test('each step share in the figures table is the share its sentence states (#2285)', () => {
+  const p = plan();
+  p.plan_steps[0].why = 'Step 3 moves 2 queries and 1 table to DocumentDB, 12.7% of calls, in wave 3.';
+  p.plan_steps[0].metrics.value_call_share_percent = 12.7;
+  p.plan_steps[1].why = 'Step 4 moves 8 queries and 4 tables to DynamoDB, 33.33% of calls.';
+  p.plan_steps[1].metrics.value_call_share_percent = 33.3333;
+  render(p);
+  open();
+  const sentences = all('step-why').map(el => el.textContent);
+  const table = all('step-metrics')[0];
+  const rows = [...table.querySelectorAll('tbody tr')].map(tr => [...tr.children].map(td => td.textContent));
+  rows.forEach((cells, i) => {
+    const share = cells.find(c => c.endsWith('%'));
+    expect(sentences[i]).toContain(`, ${share} of calls`);
+  });
+});
