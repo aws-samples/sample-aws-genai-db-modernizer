@@ -388,6 +388,9 @@ Resources:
           },
           "Logging": {
             "EnableLogging": true
+          },
+          "ControlTablesSettings": {
+            "ControlSchema": "awsdms_control"
           }
         }
       Tags:

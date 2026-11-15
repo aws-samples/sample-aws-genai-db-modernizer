@@ -40,6 +40,10 @@
 -- - The indexes of a saved schema design are not in this file: it creates the keys, the
 -- source's indexes and the foreign keys between moved tables only. Add the design's indexes
 -- when you choose.
+-- - DMS keeps its control tables in awsdms_control (the task's ControlSchema): the apply
+-- exceptions, the replication status, history and suspended tables, and the records that did
+-- not validate (awsdms_validation_failures_v1, or _v2 from DMS 3.6.1). This file creates the
+-- awsdms_control schema if it is missing; the DMS user's grants below cover it.
 -- - The DMS target endpoint sets session_replication_role = replica to skip foreign keys and
 -- triggers during the load, which needs rds_superuser (or, if your Aurora version allows it,
 -- GRANT SET ON PARAMETER session_replication_role); drop that grant when you end the step.
@@ -68,6 +72,7 @@
 -- Tables left out: none.
 -- Unsupported fields: none.
 
+CREATE SCHEMA IF NOT EXISTS "awsdms_control";
 CREATE SCHEMA IF NOT EXISTS "public";
 SET search_path TO "public";
 
@@ -91,6 +96,7 @@ CREATE TABLE "orders" (
 -- CREATE USER dms_user WITH PASSWORD '<password>';
 -- GRANT CONNECT, CREATE ON DATABASE "shop" TO dms_user;
 -- GRANT USAGE, CREATE ON SCHEMA "public" TO dms_user;
+-- GRANT USAGE, CREATE ON SCHEMA "awsdms_control" TO dms_user;
 -- GRANT UPDATE, INSERT, SELECT, DELETE, TRUNCATE ON ALL TABLES IN SCHEMA "public" TO dms_user;
 -- ALTER DEFAULT PRIVILEGES IN SCHEMA "public" GRANT UPDATE, INSERT, SELECT, DELETE, TRUNCATE ON TABLES TO dms_user;
 -- GRANT rds_superuser TO dms_user;

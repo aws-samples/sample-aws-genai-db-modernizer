@@ -23,6 +23,7 @@ from typing import Any
 import pytest
 
 from src.storage.local_store import LocalArtifactStore
+from src.tools.data_movement.dms_control import CONTROL_SCHEMA
 from src.tools.data_movement.dms_step import DmsStepError, load_step1, render_ddl
 from src.tools.data_movement.plan import write_plans
 from src.tools.data_movement.routine_scripts import DEPLOY_FILE, write_routine_scripts
@@ -137,7 +138,13 @@ def _statements(text: str) -> str:
 
 
 def _database_clauses(text: str) -> set[str]:
-    return set(re.findall(r"^CREATE DATABASE IF NOT EXISTS `(?:[^`]|``)+`(.*);$", text, re.M))
+    return {
+        options
+        for name, options in re.findall(
+            r"^CREATE DATABASE IF NOT EXISTS `((?:[^`]|``)+)`(.*);$", text, re.M
+        )
+        if name != CONTROL_SCHEMA  # DMS's own control database (#2133), not a tables' one
+    }
 
 
 def test_the_ddl_creates_the_tables_database_on_the_source_collation(tmp_path):

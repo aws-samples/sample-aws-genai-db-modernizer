@@ -833,8 +833,13 @@ def _table_problems(out: dict[str, Any], task: dict[str, Any], tables: list[dict
     out = {**out, "tables_errored": problems["tables_errored"], "table_problems": problems}
     family = None if steps is None else steps.family
     if problems["validation_failures"]:
+        from src.tools.data_movement.dms_control import task_control_schema
+
         out["validation_failures_check"] = te.failures_check(
-            family, task["ReplicationTaskArn"], None if steps is None else steps.dms_version
+            family,
+            task["ReplicationTaskArn"],
+            None if steps is None else steps.dms_version,
+            task_control_schema(task),
         )
     if not problems["errored_tables"]:
         return out

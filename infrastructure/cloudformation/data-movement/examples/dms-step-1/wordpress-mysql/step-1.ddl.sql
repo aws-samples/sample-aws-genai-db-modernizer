@@ -39,6 +39,10 @@
 -- - The indexes of a saved schema design are not in this file: it creates the keys, the
 -- source's indexes and the foreign keys between moved tables only. Add the design's indexes
 -- when you choose.
+-- - DMS keeps its control tables in awsdms_control (the task's ControlSchema): the apply
+-- exceptions, the replication status, history and suspended tables, and the records that did
+-- not validate (awsdms_validation_failures_v1). This file creates the awsdms_control database
+-- if it is missing; the DMS user's grants below cover it.
 -- - The DMS target endpoint turns foreign key checks off for its own sessions during the load
 -- (SET FOREIGN_KEY_CHECKS=0).
 --
@@ -110,6 +114,7 @@
 -- Tables left out: none.
 -- Unsupported fields: none.
 
+CREATE DATABASE IF NOT EXISTS `awsdms_control`;
 CREATE DATABASE IF NOT EXISTS `wordpress`;
 USE `wordpress`;
 

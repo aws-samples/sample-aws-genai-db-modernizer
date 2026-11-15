@@ -16,6 +16,7 @@ from pathlib import Path
 
 from src.agents.collector.offline_ingest import build_offline_collector_output
 from src.storage.local_store import LocalArtifactStore
+from src.tools.data_movement.dms_control import CONTROL_SCHEMA
 from src.tools.data_movement.dms_step import (
     DDL_FILE,
     DMS_TEMPLATE,
@@ -84,5 +85,6 @@ def test_the_dms_task_selects_the_tables_schema_and_the_ddl_creates_them_there(t
     files = render_files(inputs)
     assert '"schema-name": "forum"' not in files[DMS_TEMPLATE]
     ddl = files[DDL_FILE]
-    assert re.findall(r'CREATE SCHEMA IF NOT EXISTS "([^"]+)"', ddl) == ["public"]
+    # DMS's control schema first (#2133), then the tables' own.
+    assert re.findall(r'CREATE SCHEMA IF NOT EXISTS "([^"]+)"', ddl) == [CONTROL_SCHEMA, "public"]
     assert 'SCHEMA "forum"' not in ddl
