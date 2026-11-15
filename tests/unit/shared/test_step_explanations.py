@@ -229,7 +229,7 @@ def test_another_source_s_step_follows_its_wave_and_shares_nothing() -> None:
     step = plan["plan_steps"][2]
     assert step["kind"] == "engine_wave" and step["metrics"] is None
     assert step["why"] == (
-        "Step 3 moves 8 queries and 4 tables to DynamoDB, 70.3% of calls, in wave 3 of the "
+        "Step 3 moves 8 queries and 4 tables to DynamoDB, 70.2% of calls, in wave 3 of the "
         "roadmap, with its 2 tables copied across and 5 write statements that change "
         "engine; no step but step 1 shares its tables."
     )
@@ -723,10 +723,20 @@ def test_a_step_with_a_why_but_no_ties_is_filled() -> None:
 
 
 @pytest.mark.parametrize(
-    ("share", "text"), [(33.3333, "33.33%"), (12.75, "12.75%"), (0.004, "<0.01%")]
+    ("share", "text"), [(33.3333, "33.33%"), (12.7499, "12.75%"), (0.004, "<0.01%")]
 )
 def test_the_share_is_formatted_by_the_reports_figure_rule(share: float, text: str) -> None:
     """#2285: the sentence states a share the way the figures table does (fmt_num), so a
     stored value with more places reads the same in both."""
     step = dict(_step("slice", 3), call_share_percent=share)
     assert f", {text} of calls" in why.step_why(_plan_of(FIRST, step), step)
+
+
+def test_a_plan_with_no_why_states_the_share_its_figures_table_reads() -> None:
+    """#2285: a plan stored before #1699 (no why) whose step share is the old sum of rounded
+    stage shares (12.8) is worded from the slice's own figure (12.7), the one the table prints."""
+    step = dict(_step("slice", 3), call_share_percent=12.8)
+    step["metrics"] = {"value_call_share_percent": 12.7}
+    assert ", 12.7% of calls" in why.step_why(_plan_of(FIRST, step), step)
+    old = {k: v for k, v in step.items() if k != "metrics"}
+    assert ", 12.8% of calls" in why.step_why(_plan_of(FIRST, old), old)
