@@ -243,6 +243,7 @@ def test_a_headless_run_is_denied_every_proof_target_command(command: str) -> No
     assert _bash_rule_matches(command, permissions["deny"])
 
 
+@pytest.mark.passes_on_main  # guards the existing allow: the new deny must not reach it
 @pytest.mark.parametrize("subcommand", ["status --until stack", "plan", "routines", "teardown"])
 def test_the_other_run_dms_step_subcommands_stay_allowed(subcommand: str) -> None:
     permissions = _load_settings()["permissions"]
