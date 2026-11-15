@@ -232,6 +232,33 @@ Both wait until the task runs, up to 540 seconds, and refuse any stack that is n
 
 On a no, with nothing to offer, or when the Poll after a resume or a retry ends at `task_stopped` again (never offer a second one: show its `hint`), end with `MOVE_RESULT: stopped stage=prove reason=task <task_status>: <last_failure or stop_reason>`. Under `--auto`, never run `resume` or `retry` and never ask: `--approve-deploy` does not cover them, so end with that same line.
 
+**Routine proof (optional).** When `phase` is `replicating`, before the routine scripts, offer once, in one line, to test the carried routines on a throwaway Aurora test cluster: synthetic rows and the carried routines only, never customer data, reached only through the RDS Data API, deleted afterwards; it bills while it runs. Never offer it under `--auto`: go on to Routines. In the commands below, `{--auto}` stands for `--auto` in an `--auto` run and for nothing otherwise: a headless run never reaches them, and every `proof-target-*` command refuses `--auto`, so one that ever ran in a headless run would stop there. On a yes, the customer writes `data-movement/routine-proof/inputs.json` in the job folder (`region`, `vpc_id` and two or more private `subnet_ids`; the data-movement README's "Routine proof test cluster" section), then run (read-only):
+
+```bash
+uv run python scripts/run_dms_step.py proof-target-plan --job-id {job_id} --db {db} {--auto}
+```
+
+Show its `engine_version`, `min_capacity` and `cost`, then ask its `question` verbatim. Only on a yes, run the first; while its line says `deploying`, run the second, in the same turn, up to 4 times:
+
+```bash
+uv run python scripts/run_dms_step.py proof-target-deploy --job-id {job_id} --db {db} --approve {--auto}
+uv run python scripts/run_dms_step.py proof-target-status --job-id {job_id} --db {db} --wait-seconds 540 {--auto}
+```
+
+Then ask the plan's `run_question` verbatim. Only on a yes:
+
+```bash
+uv run python scripts/run_dms_step.py proof-target-run --job-id {job_id} --db {db} --approve {--auto}
+```
+
+Show its `counts`, `strict_check`, and every entry of `routines` with its `mode`, `outcome` and `reason`. An outcome of `proved` means no difference was found on the calls made (or, for `load_and_run`, that the routine loaded and its calls ran there); never say more than that. Then ask its `teardown_question` verbatim. Only on a yes, run, and while its line says `deleting` run it again, in the same turn, up to 4 times:
+
+```bash
+uv run python scripts/run_dms_step.py proof-target-teardown --job-id {job_id} --db {db} --approve {--auto}
+```
+
+On a no to any question, say what is left (a deployed test cluster bills until it is torn down) and go on to Routines; an error line: quote its `message` and go on to Routines. The proof never ends the run and never changes the gate.
+
 **Routines.** When `phase` is `replicating`, and before the gate, write step 1's routine scripts (read-only in AWS; the modernizer never connects to a database):
 
 ```bash
@@ -337,6 +364,7 @@ uv run python scripts/run_dms_step.py status --job-id {job_id} --db {db} --until
 - With `--inputs` and `--approve-deploy`: Move runs every step without its question, then Prove; `--approve-deploy` also stands for the customer's confirmation that every target table is empty (Move's step 5, `empty_target`).
 - `--auto` never stops the task or deletes the stack (Ending the step), never restarts the task when validation stalls, never resumes or retries a stopped or failed task, and never reloads or revalidates tables (Prove).
 - `--auto` writes the routine scripts (Prove) but never waits for the customer to run them: the gate's routines check stays `pending`.
+- `--auto` never offers or runs the routine proof (Prove): every `proof-target-*` command refuses `--auto`, which the command passes to each of them in an `--auto` run (`{--auto}`).
 - The writes refuse to run under `MODERNIZER_CI_SANDBOX=1` (the CI headless runs), whatever the flags.
 
 ## Result line

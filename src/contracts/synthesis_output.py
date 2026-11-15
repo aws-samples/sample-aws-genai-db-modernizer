@@ -3401,9 +3401,19 @@ class RoutineFacts(BaseModel):
     reason_counts: dict[str, int] = Field(
         default_factory=dict, description="A reason (rule id or reason code) -> routines"
     )
-    proof: Literal["checked, not load-tested"] = Field(
+    proof: Literal["checked, not load-tested", "load-tested on a test Aurora"] = Field(
         "checked, not load-tested",
-        description="What the verdicts rest on: the static checks, no load-and-run proof yet",
+        description=(
+            "What the verdicts rest on: the static checks, or (#1945) also the routine "
+            "proof on a throwaway Aurora test cluster"
+        ),
+    )
+    proof_counts: dict[str, int] | None = Field(
+        None,
+        description=(
+            "The routine proof's carried routines per outcome (proved, needs_attention, "
+            "not_proved, #1945); None when the proof has not run"
+        ),
     )
     line: str = Field(..., description="The headline sentence, with no routine or table name")
     routines: list[RoutineFactRow] = Field(

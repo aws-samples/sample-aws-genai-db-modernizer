@@ -34,6 +34,7 @@ _IMPORTERS = {
     "src/tools/data_movement/routine_scripts.py",  # writes step 1's deploy script (#1947)
     "src/tools/data_movement/triggers_scripts.py",  # writes the triggers-enable script (#1948)
     "src/tools/data_movement/triggers_check.py",  # reads an event's status only (#1948)
+    "src/tools/routines/proof_run.py",  # loads them on the throwaway test cluster only (#1945)
 }
 _READERS = {"read_routine_sources", "RoutineSourcesChunk"}
 _PATHS = ("collector/routine_sources", "routine_sources.json", "routine_sources/part-")
@@ -90,6 +91,9 @@ def test_nothing_but_the_routine_sources_module_reads_a_chunk():
         "src/tools/data_movement/routine_scripts.py",
         # Reads only the status each MySQL event's CREATE EVENT gives, never keeps text (#1948).
         "src/tools/data_movement/triggers_check.py",
+        # Loads the carried text on the throwaway test cluster through the Data API and
+        # keeps only ids, counts and SQLSTATEs (#1945, ADR-034 Decision 5).
+        "src/tools/routines/proof_run.py",
     }
 
 

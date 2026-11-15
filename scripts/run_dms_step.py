@@ -64,6 +64,12 @@ Every subcommand prints one JSON line, its result (exit 1 only on ``"status": "e
   the plan's ``question`` and ``teardown_question`` name the stack and region. Deploy and
   teardown act only on this job's stack (its ``modernizer:job-id`` and ``modernizer:purpose``
   tags, exactly the template's four resources, and the cluster's ``modernizer:job-id`` tag).
+- ``proof-target-run --approve`` (#1945): the routine proof on that cluster, through the RDS Data
+  API only (``src/tools/routines/proof_run.py``): a job-scoped scratch database, the synthetic rows
+  and the carried routines, the calls (side by side with the original on a disposable engine of
+  the source for a rewritten or repaired routine), then the database dropped, also on failure.
+  The result goes into the routine-migration artifact's ``proof`` fields. Refused like the
+  other ``proof-target-*`` commands; its question names the stack and the region.
 - ``triggers-scripts`` (#1948, renamed in #2113, no AWS call): write the triggers-enable
   script, which turns on the triggers and events step 1 left off, for the customer to run
   (``triggers-enable.sql``: PostgreSQL ``ENABLE TRIGGER`` for each trigger step 1 created
@@ -147,6 +153,7 @@ Usage:
     uv run python scripts/run_dms_step.py proof-target-plan --job-id <id> --db <db>
     uv run python scripts/run_dms_step.py proof-target-deploy --job-id <id> --db <db> --approve
     uv run python scripts/run_dms_step.py proof-target-status --job-id <id> --db <db> --wait-seconds 540
+    uv run python scripts/run_dms_step.py proof-target-run --job-id <id> --db <db> --approve
     uv run python scripts/run_dms_step.py proof-target-teardown --job-id <id> --db <db> --approve
 """
 
@@ -201,8 +208,9 @@ TRIGGERS_SCRIPTS, TRIGGERS_CHECK = "triggers-scripts", "triggers-check"  # no AW
 # The routine-proof test cluster (#1946): never in a CI sandbox or an --auto run.
 PROOF_PLAN, PROOF_DEPLOY = "proof-target-plan", "proof-target-deploy"
 PROOF_STATUS, PROOF_TEARDOWN = "proof-target-status", "proof-target-teardown"
-PROOF_TARGET = (PROOF_PLAN, PROOF_DEPLOY, PROOF_STATUS, PROOF_TEARDOWN)
-PROOF_WRITES = (PROOF_DEPLOY, PROOF_TEARDOWN)
+PROOF_RUN = "proof-target-run"  # the routine proof itself, on the test cluster (#1945)
+PROOF_TARGET = (PROOF_PLAN, PROOF_DEPLOY, PROOF_STATUS, PROOF_RUN, PROOF_TEARDOWN)
+PROOF_WRITES = (PROOF_DEPLOY, PROOF_RUN, PROOF_TEARDOWN)
 PROOF_TARGET_RESOURCES = _PROOF_RESOURCES  # the stack the ownership check accepts
 LOB_SIZES = (
     "lob-sizes"  # reads the customer's lob-sizes.tsv, or applies a skip; no AWS call (#2123)
@@ -2485,6 +2493,7 @@ def _proof_target(args: argparse.Namespace, sleep: Callable[[float], None]) -> d
         name = pt.stack_name(inputs, job_id)
         if writes and not args.approve:
             question = (pt.teardown_question(name, inputs.region) if command == PROOF_TEARDOWN
+                        else pt.run_question(name, inputs.region) if command == PROOF_RUN
                         else f"Deploy the routine-proof test cluster stack {name} in {inputs.region}?")  # fmt: skip
             return {"status": "error", "message": f"{command} is an AWS write: pass --approve only "
                     f"after the customer approved it ({question})"}  # fmt: skip
@@ -2507,6 +2516,8 @@ def _proof_target(args: argparse.Namespace, sleep: Callable[[float], None]) -> d
                              sleep=sleep)  # fmt: skip
         if command == PROOF_STATUS:
             return pt.status(clients, inputs, job_id, wait, args.interval_seconds, sleep=sleep)
+        if command == PROOF_RUN:
+            return _proof_run(store, db, job_id, clients, inputs, cred, sleep)
         return pt.teardown(clients, inputs, job_id, wait, args.interval_seconds, sleep=sleep)
     except (MoveError, ValueError) as exc:
         return {"status": "error", "message": str(exc)}
@@ -2514,6 +2525,32 @@ def _proof_target(args: argparse.Namespace, sleep: Callable[[float], None]) -> d
         if _credential_error(exc):
             return credentials_error(exc, [])
         return {"status": "error", "message": f"{type(exc).__name__}: {exc}"}
+
+
+def _data_api(cred: Any) -> Any:
+    """The RDS Data API client the routine proof calls (a test replaces it)."""
+    return cred.client("rds-data")
+
+
+def _proof_run(store: Any, db: str, job_id: str, clients: Any, inputs: Any, cred: Any,
+               sleep: Callable[[float], None]) -> dict[str, Any]:  # fmt: skip
+    """``proof-target-run`` (#1945): the routine proof on this job's test cluster, through
+    the RDS Data API only. The cluster is read with ``proof-target-status``'s ownership
+    checks first; a stack that is not this job's, not created, or whose cluster is not
+    available is refused before any statement."""
+    from src.tools.data_movement import proof_target as pt
+    from src.tools.routines.proof_run import run_proof
+
+    state = pt.status(clients, inputs, job_id, 0, 10, sleep=sleep)
+    cluster = state.get("cluster") or {}
+    if state.get("status") != "deployed" or cluster.get("status") != "available":
+        return {"status": "error", "message": f"proof-target-run needs this job's test cluster "
+                f"deployed and available (stack {state.get('stack_name')} is "
+                f"{state.get('stack_status') or state.get('status')}, cluster "
+                f"{cluster.get('status') or 'none'}): run proof-target-deploy first"}  # fmt: skip
+    out = run_proof(store, db, job_id, data_api=_data_api(cred), cluster=cluster)
+    return {**out, "stack_name": state.get("stack_name"), "region": inputs.region,
+            "teardown_question": state.get("teardown_question")}  # fmt: skip
 
 
 def main(argv: list[str] | None = None, *, clients: MoveClients | None = None,
