@@ -43,7 +43,7 @@ export const NODE_COLORS = {
   ...ENGINE_HEX,
 };
 
-const ChartSankey = ({ width = 800, height = 400, data, onNodeClick }) => {
+const ChartSankey = ({ width = 800, height = 400, data, onNodeClick, unavailableTitle }) => {
   // Theme detection for text color
   const [isDark, setIsDark] = useState(() => document.body.classList.contains('awsui-dark-mode'));
   useEffect(() => {
@@ -130,8 +130,20 @@ const ChartSankey = ({ width = 800, height = 400, data, onNodeClick }) => {
           key={node.index}
           data-sankey-node={node.id}
           onClick={isClickable ? () => onNodeClick(node.id) : undefined}
+          // #2300: a link is reachable and usable from the keyboard.
+          role={isClickable ? 'link' : undefined}
+          tabIndex={isClickable ? 0 : undefined}
+          aria-label={isClickable ? label : undefined}
+          onKeyDown={isClickable ? (e) => {
+            if (e.key === 'Enter' || e.key === ' ') {
+              e.preventDefault();
+              onNodeClick(node.id);
+            }
+          } : undefined}
           style={{ cursor: isClickable ? 'pointer' : 'default', pointerEvents: 'all' }}
         >
+          {/* #2300: why an engine node is not a link (no results page yet). */}
+          {!isClickable && !isSource && !isCache && unavailableTitle && <title>{unavailableTitle}</title>}
           <rect
             height={node.y1 - node.y0}
             width={NODE_WIDTH}
@@ -169,7 +181,7 @@ const ChartSankey = ({ width = 800, height = 400, data, onNodeClick }) => {
         </g>
       );
     });
-  }, [nodes, width, nodeValues, onNodeClick, textFill]);
+  }, [nodes, width, nodeValues, onNodeClick, unavailableTitle, textFill]);
 
   // Draw the links
   const allLinks = useMemo(() => {

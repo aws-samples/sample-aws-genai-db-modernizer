@@ -821,7 +821,9 @@ const JobMonitoringSummaryPage = memo(() => {
                     width={900}
                     height={280}
                     data={sankeyData}
-                    onNodeClick={handleSankeyNodeClick}
+                    // #2300: an engine is a link once the job's results exist, as "View results".
+                    onNodeClick={isJobComplete ? handleSankeyNodeClick : undefined}
+                    unavailableTitle={t('job-summary.query-flow.details-after-completion')}
                   />
                 </Container>
               </div>

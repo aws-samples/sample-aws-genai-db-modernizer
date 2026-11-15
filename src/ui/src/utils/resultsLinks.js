@@ -15,3 +15,27 @@ export function resultsEngineHref(jobId, engine) {
 export function engineFromSearch(search) {
   return new URLSearchParams(search || '').get('engine') || null;
 }
+
+// Where a linked engine lands: its explorer rows, its Table design tab, or nowhere
+// ('absent': the plan has no part for it, and the page says so). 'none' when the link
+// names no engine.
+export function linkedEngineTarget(engine, explorerEngines, designEngines) {
+  if (!engine) return 'none';
+  if (explorerEngines.includes(engine)) return 'explorer';
+  if (designEngines.includes(engine)) return 'design';
+  return 'absent';
+}
+
+// The Table design tab shown: the linked engine's when it has a design, else the
+// first. Always defined while there is a design, so the tabs are controlled from
+// their first render (Cloudscape decides that once, on the first render).
+export function activeDesignEngine(selected, designEngines) {
+  return designEngines.includes(selected) ? selected : designEngines[0];
+}
+
+// A decision is pending at the assignment gate: the approval stage has not completed.
+export function awaitsApproval(job) {
+  const stages = job?.progress?.stages;
+  const last = Array.isArray(stages) ? stages[stages.length - 1] : null;
+  return last?.name === 'WaitForAssignmentApproval' && last?.status !== 'completed';
+}

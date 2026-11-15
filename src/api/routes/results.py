@@ -250,7 +250,8 @@ def get_analysis_output(agent_type: str, job_id: str = Depends(job_id_param)):
             status_code=404, detail=f"Analysis output for {agent_type} not available"
         )
     # The engine overview figures are computed here, once, for every job old or new; the
-    # pattern analysis page only formats them (#1312, ADR-032).
+    # analysis endpoint serves them as facts, and nothing formats them (the page that did, #1312,
+    # was removed in #2300).
     # Triage only adds the signal figures: a triage file this code cannot read must not
     # take the analysis away from the page (it did not read triage before #1312).
     signals = None

@@ -1,13 +1,13 @@
 # Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
 # SPDX-License-Identifier: MIT-0
 
-"""The cache layer's "Avg cache fit" on the pattern analysis page is the routed figure (#1325).
+"""The cache layer's "Avg cache fit" is the routed figure (#1325).
 
-The page used to print the analysis phase's average over every table the cache engine rated. The
+The pattern analysis page (removed in #2300) used to print the analysis phase's average over every table the cache engine rated. The
 reports state the fit of the reads actually routed to the cache layer (``routed_confidence`` of the
 ranking's cache entry). The analysis API now serves that figure in the analysis ``facts``, computed
 at read time from the latest assignment by the same ``routed_fits`` call the ranking uses, so a
-saved job of any age answers the same way and the page only displays it (ADR-032).
+saved job of any age answers the same way and a renderer only displays it (ADR-032).
 """
 
 from __future__ import annotations

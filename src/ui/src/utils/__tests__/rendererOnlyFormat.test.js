@@ -73,7 +73,7 @@ const INPUT_KEYS = new Set([
   'cache_call_share_percent', 'tied_queries', 'risks', 'resolved_risks',
   'table_mappings', 'post_schema_reroutes', 'ranking', 'trade_offs', 'query_traces',
 ]);
-// Fields of the engine analysis artifact the pattern analysis page reads (#1312). Kept apart from
+// Fields of the engine analysis artifact (#1312; the pattern analysis page that read them was removed in #2300). Kept apart from
 // INPUT_KEYS, which the Python guard (src/report) must mirror exactly.
 const ANALYSIS_INPUT_KEYS = new Set(['table_recommendations', 'patterns_detected', 'anti_patterns_detected', 'signals']);
 // Facts fields whose name the UI also uses for an unrelated value (a wave's
