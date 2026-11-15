@@ -98,23 +98,20 @@ def _routines_after_the_full_load(root: Path, run: PipelineResult) -> dict[str, 
     100%. Its one AWS read (the stack, the endpoints' connections and the task) is answered
     by a botocore Stubber, the way the unit tests answer it: nothing is sent."""
     import scripts.run_dms_step as dms
-    from tests.unit.scripts import test_run_dms_step as stubs
+    from tests.unit.tools.aws import dms_move_stubs as stubs
     from tests.unit.tools.aws.aws_stubs import StubbedCredMgr
 
     step = root / run.db / run.job_id / "data-movement" / "step-1"
     name = dms.stack_name(dms.load_inputs(step / "inputs.json"), run.job_id)
     cred = StubbedCredMgr()
-    stubs._stack(cred, name=name)
-    stubs._connections(cred)
-    stubs._task(cred, "running", 100)
-    stubs._stats(cred)
+    stubs.full_load_done(cred, name)
     saved = os.environ.get("AWS_PROFILE")
     out = io.StringIO()
     try:
         with contextlib.redirect_stdout(out):
             code = dms.main(
                 ["routines", "--job-id", run.job_id, "--db", run.db, "--artifact-root", str(root)],
-                clients=stubs._clients(cred),
+                clients=stubs.clients(cred),
                 sleep=lambda _s: None,
             )
     finally:  # the helper sets AWS_PROFILE from the inputs file: put the caller's back
@@ -128,15 +125,30 @@ def _routines_after_the_full_load(root: Path, run: PipelineResult) -> dict[str, 
     return line
 
 
-_STEP1: dict[str, Step1] = {}
+# Each sample's step 1, or the reason building it failed: a failed build fails each of
+# the sample's tests at once with that reason, instead of running again for each.
+_STEP1: dict[str, Step1 | str] = {}
 
 
 @pytest.fixture(params=sorted(EXPECTED))
 def step1(request: pytest.FixtureRequest, tmp_path_factory: pytest.TempPathFactory) -> Step1:
     """Step 1 on a copy of the sample's job, built once per sample per session."""
     sample: str = request.param
-    if sample in _STEP1:
-        return _STEP1[sample]
+    if sample not in _STEP1:
+        try:
+            _STEP1[sample] = _build_step1(request, tmp_path_factory, sample)
+        except Exception as exc:  # noqa: BLE001 -- kept as text, so each test fails on it once
+            _STEP1[sample] = f"{type(exc).__name__}: {exc}"
+            raise
+    built = _STEP1[sample]
+    if isinstance(built, str):
+        pytest.fail(f"step 1 for {sample} failed to build earlier in this session: {built}")
+    return built
+
+
+def _build_step1(
+    request: pytest.FixtureRequest, tmp_path_factory: pytest.TempPathFactory, sample: str
+) -> Step1:
     run: PipelineResult = request.getfixturevalue(f"{sample}_run")
     root = tmp_path_factory.mktemp(f"step1-{sample}") / "artifacts"
     shutil.copytree(run.job_dir(), root / run.db / run.job_id)
@@ -146,7 +158,7 @@ def step1(request: pytest.FixtureRequest, tmp_path_factory: pytest.TempPathFacto
     _script("scripts/run_data_movement_plan.py", *common)
     _script("scripts/render_dms_step.py", *common)
     step = root / run.db / run.job_id / "data-movement" / "step-1"
-    from tests.unit.scripts.test_run_dms_step import INPUTS
+    from tests.unit.tools.aws.dms_move_stubs import INPUTS
 
     inputs = {**INPUTS, "target_database_name": TARGET_DATABASE[sample]}
     (step / "inputs.json").write_text(json.dumps(inputs))
@@ -154,8 +166,7 @@ def step1(request: pytest.FixtureRequest, tmp_path_factory: pytest.TempPathFacto
     triggers = _script("scripts/run_dms_step.py", "triggers-scripts", *common)
     [path] = sorted((root / run.db / run.job_id / "transformation-contract").glob("v*/step-1.json"))
     contract = json.loads(path.read_text())
-    _STEP1[sample] = Step1(run, root, step, contract, routines, triggers)
-    return _STEP1[sample]
+    return Step1(run, root, step, contract, routines, triggers)
 
 
 def _bucket(sample: str, kind: str, status: str) -> str:
@@ -364,8 +375,14 @@ def test_the_postgresql_scripts_deploy_and_check_on_a_stand_in_target(
 ) -> None:
     server = stand_in_target
     tables = _tables(step1.text("step-1.ddl.sql"), DISCOURSE_TABLES)
-    made = server.psql('\\set ON_ERROR_STOP on\nSET search_path TO "public";\n' + tables)
-    assert "ERROR" not in made, made
+    # psql stops on the first error and server.psql raises, so no output is read here; the
+    # tables the DDL created are listed instead.
+    server.psql('\\set ON_ERROR_STOP on\nSET search_path TO "public";\n' + tables)
+    listed = server.psql(
+        "\\set QUIET on\n\\t on\nSELECT string_agg(relname, ',' ORDER BY relname) FROM pg_class"
+        " WHERE relnamespace = 'public'::regnamespace AND relkind = 'r';"
+    )
+    assert tuple(listed.strip().split(",")) == DISCOURSE_TABLES, listed
 
     deployed = _psql(server, "-f", str(step1.step / "routines-deploy.sql"))
     assert deployed.returncode == 0, deployed.stderr
