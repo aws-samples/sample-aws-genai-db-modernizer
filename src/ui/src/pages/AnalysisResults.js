@@ -2,8 +2,8 @@
 // SPDX-License-Identifier: MIT-0
 
 //##-- React
-import { useState, useEffect, memo, useCallback, useMemo } from 'react';
-import { useParams } from 'react-router-dom';
+import { useState, useEffect, memo, useCallback, useMemo, useRef } from 'react';
+import { useParams, useLocation } from 'react-router-dom';
 import { useTranslation } from 'react-i18next';
 
 //##-- AWS UI Objects
@@ -58,6 +58,7 @@ import UnreviewedMovesNote from "../components/UnreviewedMovesNote";
 import EngineChoicesNote from "../components/EngineChoicesNote";
 import MigrationWavePlan from "../components/MigrationWavePlan";
 import { schemaSectionIdOf } from "../utils/adoptionPaths";
+import { engineFromSearch } from "../utils/resultsLinks";
 import { schemaDesignsRefusal } from "../utils/schemaDesignsLoad";
 import RoutineMigrationSection from "../components/RoutineMigrationSection";
 import ExecutiveSummaryStats from "../components/ExecutiveSummaryStats";
@@ -229,6 +230,7 @@ const groupPatternsBySourceTable = (patterns) => {
 const AnalysisResultsPage = memo(() => {
   const { t } = useTranslation();
   const { jobId } = useParams();
+  const { search: locationSearch, hash: locationHash } = useLocation();
   const [navigationOpen, setNavigationOpen] = useState(false);
   // The experimental graph explorer (#308): its entry shows only when the server flag is on.
   const graphExplorer = useGraphExplorerFlag();
@@ -1010,6 +1012,28 @@ const AnalysisResultsPage = memo(() => {
     return displayItems.slice(start, start + PAGE_SIZE);
   }, [displayItems, currentPage]);
 
+
+  // #2300: a link from the Sankey (or an old pattern-analysis link) names an
+  // engine (?engine=) and a section (#hash). Once the page has its data, filter
+  // the explorer to that engine (only when it has rows there) and scroll to the
+  // section. Done once per page load, so the user's own filter changes stand.
+  const linkedEngineHandled = useRef(false);
+  useEffect(() => {
+    if (loading || linkedEngineHandled.current) return;
+    linkedEngineHandled.current = true;
+    const engine = engineFromSearch(locationSearch);
+    if (engine && explorerPatterns.some(ap => ap.engine === engine)) {
+      setEngineFilter([{ label: ENGINE_LABELS[engine] || engine, value: engine }]);
+    }
+    const sectionId = locationHash.replace(/^#/, '');
+    if (sectionId) {
+      // Wait a frame so the sections the data just unlocked are in the DOM.
+      requestAnimationFrame(() => {
+        const el = document.getElementById(sectionId);
+        if (el) el.scrollIntoView({ block: 'start' });
+      });
+    }
+  }, [loading, locationSearch, locationHash, explorerPatterns]);
 
   // ============================================
   // Handlers

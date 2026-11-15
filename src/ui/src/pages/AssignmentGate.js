@@ -50,6 +50,7 @@ import {
 import { sourceEngineOf } from "../utils/sqlLocking";
 import { ENGINE_STYLES, engineHex } from "../utils/engineColors";
 import EngineBadge from "../components/EngineBadge";
+import { resultsEngineHref } from "../utils/resultsLinks";
 import { getCacheOverlay, ownerDistribution, getQueryCacheInfo, formatCacheLayerLine, formatCacheReadLine, formatCacheReadsMore, formatCachedByLine, isCacheEngine, buildOverrideList, addCacheOverlayNode } from "../utils/cacheLayer";
 import { summaryFallbackInfo } from "../utils/summaryFallback";
 import { reroutedQueryIds, rowMoveKind } from "../utils/postSchemaReroutes";
@@ -325,9 +326,10 @@ const AssignmentGatePage = memo(() => {
   // ---- Handle Sankey node click ----
   const handleSankeyNodeClick = useCallback((nodeId) => {
     if (nodeId && nodeId !== 'patterns') {
-      window.open(`/analysis/patterns/${jobId}?target=${nodeId}`, '_blank');
+      // #2300: the engine's part of the results page, in this tab.
+      navigate(resultsEngineHref(jobId, nodeId));
     }
-  }, [jobId]);
+  }, [jobId, navigate]);
 
 
   // ---- Computed data ----

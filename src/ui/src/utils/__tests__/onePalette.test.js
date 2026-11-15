@@ -19,7 +19,7 @@ const sources = () => ['pages', 'components'].flatMap((dir) => fs
 
 test('the scan reads the pages that draw engines', () => {
   const names = sources().map((s) => s.name);
-  ['pages/AnalysisResults.js', 'pages/AssignmentGate.js', 'pages/PatternAnalysis.js',
+  ['pages/AnalysisResults.js', 'pages/AssignmentGate.js',
     'pages/JobMonitoringSummary.js', 'components/MigrationWavePlan.js', 'components/ChartSankey.js']
     .forEach((name) => expect(names).toContain(name));
 });
@@ -40,8 +40,8 @@ test('no engine badge picks a named Cloudscape colour', () => {
   });
 });
 
-test('the roadmap, the results page, the gate and the pattern page draw engines with EngineBadge', () => {
+test('the roadmap, the results page and the gate draw engines with EngineBadge', () => {
   const byName = Object.fromEntries(sources().map((s) => [s.name, s.text]));
-  ['pages/AnalysisResults.js', 'pages/AssignmentGate.js', 'pages/PatternAnalysis.js', 'components/MigrationWavePlan.js']
+  ['pages/AnalysisResults.js', 'pages/AssignmentGate.js', 'components/MigrationWavePlan.js']
     .forEach((name) => expect([name, /<EngineBadge\b/.test(byName[name])]).toEqual([name, true]));
 });
