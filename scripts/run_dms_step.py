@@ -2507,8 +2507,9 @@ def _proof_target(args: argparse.Namespace, sleep: Callable[[float], None]) -> d
                   else None)  # fmt: skip
         planned = target
         if command == PROOF_RUN:
-            with contextlib.suppress(MoveError, ValueError):  # the run's own checks follow
-                planned = pt.planned_target(store, db, job_id)
+            # Read before the status describe calls, so a MySQL run is refused before any
+            # AWS call; a run whose planned target cannot be read is refused here too.
+            planned = pt.planned_target(store, db, job_id)
         if planned is not None and (refused := pt.mysql_refusal(planned.engine)) is not None:
             return refused  # before any AWS call: the MySQL proof cannot run yet (#2298)
         if target is not None:
