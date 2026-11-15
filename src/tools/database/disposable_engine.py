@@ -1630,8 +1630,11 @@ class _MySQLBackend(_Backend):
             for name in fresh:
                 quoted = _quote(name, "`")
                 _execute(cur, f"CREATE DATABASE {quoted}")
-                granted = grant_database(name)  # `_` and `%` are wildcards in a GRANT
-                _execute(cur, f"GRANT ALL PRIVILEGES ON {granted}.* TO '{_RUNNER}'@'localhost'")
+                # `_` and `%` are wildcards in a GRANT: the helper escapes them
+                grant = (
+                    f"GRANT ALL PRIVILEGES ON {grant_database(name)}.* TO '{_RUNNER}'@'localhost'"
+                )
+                _execute(cur, grant)
                 made.append(name)
             cur.close()
         except self._mc.Error as exc:

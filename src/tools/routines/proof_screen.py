@@ -26,9 +26,10 @@ holds routine text.
   its tables in, ``schemas``, may be named, #1970);
   with such schemas, a call into one (also a ``CALL`` or ``PERFORM``, read from the tokens), a
   MySQL statement naming one that creates, alters, drops, renames or truncates, writes a file
-  or runs ``USE``, and a function, procedure, operator or aggregate created from a body (on
-  PostgreSQL, whatever the schemas) are refused too, so only reads and row changes of a setup
-  schema's tables remain;
+  or runs ``USE``, and a function, procedure, operator or aggregate created or altered from a
+  body (on PostgreSQL, whatever the schemas) are refused too. On MySQL only reads and row
+  changes of a setup database's tables remain; on PostgreSQL DDL on those tables passes the
+  screen and is undone by the call's ``ROLLBACK``;
 - a name written so that the text and the server read it differently: a PostgreSQL
   ``U&"..."`` Unicode-escaped name, a MySQL ``/*! ... */`` versioned comment; and on
   PostgreSQL every name the statement binds is read again from the parser's tree, which
@@ -491,6 +492,15 @@ _PG_TABLE_BEFORE = {"INTO", "ON", "TABLE", "COPY", "ANALYZE", "ANALYSE", "VACUUM
 _PG_CREATED = {"FUNCTION", "PROCEDURE", "OPERATOR", "AGGREGATE"}
 
 
+def _setup_name(tok: RoutineToken, schema: str, engine: str) -> bool:
+    """Whether ``tok`` is the setup schema ``schema``. A MySQL database name is read in any
+    letter case (a server with ``lower_case_table_names`` 1 or 2 treats ``INVENTORY`` as
+    ``inventory``); refusing more is safe."""
+    if engine == "mysql":
+        return tok.text.casefold() == schema.casefold()
+    return _same_schema(tok, schema, engine)
+
+
 def _names_schema(
     toks: Sequence[RoutineToken], i: int, schemas: Collection[str], engine: str
 ) -> bool:
@@ -500,7 +510,7 @@ def _names_schema(
         tok.kind in ("VAR", "IDENTIFIER")
         and i + 1 < len(toks)
         and toks[i + 1].kind == "DOT"
-        and any(_same_schema(tok, s, engine) for s in schemas)
+        and any(_setup_name(tok, s, engine) for s in schemas)
     )
 
 
@@ -527,12 +537,10 @@ def _mysql_setup_refusal(
         names = any(_names_schema(toks, j, schemas, "mysql") for j in statement)
         for j in statement:
             if toks[j].text.upper() == "USE" and toks[j].kind not in ("IDENTIFIER", "STRING"):
-                if j + 1 < len(toks) and any(
-                    _same_schema(toks[j + 1], s, "mysql") for s in schemas
-                ):
+                if j + 1 < len(toks) and any(_setup_name(toks[j + 1], s, "mysql") for s in schemas):
                     names = True
         if "USE" in inherited and statement:  # ``USE`` is a command: its rest is a string
-            names = names or any(_same_schema(toks[statement[0]], s, "mysql") for s in schemas)
+            names = names or any(_setup_name(toks[statement[0]], s, "mysql") for s in schemas)
         if names and words & (_MY_CHANGES | {"USE"}):
             return "its text changes or writes out a database the setup made"
         if depth < _DEPTH:
@@ -562,9 +570,13 @@ def _setup_schema_refusal(text: str, engine: str, schemas: Collection[str]) -> s
     databases may not create, alter, drop, rename or truncate anything, write a file, or
     ``USE`` it, so only reads and row changes of its tables remain. PostgreSQL: no call of a
     function in one of the schemas (``sales.f(...)`` after any word but the few that put a
-    table before its column list), and, schema or not, no ``CREATE`` of a function,
-    procedure, operator or aggregate from a body: a more specific signature in ``public``
-    or a setup schema would win over ``pg_catalog``'s."""
+    table before its column list), and, schema or not, no ``CREATE`` or ``ALTER`` of a
+    function, procedure, operator or aggregate from a body (so no ``RENAME`` or ``SET
+    SCHEMA`` of one either): a more specific signature in ``public`` or a setup schema would
+    win over ``pg_catalog``'s for the routine's own calls. A routine whose own header is
+    that signature is not read for it. MySQL's check is conservative on words: ``TRUNCATE(``
+    the function, a column named ``dumpfile`` or a message string that holds one of the
+    words, in a statement that names a setup database, is refused too."""
     try:
         levels = list(_levels(text, engine))
     except RoutineTokenError:
@@ -572,12 +584,12 @@ def _setup_schema_refusal(text: str, engine: str, schemas: Collection[str]) -> s
     for depth, toks in enumerate(levels):
         if engine == "postgresql":
             for i, tok in enumerate(toks):
-                if (depth, i) != (0, 0) and tok.text.upper() == "CREATE":
+                if (depth, i) != (0, 0) and tok.text.upper() in ("CREATE", "ALTER"):
                     after = [t.text.upper() for t in toks[i + 1 : i + 4]]
                     if after[:2] == ["OR", "REPLACE"]:
                         after = after[2:]
                     if after and after[0] in _PG_CREATED:
-                        return "its body creates a function, procedure, operator or aggregate"
+                        return "its body creates or alters a function, procedure, operator or aggregate"
                 if (
                     _names_schema(toks, i, schemas, engine)
                     and i + 3 < len(toks)

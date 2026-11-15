@@ -25,7 +25,7 @@ carried text runs as written in the scratch database's own ``public`` schema, as
 the disposable engine of the source.
 
 Role (PostgreSQL). The master user creates a ``NOLOGIN NOSUPERUSER`` role per scratch
-database that owns its ``public`` schema, and every load, ``CREATE`` and call runs under
+database that owns its ``public`` schema and the schemas the setup made for the source tables (#1970), and every load, ``CREATE`` and call runs under
 ``SET LOCAL ROLE`` to it, so a routine runs without the master user's privileges, as it runs
 as a plain role on the disposable engine; the screen refuses a text that changes its role.
 The role is dropped with the database.
@@ -591,7 +591,7 @@ class _DataApiBackend(de._Backend):
             )
         if not self._pg_types:
             response = self._guarded(
-                "SELECT typname::text, format_type(oid, NULL) FROM pg_type "
+                "SELECT typname::text, pg_catalog.format_type(oid, NULL) FROM pg_type "
                 "WHERE typnamespace IN ('pg_catalog'::regnamespace, 'public'::regnamespace)", meta=True
             )  # fmt: skip
             rows, _, _ = self._rows(response)

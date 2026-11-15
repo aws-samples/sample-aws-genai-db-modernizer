@@ -210,7 +210,7 @@ class FakeDataApi:
             oid = params[0]["value"]["longValue"]
             rid = list(self.strict)[oid - 1]
             return rows(*[[lvl, st] for lvl, st in self.strict[rid]], types=("text", "text"))
-        if "typname::text, format_type" in sql:
+        if "typname::text, pg_catalog.format_type" in sql:
             return rows(
                 ["int4", "integer"], ["int8", "bigint"], ["text", "text"], types=("text", "text")
             )

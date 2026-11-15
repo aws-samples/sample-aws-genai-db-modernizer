@@ -376,6 +376,11 @@ def _my(body, schemas=MY_SCHEMAS):
         "SELECT id FROM inventory.stock INTO DUMPFILE '/tmp/x';",
         "USE inventory;",
         "SELECT 1; DROP TABLE inventory.stock;",
+        "CREATE TABLE INVENTORY.evil (a int);",
+        "CREATE TABLE Inventory.evil (a int);",
+        "DROP TABLE `Inventory`.`stock`;",
+        "USE INVENTORY;",
+        "SELECT id FROM Inventory.stock INTO OUTFILE '/tmp/x';",
     ],
 )
 def test_a_mysql_body_never_changes_or_writes_out_a_setup_database(body):
@@ -448,6 +453,8 @@ def test_a_postgresql_trigger_when_clause_cannot_call_into_a_setup_schema():
         "CREATE PROCEDURE q() LANGUAGE sql AS $f$ SELECT 1 $f$;",
         "CREATE OPERATOR === (LEFTARG = int, RIGHTARG = int, FUNCTION = int4eq);",
         "CREATE AGGREGATE a(int) (SFUNC = int4pl, STYPE = int);",
+        "ALTER FUNCTION g(varchar) RENAME TO lower;",
+        "ALTER FUNCTION g(varchar) SET SCHEMA sales;",
     ],
 )
 def test_a_postgresql_body_never_creates_a_function_or_an_operator(body):
@@ -511,6 +518,8 @@ def test_the_harness_reads_sequences_and_types_through_pg_catalog():
             r"(?<![\w.])(quote_ident|format_type|pg_get_serial_sequence|setval)\(", sql
         ):
             raise AssertionError(f"{word} is not qualified with pg_catalog in: {sql}")
+    source = Path("src/tools/routines/data_api_target.py").read_text()
+    assert not re.findall(r"(?<![\w.])(?:quote_ident|format_type|to_jsonb|setval)\(", source)
 
 
 @needs_pg
@@ -553,18 +562,26 @@ def test_grant_database_escapes_the_wildcards_and_the_quote():
 def test_every_grant_on_a_database_in_the_source_goes_through_the_escaping_helper():
     """MySQL reads ``_`` and ``%`` in the database part of a GRANT as wildcards, so a
     grant written any other way gives rights on every look-alike database (``my_ql`` on
-    ``mysql``)."""
-    pattern = re.compile(r"GRANT[^\n]*\bON\b[^\n]*\.\*|GRANT ALL PRIVILEGES ON \{")
+    ``mysql``). Whole statements are read: the grant and its ``ON db.*`` may sit on
+    different lines of a string."""
     bad = []
     for path in sorted(Path("src").rglob("*.py")):
         if path.name == "mysql_grants.py":
             continue
-        lines = path.read_text().splitlines()
-        for i, line in enumerate(lines):
-            window = " ".join(lines[max(0, i - 1) : i + 2])
-            if pattern.search(line) and "grant_database(" not in window:
-                bad.append(f"{path}:{i + 1}")
+        text = path.read_text()
+        for m in _GRANT.finditer(text):
+            if "grant_database(" not in m.group(0):
+                bad.append(f"{path}:{text.count(chr(10), 0, m.start()) + 1}")
     assert not bad, bad
+
+
+_GRANT = re.compile(r"GRANT\b[^;]{0,400}?\bON\b[^;]{0,200}?\.\*", re.S)
+
+
+def test_the_grant_scan_sees_a_grant_split_over_two_string_lines():
+    sample = 'x = ("GRANT ALTER, CREATE "\n     f"ON `{db}`.* TO u")'
+    found = _GRANT.search(sample)
+    assert found and "grant_database(" not in found.group(0)
 
 
 @pytest.mark.integration
