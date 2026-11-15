@@ -265,6 +265,7 @@ def _step_dict(
     kind: str,
     engine: str,
     stages: list[dict[str, Any]],
+    call_share: float,
     *,
     new_engine: bool,
     movement: str,
@@ -286,13 +287,7 @@ def _step_dict(
         "unit_count": sum(s["unit_count"] for s in stages),
         "query_count": sum(s["query_count"] for s in stages),
         "owned_table_count": sum(s["owned_table_count"] for s in stages),
-        # One rounding of the slice's own calls: a sum of rounded stage shares can sit a
-        # tenth off the figures table's share, which reads the same value (#2285).
-        "call_share_percent": (
-            metrics["value_call_share_percent"]
-            if metrics
-            else round(min(100.0, sum(s["call_share_percent"] for s in stages)), 1)
-        ),
+        "call_share_percent": call_share,
         "metrics": metrics,
         "table_classes": table_classes,
     }
@@ -452,6 +447,7 @@ def build_slice_plan(
                 "relational_step",
                 whole.engine,
                 [stage],
+                stage["call_share_percent"],
                 new_engine=whole.engine not in in_use,
                 movement=(
                     "homogeneous"
@@ -496,6 +492,7 @@ def build_slice_plan(
                 kind,
                 engine,
                 stages,
+                share(sum(u.calls_per_second for u in members), calls_total),
                 new_engine=engine not in in_use and engine not in seen_engines,
                 movement="heterogeneous",
                 phase_wave=phase,

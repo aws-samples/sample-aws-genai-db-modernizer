@@ -314,7 +314,12 @@ def step_why(plan: Mapping[str, Any], step: Mapping[str, Any]) -> str:
     engine = display_engine(str(step.get("engine")))
     queries = _count(int(step.get("query_count") or 0), "query", "queries")
     tables = _count(int(step.get("owned_table_count") or 0), "table", "tables")
-    share = _percent(step.get("call_share_percent") or 0.0)
+    # A plan stored before the step's share was rounded once holds the sum of its stages'
+    # rounded shares; the slice's own figure, when there is one, is the one the figures
+    # table prints (#2285).
+    metrics = step.get("metrics") or {}
+    own = metrics.get("value_call_share_percent")
+    share = _percent(own if own is not None else step.get("call_share_percent") or 0.0)
     kind = step.get("kind")
     if kind == "relational_step":
         return RELATIONAL_WHY.format(

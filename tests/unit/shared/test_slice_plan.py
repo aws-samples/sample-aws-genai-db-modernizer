@@ -276,29 +276,59 @@ def test_a_run_with_no_schema_design_leaves_stage_d_empty() -> None:
     assert plan == _plan_from_report_risks([])
 
 
-def test_a_step_s_call_share_is_its_slice_s_one_rounding_not_a_sum_of_rounded_stages() -> None:
-    """#2285: two stages at 6.4% each (each rounded from 6.35 to 6.44) sum to 12.8, but the
-    slice's calls are 12.7% of the total once; the sentence and the figures table must read
-    the same share, so the step states the slice's own figure."""
-    from src.shared.slice_plan import _step_dict
+# Calls per second per query, chosen so that a step's stage shares, each rounded to one
+# place, add up a tenth away from the step's own share rounded once (#2285).
+ROUNDING_CALLS = {
+    "homogeneous": {
+        "q01": 1.7, "q02": 8.1, "q03": 7.4, "q04": 2.8, "q05": 5.0, "q06": 4.5, "q07": 6.4,
+        "q08": 7.6, "q09": 1.3, "q10": 0.8, "q11": 8.0, "q12": 4.4, "q13": 7.4,
+    },
+    "heterogeneous": {
+        "q01": 8.1, "q02": 7.3, "q03": 4.3, "q04": 2.8, "q05": 5.1, "q06": 4.1, "q07": 7.6,
+        "q08": 3.2, "q09": 4.8, "q10": 5.8, "q11": 8.7, "q12": 5.0, "q13": 3.0,
+    },
+}  # fmt: skip
 
-    def stage(label: str) -> dict[str, Any]:
-        return {
-            "label": label,
-            "unit_count": 1,
-            "query_count": 1,
-            "owned_table_count": 1,
-            "call_share_percent": 6.4,
-        }
 
-    step = _step_dict(
-        3,
-        "slice",
-        "dynamodb",
-        [stage("3a"), stage("3b")],
-        new_engine=True,
-        movement="heterogeneous",
-        phase_wave=3,
-        metrics={"value_call_share_percent": 12.7},
+@pytest.mark.parametrize("homogeneity", ["homogeneous", "heterogeneous"])
+def test_a_step_s_call_share_is_its_own_calls_rounded_once(
+    homogeneity: str, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """#2285: a slice step and an engine-wave step state the share their units' calls are of
+    the total, rounded once, never the sum of their stages' rounded shares (which sat a
+    tenth away: 69.5 against 69.6, 50.5 against 50.3), so the sentence and the figures table
+    read one figure; a slice's metric is the same figure."""
+    calls = ROUNDING_CALLS[homogeneity]
+    monkeypatch.setattr(
+        job, "QUERIES", {q: (e, t, calls[q], c) for q, (e, t, _, c) in job.QUERIES.items()}
     )
-    assert step["call_share_percent"] == step["metrics"]["value_call_share_percent"] == 12.7
+    waves = job.waves(homogeneity=homogeneity)
+    if homogeneity == "heterogeneous":  # one engine per wave: an engine-wave step each
+        waves = [
+            waves[0],
+            waves[1],
+            {"wave": 3, "engines": ["dynamodb"], "tables": job.TABLES[:7]},
+            {"wave": 4, "engines": ["documentdb"], "tables": []},
+        ]
+    plan = _plan(waves=waves)
+    assert plan is not None
+    units = {u["key"]: u for u in plan["move_units"]}
+    total = sum(calls.values())
+    checked = 0
+    for step in plan["plan_steps"]:
+        if step["kind"] == "relational_step":
+            continue
+        ids = {
+            i for st in step["step_stages"] for k in st["unit_keys"] for i in units[k]["query_ids"]
+        }
+        once = round(100 * sum(calls[i] for i in ids) / total, 1)
+        assert step["call_share_percent"] == once, step["step_number"]
+        if step["metrics"]:
+            assert step["metrics"]["value_call_share_percent"] == once
+        checked += 1
+    assert checked >= 3
+    assert any(
+        round(sum(st["call_share_percent"] for st in s["step_stages"]), 1)
+        != s["call_share_percent"]
+        for s in plan["plan_steps"]
+    ), "the fixture must make the sum of rounded stage shares differ"

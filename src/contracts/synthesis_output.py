@@ -4058,7 +4058,16 @@ class SliceStep(BaseModel):
     unit_count: int = Field(..., ge=1)
     query_count: int = Field(..., ge=0, description="The sum of its stages' query_count")
     owned_table_count: int = Field(0, ge=0, description="The sum of its stages' owned_table_count")
-    call_share_percent: float = Field(0.0, ge=0, le=100)
+    call_share_percent: float = Field(
+        0.0,
+        ge=0,
+        le=100,
+        description=(
+            "The step's own calls per second over the in-scope total, rounded once to one "
+            "place (#2285): not the sum of its stages' shares, which are each rounded and can "
+            "sit a tenth away. A slice's metrics.value_call_share_percent is the same figure."
+        ),
+    )
     metrics: SliceMetrics | None = Field(None, description="A slice step's order metrics")
     table_classes: RelationalTableClasses | None = Field(
         None, description="The relational step only"
