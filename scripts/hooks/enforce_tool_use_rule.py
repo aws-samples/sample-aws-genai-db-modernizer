@@ -18,8 +18,9 @@ from a file: the scripts write their own artifacts and file writes go through
 Edit/Write, whose allow rules (``artifacts/**``) bound them; only ``2>&1``-style fd duplication and ``/dev/null`` are fine. Replaying 105 saved headless
 transcripts (2679 Bash calls) through it refused 26 calls, all genuine violations (pipes into
 ``head``/``tail``/``cut``/``grep``, ``ls``, ``find``, a ``VAR=...;`` chain, ``echo``), and none of
-the documented pipeline commands. It also refuses every ``run_dms_step.py proof-target-*`` call (#1946), read from the shell words,
-so no quoting gets past it. Stdin: the hook event JSON. Exit 0 allows, exit 2
+the documented pipeline commands. It also refuses every ``run_dms_step.py proof-target-*`` call (#1946): split as the shell
+splits it, no argument may start with ``proof-target`` or hold a character outside
+``[A-Za-z0-9_./=:,@+-]``. Stdin: the hook event JSON. Exit 0 allows, exit 2
 blocks.
 """
 
@@ -107,29 +108,35 @@ def has_file_redirection(command: str) -> bool:
 
 
 # The routine-proof test cluster's commands (#1946) never run headless. settings.ci.json denies
-# them too, but a permission rule matches the command's text, so a quoted or escaped subcommand
-# ("proof-target-deploy", proof\-target-deploy) would slip past it: this reads the words the
-# shell would pass instead.
+# them too, but a permission rule matches the command's text, so a quoted, escaped or expanded
+# subcommand ("proof-target-deploy", proof\-target-deploy, $'...', {...,}, a glob) would slip
+# past it. The hook splits the command as the shell does, then refuses a run_dms_step.py
+# argument that starts with proof-target or holds any character outside PLAIN_ARGUMENT: with
+# no quote, $, brace, glob or backslash left, the shell has nothing to expand into one.
 PROOF_TARGET_SCRIPT = "run_dms_step.py"
 PROOF_TARGET_PREFIX = "proof-target"
+PLAIN_ARGUMENT = re.compile(r"[A-Za-z0-9_./=:,@+-]*")
 PROOF_TARGET_BLOCK = (
     "Blocked: the routine-proof test cluster's commands (run_dms_step.py proof-target-*) never "
-    "run in a headless session; they deploy, read and delete AWS resources only in a run the "
-    "customer attends (#1946)."
+    "run in a headless session, and every run_dms_step.py argument must be plain "
+    "(letters, digits and _ . / = : , @ + -) so none can expand into one (#1946)."
 )
 
 
 def is_proof_target_call(command: str) -> bool:
-    """True when the shell would run ``run_dms_step.py`` with any argument starting with
-    ``proof-target``, whatever its quoting, escaping or option order. Fails closed: a command
-    the shell words cannot be read from that names the script counts as one."""
+    """True when the command runs ``run_dms_step.py`` with an argument that, split as the shell
+    splits it, starts with ``proof-target`` or holds a character outside ``PLAIN_ARGUMENT``.
+    Fails closed: a command naming the script whose words cannot be read counts as one."""
     try:
         words = shlex.split(command, comments=False, posix=True)
     except ValueError:
         return PROOF_TARGET_SCRIPT in command
     for i, word in enumerate(words):
         if os.path.basename(word) == PROOF_TARGET_SCRIPT:
-            return any(w.startswith(PROOF_TARGET_PREFIX) for w in words[i + 1 :])
+            return any(
+                w.startswith(PROOF_TARGET_PREFIX) or not PLAIN_ARGUMENT.fullmatch(w)
+                for w in words[i + 1 :]
+            )
     return False
 
 
