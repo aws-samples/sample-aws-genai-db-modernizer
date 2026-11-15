@@ -219,3 +219,13 @@ def test_a_quoted_in_sync_in_a_producer_fails(tmp_path: Path) -> None:
     rule = 'Never write "in sync": a copy that CDC keeps current from its owner.'
     assert _in_sync_strings("src/skills/executive-summary.md", [(1, rule)]) == []
     assert _in_sync_strings("src/ui/src/locales/en.json", [(1, rule)]) != []
+
+
+def test_the_step_gate_evidence_is_scanned() -> None:
+    """#1801: the gate evidence's words (the facts layer, the engineering report's section,
+    the results page's component and its strings) are among the files scanned above."""
+    assert {"src/shared/report_facts.py", "src/report/step_gate.py",
+            "src/report/executive_report.py"} <= set(_python_files())  # fmt: skip
+    assert {"src/ui/src/components/StepGateEvidence.js", "src/ui/src/locales/en.json"} <= set(
+        _text_files()
+    )

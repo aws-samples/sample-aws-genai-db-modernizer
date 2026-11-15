@@ -1,0 +1,85 @@
+{
+  "step": 1,
+  "status": "fail",
+  "status_text": "Failed",
+  "result_line": "The gate did not pass: the findings below name each check that did not.",
+  "read_at": "2026-11-14T09:30:12Z",
+  "read_at_text": "2026-11-14 09:30 UTC",
+  "full_load_percent": "100",
+  "rows_loaded": 1234567,
+  "tables_reported": 3,
+  "load_line": "Full load at 100%: 1,234,567 rows loaded across 3 tables.",
+  "window_minutes": 15,
+  "max_lag_seconds": 30,
+  "source_lag_seconds": "2",
+  "target_lag_seconds": "42",
+  "lag_line": "Highest replication lag in the 15 minutes before the read: 2 s at the source, 42 s at the target; the gate accepts under 30 s.",
+  "table_count": 3,
+  "keyed_table_count": 2,
+  "validated_table_count": 1,
+  "validating_table_count": 0,
+  "failed_table_count": 1,
+  "exception_count": 2,
+  "validation_line": "1 of 2 tables with a key validated; 1 with validation failures. 2 named exceptions, listed below.",
+  "gate_tables": [
+    {
+      "table": "shop.audit_log",
+      "rows_loaded": 12,
+      "validation_state": "No primary key",
+      "failed_records": 0,
+      "suspended_records": 0,
+      "status": "exception",
+      "status_text": "Named exception"
+    },
+    {
+      "table": "shop.customers",
+      "rows_loaded": 1234,
+      "validation_state": "Validated",
+      "failed_records": 0,
+      "suspended_records": 0,
+      "status": "pass",
+      "status_text": "Validated"
+    },
+    {
+      "table": "shop.orders",
+      "rows_loaded": 1233321,
+      "validation_state": "Mismatched records",
+      "failed_records": 3,
+      "suspended_records": 1,
+      "status": "fail",
+      "status_text": "Validation failed"
+    }
+  ],
+  "named_exceptions": [
+    {
+      "table": "shop.audit_log",
+      "column": null,
+      "kind": "table",
+      "kind_text": "Not validated",
+      "reason": "not validated: no primary or unique key",
+      "rows_loaded": 12
+    },
+    {
+      "table": "shop.order_totals",
+      "column": null,
+      "kind": "view",
+      "kind_text": "View, not validated",
+      "reason": "not validated: no primary or unique key",
+      "rows_loaded": null
+    }
+  ],
+  "gate_findings": [
+    {
+      "check": "lag",
+      "check_text": "Lag",
+      "text": "2 of 15 CDCLatencyTarget datapoints at or over 30 s (highest 42 s)"
+    },
+    {
+      "check": "parity",
+      "check_text": "Validation",
+      "text": "shop.orders: validation Mismatched records: 3 failed and 1 suspended records"
+    }
+  ],
+  "gate_findings_not_shown": 0,
+  "cutover_message": "The cutover is your responsibility. The modernizer does not run, schedule or advise on it."
+}

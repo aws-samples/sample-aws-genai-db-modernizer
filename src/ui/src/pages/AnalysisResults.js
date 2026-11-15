@@ -57,6 +57,7 @@ import NoOpenRisksSection from "../components/NoOpenRisksSection";
 import UnreviewedMovesNote from "../components/UnreviewedMovesNote";
 import EngineChoicesNote from "../components/EngineChoicesNote";
 import MigrationWavePlan from "../components/MigrationWavePlan";
+import StepGateEvidence from "../components/StepGateEvidence";
 import { schemaSectionIdOf } from "../utils/adoptionPaths";
 import { engineFromSearch, linkedEngineTarget, activeDesignEngine } from "../utils/resultsLinks";
 import { schemaDesignsRefusal } from "../utils/schemaDesignsLoad";
@@ -2192,6 +2193,7 @@ const AnalysisResultsPage = memo(() => {
               t={t}
               schemaSectionId={schemaSectionIdOf(totalAccessPatterns > 0 || cachePatternCount > 0, auroraDesigns.length > 0)}
             />
+            <StepGateEvidence synthesis={synthesis} t={t} />
 
             {/* Routines (#1939): how the job's routines migrate, the to-do and each
                 routine behind a routine risk, from facts.routines, as both reports

@@ -4131,6 +4131,9 @@ def compute_report_facts(
             )
         ),
         "adoption": adoption_facts(report, plan, slice_inputs, price=path_pricer),
+        # #1801: step 1's gate runs after synthesis; its evidence is attached when the
+        # report is read (src.report.facts.with_step_gate), never stored here.
+        "step_gate": None,
     }
 
 
@@ -4798,6 +4801,186 @@ def routing_detail_facts(
         }
     )
     return detail.model_dump(mode="json")
+
+
+# ---------------------------------------------------------------------------
+# Step 1's gate evidence and the cutover message (#1801, ADR-033 Decision 10)
+# ---------------------------------------------------------------------------
+
+#: Where ``/move``'s read-only gate writes step 1's result (``src.tools.data_movement.dms_gate``).
+STEP_GATE_FILE = "data-movement/step-1/gate.json"
+#: The findings the deliverables list; the rest are counted (``gate_findings_not_shown``).
+STEP_GATE_FINDINGS = 20
+# nosec B105 below: "pass" is the gate's status value, not a password.
+STEP_GATE_STATUS_TEXT = {"pass": "Passed", "pending": "Pending", "fail": "Failed"}  # nosec B105
+#: What a gate that has not passed says instead of ``REPLICATING_MESSAGE``: no claim either way.
+STEP_GATE_PENDING_LINE = "The gate has not passed yet: some of its evidence is still arriving."
+STEP_GATE_FAIL_LINE = "The gate did not pass: the findings below name each check that did not."
+STEP_GATE_CHECK_TEXT = {"load": "Full load", "lag": "Lag", "parity": "Validation",
+                        "routines": "Routines"}  # fmt: skip
+STEP_GATE_TABLE_TEXT = {"pass": "Validated", "pending": "Validating", "fail": "Validation failed",  # nosec B105
+                        "exception": "Named exception"}  # fmt: skip
+STEP_GATE_EXCEPTION_TEXT = {
+    "table": "Not validated",
+    "view": "View, not validated",
+    "keyless_lob": "LOB values can be lost",
+    "unsupported_field": "Field not moved",
+    "skipped_rule": "Not moved: blocked",
+    "not_moved": "Not moved",
+}
+
+_step_gate_log = logging.getLogger(__name__ + ".step_gate")
+
+
+def _gate_noun(n: int, one: str, many: str) -> str:
+    return one if n == 1 else many
+
+
+def step_gate_key(db: str, job_id: str) -> str:
+    """The artifact key of a job's step 1 gate file."""
+    return f"{db}/{job_id}/{STEP_GATE_FILE}"
+
+
+def _lag_value(evidence: Mapping[str, str], metric: str) -> str | None:
+    value = evidence.get(f"{metric}_max")
+    return None if value in (None, "", "none") else str(value)
+
+
+def _lag_line(window: int, limit: int, source: str | None, target: str | None) -> str:
+    def part(value: str | None, where: str) -> str:
+        return f"{value} s {where}" if value is not None else f"no datapoint {where}"
+
+    return (
+        f"Highest replication lag in the {window} minutes before the read: "
+        f"{part(source, 'at the source')}, {part(target, 'at the target')}; "
+        f"the gate accepts under {limit} s."
+    )
+
+
+def _validation_line(keyed: int, validated: int, validating: int, failed: int,
+                     exceptions: int) -> str:  # fmt: skip
+    if keyed:
+        line = f"{validated} of {keyed} {_gate_noun(keyed, 'table', 'tables')} with a key validated"
+    else:
+        line = "No table has a key DMS can validate on"
+    extra = [f"{validating} still validating" if validating else "",
+             f"{failed} with validation failures" if failed else ""]  # fmt: skip
+    line += "".join(f"; {e}" for e in extra if e) + "."
+    if exceptions:
+        line += f" {exceptions} named {_gate_noun(exceptions, 'exception', 'exceptions')}, listed below."
+    return line
+
+
+def step_gate_facts(gate: Mapping[str, Any] | None) -> dict[str, Any] | None:
+    """Step 1's gate evidence as every deliverable states it (#1801), from the saved gate
+    file ``/move``'s read-only gate wrote (``STEP_GATE_FILE``); None without one.
+
+    The result, the time the gate read DMS and CloudWatch, the full load, the lag, the
+    validation per table, the named exceptions with their reasons, the findings of a check
+    that did not pass, and the cutover message, ``CUTOVER_DISCLAIMER``, verbatim. On a pass
+    the result says only ``REPLICATING_MESSAGE``. Table names, DMS states and reasons are the
+    collection's and DMS's text: data, escaped where they are rendered. Raises
+    ``ValueError`` (a ``ValidationError``) or ``ContractVersionError`` for a file the gate
+    contract refuses."""
+    from datetime import UTC
+
+    from src.contracts.dms_gate import DmsGate
+    from src.contracts.synthesis_output import StepGateFacts
+    from src.shared.contract_versioning import load_contract
+    from src.shared.cutover_message import CUTOVER_DISCLAIMER, REPLICATING_MESSAGE
+
+    if not isinstance(gate, Mapping):
+        return None
+    g = load_contract(DmsGate, gate, artifact=STEP_GATE_FILE)
+    checks = {c.id: c for c in g.checks}
+    load = checks["load"].evidence
+    lag = checks["lag"].evidence
+    rows = int(load.get("rows_loaded") or 0)
+    reported = int(load.get("tables_reported") or 0)
+    percent = str(load.get("full_load_percent") or "0")
+    source, target = _lag_value(lag, "CDCLatencySource"), _lag_value(lag, "CDCLatencyTarget")
+    verdicts = [t.status for t in g.tables]
+    keyed = len([v for v in verdicts if v != "exception"])
+    validated, validating, failed = (verdicts.count(s) for s in ("pass", "pending", "fail"))
+    findings = [{"check": c.id, "check_text": STEP_GATE_CHECK_TEXT[c.id], "text": r}
+                for c in g.checks for r in c.reasons]  # fmt: skip
+    at = g.checked_at.astimezone(UTC) if g.checked_at.tzinfo else g.checked_at.replace(tzinfo=UTC)
+    result = {"pass": REPLICATING_MESSAGE, "pending": STEP_GATE_PENDING_LINE,
+              "fail": STEP_GATE_FAIL_LINE}[g.status]  # fmt: skip
+    tables = [
+        {
+            "table": t.table,
+            "rows_loaded": t.rows_loaded,
+            "validation_state": t.validation_state,
+            "failed_records": t.validation_failed_records,
+            "suspended_records": t.validation_suspended_records,
+            "status": t.status,
+            "status_text": STEP_GATE_TABLE_TEXT[t.status],
+        }
+        for t in g.tables
+    ]
+    exceptions = [
+        {
+            "table": e.table,
+            "column": e.column,
+            "kind": e.kind,
+            "kind_text": STEP_GATE_EXCEPTION_TEXT[e.kind],
+            "reason": e.reason,
+            "rows_loaded": e.rows_loaded,
+        }
+        for e in g.exceptions
+    ]
+    load_line = (
+        f"Full load at {percent}%: {rows:,} {_gate_noun(rows, 'row', 'rows')} loaded "
+        f"across {reported} {_gate_noun(reported, 'table', 'tables')}."
+    )
+    block = StepGateFacts.model_validate(
+        {
+            "step": g.step,
+            "status": g.status,
+            "status_text": STEP_GATE_STATUS_TEXT[g.status],
+            "result_line": result,
+            "read_at": at.strftime("%Y-%m-%dT%H:%M:%SZ"),
+            "read_at_text": at.strftime("%Y-%m-%d %H:%M UTC"),
+            "full_load_percent": percent,
+            "rows_loaded": rows,
+            "tables_reported": reported,
+            "load_line": load_line,
+            "window_minutes": g.window_minutes,
+            "max_lag_seconds": g.max_lag_seconds,
+            "source_lag_seconds": source,
+            "target_lag_seconds": target,
+            "lag_line": _lag_line(g.window_minutes, g.max_lag_seconds, source, target),
+            "table_count": len(tables),
+            "keyed_table_count": keyed,
+            "validated_table_count": validated,
+            "validating_table_count": validating,
+            "failed_table_count": failed,
+            "exception_count": len(exceptions),
+            "validation_line": _validation_line(
+                keyed, validated, validating, failed, len(exceptions)
+            ),
+            "gate_tables": tables,
+            "named_exceptions": exceptions,
+            "gate_findings": findings[:STEP_GATE_FINDINGS],
+            "gate_findings_not_shown": max(len(findings) - STEP_GATE_FINDINGS, 0),
+            "cutover_message": CUTOVER_DISCLAIMER,
+        }
+    )
+    return block.model_dump(mode="json")
+
+
+def read_step_gate_facts(raw: Any, *, artifact: str = STEP_GATE_FILE) -> dict[str, Any] | None:
+    """``step_gate_facts`` for a gate file as read from the store: None for no file, and for
+    one the gate contract refuses (logged, never raised: an unreadable gate file never fails
+    a report). Nothing here reads a database or calls AWS."""
+    from src.shared.contract_versioning import ContractVersionError
+
+    try:
+        return step_gate_facts(raw)
+    except (ValueError, TypeError, KeyError, ContractVersionError):
+        _step_gate_log.warning("the step gate file %s could not be read; left out", artifact)
+        return None
 
 
 # ---------------------------------------------------------------------------

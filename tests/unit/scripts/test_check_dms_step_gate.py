@@ -128,3 +128,61 @@ def test_a_fail_result_still_exits_zero(tmp_path, capsys):
     assert script.main(_argv(tmp_path), clients=g.clients(cred)) == 0
     out = json.loads(capsys.readouterr().out)
     assert out["status"] == "fail" and any(r.startswith("load: ") for r in out["reasons"])
+
+
+# #1801: the gate renders the job's deliverables again, so they state this read's evidence.
+
+
+def _with_report(tmp_path):
+    from tests.unit.report.test_migration_waves_rendering import _report_with_waves
+
+    LocalArtifactStore(str(tmp_path)).write_json(
+        "shop/job1/synthesis/v1/report.json", _report_with_waves()
+    )
+
+
+def test_the_gate_renders_the_deliverables_again_with_its_evidence(tmp_path, capsys, monkeypatch):
+    from src.shared.cutover_message import CUTOVER_DISCLAIMER, REPLICATING_MESSAGE
+
+    b = _job(tmp_path)
+    _with_report(tmp_path)
+    cred = StubbedCredMgr()
+    g.queue(cred, b.plan.contract.sha256)
+    monkeypatch.setattr(script, "write_gate", functools.partial(script.write_gate, now=g.NOW))
+    assert script.main(_argv(tmp_path), clients=g.clients(cred)) == 0
+    out = json.loads(capsys.readouterr().out)
+    assert out["status"] == "pass" and out["deliverables"] in ("complete", "partial")
+    md = (tmp_path / "shop/job1/deliverables/engineering-report.md").read_text()
+    section = md.split("## Step 1 gate evidence\n", 1)[1].split("\n## ", 1)[0]
+    assert f"**Passed.** {REPLICATING_MESSAGE}" in section
+    assert f"*{CUTOVER_DISCLAIMER}*" in section
+    data = json.loads((tmp_path / "shop/job1/deliverables/assessment-data.json").read_text())
+    assert data["facts"]["step_gate"]["status"] == "pass"
+
+
+def test_a_job_with_no_report_yet_still_gets_its_gate(tmp_path, capsys):
+    b = _job(tmp_path)
+    cred = StubbedCredMgr()
+    g.queue(cred, b.plan.contract.sha256, progress=70)
+    assert script.main(_argv(tmp_path), clients=g.clients(cred)) == 0
+    out = json.loads(capsys.readouterr().out)
+    assert out["status"] == "pending" and out["deliverables"] == "no_report"
+    assert (tmp_path / "shop/job1/data-movement/step-1/gate.json").exists()
+    assert not (tmp_path / "shop/job1/deliverables").exists()
+
+
+def test_a_render_failure_never_fails_the_gate(tmp_path, capsys, monkeypatch):
+    from src.report import deliverables_folder
+
+    b = _job(tmp_path)
+    _with_report(tmp_path)
+    cred = StubbedCredMgr()
+    g.queue(cred, b.plan.contract.sha256, progress=70)
+
+    def boom(*_a, **_k):
+        raise RuntimeError("render failed")
+
+    monkeypatch.setattr(deliverables_folder, "render_job_deliverables", boom)
+    assert script.main(_argv(tmp_path), clients=g.clients(cred)) == 0
+    out = json.loads(capsys.readouterr().out)
+    assert out["status"] == "pending" and out["deliverables"] == "failed"

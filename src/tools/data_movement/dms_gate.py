@@ -50,6 +50,7 @@ from src.contracts.dms_gate import (
 from src.contracts.routine_check import STATIC_LABEL, RoutineCheckResult
 from src.shared.contract_versioning import load_contract
 from src.shared.cutover_message import CUTOVER_MESSAGE_ID
+from src.shared.cutover_message import REPLICATING_MESSAGE as REPLICATING_MESSAGE
 from src.tools.aws.credentials import AWSCredentialManager
 from src.tools.data_movement.dms_step import (
     CONTRACT_TAG,
@@ -60,8 +61,8 @@ from src.tools.data_movement.dms_step import (
 )
 from src.tools.data_movement.validation_key import gate_reason, key_type_message, key_type_problem
 
-# What step 1 shows once the gate passes, word for word (#2062): never more.
-REPLICATING_MESSAGE = "Full load complete. Replication is in progress."
+# REPLICATING_MESSAGE, what step 1 shows once the gate passes (#2062), is imported above from
+# src.shared.cutover_message, so the deliverables quote the same words (#1801).
 LAG_METRICS = ("CDCLatencySource", "CDCLatencyTarget")
 DEFAULT_WINDOW_MINUTES = 15
 PERIOD_SECONDS = 60

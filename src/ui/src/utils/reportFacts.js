@@ -508,3 +508,13 @@ export function routineToDoText(routines) {
 export function routineKey(ref) {
   return `${ref.kind}:${ref.routine_id}`;
 }
+
+// #1801: step 1's gate evidence and the cutover message (facts.step_gate), from the
+// gate file /move saved, as the engineering and executive reports state it: the
+// result, the time of the read, the full load, lag and validation lines, each table,
+// the named exceptions and the findings. Null when the step's gate never ran. Read as
+// stored; nothing is counted.
+export function stepGateOf(synthesis) {
+  const gate = factsOf(synthesis) && factsOf(synthesis).step_gate;
+  return gate && typeof gate === 'object' && gate.status ? gate : null;
+}

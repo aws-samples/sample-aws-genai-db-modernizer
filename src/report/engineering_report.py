@@ -100,6 +100,7 @@ from .risks import (
 from .roadmap import _roadmap_md, one_step_pointer
 from .routines import routines_md
 from .sources_of_truth import sources_of_truth_md
+from .step_gate import step_gate_md
 from .table_owners import (
     also_read_by_cell,
     cached_by_cell,
@@ -1481,6 +1482,8 @@ def render_engineering_report_md(
     gates = _SaidOnce()
     out += adoption_md(facts, one_step_pointer(report), gates)
     out += _roadmap_md(report, gates)
+    # #1801: step 1's gate evidence, once /move's gate has read it, after the roadmap.
+    out += step_gate_md(report)
     out += sources_of_truth_md(report)
 
     # #1454, #1574: one ledger of long sentences for the migration notes and the risk

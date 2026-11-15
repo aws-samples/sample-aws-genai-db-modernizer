@@ -982,3 +982,35 @@ def test_a_recount_of_the_routing_detail_is_caught(
         "    return n, gap\n"
     )
     assert len(_violations(bad)) == 2
+
+
+def test_a_recount_of_the_step_gate_evidence_is_caught(tmp_path: Path) -> None:
+    """#1801: the step 1 gate section formats ``facts.step_gate``; it passes as shipped, and
+    each way of counting the gate's tables, rows, exceptions or findings again in it is
+    flagged (the gate's figures are owned the moment they join the contract)."""
+    real = REPORT / "step_gate.py"
+    source = real.read_text()
+    assert _violations(real) == []
+    recounts = [
+        (
+            'hidden = gate.get("gate_findings_not_shown") or 0',
+            'hidden = len(gate.get("gate_findings") or []) - 20',
+        ),
+        (
+            "f\"- {escaping.md_text(gate.get('validation_line'))}\",",
+            "f\"- {sum(1 for t in gate.get('gate_tables') or [] if t['status'] == 'pass')}\",",
+        ),
+        (
+            "f\"- {escaping.md_text(gate.get('load_line'))}\",",
+            "f\"- {sum(t['rows_loaded'] or 0 for t in gate.get('gate_tables') or [])}\",",
+        ),
+        (
+            "f\"- {escaping.md_text(gate.get('lag_line'))}\",",
+            "f\"- {len(gate.get('named_exceptions') or [])}\",",
+        ),
+    ]
+    for i, (shipped, recount) in enumerate(recounts):
+        assert shipped in source, shipped
+        sample = tmp_path / f"step_gate_{i}.py"
+        sample.write_text(source.replace(shipped, recount, 1))
+        assert _violations(sample) != [], recount

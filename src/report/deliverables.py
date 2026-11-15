@@ -28,6 +28,7 @@ from src.shared.target_databases import engine_scope_statement, no_engine_in_sco
 from src.tools.validation.customer_text_guard import STYLE_AUDIT_FIELDS
 
 from . import detailed_report, escaping, executive_report, renderers
+from .facts import step_gate_of, with_step_gate
 
 logger = logging.getLogger(__name__)
 
@@ -313,6 +314,9 @@ def render_deliverables(
     # #1574: a long sentence two design trade-offs share is stated once (the same
     # function synthesis applies), so a report written before it reads the same.
     report = design_prose_report(report)
+    # #1801: step 1's gate evidence, from the gate file /move saved after synthesis, so
+    # every deliverable rendered after a gate read states it (absent: nothing changes).
+    report = with_step_gate(report, step_gate_of(store, database_name, job_id))
     # #1166: one commit for the whole set; each renderer only prints it.
     commit = build_commit()
 

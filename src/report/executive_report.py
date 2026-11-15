@@ -151,6 +151,7 @@ from .risks import (
 from .roadmap import _SUGGESTED_PATH_NOTE, _moves_from_label, _wave_headline_stats
 from .roadmap import resolve_migration_waves as _resolve_waves
 from .routines import lists_routines, routine_summary_lines, routine_wave
+from .step_gate import STEP_GATE_PDF_POINTER, step_gate_block
 from .table_owners import owner_rule_short, ownership_facts, ownership_summary_text
 from .unreviewed import unreviewed_moves_line
 from .unservable import (
@@ -1227,6 +1228,26 @@ def _why(report: dict[str, Any], st: dict[str, ParagraphStyle], names: Any) -> l
     return flow
 
 
+def _step_gate_flow(report: dict[str, Any], st: dict[str, ParagraphStyle]) -> list:
+    """Step 1's gate evidence (#1801), once /move's gate has read it: the result, the
+    time of the read, the full load, lag and validation lines and the cutover message,
+    as ``facts.step_gate`` words them; the engineering report lists each table."""
+    gate = step_gate_block(report)
+    if gate is None:
+        return []
+    head = f"Step 1 gate, read {gate.get('read_at_text')}"
+    evidence = " ".join(
+        str(gate.get(k) or "") for k in ("load_line", "lag_line", "validation_line")
+    )
+    return [
+        _gap(12),
+        _labelled(head, f"{gate.get('status_text')}. {gate.get('result_line')}", st["sub"]),
+        _para(evidence, st["small"]),
+        _para(gate.get("cutover_message"), st["sub"]),
+        _para(STEP_GATE_PDF_POINTER, st["small"]),
+    ]
+
+
 def _waves(report: dict[str, Any], st: dict[str, ParagraphStyle], names: Any) -> list:
     waves = _resolve_waves(report) or []
     flow: list[Flowable] = [_Section(H_WAVES)]
@@ -1312,7 +1333,9 @@ def _waves(report: dict[str, Any], st: dict[str, ParagraphStyle], names: Any) ->
                 # report).
                 content.append(_labelled("Readiness", wf["readiness_line_short"], st["small"]))
         flow += [_Panel(content, accent), _gap(10)]
-    return flow[:-1] if waves else flow
+    flow = flow[:-1] if waves else flow
+    # #1801: step 1's gate evidence, once /move's gate has read it, after the waves.
+    return flow + _step_gate_flow(report, st)
 
 
 def _wave_stages_text(facts: dict[str, Any], wave: int) -> str:

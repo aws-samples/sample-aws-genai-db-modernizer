@@ -4993,6 +4993,101 @@ def check_plan_against_facts(
         raise ValueError("relational_only ends on facts.no_migration's engines")
 
 
+class StepGateTableFact(BaseModel):
+    """One step table as the step's gate read it from DMS (#1801)."""
+
+    table: str = Field(..., description="Source table id (schema.table), from the collection")
+    rows_loaded: int | None = Field(
+        None, ge=0, description="Rows DMS reports loaded (FullLoadRows); None if not reported"
+    )
+    validation_state: str | None = Field(
+        None, description="DMS's validation state, as DMS reports it; None if not reported"
+    )
+    failed_records: int = Field(0, ge=0, description="Records DMS reports failed validation")
+    suspended_records: int = Field(0, ge=0, description="Records DMS reports suspended")
+    status: Literal["pass", "pending", "fail", "exception"] = Field(
+        ..., description="The gate's verdict on the table; exception: a named exception covers it"
+    )
+    status_text: str = Field(..., min_length=1, description="The verdict in words")
+
+
+class StepGateExceptionFact(BaseModel):
+    """A table, view, field or rule the step's gate names because it cannot vouch for it."""
+
+    table: str = Field(..., description="Source table or view id (schema.name)")
+    column: str | None = Field(None, description="The column, for a field not moved")
+    kind: Literal[
+        "table", "view", "keyless_lob", "unsupported_field", "skipped_rule", "not_moved"
+    ] = Field(..., description="The gate's exception kind (src.contracts.dms_gate)")
+    kind_text: str = Field(..., min_length=1, description="The exception kind in words")
+    reason: str = Field(..., min_length=1, description="Why, as the gate states it")
+    rows_loaded: int | None = Field(None, ge=0, description="Rows DMS reports loaded, if any")
+
+
+class StepGateFinding(BaseModel):
+    """One reason a check of the step's gate did not pass, as the gate states it."""
+
+    check: Literal["load", "lag", "parity", "routines"] = Field(..., description="The check")
+    check_text: str = Field(..., min_length=1, description="The check in words")
+    text: str = Field(..., min_length=1, description="The finding, as the gate states it")
+
+
+class StepGateFacts(BaseModel):
+    """The evidence a step's gate read, and the cutover message (#1801, ADR-033 Decision 10).
+
+    Computed by ``src.shared.report_facts.step_gate_facts`` from the step's saved gate file
+    (``data-movement/step-1/gate.json``, written by ``/move``'s read-only gate); the
+    deliverables attach it when they read the report (``src.report.facts.with_step_gate``),
+    so a gate read after synthesis reaches them. Absent when the step's gate never ran.
+    """
+
+    step: int = Field(1, ge=1, description="The migration step the gate covers")
+    status: Literal["pass", "pending", "fail"] = Field(..., description="The gate's result")
+    status_text: str = Field(..., min_length=1, description="The result in one word")
+    result_line: str = Field(
+        ...,
+        min_length=1,
+        description="What the result says: on a pass, exactly REPLICATING_MESSAGE",
+    )
+    read_at: str = Field(..., description="When the gate read DMS and CloudWatch (ISO 8601, UTC)")
+    read_at_text: str = Field(..., min_length=1, description="The same time, as printed")
+    full_load_percent: str = Field(..., description="DMS's full load progress, in percent")
+    rows_loaded: int = Field(0, ge=0, description="Rows DMS reports loaded, all tables")
+    tables_reported: int = Field(0, ge=0, description="Tables in DMS's table statistics")
+    load_line: str = Field(..., min_length=1, description="The full load evidence, in words")
+    window_minutes: int = Field(..., ge=1, description="Minutes of lag history the gate judged")
+    max_lag_seconds: int = Field(..., ge=0, description="The largest lag the gate accepts")
+    source_lag_seconds: str | None = Field(
+        None, description="Highest CDCLatencySource datapoint in the window; None: no datapoint"
+    )
+    target_lag_seconds: str | None = Field(
+        None, description="Highest CDCLatencyTarget datapoint in the window; None: no datapoint"
+    )
+    lag_line: str = Field(..., min_length=1, description="The lag evidence, in words")
+    table_count: int = Field(0, ge=0, description="The step's tables the gate lists")
+    keyed_table_count: int = Field(0, ge=0, description="Tables with a key DMS validates on")
+    validated_table_count: int = Field(0, ge=0, description="Of those, the tables validated")
+    validating_table_count: int = Field(0, ge=0, description="Of those, the tables validating")
+    failed_table_count: int = Field(0, ge=0, description="Of those, the tables that failed")
+    exception_count: int = Field(0, ge=0, description="Named exceptions")
+    validation_line: str = Field(..., min_length=1, description="The validation evidence")
+    gate_tables: list[StepGateTableFact] = Field(
+        default_factory=list, description="Sorted by table"
+    )
+    named_exceptions: list[StepGateExceptionFact] = Field(
+        default_factory=list, description="Sorted by table"
+    )
+    gate_findings: list[StepGateFinding] = Field(
+        default_factory=list, description="Why a check did not pass, the first STEP_GATE_FINDINGS"
+    )
+    gate_findings_not_shown: int = Field(0, ge=0, description="The findings beyond those listed")
+    cutover_message: str = Field(
+        ...,
+        min_length=1,
+        description="CUTOVER_DISCLAIMER, verbatim wherever the gate's evidence appears",
+    )
+
+
 class ReportFacts(BaseModel):
     """Every customer-facing figure, computed once at synthesis (#615, ADR-032).
 
@@ -5370,6 +5465,13 @@ class ReportFacts(BaseModel):
         description=(
             "The adoption paths, those not offered and the one-step form of the full "
             "target (#1130, #473); None for a report written before it"
+        ),
+    )
+    step_gate: StepGateFacts | None = Field(
+        None,
+        description=(
+            "Step 1's gate evidence and the cutover message (#1801), from the step's saved "
+            "gate file, attached when the report is read; None when the gate never ran"
         ),
     )
 
