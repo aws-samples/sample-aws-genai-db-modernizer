@@ -517,6 +517,9 @@ class _DataApiBackend(de._Backend):
         if self.engine == "postgresql":
             if self.role:
                 self._call(f"SET LOCAL ROLE {de._quote(self.role, self._mark)}")
+            if self._namespaces:  # public first, then the source schemas (#1970)
+                paths = ", ".join(de._quote(n, '"') for n in ["public", *self._namespaces])
+                self._call(f"SET LOCAL search_path = {paths}")
             for statement in (
                 f"SET LOCAL TIME ZONE INTERVAL '{SESSION_TIME_ZONE}' HOUR TO MINUTE",
                 "SET LOCAL lock_timeout = '5s'",
@@ -784,11 +787,12 @@ class _DataApiBackend(de._Backend):
 
     def _pg_columns(self, table: str) -> list[tuple[str, str, str]]:
         """Each column's name, type name and type category, in order."""
-        got = self._guarded(_PG_COLUMNS, [de._quote_table(table, '"')], meta=True)
+        got = self._guarded(_PG_COLUMNS, [de.qualified_table(table, self._namespaces, '"')],
+                            meta=True)  # fmt: skip
         return [(str(n), str(t), str(c)) for n, t, c in self._rows(got, as_text=True)[0]]
 
     def tables(self) -> list[str]:
-        sql = de._PG_TABLES if self.engine == "postgresql" else de._MY_TABLES
+        sql = de.pg_tables_sql(self._namespaces) if self.engine == "postgresql" else de._MY_TABLES
         return [str(r[0]) for r in self._rows(self._guarded(sql, meta=True))[0]]
 
     def column_types(self, tables):  # type: ignore[no-untyped-def]
@@ -796,7 +800,8 @@ class _DataApiBackend(de._Backend):
         for table in tables:
             if self.engine == "postgresql":
                 sql = de._PG_COLUMN_TYPES.replace("%s::regclass", "CAST(%s AS regclass)")
-                got = self._guarded(sql, [de._quote_table(table, '"')], meta=True)
+                got = self._guarded(sql, [de.qualified_table(table, self._namespaces, '"')],
+                                    meta=True)  # fmt: skip
             else:
                 got = self._guarded(de._MY_COLUMN_TYPES, [table], meta=True)
             out[table] = {str(n): str(t) for n, t in self._rows(got)[0]}
@@ -932,7 +937,33 @@ class DataApiTarget(DisposableEngineTarget):
             self.drop_failed = True  # the proof's final drop_scratch sweep tries again
 
     # ---- the protocol, where the Data API differs
+    def _create_schemas(self, names: Sequence[str]) -> None:
+        """Each source schema of the setup (#1970), in the scratch database, owned by the
+        run's role as ``public`` is, and closed to everyone else. Made by the master user in
+        the scratch database (the role cannot create a schema there); the names are checked."""
+        if self.engine != "postgresql":
+            raise ProofTargetError(
+                f"{self.description} cannot hold a source database other than the scratch "
+                "database yet: the setup's tables name one"
+            )
+        made = list(self._backend._namespaces)
+        try:
+            for name in names:
+                if name.casefold() == "public" or name in made:
+                    continue
+                schema = de._quote(name, '"')
+                self._backend._guarded(f"CREATE SCHEMA {schema} AUTHORIZATION {self._role_sql}")
+                self._backend._guarded(f"REVOKE ALL ON SCHEMA {schema} FROM PUBLIC")
+                made.append(name)
+        except (de.EngineError, ValueError) as exc:
+            raise ProofTargetError(f"the source schemas were not created on {self.description}",
+                                   getattr(exc, "sqlstate", None)) from None  # fmt: skip
+        self._backend._namespaces = tuple(made)
+        self._schemas = tuple(made)
+
     def load_setup(self, setup: ProofSetup) -> None:
+        if setup.schemas:
+            self._create_schemas(setup.schemas)
         try:
             self._backend.load(setup.ddl, setup.rows_by_table(), [])
         except de.EngineError as exc:

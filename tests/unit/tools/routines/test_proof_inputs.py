@@ -307,19 +307,25 @@ def test_a_trigger_gets_the_row_change_of_each_event(dialect):
     inputs = build_proof_inputs([t], TABLES, dialect=dialect, seed=1)
     changes = _changes(inputs, t.routine_id)
     assert [c.kind for c in changes] == ["INSERT", "UPDATE", "DELETE"]
-    assert {c.action for c in changes} == {"row_change"} and {c.name for c in changes} == {"orders"}
+    assert {c.action for c in changes} == {"row_change"} and {c.name for c in changes} == {
+        "app.orders" if dialect == "postgresql" else "orders"
+    }
     q = '"' if dialect == "postgresql" else "`"
+    schema = f"{q}app{q}." if dialect == "postgresql" else ""  # PostgreSQL: its source schema
     ins, upd, dele = changes
     assert _sql(ins, dialect) == (
-        f"INSERT INTO {q}orders{q} ({q}id{q}, {q}customer_id{q}, {q}total{q}) "
+        f"INSERT INTO {schema}{q}orders{q} ({q}id{q}, {q}customer_id{q}, {q}total{q}) "
         "VALUES (%s, %s, %s)"
     )
-    assert _sql(upd, dialect) == f"UPDATE {q}orders{q} SET {q}total{q} = %s WHERE {q}id{q} = %s"
-    assert _sql(dele, dialect) == f"DELETE FROM {q}orders{q} WHERE {q}id{q} = %s"
-    rows = dict(inputs.setup.rows)["orders"]
+    assert _sql(upd, dialect) == (
+        f"UPDATE {schema}{q}orders{q} SET {q}total{q} = %s WHERE {q}id{q} = %s"
+    )
+    assert _sql(dele, dialect) == f"DELETE FROM {schema}{q}orders{q} WHERE {q}id{q} = %s"
+    prefix = "app." if dialect == "postgresql" else ""
+    rows = dict(inputs.setup.rows)[prefix + "orders"]
     seeded = {r["id"] for r in rows}
     assert ins.args[0] not in seeded  # a held-back row: its key is new
-    assert ins.args[1] in {r["id"] for r in dict(inputs.setup.rows)["customers"]}
+    assert ins.args[1] in {r["id"] for r in dict(inputs.setup.rows)[prefix + "customers"]}
     assert upd.args[1] == rows[0]["id"] and dele.args == (rows[-1]["id"],)
 
 
@@ -332,12 +338,12 @@ def test_the_row_changes_run_before_the_calls():
 def test_an_update_of_trigger_sets_its_column_and_a_key_keeps_its_value():
     t = _trigger("t_total", "orders", ["UPDATE"], columns=("TOTAL",))
     upd = _changes(build_proof_inputs([t], TABLES, dialect="postgresql"), t.routine_id)[0]
-    assert _sql(upd).startswith('UPDATE "orders" SET "total" = %s')
+    assert _sql(upd).startswith('UPDATE "app"."orders" SET "total" = %s')
     k = _trigger("t_key", "orders", ["UPDATE"], columns=("customer_id",))
     inputs = build_proof_inputs([k], TABLES, dialect="postgresql")
     upd = _changes(inputs, k.routine_id)[0]
-    assert _sql(upd).startswith('UPDATE "orders" SET "customer_id" = %s')
-    assert upd.args[0] == dict(inputs.setup.rows)["orders"][0]["customer_id"]
+    assert _sql(upd).startswith('UPDATE "app"."orders" SET "customer_id" = %s')
+    assert upd.args[0] == dict(inputs.setup.rows)["app.orders"][0]["customer_id"]
 
 
 def test_two_triggers_on_one_table_insert_and_delete_different_rows():
@@ -358,7 +364,7 @@ def test_a_table_without_a_key_is_matched_on_its_comparable_columns():
     t = _trigger("log_del", "log", ["DELETE"])
     inputs = build_proof_inputs([t], [log], dialect="postgresql")
     dele = _changes(inputs, t.routine_id)[0]
-    assert _sql(dele).startswith('DELETE FROM "log" WHERE "at" = %s')
+    assert _sql(dele).startswith('DELETE FROM "app"."log" WHERE "at" = %s')
     assert '"score"' not in _sql(dele)  # a float never decides which row is matched
 
 
@@ -392,11 +398,11 @@ def test_the_setup_creates_every_touched_table_and_its_parents_in_order():
     f = _fn("order_total", _p("integer"), tables=("orders",))
     inputs = build_proof_inputs([f], TABLES, dialect="postgresql")
     assert inputs.setup.tables == ("app.customers", "app.orders")  # audit is not touched
-    assert [t for t, _ in inputs.setup.rows] == ["customers", "orders"]
+    assert [t for t, _ in inputs.setup.rows] == ["app.customers", "app.orders"]
     ddl = inputs.setup.ddl
     creates = [d for d in ddl if d.startswith("CREATE TABLE")]
-    assert [d.split('"')[1] for d in creates] == ["customers", "orders"]
-    assert ddl[-1].startswith('ALTER TABLE "orders" ADD CONSTRAINT "o_customer" FOREIGN KEY')
+    assert [d.split('"')[3] for d in creates] == ["customers", "orders"]  # in schema app
+    assert ddl[-1].startswith('ALTER TABLE "app"."orders" ADD CONSTRAINT "o_customer" FOREIGN KEY')
     assert all(len(rows) <= PROOF_ROWS + 4 for _, rows in inputs.setup.rows)
 
 
@@ -700,8 +706,8 @@ def test_a_table_with_an_extension_type_is_left_out_and_the_rest_load():
     )
     ddl = "\n".join(out.setup.ddl)
     assert '"embeddings"' not in ddl and "HALFVEC" not in ddl
-    assert 'CREATE TABLE "uses"' in ddl and '"u_emb"' not in ddl  # its key has no table
-    assert {t for t, _ in out.setup.rows} >= {"customers", "orders", "uses"}
+    assert 'CREATE TABLE "app"."uses"' in ddl and '"u_emb"' not in ddl  # its key has no table
+    assert {t for t, _ in out.setup.rows} >= {"app.customers", "app.orders", "app.uses"}
     kept = build_proof_inputs([f], TABLES + [vec, child], dialect="postgresql",
                               extensions=("vector",))  # fmt: skip
     assert "app.embeddings" not in dict(kept.setup.unseeded)
@@ -742,7 +748,7 @@ def test_reserved_rows_of_a_self_referencing_table_are_pointed_at_by_none():
                   fks=[_fk("n_parent", ["parent_id"], "node", ["id"])], row_count=3)  # fmt: skip
     triggers = [_trigger(f"t{i}", "node", ["INSERT", "DELETE"]) for i in range(3)]
     out = build_proof_inputs(triggers, [tree], dialect="postgresql")
-    rows = dict(out.setup.rows)["node"]
+    rows = dict(out.setup.rows)["app.node"]
     inserted = [c.args for c in out.calls if c.kind == "INSERT"]
     deleted = {c.args[0] for c in out.calls if c.kind == "DELETE"}
     assert len(inserted) == len(deleted) == 3

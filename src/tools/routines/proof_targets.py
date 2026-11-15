@@ -24,7 +24,9 @@ or a user (MySQL) that can write only to the scratch database.
 What a target does, in the order the comparison calls it:
 
 1. ``load_setup(setup)``: create the synthetic tables and rows
-   (:class:`~src.tools.routines.proof_inputs.ProofSetup`).
+   (:class:`~src.tools.routines.proof_inputs.ProofSetup`), each table in its source schema
+   (PostgreSQL) or database (MySQL), those made first (#1970). A body may then name one of
+   them; a ``CREATE`` still never writes outside the target's own schema.
 2. ``create(routine)``, once per ``CREATE`` statement: None when it loads, else the
    engine's SQLSTATE (``"?????"`` when it gave none); :class:`CreateRefused` for a text
    it refuses. The engine's message is never returned, because it can quote the text.
@@ -212,6 +214,9 @@ class DisposableEngineTarget:
     source's engine and version for the original routines, and, until #1945 and #1946,
     the target's version for the carried ones."""
 
+    #: The setup's source schemas (#1970), set by ``load_setup``.
+    _schemas: tuple[str, ...] = ()
+
     def __init__(
         self,
         engine: str,
@@ -256,6 +261,8 @@ class DisposableEngineTarget:
 
     def load_setup(self, setup: ProofSetup) -> None:
         try:
+            de.create_namespaces(self._handle, setup.schemas)
+            self._schemas = tuple(setup.schemas)
             de.load(self._handle, setup.ddl, setup.rows_by_table())
         except de.EngineError as exc:
             raise ProofTargetError(
@@ -263,7 +270,9 @@ class DisposableEngineTarget:
             ) from exc
 
     def create(self, routine: de.SourceRoutine) -> str | None:
-        why = create_refusal(routine.create_sql, self.engine, routine.kind, self.namespace)
+        why = create_refusal(
+            routine.create_sql, self.engine, routine.kind, self.namespace, self._schemas
+        )
         if why is not None:
             raise CreateRefused(why)
         try:

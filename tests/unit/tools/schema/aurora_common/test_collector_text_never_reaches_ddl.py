@@ -355,6 +355,12 @@ DDL_WRITERS = {
     # names matching the scratch pattern or quoted with _quote/_quote_table, and every value
     # is bound; tests/unit/tools/routines/test_data_api_target.py.
     "src/tools/routines/data_api_target.py",
+    # The routine proof's setup naming the schema of each table (#1970): the generator's own
+    # statements, with each table's quoted name swapped for schema.table, the schema checked
+    # as a plain identifier first (a table with any other schema name is created without it);
+    # tests/unit/tools/routines/test_proof_source_schema.py::
+    # test_a_schema_name_that_is_not_a_plain_identifier_is_never_written_into_a_statement.
+    "src/tools/routines/proof_inputs.py",
     # A routine's rewritten header (#1937): the pinned SET search_path clause (each schema
     # name double-quoted with its quotes doubled) and the DEFINER clause (user and host
     # backticked with backticks doubled); a control or line-separator character in any

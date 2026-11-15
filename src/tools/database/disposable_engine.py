@@ -223,11 +223,34 @@ _MY_AUTO_INCREMENTS = (
     "SELECT TABLE_NAME, AUTO_INCREMENT FROM information_schema.TABLES "
     "WHERE TABLE_SCHEMA = DATABASE() AND AUTO_INCREMENT IS NOT NULL ORDER BY TABLE_NAME"
 )
+# The same, with the setup's other databases (#1970): a table there is ``database.table``.
+_MY_AUTO_INCREMENTS_IN = (
+    "SELECT CASE WHEN TABLE_SCHEMA = DATABASE() THEN TABLE_NAME "
+    "ELSE CONCAT(TABLE_SCHEMA, '.', TABLE_NAME) END AS name, AUTO_INCREMENT "
+    "FROM information_schema.TABLES WHERE TABLE_SCHEMA IN ({schemas}) "
+    "AND AUTO_INCREMENT IS NOT NULL ORDER BY name"
+)
 # The base tables of the routines' own schema (PostgreSQL ``public``, the MySQL database).
 _PG_TABLES = "SELECT tablename FROM pg_tables WHERE schemaname = 'public' ORDER BY tablename"
 _MY_TABLES = (
     "SELECT TABLE_NAME FROM information_schema.TABLES WHERE TABLE_SCHEMA = DATABASE() "
     "AND TABLE_TYPE = 'BASE TABLE' ORDER BY TABLE_NAME"
+)
+# The base tables of the routines' own schema and of the schemas the setup made (#1970): a
+# table of one of those is ``schema.table``. The names are checked identifiers.
+_PG_TABLES_IN = (
+    "SELECT CASE WHEN schemaname = 'public' THEN tablename "
+    "ELSE schemaname || '.' || tablename END AS name FROM pg_tables "
+    "WHERE schemaname IN ({schemas}) ORDER BY name"
+)
+_MY_TABLES_IN = (
+    "SELECT CASE WHEN TABLE_SCHEMA = DATABASE() THEN TABLE_NAME "
+    "ELSE CONCAT(TABLE_SCHEMA, '.', TABLE_NAME) END AS name FROM information_schema.TABLES "
+    "WHERE TABLE_SCHEMA IN ({schemas}) AND TABLE_TYPE = 'BASE TABLE' ORDER BY name"
+)
+_MY_COLUMN_TYPES_IN = (
+    "SELECT COLUMN_NAME, COLUMN_TYPE FROM information_schema.COLUMNS "
+    "WHERE TABLE_SCHEMA = %s AND TABLE_NAME = %s ORDER BY ORDINAL_POSITION"
 )
 _PG_COLUMN_TYPES = (
     "SELECT attname, format_type(atttypid, atttypmod) FROM pg_attribute "
@@ -387,6 +410,46 @@ def _quote_table(name: str, mark: str) -> str:
 
 
 _SQL_NOTE = "identifiers are validated by _parts and quoted; values are bound"
+
+
+def _search_path_sql(namespaces: Sequence[str]) -> str:
+    """``SET search_path TO "public", "sales"``: every name checked and quoted."""
+    return "SET search_path TO " + ", ".join(_quote(n, '"') for n in ["public", *namespaces])
+
+
+def _schema_literals(names: Sequence[str]) -> str:
+    """``'public', 'sales'``: string literals of checked identifiers, for an ``IN`` list."""
+    if not all(_IDENT.match(n) for n in names):
+        raise ValueError("not a plain schema name")
+    return ", ".join(f"'{n}'" for n in names)
+
+
+def pg_tables_sql(namespaces: Sequence[str]) -> str:
+    """The query for the base tables of ``public`` and of the setup's ``namespaces``."""
+    return _PG_TABLES_IN.format(schemas=_schema_literals(["public", *namespaces]))
+
+
+def _my_schemas(namespaces: Sequence[str]) -> str:
+    """The MySQL ``IN`` list: the connection's own database and the setup's others."""
+    return ", ".join(["DATABASE()", *([_schema_literals(namespaces)] if namespaces else [])])
+
+
+def _split_table(name: str, namespaces: Sequence[str]) -> tuple[str | None, str]:
+    """``(schema, table)`` of a name the engine listed: ``sales.orders`` is in ``sales``
+    when ``sales`` is a schema the setup made; any other name is a table of the routines'
+    own schema, whatever it holds."""
+    head, dot, rest = name.partition(".")
+    if dot and rest and head in namespaces:
+        return head, rest
+    return None, name
+
+
+def qualified_table(name: str, namespaces: Sequence[str], mark: str) -> str:
+    """A listed table name as a statement writes it: ``"sales"."orders"``, each part quoted
+    (the mark doubled inside it), the schema part only for a schema the setup made."""
+    schema, table = _split_table(name, namespaces)
+    quoted = _quote_table(table, mark)
+    return f"{_quote_table(schema, mark)}.{quoted}" if schema else quoted
 
 
 def _insert_sql(table: str, cols: Sequence[str], mark: str) -> str:
@@ -878,6 +941,12 @@ def sweep_stale() -> list[Path]:
 
 
 class _Backend:
+    #: Schemas (PostgreSQL) or databases (MySQL) made by :func:`create_namespaces` (#1970).
+    _namespaces: tuple[str, ...] = ()
+
+    def create_namespaces(self, names: Sequence[str]) -> None:
+        raise NotImplementedError
+
     def load(
         self,
         ddl: Sequence[str],
@@ -1137,6 +1206,9 @@ class _PostgresBackend(_Backend):
         ext = self._psycopg2.extensions
         conn = self._psycopg2.connect(self._server.dsn(_RUNNER, _DATABASE, self._password))
         conn.autocommit = True
+        if self._namespaces:
+            with conn.cursor() as cur:
+                _execute(cur, _search_path_sql(self._namespaces))
         for oids, array, name in (((1186,), (1187,), "INTERVAL"), ((114,), (199,), "JSON")):
             as_text = ext.new_type(oids, f"{name}_AS_TEXT", lambda value, cur: value)
             ext.register_type(as_text, conn)
@@ -1152,6 +1224,25 @@ class _PostgresBackend(_Backend):
             finally:
                 cur.close()
         return tuple(self._type_names.get(int(d.type_code), str(d.type_code)) for d in description)
+
+    def create_namespaces(self, names):  # type: ignore[no-untyped-def]
+        """Each schema, made by the runner (it owns the database, so it owns the schema),
+        and a search path of ``public`` then the schemas, so an unqualified name resolves as
+        it did when every table sat in ``public``."""
+        made = list(self._namespaces)
+        cur = self._conn.cursor()
+        try:
+            for name in names:
+                if name.casefold() == "public" or name in made:
+                    continue
+                _execute(cur, "CREATE SCHEMA " + _quote(name, '"'))
+                made.append(name)
+            self._namespaces = tuple(made)
+            _execute(cur, _search_path_sql(self._namespaces))
+        except self._psycopg2.Error as exc:
+            raise EngineError(f"{type(exc).__name__}: {exc}".strip(), _sqlstate(exc)) from exc
+        finally:
+            cur.close()
 
     def load(self, ddl, rows, routines):  # type: ignore[no-untyped-def]
         cur = self._conn.cursor()
@@ -1234,7 +1325,7 @@ class _PostgresBackend(_Backend):
         cur = self._conn.cursor()
         try:
             for table in tables:
-                _execute(cur, _PG_COLUMN_TYPES, [_quote_table(table, '"')])
+                _execute(cur, _PG_COLUMN_TYPES, [qualified_table(table, self._namespaces, '"')])
                 out[table] = {str(n): str(t) for n, t in cur.fetchall()}
         except self._psycopg2.Error as exc:
             raise EngineError(f"{type(exc).__name__}: {exc}".strip(), _sqlstate(exc)) from exc
@@ -1263,7 +1354,7 @@ class _PostgresBackend(_Backend):
     def tables(self) -> list[str]:
         cur = self._conn.cursor()
         try:
-            _execute(cur, _PG_TABLES)
+            _execute(cur, pg_tables_sql(self._namespaces) if self._namespaces else _PG_TABLES)
             return [str(r[0]) for r in cur.fetchall()]
         except self._psycopg2.Error as exc:
             raise EngineError(f"{type(exc).__name__}: {exc}".strip(), _sqlstate(exc)) from exc
@@ -1522,6 +1613,30 @@ class _MySQLBackend(_Backend):
             **server.connect_args(_RUNNER, server.runner_password, _DATABASE)
         )
 
+    def create_namespaces(self, names):  # type: ignore[no-untyped-def]
+        """Each source database, made by the server's admin (the runner may create none) and
+        granted to the runner alone, as ``src`` is: nothing wider than that database."""
+        made = list(self._namespaces)
+        fresh = [n for n in names if n != _DATABASE and n not in made]
+        if not fresh:
+            return
+        conn = None
+        try:
+            conn = self._mc.connect(**self._server.connect_args("root", self._server.password))
+            cur = conn.cursor()
+            for name in fresh:
+                quoted = _quote(name, "`")
+                _execute(cur, f"CREATE DATABASE {quoted}")
+                _execute(cur, f"GRANT ALL PRIVILEGES ON {quoted}.* TO '{_RUNNER}'@'localhost'")
+                made.append(name)
+            cur.close()
+        except self._mc.Error as exc:
+            raise EngineError(f"{type(exc).__name__}: {exc}".strip(), _sqlstate(exc)) from exc
+        finally:
+            if conn is not None:
+                conn.close()
+            self._namespaces = tuple(made)
+
     def load(self, ddl, rows, routines):  # type: ignore[no-untyped-def]
         cur = self._conn.cursor()
         try:
@@ -1674,7 +1789,11 @@ class _MySQLBackend(_Backend):
     def tables(self) -> list[str]:
         cur = self._conn.cursor()
         try:
-            _execute(cur, _MY_TABLES)
+            if self._namespaces:
+                sql = _MY_TABLES_IN.format(schemas=_my_schemas(self._namespaces))
+            else:
+                sql = _MY_TABLES
+            _execute(cur, sql)
             return [str(r[0]) for r in cur.fetchall()]
         except self._mc.Error as exc:
             raise EngineError(f"{type(exc).__name__}: {exc}".strip(), _sqlstate(exc)) from exc
@@ -1686,7 +1805,11 @@ class _MySQLBackend(_Backend):
         cur = self._conn.cursor()
         try:
             for table in tables:
-                _execute(cur, _MY_COLUMN_TYPES, [table])
+                schema, name = _split_table(table, self._namespaces)
+                if schema is None:
+                    _execute(cur, _MY_COLUMN_TYPES, [name])
+                else:
+                    _execute(cur, _MY_COLUMN_TYPES_IN, [schema, name])
                 out[table] = {str(n): str(t) for n, t in cur.fetchall()}
         except self._mc.Error as exc:
             raise EngineError(f"{type(exc).__name__}: {exc}".strip(), _sqlstate(exc)) from exc
@@ -1755,7 +1878,11 @@ class _MySQLBackend(_Backend):
         try:
             with contextlib.suppress(self._mc.Error):  # 5.7 has no such variable
                 _execute(cur, _MY_STATS_NOW)
-            _execute(cur, _MY_AUTO_INCREMENTS)
+            if self._namespaces:
+                sql = _MY_AUTO_INCREMENTS_IN.format(schemas=_my_schemas(self._namespaces))
+            else:
+                sql = _MY_AUTO_INCREMENTS
+            _execute(cur, sql)
             return tuple((str(t), int(n), None) for t, n in cur.fetchall())
         except self._mc.Error as exc:
             raise EngineError(f"{type(exc).__name__}: {exc}".strip(), _sqlstate(exc)) from exc
@@ -1769,7 +1896,7 @@ class _MySQLBackend(_Backend):
         cur = self._conn.cursor()
         try:
             for table, value, _ in state:
-                target = _quote_table(table, "`")  # any spelling, the backtick doubled
+                target = qualified_table(table, self._namespaces, "`")  # any spelling, doubled
                 _execute(cur, f"ALTER TABLE {target} AUTO_INCREMENT = {int(value)}")
         except self._mc.Error as exc:
             raise EngineError(f"{type(exc).__name__}: {exc}".strip(), _sqlstate(exc)) from exc
@@ -2041,6 +2168,20 @@ def start(
         raise
     _LIVE.append(handle)
     return handle
+
+
+def create_namespaces(handle: EngineHandle, names: Sequence[str]) -> None:
+    """Make the source schemas (PostgreSQL) or databases (MySQL) the setup's tables sit in
+    (#1970), before :func:`load`. Every name must be a plain identifier (``ValueError``
+    otherwise). Runs as the non-superuser runner on PostgreSQL, which owns the schemas; on
+    MySQL the server's admin makes each database and grants it to the runner, and only to it.
+    After this, :func:`tables` also lists the tables of these schemas as ``schema.table``,
+    and PostgreSQL's search path is ``public`` then these, so an unqualified name resolves."""
+    _check_live(handle)
+    for name in names:
+        if not _IDENT.match(name):
+            raise ValueError(f"not a plain schema name: {name!r}")
+    handle._backend.create_namespaces(names)
 
 
 def load(

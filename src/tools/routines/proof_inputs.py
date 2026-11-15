@@ -72,9 +72,17 @@ PostgreSQL routine with a parameter whose type no cast can name (an uncast call 
 reach another overload, so none is sent), a trigger
 on a view (``INSTEAD OF``), a ``TRUNCATE`` trigger, and a trigger on a table the
 collection lacks, a MySQL event on PostgreSQL and one whose name is not a plain
-identifier (#1971). Setup tables are created
-without a schema, so a routine body that names another schema (#1970) does not find
-them.
+identifier (#1971).
+
+Setup tables sit in their source schema (#1970): a PostgreSQL table of a schema other than
+``public`` is created as ``"sales"."orders"``, and a MySQL table of a database other than
+the routines' own (the schema of the routine ids, and the engine's own database) in that
+database, so a body that names ``sales.orders`` finds it. ``ProofSetup.schemas`` lists those
+schemas; a target creates them first, and its rows, table names and snapshots carry the
+qualified name. A table of the routines' own MySQL database, or of ``public``, stays
+unqualified, as an unqualified body names it. Two tables of one name in different schemas
+still collide (one is left out with its reason), as the DDL generator keeps one flat set of
+names.
 
 Building the inputs takes time linear in the routines and tables: every foreign key is
 resolved through one ``TableIndex``, and the columns foreign keys point at are indexed
@@ -323,6 +331,9 @@ class ProofSetup:
     ``(table, rows)`` in insert order. ``tables``: the table ids in the setup, in
     insert order. ``unseeded``: tables created with no rows, with why. ``missing``:
     ``(routine id, table)`` for each table a routine names that the collection lacks.
+    ``schemas``: the source schemas (PostgreSQL) or databases (MySQL) the tables above sit
+    in besides the target's own; a target creates them before ``ddl``, and the names in
+    ``rows`` are ``schema.table`` for a table in one.
     """
 
     dialect: str
@@ -332,6 +343,7 @@ class ProofSetup:
     cycle_breaks: tuple[tuple[str, str], ...] = ()
     unseeded: tuple[tuple[str, str], ...] = ()
     missing: tuple[tuple[str, str], ...] = ()
+    schemas: tuple[str, ...] = ()
 
     def rows_by_table(self) -> dict[str, list[dict[str, Any]]]:
         """The rows as ``disposable_engine.load`` takes them (insert order kept)."""
@@ -655,6 +667,73 @@ def _plain(table: Mapping[str, Any]) -> bool:
     return all(_IDENT.match(n) for n in names)
 
 
+def _source_schema(table: Mapping[str, Any], dialect: Dialect, own: Collection[str]) -> str | None:
+    """The schema (PostgreSQL) or database (MySQL) the setup creates the table in, or None
+    when it goes unqualified: ``public``, the engine's own database, and a database a
+    routine of the collection lives in (an unqualified body names its tables there)."""
+    written = table.get("schema_name")
+    if not written:
+        return None
+    schema = str(written)
+    if not _IDENT.match(schema):
+        return None  # created unqualified; the build says so in ``unseeded``
+    if dialect == "postgresql":
+        return None if schema.casefold() == "public" else schema
+    return None if schema in own else schema
+
+
+def _qname(table: Mapping[str, Any]) -> str:
+    """The table's name as a statement writes it: ``schema.table`` when it sits in a
+    schema other than the target's own."""
+    schema = table.get("proof_schema")
+    return f"{schema}.{_name(table)}" if schema else _name(table)
+
+
+def _qualify(result: DdlResult, schemas: Mapping[str, str], dialect: Dialect) -> DdlResult:
+    """Name the schema of each generated statement's table. The generator writes a table
+    as one quoted name, in four fixed places; each is rewritten here and a statement that
+    does not have its place is an error, never silently left unqualified. Only checked
+    identifiers go in (``_plain``)."""
+    mark = '"' if dialect == "postgresql" else "`"
+
+    def q(name: str) -> str:
+        return mark + name.replace(mark, mark + mark) + mark
+
+    def qualified(name: str) -> str:
+        return f"{q(schemas[name])}.{q(name)}" if name in schemas else q(name)
+
+    def swap(sql: str, old: str, new: str) -> str:
+        if old not in sql:
+            raise ValueError("a generated statement does not name its table where expected")
+        return sql.replace(old, new, 1)
+
+    for t in result.tables:
+        if t.table_name in schemas:
+            t.create_sql = swap(
+                t.create_sql,
+                f"CREATE TABLE {q(t.table_name)} (",
+                f"CREATE TABLE {qualified(t.table_name)} (",
+            )
+            t.index_sql = [
+                swap(i, f" ON {q(t.table_name)} ", f" ON {qualified(t.table_name)} ")
+                for i in t.index_sql
+            ]
+        fks = []
+        for fk in t.fk_sql:
+            fk = swap(
+                fk,
+                f"ALTER TABLE {q(t.table_name)} ADD",
+                f"ALTER TABLE {qualified(t.table_name)} ADD",
+            )
+            ref = fk.rpartition(" REFERENCES ")
+            parent = next((n for n in schemas if ref[2].startswith(q(n) + " (")), None)
+            if parent is not None:
+                fk = ref[0] + ref[1] + qualified(parent) + ref[2][len(q(parent)) :]
+            fks.append(fk)
+        t.fk_sql = fks
+    return result
+
+
 def _closure(start: Iterable[str], index: TableIndex) -> list[str]:
     """``start`` and every table their foreign keys reference, transitively, sorted."""
     seen: set[str] = set()
@@ -877,7 +956,7 @@ def _trigger_changes(
     spec = routine.trigger
     assert spec is not None  # nosec B101 - the input model requires it for a trigger
     table = tables[tid]
-    name = _name(table)
+    name = _qname(table)
     rows = related.tables[tid].rows
     held = related.held_back.get(tid) or []
     if not rows:
@@ -978,6 +1057,9 @@ def build_proof_inputs(
             else:
                 trigger_table[r.routine_id] = tid
 
+    own = {de.NAMESPACE["mysql"]} | {
+        r.routine_id.partition(".")[0] for r in ordered if "." in r.routine_id
+    }
     selected: dict[str, Mapping[str, Any]] = {}
     skip: dict[str, str] = {}
     taken: set[str] = set()
@@ -986,9 +1068,14 @@ def build_proof_inputs(
             skip[tid] = "another table of the same name is already in the setup"
             continue
         taken.add(_name(index.by_id[tid]).lower())
-        selected[tid] = _shaped(index.by_id[tid], dialect)
+        selected[tid] = {
+            **_shaped(index.by_id[tid], dialect),
+            "proof_schema": _source_schema(index.by_id[tid], dialect, own),
+        }
         if not _plain(index.by_id[tid]):
             skip[tid] = "its name or a column name is not a plain identifier"
+        elif (written := index.by_id[tid].get("schema_name")) and not _IDENT.match(str(written)):
+            skip[tid] = "its schema name is not a plain identifier, so it is created without it"
     # A table whose type the engine lacks is not created at all; the rest still load.
     first = TableIndex(selected)
     lacking = _needs_extension(
@@ -1012,10 +1099,18 @@ def build_proof_inputs(
         skip={k: v for k, v in skip.items() if k in selected},
     )
     ddl = _setup_ddl(
-        _generate(dialect, [_ddl_table(selected[t], chosen, dialect) for t in related.order])
+        _qualify(
+            _generate(dialect, [_ddl_table(selected[t], chosen, dialect) for t in related.order]),
+            {
+                _name(selected[t]): str(selected[t]["proof_schema"])
+                for t in related.order
+                if selected[t].get("proof_schema")
+            },
+            dialect,
+        )
     )
     rows = tuple(
-        (_name(selected[t]), tuple(related.tables[t].rows))
+        (_qname(selected[t]), tuple(related.tables[t].rows))
         for t in related.order
         if related.tables[t].rows
     )
@@ -1029,6 +1124,15 @@ def build_proof_inputs(
         cycle_breaks=related.cycle_breaks,
         unseeded=tuple(sorted(unseeded.items())),
         missing=tuple(missing),
+        schemas=tuple(
+            sorted(
+                {
+                    str(selected[t]["proof_schema"])
+                    for t in related.order
+                    if selected[t].get("proof_schema")
+                }
+            )
+        ),
     )
     referenced = _referenced_columns(chosen)
 
