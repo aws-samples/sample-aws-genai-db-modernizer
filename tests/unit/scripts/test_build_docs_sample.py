@@ -312,6 +312,7 @@ _NEWER_THAN_THE_RECORDING = (
     "cutover_responsibility",  # #2107
     "slice_plan",  # #1128
     "adoption",  # #1128
+    "engine_query_counts",  # #2358
 )
 # Fields added inside a recorded fact, filled in the same way (#399).
 _NEWER_FIELDS_THAN_THE_RECORDING = {
