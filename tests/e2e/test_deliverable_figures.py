@@ -38,10 +38,10 @@ deliverable names in an engine slot is in the final architecture.
 
 Not marked ``deterministic`` as a module (#2143): a check that holds on any run also
 runs on the e2e-llm job. Each test that keeps the mark says why: the designed jobs exist
-only in deterministic mode, the trace-appendix check skips a job with no trace, and
-the three report-figure checks wait on #2358 (they read
-the reality check's distribution as the final one, which a later assignment version
-changes). ``replay_stale`` marks a check the saved replay reports predate.
+only in deterministic mode and the trace-appendix check skips a job with no trace. The
+three report-figure checks are a strict xfail on a job whose version after the reality
+check moved a query, until #2358 is fixed (they read the reality check's distribution as
+the final one). ``replay_stale`` marks a check the saved replay reports predate.
 """
 
 from __future__ import annotations
@@ -94,6 +94,33 @@ from tests.e2e.pipeline import PipelineResult, real_designs
 # fails, and an entry that no longer reproduces fails too, so it is removed
 # once its issue is fixed.
 KNOWN: dict[tuple[str, str, str], str] = {}
+
+
+def _moved_after_the_reality_check(run: PipelineResult) -> bool:
+    """Whether a version after the reality check (an --auto pick, a post-schema reroute)
+    moved a query to another engine: the case in which ``reality_check.after_distribution``
+    is no longer the final distribution (#2358)."""
+    for path in (run.job_dir() / "assignment").glob("v*/assignment.json"):
+        version = json.loads(path.read_text())
+        if version.get("source") in ("assignment_resolution", "reality_check"):
+            continue
+        for move in version.get("moves") or []:
+            if move.get("from_engine") != move.get("to_engine"):
+                return True
+    return False
+
+
+def _xfail_while_2358_holds(run: PipelineResult, request: pytest.FixtureRequest) -> None:
+    """#2358: these checks read the reality check's distribution as the final one. On a
+    job with a later version that moved a query they fail, until #2358 is fixed; the mark
+    is strict, so the check then passes there and fails until this is removed."""
+    if run.external and _moved_after_the_reality_check(run):
+        request.applymarker(
+            pytest.mark.xfail(
+                strict=True,
+                reason="#2358: reality_check.after_distribution is read as the final distribution",
+            )
+        )
 
 
 def _report_json(run: PipelineResult) -> dict[str, Any]:
@@ -224,12 +251,9 @@ def _settle(db: str, deliverable: str, problems: list[tuple[str, str]]) -> None:
         pytest.xfail(f"known bugs {', '.join(sorted(set(known.values())))}: {details}")
 
 
-# deterministic: #2358, the reality check's after_distribution is read as the final
-# distribution, and a run with a version after the reality check (an --auto pick, a
-# post-schema reroute) changes it.
-@pytest.mark.deterministic
-def test_report_json_is_consistent(run: PipelineResult) -> None:
+def test_report_json_is_consistent(run: PipelineResult, request: pytest.FixtureRequest) -> None:
     """report.json itself satisfies every invariant the deliverables are held to."""
+    _xfail_while_2358_holds(run, request)
     report = _report_json(run)
     exp = expected_figures(report)
     as_observed = {k: [(v, "report.json")] for k, v in exp.items()}
@@ -238,8 +262,8 @@ def test_report_json_is_consistent(run: PipelineResult) -> None:
     _settle(run.db, "report.json", problems)
 
 
-# replay_stale: the saved replay reports predate facts this compares (growth_scenarios,
-# adoption); a fresh run's report carries them.
+# replay_stale: the saved replay reports predate today's facts layer (its newer figures
+# and the reshaped ones); a fresh run's report is checked here.
 @pytest.mark.replay_stale
 def test_report_json_facts_are_the_facts_layer_output(run: PipelineResult) -> None:
     """#615: report.json carries the facts block, and it is exactly what the
@@ -469,21 +493,15 @@ def test_every_deliverable_shows_the_reality_check_decisions(run: PipelineResult
         assert not missing, f"{deliverable} does not show {missing}"
 
 
-# deterministic: #2358, the reality check's after_distribution is read as the final
-# distribution, and a run with a version after the reality check (an --auto pick, a
-# post-schema reroute) changes it.
-@pytest.mark.deterministic
-def test_pdf_report_figures(run: PipelineResult) -> None:
+def test_pdf_report_figures(run: PipelineResult, request: pytest.FixtureRequest) -> None:
+    _xfail_while_2358_holds(run, request)
     report = _report_json(run)
     text = " ".join(pdf_page_texts(str(run.deliverable("executive-report.pdf"))))
     _settle(run.db, "PDF", _problems(report, pdf_figures(text), _pdf_required))
 
 
-# deterministic: #2358, the reality check's after_distribution is read as the final
-# distribution, and a run with a version after the reality check (an --auto pick, a
-# post-schema reroute) changes it.
-@pytest.mark.deterministic
-def test_engineering_report_figures(run: PipelineResult) -> None:
+def test_engineering_report_figures(run: PipelineResult, request: pytest.FixtureRequest) -> None:
+    _xfail_while_2358_holds(run, request)
     report = _report_json(run)
     figs = engineering_figures(run.deliverable("engineering-report.md").read_text())
     _settle(run.db, "engineering report", _problems(report, figs, _engineering_required))
@@ -498,8 +516,8 @@ def _path_label(path_id: str, default_path_id: str = "") -> str:
     return f"{base}, the default" if path_id == default_path_id else base
 
 
-# replay_stale: the saved replay reports predate facts this compares (growth_scenarios,
-# adoption); a fresh run's report carries them.
+# replay_stale: the saved replay reports predate today's facts layer (its newer figures
+# and the reshaped ones); a fresh run's report is checked here.
 @pytest.mark.replay_stale
 def test_the_adoption_paths_section_shows_the_stored_path_figures(run: PipelineResult) -> None:
     """#1131: "Adoption paths" shows the paths the capped view names (#2172), every
@@ -608,8 +626,8 @@ def test_the_adoption_paths_section_shows_the_stored_path_figures(run: PipelineR
 _MOVING_TABLES_SENTINEL = 9137
 
 
-# replay_stale: the saved replay reports predate facts this compares (growth_scenarios,
-# adoption); a fresh run's report carries them.
+# replay_stale: the saved replay reports predate today's facts layer (its newer figures
+# and the reshaped ones); a fresh run's report is checked here.
 @pytest.mark.replay_stale
 def test_no_deliverable_line_states_a_path_s_moving_table_count(run: PipelineResult) -> None:
     """Review of #2241 (Critical 1): the whole engineering report, not only "Adoption

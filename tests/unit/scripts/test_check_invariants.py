@@ -411,9 +411,12 @@ def test_a_routine_unit_on_two_engines_fails(
     tmp_path: Path, tmp_path_factory: pytest.TempPathFactory
 ) -> None:
     """No saved run has a routine unit, so the break adds one whose two statements are
-    on two engines."""
+    on two engines. Both versions are stamped 1.26 (whole units): in the saved 1.24 run
+    the two statements already sat on two engines in v1, which is a carried split, a
+    warning (``test_a_split_carried_from_before_whole_units_is_a_warning``)."""
 
     def edit(a: dict) -> None:
+        a["contract_version"] = "1.26"
         engine = _engine_of(a)
         first = next(q for q, e in engine.items() if e == "aurora_mysql")
         second = next(q for q, e in engine.items() if e == "dynamodb")
@@ -426,7 +429,10 @@ def test_a_routine_unit_on_two_engines_fails(
             }
         ]
 
-    result = _fails(_break_assignment(tmp_path, tmp_path_factory, edit), "routine_unit_one_engine")
+    job = _break_assignment(tmp_path, tmp_path_factory, edit)
+    v1 = job / "assignment" / "v1" / "assignment.json"
+    _write(v1, {**_read(v1), "contract_version": "1.26"})
+    result = _fails(job, "routine_unit_one_engine")
     assert result["failures"]["routine_unit_one_engine"] == [
         "v2: routine unit wordpress.audit_proc is on aurora_mysql, dynamodb"
     ]
@@ -548,7 +554,9 @@ def test_older_artifact_shapes_load_and_say_what_they_lack(
     job = _copy("wordpress-both", tmp_path, tmp_path_factory)
     path = _latest(job)
     a = _read(path)
-    for key in ("moves", "write_groups", "routine_units"):
+    # A file from before contract versions (review of #2370): with a contract_version,
+    # a missing ``moves`` is a break, not the legacy shape.
+    for key in ("moves", "write_groups", "routine_units", "contract_version"):
         a.pop(key, None)
     for qa in a["query_assignments"]:
         qa["assigned_engine"] = {"aurora_mysql": "Aurora MySQL", "dynamodb": "dynamodb"}.get(
@@ -572,3 +580,259 @@ def test_a_folder_with_no_assignment_is_an_error(tmp_path: Path) -> None:
     code, result = check(tmp_path)
     assert code == 2 and result["status"] == "error"
     assert "no assignment" in result["message"]
+
+
+# ---------------------------------------------------------------------------
+# Review of #2370
+# ---------------------------------------------------------------------------
+
+
+def _ungrouped(a: dict, engine: str) -> str:
+    grouped = {q for g in a["co_dependency_groups"] for q in g}
+    grouped |= {q for m in (a.get("write_groups") or {}).values() for q in m}
+    return next(q for q, e in _engine_of(a).items() if e == engine and q not in grouped)
+
+
+def test_a_versioned_assignment_with_no_moves_is_a_ledger_break(
+    tmp_path: Path, tmp_path_factory: pytest.TempPathFactory
+) -> None:
+    """The reviewer's break: discourse v4 (contract 1.26) with its ``moves`` dropped and
+    one statement moved from DynamoDB to Aurora PostgreSQL. Only a file saved before the
+    move ledger (no contract version, or one below 1.15) may lack ``moves``."""
+    job = _copy("discourse-both", tmp_path, tmp_path_factory)
+    path = job / "assignment" / "v4" / "assignment.json"
+    a = _read(path)
+    assert a["contract_version"] >= "1.15"
+    a.pop("moves")
+    qid = _ungrouped(a, "dynamodb")
+    _move(a, qid, "aurora_postgresql", record=False)
+    _write(path, a)
+    result = _fails(job, "ledger_explains_every_engine")
+    lines = result["failures"]["ledger_explains_every_engine"]
+    assert f"v4: contract {a['contract_version']} records no moves" in lines
+    assert any(line.startswith(f"v4: query {qid} is on aurora_postgresql") for line in lines)
+    assert not any(line.startswith("assignment v4: no moves") for line in result["legacy"])
+
+
+def test_a_versioned_assignment_with_no_moves_names_the_missing_ledger(
+    tmp_path: Path, tmp_path_factory: pytest.TempPathFactory
+) -> None:
+    """Without its moves, v2 (contract 1.24) is read as recording none: the check names
+    the missing ledger, and v2's reality-check moves then replay to nothing."""
+
+    def edit(a: dict) -> None:
+        a.pop("moves")
+
+    result = _fails(
+        _break_assignment(tmp_path, tmp_path_factory, edit), "ledger_explains_every_engine"
+    )
+    lines = result["failures"]["ledger_explains_every_engine"]
+    assert lines[0] == "v2: contract 1.24 records no moves"
+    assert not any("no moves (saved before the move ledger)" in n for n in result["legacy"])
+
+
+def _co_group_members(a: dict) -> list[str]:
+    return next(g for g in a["co_dependency_groups"] if len(g) >= 2)
+
+
+def test_a_customers_own_split_of_a_co_dependency_group_stands(
+    tmp_path: Path, tmp_path_factory: pytest.TempPathFactory
+) -> None:
+    """ADR-031 Amendment 21 as the assignment validator applies it: two members the
+    customer picked onto two engines are the customer's split, which stands."""
+
+    def edit(a: dict) -> None:
+        first, second = _co_group_members(a)[:2]
+        _move(a, first, "aurora_mysql")
+        _move(a, second, "dynamodb")
+        for qa in a["query_assignments"]:
+            if qa["query_id"] in (first, second):
+                qa["customer_override"] = True
+
+    code, result = check(_break_assignment(tmp_path, tmp_path_factory, edit))
+    assert result["checks"]["co_dependency_group_one_engine"]["status"] == "pass", result
+    assert result["checks"]["ledger_explains_every_engine"]["status"] == "pass"
+
+
+def test_a_split_the_customer_picked_only_one_side_of_fails(
+    tmp_path: Path, tmp_path_factory: pytest.TempPathFactory
+) -> None:
+    def edit(a: dict) -> None:
+        first = _co_group_members(a)[0]
+        _move(a, first, "dynamodb")
+        for qa in a["query_assignments"]:
+            if qa["query_id"] == first:
+                qa["customer_override"] = True
+
+    _fails(_break_assignment(tmp_path, tmp_path_factory, edit), "co_dependency_group_one_engine")
+
+
+def test_a_customer_pick_never_excuses_a_split_write_group(
+    tmp_path: Path, tmp_path_factory: pytest.TempPathFactory
+) -> None:
+    """A table's writes never split, picked or not (ADR-031 Amendment 9)."""
+
+    def edit(a: dict) -> None:
+        first, second = a["write_groups"]["wordpress.wp_posts"][:2]
+        _move(a, first, "aurora_mysql")
+        for qa in a["query_assignments"]:
+            if qa["query_id"] in (first, second):
+                qa["customer_override"] = True
+
+    _fails(_break_assignment(tmp_path, tmp_path_factory, edit), "write_group_one_engine")
+
+
+def test_an_out_of_scope_member_on_another_engine_is_not_a_split(
+    tmp_path: Path, tmp_path_factory: pytest.TempPathFactory
+) -> None:
+    def edit(a: dict) -> None:
+        first = _co_group_members(a)[0]
+        _move(a, first, "dynamodb")
+        for qa in a["query_assignments"]:
+            if qa["query_id"] == first:
+                qa["in_scope"] = False
+
+    code, result = check(_break_assignment(tmp_path, tmp_path_factory, edit))
+    assert result["checks"]["co_dependency_group_one_engine"]["status"] == "pass", result
+
+
+def _split_in_both_versions(job: Path, contract: str | None) -> str:
+    """Split co-dependency group 0 in v1 and carry it unchanged into v2."""
+    v1, v2 = (job / "assignment" / f"v{n}" / "assignment.json" for n in (1, 2))
+    a1, a2 = _read(v1), _read(v2)
+    qid = _co_group_members(a1)[0]
+    for a in (a1, a2):
+        if contract is not None:
+            a["contract_version"] = contract
+        for qa in a["query_assignments"]:
+            if qa["query_id"] == qid:
+                qa["assigned_engine"] = "dynamodb"
+                qa["tied_engines"] = []
+    last = max((m for m in a1["moves"] if m["query_id"] == qid), key=lambda m: m["seq"])
+    last.update(to_engine="dynamodb", tied_engines=[])
+    a2["moves"] = [m for m in a2["moves"] if m["query_id"] != qid]
+    _write(v1, a1)
+    _write(v2, a2)
+    return qid
+
+
+def test_a_split_carried_from_before_whole_units_is_a_warning(
+    tmp_path: Path, tmp_path_factory: pytest.TempPathFactory
+) -> None:
+    """A split some version saved before contract 1.26 (whole placement units) already
+    had, kept on the engines the members already had, is a warning, as the validator's
+    legacy baseline makes it."""
+    job = _copy("wordpress-both", tmp_path, tmp_path_factory)
+    _split_in_both_versions(job, None)  # the saved run's own 1.24
+    code, result = check(job)
+    status = result["checks"]["co_dependency_group_one_engine"]
+    assert status["status"] == "pass" and status["failed"] == 0, result
+    assert status["warned"] == 2
+    assert all(
+        "saved before whole units" in w
+        for w in result["warnings"]["co_dependency_group_one_engine"]
+    )
+
+
+def test_the_same_split_on_versions_after_whole_units_fails(
+    tmp_path: Path, tmp_path_factory: pytest.TempPathFactory
+) -> None:
+    job = _copy("wordpress-both", tmp_path, tmp_path_factory)
+    _split_in_both_versions(job, "1.26")
+    result = _fails(job, "co_dependency_group_one_engine")
+    assert len(result["failures"]["co_dependency_group_one_engine"]) == 2
+
+
+def _documentdb_v4(job: Path) -> tuple[Path, dict]:
+    path = job / "schema-documentdb" / "v4" / "schema_output.json"
+    return path, _read(path)
+
+
+def test_a_documentdb_statement_named_only_by_an_index_is_covered(
+    tmp_path: Path, tmp_path_factory: pytest.TempPathFactory
+) -> None:
+    """The reviewer's break: a DocumentDB statement named only by a collection's index,
+    which the product's coverage check (``scope.covered_query_ids``) counts as designed."""
+    job = _copy("discourse-both", tmp_path, tmp_path_factory)
+    path, design = _documentdb_v4(job)
+    qid = "7025230785254451127"
+    for ap in design["access_patterns"]:
+        ap["source_query_ids"] = [q for q in ap.get("source_query_ids") or [] if q != qid]
+    collection = next(c for c in design["collections"] if c.get("indexes"))
+    collection["indexes"][0].setdefault("source_query_ids", []).append(qid)
+    _write(path, design)
+    _, result = check(job)
+    lines = result["failures"].get("design_covers_its_statements") or []
+    assert not any("schema-documentdb" in line for line in lines), lines
+
+
+def test_a_documentdb_index_naming_another_engines_statement_fails(
+    tmp_path: Path, tmp_path_factory: pytest.TempPathFactory
+) -> None:
+    job = _copy("discourse-both", tmp_path, tmp_path_factory)
+    a = _read(job / "assignment" / "v4" / "assignment.json")
+    foreign = next(q for q, e in _engine_of(a).items() if e == "aurora_postgresql")
+    path, design = _documentdb_v4(job)
+    collection = next(c for c in design["collections"] if c.get("indexes"))
+    collection["indexes"][0].setdefault("source_query_ids", []).append(foreign)
+    _write(path, design)
+    result = _fails(job, "design_names_only_own_statements")
+    assert result["failures"]["design_names_only_own_statements"] == [
+        f"schema-documentdb/v4: names query {foreign}, assigned to aurora_postgresql"
+    ]
+
+
+@pytest.mark.parametrize("name", ["wordpress-both", "discourse-both"])
+def test_the_loaded_design_names_are_what_the_products_coverage_reads(
+    name: str, tmp_path: Path, tmp_path_factory: pytest.TempPathFactory
+) -> None:
+    """The statements the checks read as designed are ``scope.covered_query_ids``'s, for
+    every saved design: the check never disagrees with what finalize accepts."""
+    import duckdb
+
+    from src.agents.schema_design.scope import covered_query_ids
+
+    job = saved_job(name, tmp_path_factory)
+    database = tmp_path / "job.duckdb"
+    proc = subprocess.run(  # nosec B603 -- fixed interpreter and this repo's script
+        [sys.executable, str(SCRIPT), str(job), "--duckdb", str(database)],
+        cwd=REPO,
+        capture_output=True,
+        text=True,
+        timeout=300,
+    )
+    assert database.is_file(), proc.stdout + proc.stderr
+    con = duckdb.connect(str(database), read_only=True)
+    try:
+        loaded: dict[tuple[str, int], set[str]] = {}
+        for engine, version, qid in con.execute(
+            "SELECT engine, version, query_id FROM design_names"
+        ).fetchall():
+            loaded.setdefault((engine, version), set()).add(qid)
+        designs = con.execute("SELECT engine, version FROM designs").fetchall()
+    finally:
+        con.close()
+    assert designs
+    for engine, version in designs:
+        design = _read(job / f"schema-{engine}" / f"v{version}" / "schema_output.json")
+        assert loaded.get((engine, version), set()) == covered_query_ids(engine, design), (
+            engine,
+            version,
+        )
+
+
+@pytest.mark.parametrize("edit", ["null", "missing"])
+def test_a_facts_figure_that_is_null_or_missing_fails(
+    edit: str, tmp_path: Path, tmp_path_factory: pytest.TempPathFactory
+) -> None:
+    job = _copy("wordpress-both", tmp_path, tmp_path_factory)
+    path = _latest(job, "synthesis", "report.json")
+    report = _read(path)
+    if edit == "null":
+        report["facts"]["in_scope_query_count"] = None
+    else:
+        del report["facts"]["engine_count"]
+    _write(path, report)
+    result = _fails(job, "facts_recount")
+    figure = "in_scope_query_count" if edit == "null" else "engine_count"
+    assert f"synthesis v2: facts.{figure} is missing" in result["failures"]["facts_recount"]

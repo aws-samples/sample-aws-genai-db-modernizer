@@ -28,46 +28,111 @@ MAX_EXAMPLES = 5
 
 @dataclass(frozen=True)
 class Check:
-    """One invariant: where it is stated, what it applies to, and what breaks it."""
+    """One invariant: where it is stated, what it applies to, what breaks it and, where
+    the ADR allows a legacy exception, what is only a warning."""
 
     name: str
     rule: str
     checked: str
     violations: str
+    warnings: str | None = None
 
 
-# Every member of each group assigned the same engine; filled in by ``_one_engine`` from
-# this module's own table and column names only.
-_ONE_ENGINE_CHECKED = "SELECT count(*) FROM (SELECT DISTINCT version, {key} FROM {table})"
-_ONE_ENGINE_VIOLATIONS = """
-    SELECT 'v' || g.version || ': {label} ' || g.{key} || ' is on '
-           || array_to_string(list_sort(list(DISTINCT q.engine)), ', ')
-    FROM {table} g JOIN query_assignments q USING (version, query_id)
-    WHERE q.engine IS NOT NULL
-    GROUP BY g.version, g.{key}
-    HAVING count(DISTINCT q.engine) > 1
-    ORDER BY g.version, g.{key}
+# One engine per group, as ADR-031 Decision 4 states it and
+# ``assignment_validator._unit_split_errors`` applies it: only in-scope members count; a
+# co-dependency group's or routine unit's split onto engines the customer picked
+# (``customer_override``) stands (Amendment 21), a table's writes never split that way;
+# and a split a version saved before whole units (contract 1.26,
+# ``saved_before_units``) already had, still on engines the members had in the version
+# it came from, is a warning. Filled in by ``_one_engine`` from this module's own names.
+_ONE_ENGINE_CHECKED = """
+    SELECT count(*) FROM (
+        SELECT DISTINCT g.version, g.{key}
+        FROM {table} g JOIN query_assignments q USING (version, query_id) WHERE q.in_scope)
 """
+_ONE_ENGINE_SPLITS = """
+    WITH RECURSIVE lineage(version, ancestor) AS (
+        SELECT version, version FROM versions
+        UNION
+        SELECT l.version, v.previous_version
+        FROM lineage l JOIN versions v ON v.version = l.ancestor
+        WHERE v.previous_version IS NOT NULL),
+    members AS (
+        SELECT g.version, g.{key} AS group_id, q.query_id, q.engine, q.customer_override
+        FROM {table} g JOIN query_assignments q USING (version, query_id)
+        WHERE q.in_scope AND q.engine IS NOT NULL),
+    splits AS (
+        SELECT version, group_id, list_sort(list(DISTINCT engine)) AS engines,
+               list_sort(list(DISTINCT engine) FILTER (WHERE customer_override)) AS picked
+        FROM members GROUP BY version, group_id HAVING count(DISTINCT engine) > 1),
+    old_splits AS (
+        SELECT DISTINCT m.version, m.group_id
+        FROM members m
+        JOIN lineage l ON l.version = m.version
+        JOIN versions lv ON lv.version = l.ancestor AND lv.units_legacy
+        JOIN query_assignments o ON o.version = l.ancestor AND o.query_id = m.query_id
+        GROUP BY m.version, m.group_id, l.ancestor
+        HAVING count(DISTINCT o.engine) > 1),
+    had AS (
+        SELECT m.version, m.group_id, list(DISTINCT p.engine) AS engines
+        FROM members m JOIN versions v ON v.version = m.version
+        JOIN query_assignments p ON p.version = v.previous_version AND p.query_id = m.query_id
+        GROUP BY m.version, m.group_id),
+    judged AS (
+        SELECT s.version, s.group_id, s.engines,
+               {customer} AS customer_split,
+               (o.version IS NOT NULL AND (
+                   list_has_all(coalesce(h.engines, []), s.engines)
+                   OR (v.previous_version IS NULL AND v.units_legacy))) AS carried
+        FROM splits s JOIN versions v USING (version)
+        LEFT JOIN old_splits o USING (version, group_id)
+        LEFT JOIN had h USING (version, group_id))
+    SELECT 'v' || version || ': {label} ' || group_id || ' is on '
+           || array_to_string(engines, ', ') || {suffix}
+    FROM judged WHERE NOT customer_split AND {which}
+    ORDER BY version, group_id
+"""
+_CUSTOMER_SPLIT = "(len(coalesce(s.picked, [])) > 1 AND list_has_all(s.picked, s.engines))"
+_CARRIED = "', already split in a version saved before whole units (contract 1.26)'"
 
 
-def _one_engine(name: str, table: str, key: str, label: str) -> Check:
-    """Every member of each ``table`` group (keyed by ``key``) assigned the same engine
-    in every version; a member with no engine (unservable) is not on one."""
+def _one_engine(name: str, table: str, key: str, label: str, *, customer: bool) -> Check:
+    """Every in-scope member of each ``table`` group (keyed by ``key``) on one engine, in
+    every version (a member with no engine, unservable, is on none); ``customer``: a
+    split onto engines the customer picked stands."""
     names = {"table": table, "key": key, "label": label}
+    common = {**names, "customer": _CUSTOMER_SPLIT if customer else "false"}
     return Check(
         name=name,
         rule=f"each {label} is placed on one engine, in every assignment version",
         checked=_ONE_ENGINE_CHECKED.format(**names),  # nosec B608 -- this module's own names
-        violations=_ONE_ENGINE_VIOLATIONS.format(**names),  # nosec B608 -- this module's own names
+        violations=_ONE_ENGINE_SPLITS.format(  # nosec B608 -- this module's own names
+            **common, suffix="''", which="NOT carried"
+        ),
+        warnings=_ONE_ENGINE_SPLITS.format(  # nosec B608 -- this module's own names
+            **common, suffix=_CARRIED, which="carried"
+        ),
     )
 
 
 CHECKS: tuple[Check, ...] = (
     _one_engine(
-        "co_dependency_group_one_engine", "co_dependency", "group_no", "co-dependency group"
+        "co_dependency_group_one_engine",
+        "co_dependency",
+        "group_no",
+        "co-dependency group",
+        customer=True,
     ),
-    _one_engine("write_group_one_engine", "write_groups", "table_name", "write group of table"),
-    _one_engine("routine_unit_one_engine", "routine_units", "routine_id", "routine unit"),
+    _one_engine(
+        "write_group_one_engine",
+        "write_groups",
+        "table_name",
+        "write group of table",
+        customer=False,
+    ),
+    _one_engine(
+        "routine_unit_one_engine", "routine_units", "routine_id", "routine unit", customer=True
+    ),
     Check(
         name="one_writer_per_table",
         rule=(
@@ -200,11 +265,12 @@ CHECKS: tuple[Check, ...] = (
         rule=(
             "the move ledger explains every engine change (ADR-031 Amendment 3): each "
             "version's engines and ties replay from the version it was derived from plus "
-            "its own moves"
+            "its own moves; only a file saved before the ledger (no contract version, or "
+            "one below 1.15) may record none"
         ),
         checked="""
             SELECT count(*) FROM query_assignments JOIN versions USING (version)
-            WHERE has_moves
+            WHERE has_moves OR NOT ledger_legacy
         """,
         violations="""
             WITH state AS (
@@ -223,24 +289,31 @@ CHECKS: tuple[Check, ...] = (
             FROM state e JOIN versions v USING (version)
             LEFT JOIN last_move m USING (version, query_id)
             LEFT JOIN state s ON s.version = v.previous_version AND s.query_id = e.query_id
-            WHERE v.has_moves
+            WHERE (v.has_moves OR NOT v.ledger_legacy)
               AND (coalesce(m.engine, s.engine) IS DISTINCT FROM e.engine
                    OR coalesce(m.tied, s.tied) IS DISTINCT FROM e.tied)
-            ORDER BY e.version, e.query_id
+            UNION ALL
+            -- Every assignment saved with a contract version (1.15+) records its moves:
+            -- only a file from before the ledger may lack them (the review of #2370).
+            SELECT 'v' || version || ': contract ' || contract || ' records no moves'
+            FROM versions WHERE NOT has_moves AND NOT ledger_legacy
+            ORDER BY 1
         """,
     ),
     Check(
         name="facts_recount",
         rule=(
             "report.json's facts agree with what they count (ADR-032): each figure recounted "
-            "from the assignment version the report renders, or from the report's own lists"
+            "from the assignment version the report renders, or from the report's own lists; "
+            "a figure missing from a report that has facts fails"
         ),
-        checked="SELECT count(*) FROM facts_recount WHERE saved IS NOT NULL",
+        checked="SELECT count(*) FROM facts_recount",
         violations="""
             SELECT 'synthesis v' || version || ': facts.' || figure || ' is '
-                   || saved || ', recounted ' || recount
+                   || CASE WHEN saved IS NULL THEN 'missing'
+                           ELSE saved || ', recounted ' || recount END
             FROM facts_recount
-            WHERE saved IS NOT NULL AND abs(saved - recount) > tolerance
+            WHERE saved IS NULL OR abs(saved - recount) > tolerance
             ORDER BY version, figure
         """,
     ),
@@ -307,7 +380,9 @@ VIEWS: tuple[str, ...] = (
     """,
     """
     CREATE VIEW facts_recount AS
-    WITH r AS (SELECT version, doc, doc -> 'facts' AS f FROM reports),
+    WITH r AS (
+        SELECT version, doc, doc -> 'facts' AS f FROM reports
+        WHERE json_type(doc -> 'facts') = 'OBJECT'),
     n_owned AS (SELECT version, count(*) AS n FROM owned GROUP BY version),
     n_tied AS (SELECT version, count(*) AS n FROM owned WHERE tied <> '' GROUP BY version),
     n_engines AS (
@@ -417,7 +492,8 @@ def run_checks(
     con: duckdb.DuckDBPyConnection, checks: tuple[Check, ...] = CHECKS
 ) -> list[dict[str, Any]]:
     """Each check's result: ``name``, ``status`` (``pass``, ``fail`` or ``na``), how many
-    things it ``checked``, how many ``failed`` and the first :data:`MAX_EXAMPLES` lines."""
+    things it ``checked``, how many ``failed`` and were only ``warned`` about (a legacy
+    exception the ADR allows), and the first :data:`MAX_EXAMPLES` lines of each."""
     for view in VIEWS:
         con.execute(view)
     results: list[dict[str, Any]] = []
@@ -425,6 +501,9 @@ def run_checks(
         row = con.execute(check.checked).fetchone()
         checked = int(row[0]) if row and row[0] is not None else 0
         violations = [str(r[0]) for r in con.execute(check.violations).fetchall()]
+        warnings = (
+            [str(r[0]) for r in con.execute(check.warnings).fetchall()] if check.warnings else []
+        )
         status = "fail" if violations else ("pass" if checked else "na")
         results.append(
             {
@@ -432,7 +511,9 @@ def run_checks(
                 "status": status,
                 "checked": checked,
                 "failed": len(violations),
+                "warned": len(warnings),
                 "examples": violations[:MAX_EXAMPLES],
+                "warnings": warnings[:MAX_EXAMPLES],
             }
         )
     return results
