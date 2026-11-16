@@ -10,6 +10,13 @@ never a near-miss guess. Each entry names where the failure and its fix are desc
 DMS User Guide or the step 1 rehearsals, and the fix is always the customer's to make (the
 modernizer never connects to their databases).
 
+Live DMS often puts only ``Stream Component Fatal error ... FATAL_ERROR`` in those fields, and
+the error it hit (a permission denial on the control schema, a missing source grant) only in
+the task's CloudWatch Logs log group (#2364). So for a failed task no hint matched, Prove also
+matches the catalog against the task log's recent error events (``log_hint``): read-only,
+bounded to ``LOG_WINDOW_MINUTES`` before the task stopped and to ``LOG_EVENTS`` events, and only
+the matched entry's own fixed text ever leaves this module, never a log line.
+
 Only a task that failed now gets a hint: DMS keeps the last failure message after a task is
 resumed, so a running task, or one stopped normally, gets none. A LOB larger than the task's
 limit has no entry: on the step 1 rehearsals ``FailTasksOnLobTruncation`` did not stop a live
@@ -20,6 +27,7 @@ from __future__ import annotations
 
 import re
 from dataclasses import dataclass
+from datetime import datetime, timedelta
 from typing import Any
 
 from src.tools.data_movement.dms_control import CONTROL_SCHEMA, CONTROL_TABLE_PATTERN
@@ -136,3 +144,51 @@ def failure_hint(task: dict[str, Any] | None) -> str | None:
         if found is not None:
             return found.hint
     return None
+
+
+# The task log Prove reads for a failed task no hint matched (#2364). DMS writes a task's log to
+# the log group ``dms-tasks-<replication instance identifier>`` (AWS DMS User Guide, Logging
+# task settings); step 1's stack makes its own instance, so that group holds this task only.
+LOG_GROUP_PREFIX = "dms-tasks-"
+LOG_WINDOW_MINUTES = 15  # read back this far from when the task stopped
+LOG_AFTER_SECONDS = 60  # and this far past it (DMS flushes its last lines after the stop)
+LOG_EVENTS = 500  # read at most this many events in all
+LOG_PAGE = 100  # events asked for per FilterLogEvents call
+LOG_PAGES = 5  # FilterLogEvents calls at most (a page can come back empty with a next token)
+# DMS's error lines only, as it tags them: "[TARGET_APPLY    ]E:  ...".
+LOG_ERRORS = '"]E:"'
+
+
+def task_log_group(instance_identifier: str) -> str:
+    """The CloudWatch Logs log group DMS writes the task's log to."""
+    return f"{LOG_GROUP_PREFIX}{instance_identifier}"
+
+
+def log_window(stats: dict[str, Any], now: datetime) -> tuple[int, int]:
+    """(start, end) in epoch milliseconds: ``LOG_WINDOW_MINUTES`` before the task's
+    ``StopDate`` to ``LOG_AFTER_SECONDS`` after it; before ``now`` when DMS gives no stop date."""
+    stop = stats.get("StopDate")
+    end = stop if isinstance(stop, datetime) else now
+    end = end if end.tzinfo else end.replace(tzinfo=now.tzinfo)
+    start = end - timedelta(minutes=LOG_WINDOW_MINUTES)
+    if isinstance(stop, datetime):
+        end = end + timedelta(seconds=LOG_AFTER_SECONDS)
+    return int(start.timestamp() * 1000), int(end.timestamp() * 1000)
+
+
+def log_hint(logs: Any, log_group: str, start_ms: int, end_ms: int) -> FailureHint | None:
+    """The first ``FAILURE_HINTS`` entry whose pattern matches one of the task log's error events
+    in [``start_ms``, ``end_ms``]; None for none. Read-only (``FilterLogEvents``), at most
+    ``LOG_EVENTS`` events over ``LOG_PAGES`` calls; the messages are matched and dropped here,
+    and only the entry (its own fixed text) is returned. AWS errors propagate to the caller."""
+    kwargs: dict[str, Any] = {"logGroupName": log_group, "startTime": start_ms,
+                              "endTime": end_ms, "filterPattern": LOG_ERRORS, "limit": LOG_PAGE}  # fmt: skip
+    messages: list[str] = []
+    for _ in range(LOG_PAGES):
+        page = logs.filter_log_events(**kwargs)
+        messages += [str(e.get("message") or "") for e in page.get("events") or []]
+        if len(messages) >= LOG_EVENTS or not page.get("nextToken"):
+            break
+        kwargs["nextToken"] = page["nextToken"]
+    read = messages[:LOG_EVENTS]
+    return next((h for h in FAILURE_HINTS if any(h.pattern.search(m) for m in read)), None)

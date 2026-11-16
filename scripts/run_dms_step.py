@@ -133,7 +133,10 @@ Every subcommand prints one JSON line, its result (exit 1 only on ``"status": "e
   create never completed, only with this job's own stack tag; no write ever turns termination
   protection off, and ``teardown`` sends no delete while it is on.
 - Every line about the task carries ``hint`` (the fix for a failure DMS describes in a known
-  way, ``src/tools/data_movement/dms_failures.py``; None for any other). ``status``'s line
+  way, ``src/tools/data_movement/dms_failures.py``; None for any other). For a failed task whose
+  own message names no known failure, ``status`` also matches its CloudWatch task log's recent
+  error events (#2364, ``hint_source`` ``task_log``): read-only, bounded, and no log text on the
+  line. ``status``'s line
   carries ``recovery``: ``resume`` or ``retry`` only when that command would run, by the same
   rule they use (``recovery_plan``, with the table states), else None; for a stopped or failed
   task neither may reload, it carries ``recovery_refused``, ``tables_to_empty`` and
@@ -149,7 +152,8 @@ root) holds ids and ARNs only, never a secret's value: an unknown key, such as `
 is refused. Calls use the ambient credentials, or ``read_profile`` (preflight, gate, status)
 and ``write_profile`` (deploy, execute, test, start) from the file. The only clients are
 CloudFormation, DMS, S3 (that one upload), STS (the caller's account, so the upload
-names the bucket's expected owner) and, for status's reads only, CloudWatch. No secret is ever read.
+names the bucket's expected owner) and, for status's reads only, CloudWatch and CloudWatch Logs
+(a failed task's log, read only to match a fix hint, #2364). No secret is ever read.
 
 Usage:
     uv run python scripts/run_dms_step.py summary --job-id <id> --db <db>
@@ -449,6 +453,15 @@ class RetentionReader:
     family: str | None
 
 
+@dataclass(frozen=True)
+class TaskLogReader:
+    """status's read of a failed task's CloudWatch Logs (#2364): read-only and bounded
+    (``dms_failures.log_hint``), only for a failed task no fix hint matched. Only the matched
+    hint's own text reaches the line, never a log line. The writes never get a Logs client."""
+
+    logs: Any
+
+
 class MoveError(Exception):
     """A refusal: printed as ``{"status": "error", "message": ...}``."""
 
@@ -743,11 +756,14 @@ def _table_statistics(clients: MoveClients, task_arn: str) -> list[dict[str, Any
 def status(clients: MoveClients, name: str, lag: LagReader | None = None,
            retention: RetentionReader | None = None,
            steps: StepsContext | None = None, change_set: str | None = None,
-           seen: ValidatedTables | None = None) -> dict[str, Any]:  # fmt: skip
+           seen: ValidatedTables | None = None,
+           task_log: TaskLogReader | None = None) -> dict[str, Any]:  # fmt: skip
     """Where step 1 stands: the stack, both endpoint connections, the task, its tables and,
     with a ``lag`` reader, its capture lag; with a ``retention`` reader, once the task has run,
     the source's change-log retention (#2060). ``seen`` (the tables DMS has reported
-    ``Validated`` since their full load, #2062) is updated from the table statistics read."""
+    ``Validated`` since their full load, #2062) is updated from the table statistics read.
+    With a ``task_log`` reader, a failed task no hint matched gets the hint its CloudWatch task
+    log's error events match (#2364)."""
     from src.tools.data_movement.stack_states import stack_kind
 
     stack = _stack(clients, name)
@@ -803,7 +819,7 @@ def status(clients: MoveClients, name: str, lag: LagReader | None = None,
                  else "ready_to_start" if statuses == {"successful"} else "connections_not_tested")  # fmt: skip
         return {**out, "phase": phase}
     if task.get("Status") in TASK_STOPPED:
-        out = {**out, "phase": "task_stopped"}
+        out = {**out, "phase": "task_stopped", **_log_hint(clients, task_log, task, instance, out)}
         if task.get("Status") in ("stopped", "failed"):
             tables = _table_statistics(clients, outputs["ReplicationTaskArn"])
             out.update(_recovery_fields(task, tables, steps))
@@ -838,6 +854,36 @@ def status(clients: MoveClients, name: str, lag: LagReader | None = None,
     judged = _table_problems(_judge_validation({**out, "phase": phase}, task, loaded), task,
                              tables, steps)  # fmt: skip
     return _source_retention(judged, retention)
+
+
+def _log_hint(clients: MoveClients, reader: TaskLogReader | None, task: dict[str, Any],
+              instance: str, out: dict[str, Any]) -> dict[str, Any]:  # fmt: skip
+    """``hint`` (and ``hint_source`` ``task_log``) from the task's CloudWatch log, for a task that
+    failed now with no hint from DMS's own message (#2364); nothing otherwise. The replication
+    instance's identifier names the log group (``DescribeReplicationInstances``, the gate's own
+    read). A profile that may not read either, or a log with no known error, leaves the hint
+    None, as before; no log text is ever kept or printed."""
+    from botocore.exceptions import BotoCoreError, ClientError
+
+    from src.tools.data_movement import dms_failures as df
+
+    if reader is None or out.get("hint") is not None or not df.failed_now(task):
+        return {}
+    try:
+        found = (
+            clients.dms.describe_replication_instances(
+                Filters=[{"Name": "replication-instance-arn", "Values": [instance]}]
+            ).get("ReplicationInstances")
+            or []
+        )
+        identifier = found[0].get("ReplicationInstanceIdentifier") if found else None
+        if not identifier:
+            return {}
+        start, end = df.log_window(task.get("ReplicationTaskStats") or {}, datetime.now(UTC))
+        hint = df.log_hint(reader.logs, df.task_log_group(identifier), start, end)
+    except (BotoCoreError, ClientError):
+        return {}
+    return {} if hint is None else {"hint": hint.hint, "hint_source": "task_log"}
 
 
 def _table_problems(out: dict[str, Any], task: dict[str, Any], tables: list[dict[str, Any]],
@@ -1120,6 +1166,7 @@ def wait_status(
     steps: StepsContext | None = None,
     change_set: str | None = None,
     seen: ValidatedTables | None = None,
+    task_log: TaskLogReader | None = None,
 ) -> dict[str, Any]:
     """Poll until ``until`` holds or the time is up. Under ``replicating``, ``on_poll`` gets
     each poll's progress line but the last one (the result line carries it), a first
@@ -1131,7 +1178,7 @@ def wait_status(
     until = current_phase(until)
     read: Callable[[MoveClients, str], dict[str, Any]] = functools.partial(
         status, lag=lag, retention=retention, steps=steps, change_set=change_set,
-        seen=ValidatedTables() if seen is None else seen,
+        seen=ValidatedTables() if seen is None else seen, task_log=task_log,
     )  # fmt: skip
     done = UNTIL.get(until or "")
     if until == "task_stopped":
@@ -2866,7 +2913,8 @@ def _proof_run(store: Any, db: str, job_id: str, clients: Any, inputs: Any, cred
 
 
 def main(argv: list[str] | None = None, *, clients: MoveClients | None = None,
-         sleep: Callable[[float], None] = time.sleep, cloudwatch: Any = None) -> int:  # fmt: skip
+         sleep: Callable[[float], None] = time.sleep, cloudwatch: Any = None,
+         logs: Any = None) -> int:  # fmt: skip
     args = _parser().parse_args(argv)
     args.command = LEGACY_COMMANDS.get(args.command, args.command)
     from scripts._sandbox import PATH_ARGS, SANDBOX_ENV, sandbox_violation
@@ -2951,6 +2999,7 @@ def main(argv: list[str] | None = None, *, clients: MoveClients | None = None,
                                   sts=cred.client("sts") if uploads else None)  # fmt: skip
             if args.command == "status":
                 cloudwatch = cred.client("cloudwatch")
+                logs = cred.client("logs")  # a failed task's log, for its fix hint (#2364)
         name = stack_name(inputs, job_id)
         made, untrack = _track_writes(clients)
         if args.command == "status":
@@ -2963,6 +3012,7 @@ def main(argv: list[str] | None = None, *, clients: MoveClients | None = None,
                                         on_poll=_print_progress,
                                         lag=None if cloudwatch is None else LagReader(cloudwatch),
                                         retention=retention, change_set=args.change_set,
+                                        task_log=None if logs is None else TaskLogReader(logs),
                                         steps=_status_context(args.artifact_root, db, job_id,
                                                               inputs.region), seen=seen))  # fmt: skip
         if args.command == VIEWS:

@@ -8,6 +8,8 @@ near-miss hint."""
 
 from __future__ import annotations
 
+from datetime import UTC, datetime, timedelta
+
 import pytest
 
 from src.tools.data_movement import dms_failures as df
@@ -159,3 +161,98 @@ def test_a_task_stopped_by_an_error_gets_its_hint():
 def test_no_task_or_no_message_gets_no_hint():
     assert df.failure_hint(None) is None
     assert df.failure_hint({"Status": "failed"}) is None
+
+
+# --- The task log (#2364): the hint DMS's own message never names ----------------------------
+
+# The two denial lines of the #2135 Discourse rehearsal's task log, as DMS wrote them (only
+# those lines). The task's LastFailureMessage held only DMS's generic fatal error.
+PG_DENIAL_LOG = [
+    "2026-11-16T15:15:39 [TARGET_APPLY    ]E:  RetCode: SQL_ERROR  SqlState: 42501 NativeError: 1 "
+    "Message: ERROR: permission denied for schema awsdms_control; Error while executing the "
+    "query [1022502]  (ar_odbc_stmt.c:5188)",
+    "2026-11-16T15:15:40 [VALIDATOR_TARGE ]E:  RetCode: SQL_ERROR  SqlState: 42501 NativeError: 1 "
+    "Message: ERROR: permission denied for schema awsdms_control; Error while executing the "
+    "query [1022502]  (ar_odbc_stmt.c:5188)",
+]
+GENERIC_FATAL = (
+    "Last Error ;\n Stream Component Fatal error. Stop Reason FATAL_ERROR Error Level FATAL"
+)
+
+
+class FakeLogs:
+    """A CloudWatch Logs client that answers FilterLogEvents from ``pages`` and records calls."""
+
+    def __init__(self, *pages: list[str], next_forever: bool = False) -> None:
+        self.pages, self.next_forever = list(pages), next_forever
+        self.calls: list[dict] = []
+
+    def filter_log_events(self, **kwargs):
+        self.calls.append(kwargs)
+        i = len(self.calls) - 1
+        events = [{"message": m} for m in (self.pages[i] if i < len(self.pages) else [])]
+        more = self.next_forever or i + 1 < len(self.pages)
+        return {"events": events, **({"nextToken": f"t{i + 1}"} if more else {})}
+
+
+@pytest.mark.passes_on_main  # the message DMS gave live never named the failure (#2364)
+def test_the_generic_fatal_message_alone_carries_no_hint():
+    assert df.failure_hint({"Status": "failed", "LastFailureMessage": GENERIC_FATAL,
+                            "StopReason": GENERIC_FATAL}) is None  # fmt: skip
+
+
+def test_the_task_logs_control_schema_denial_carries_the_schema_grant():
+    logs = FakeLogs(PG_DENIAL_LOG)
+    found = df.log_hint(logs, "dms-tasks-ri", 1, 2)
+    assert found is not None and found.id == "postgresql_control_schema"
+    assert 'GRANT USAGE, CREATE ON SCHEMA "awsdms_control"' in found.hint
+    # One bounded read of the error lines only, in the window, of this task's log group.
+    assert logs.calls == [{"logGroupName": "dms-tasks-ri", "startTime": 1, "endTime": 2,
+                           "filterPattern": df.LOG_ERRORS, "limit": df.LOG_PAGE}]  # fmt: skip
+
+
+def test_the_task_logs_mysql_control_denial_carries_the_grant_database_grant():
+    line = ("2026-11-16T15:15:39 [TARGET_APPLY    ]E:  RetCode: SQL_ERROR  SqlState: 42000 "
+            "NativeError: 1142 Message: [MySQL][ODBC 8.0(w) Driver][mysqld-8.0.39]CREATE command "
+            "denied to user 'dms_user'@'10.0.0.1' for table 'awsdms_apply_exceptions' [1022502]")  # fmt: skip
+    found = df.log_hint(FakeLogs([line]), "dms-tasks-ri", 1, 2)
+    assert found is not None and found.id == "mysql_control_database"
+    assert "GRANT ALL PRIVILEGES ON `awsdms\\_control`.*" in found.hint
+
+
+@pytest.mark.parametrize(("hint_id", "message", "words"), KNOWN,
+                         ids=[f"{h}-{i}" for i, (h, *_) in enumerate(KNOWN)])  # fmt: skip
+def test_every_known_failure_also_carries_its_hint_from_the_task_log(hint_id, message, words):
+    """A source grant, the heartbeat, binary logging or memory: any of them can be in the log
+    only, so every catalog entry is matched there too."""
+    line = f"2026-11-16T15:15:39 [SOURCE_CAPTURE  ]E:  {message} [1020101]"
+    found = df.log_hint(FakeLogs(["an unrelated error", line]), "dms-tasks-ri", 1, 2)
+    assert found is not None and found.id == hint_id and words in found.hint
+
+
+@pytest.mark.parametrize("message", UNKNOWN)
+def test_a_log_with_no_known_failure_carries_no_hint(message):
+    assert df.log_hint(FakeLogs([message, "Stream component failed at subtask 0"]),
+                       "dms-tasks-ri", 1, 2) is None  # fmt: skip
+
+
+def test_the_log_read_is_bounded_in_calls_and_events():
+    endless = FakeLogs(*([[]] * 20), next_forever=True)  # empty pages, a next token forever
+    assert df.log_hint(endless, "dms-tasks-ri", 1, 2) is None
+    assert len(endless.calls) == df.LOG_PAGES
+    assert all(c["limit"] == df.LOG_PAGE for c in endless.calls)
+    assert [c.get("nextToken") for c in endless.calls] == [None, "t1", "t2", "t3", "t4"]
+    filler = ["a line DMS logged"] * df.LOG_PAGE
+    late = FakeLogs(*([filler] * (df.LOG_EVENTS // df.LOG_PAGE)), PG_DENIAL_LOG)
+    assert df.log_hint(late, "dms-tasks-ri", 1, 2) is None  # past LOG_EVENTS: never read
+    assert len(late.calls) == df.LOG_EVENTS // df.LOG_PAGE
+
+
+def test_the_log_window_ends_just_past_the_tasks_stop():
+    stop = datetime(2026, 11, 16, 15, 15, 40, tzinfo=UTC)
+    start, end = df.log_window({"StopDate": stop}, datetime(2026, 11, 17, tzinfo=UTC))
+    assert end - start == (df.LOG_WINDOW_MINUTES * 60 + df.LOG_AFTER_SECONDS) * 1000
+    assert end == int((stop + timedelta(seconds=df.LOG_AFTER_SECONDS)).timestamp() * 1000)
+    now = datetime(2026, 11, 17, tzinfo=UTC)
+    start, end = df.log_window({}, now)  # no stop date: the minutes before now
+    assert end == int(now.timestamp() * 1000) and end - start == df.LOG_WINDOW_MINUTES * 60_000
