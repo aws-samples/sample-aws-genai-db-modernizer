@@ -38,10 +38,8 @@ deliverable names in an engine slot is in the final architecture.
 
 Not marked ``deterministic`` as a module (#2143): a check that holds on any run also
 runs on the e2e-llm job. Each test that keeps the mark says why: the designed jobs exist
-only in deterministic mode and the trace-appendix check skips a job with no trace. The
-three report-figure checks are a strict xfail on a job whose version after the reality
-check moved a query, until #2358 is fixed (they read the reality check's distribution as
-the final one). ``replay_stale`` marks a check the saved replay reports predate.
+only in deterministic mode and the trace-appendix check skips a job with no trace.
+``replay_stale`` marks a check the saved replay reports predate.
 """
 
 from __future__ import annotations
@@ -94,33 +92,6 @@ from tests.e2e.pipeline import PipelineResult, real_designs
 # fails, and an entry that no longer reproduces fails too, so it is removed
 # once its issue is fixed.
 KNOWN: dict[tuple[str, str, str], str] = {}
-
-
-def _moved_after_the_reality_check(run: PipelineResult) -> bool:
-    """Whether a version after the reality check (an --auto pick, a post-schema reroute)
-    moved a query to another engine: the case in which ``reality_check.after_distribution``
-    is no longer the final distribution (#2358)."""
-    for path in (run.job_dir() / "assignment").glob("v*/assignment.json"):
-        version = json.loads(path.read_text())
-        if version.get("source") in ("assignment_resolution", "reality_check"):
-            continue
-        for move in version.get("moves") or []:
-            if move.get("from_engine") != move.get("to_engine"):
-                return True
-    return False
-
-
-def _xfail_while_2358_holds(run: PipelineResult, request: pytest.FixtureRequest) -> None:
-    """#2358: these checks read the reality check's distribution as the final one. On a
-    job with a later version that moved a query they fail, until #2358 is fixed; the mark
-    is strict, so the check then passes there and fails until this is removed."""
-    if run.external and _moved_after_the_reality_check(run):
-        request.applymarker(
-            pytest.mark.xfail(
-                strict=True,
-                reason="#2358: reality_check.after_distribution is read as the final distribution",
-            )
-        )
 
 
 def _report_json(run: PipelineResult) -> dict[str, Any]:
@@ -251,9 +222,8 @@ def _settle(db: str, deliverable: str, problems: list[tuple[str, str]]) -> None:
         pytest.xfail(f"known bugs {', '.join(sorted(set(known.values())))}: {details}")
 
 
-def test_report_json_is_consistent(run: PipelineResult, request: pytest.FixtureRequest) -> None:
+def test_report_json_is_consistent(run: PipelineResult) -> None:
     """report.json itself satisfies every invariant the deliverables are held to."""
-    _xfail_while_2358_holds(run, request)
     report = _report_json(run)
     exp = expected_figures(report)
     as_observed = {k: [(v, "report.json")] for k, v in exp.items()}
@@ -493,15 +463,13 @@ def test_every_deliverable_shows_the_reality_check_decisions(run: PipelineResult
         assert not missing, f"{deliverable} does not show {missing}"
 
 
-def test_pdf_report_figures(run: PipelineResult, request: pytest.FixtureRequest) -> None:
-    _xfail_while_2358_holds(run, request)
+def test_pdf_report_figures(run: PipelineResult) -> None:
     report = _report_json(run)
     text = " ".join(pdf_page_texts(str(run.deliverable("executive-report.pdf"))))
     _settle(run.db, "PDF", _problems(report, pdf_figures(text), _pdf_required))
 
 
-def test_engineering_report_figures(run: PipelineResult, request: pytest.FixtureRequest) -> None:
-    _xfail_while_2358_holds(run, request)
+def test_engineering_report_figures(run: PipelineResult) -> None:
     report = _report_json(run)
     figs = engineering_figures(run.deliverable("engineering-report.md").read_text())
     _settle(run.db, "engineering report", _problems(report, figs, _engineering_required))
