@@ -42,6 +42,7 @@ jest.mock('../classes/ApiManager', () => ({
 jest.mock('../components/AssessmentNotFound', () => ({
   __esModule: true,
   default: ({ jobId }) => <div data-page="AssessmentNotFound" data-job-id={jobId} />,
+  AssessmentLookupPending: () => <div data-page="AssessmentLookupPending" />,
 }));
 
 global.IS_REACT_ACT_ENVIRONMENT = true;

@@ -277,16 +277,18 @@ def test_legacy_report_route_redirects_to_results(
         assert ev == {"console": [], "pageerror": [], "failed": []}, (r.db, ev)
 
 
+@pytest.mark.parametrize("job_id", ["doesnotexist", "does.not.exist"])
 @pytest.mark.parametrize("route", ["results", "monitor/summary", "assignments"])
 def test_an_unknown_assessment_id_shows_one_not_found_state(
-    page: Page, ui: str, all_runs: list[PipelineResult], route: str
+    page: Page, ui: str, all_runs: list[PipelineResult], route: str, job_id: str
 ) -> None:
-    """#2307: a mistyped or stale job link shows one not-found state, with no half-built
-    page, no request URL or status code, and no approve button."""
-    page.goto(f"{ui}/analysis/{route}/doesnotexist")
+    """#2307: a mistyped or stale job link (also an id the API refuses, such as one with a
+    dot) shows one not-found state, with no half-built page, no request URL or status
+    code, and no approve button."""
+    page.goto(f"{ui}/analysis/{route}/{job_id}")
     expect(page.get_by_role("heading", name="Assessment not found")).to_be_visible(timeout=READY_MS)
-    expect(page.get_by_text("No assessment has the id doesnotexist.")).to_be_visible()
-    expect(page.get_by_role("button", name="Go to assessments")).to_be_visible()
+    expect(page.get_by_text(f"No assessment has the id {job_id}.")).to_be_visible()
+    expect(page.get_by_role("link", name="Go to assessments")).to_be_visible()
     text = page.inner_text("body")
     assert "/api/v1/" not in text and "Failed to fetch" not in text and "404" not in text, text
     assert page.get_by_role("button", name=re.compile("Continue with recommendation")).count() == 0
