@@ -79,7 +79,8 @@ import { costBaselineStats } from "../utils/tcoAnalysis";
 // #358: engine display names come from the shared mapping (checked against
 // src/shared/engine_names.py by tests/unit/report/test_engine_names_js_sync.py)
 // rather than this page's own hand-kept copy.
-import { ENGINE_LABELS } from "../utils/engineNames";
+import { ENGINE_LABELS, displayEngine } from "../utils/engineNames";
+import { formatMoney, formatRate } from "../utils/format";
 import { badgeTextColor, engineHex } from "../utils/engineColors";
 import EngineBadge from "../components/EngineBadge";
 import { WORKLOAD_FIT_DEFINITION } from "../utils/workloadFitLabels";
@@ -1394,7 +1395,7 @@ const AnalysisResultsPage = memo(() => {
                 {
                   id: 'calls_per_second',
                   header: t('analysis-results.pattern-detail.calls-per-sec'),
-                  cell: (item) => item.calls_per_second?.toFixed(2) || '—',
+                  cell: (item) => formatRate(item.calls_per_second),
                   width: 100
                 },
                 {
@@ -2126,7 +2127,7 @@ const AnalysisResultsPage = memo(() => {
                             {isCacheLayer ? t('cache-layer.engine-badge-suffix', { defaultValue: ' (cache layer)' }) : ''}
                           </EngineBadge>
                           <Box fontSize="display-l" fontWeight="bold" margin={{ top: 'xs' }}>
-                            ${cb.monthly_cost_usd?.toFixed(2)}
+                            {formatMoney(cb.monthly_cost_usd)}
                           </Box>
                           <Box fontSize="body-s" color="text-body-secondary">/month · {cb.pricing_mode}</Box>
                           {costSizingText(t, costSizingOf(synthesis, cb.database)) && (
@@ -3130,7 +3131,7 @@ const AnalysisResultsPage = memo(() => {
                                         {
                                           id: 'rps',
                                           header: t('analysis-results.aurora-design.col-calls-per-second'),
-                                          cell: q => (typeof q.callsPerSecond === 'number' ? q.callsPerSecond.toFixed(2) : '—'),
+                                          cell: q => formatRate(q.callsPerSecond),
                                         },
                                         {
                                           id: 'reason',
@@ -3235,15 +3236,15 @@ const AnalysisResultsPage = memo(() => {
                         },
                         {
                           label: 'Frequency (per hour)',
-                          value: queryJourneyData?.source?.frequency_per_hour?.toFixed(2) || '—'
+                          value: formatRate(queryJourneyData?.source?.frequency_per_hour)
                         },
                         {
                           label: 'Calls per Second',
-                          value: queryJourneyData?.source?.calls_per_second?.toFixed(4) || '—'
+                          value: formatRate(queryJourneyData?.source?.calls_per_second)
                         },
                         {
                           label: 'Assigned Engine',
-                          value: queryJourneyData?.assignment?.assigned_engine || '—'
+                          value: queryJourneyData?.assignment?.assigned_engine ? displayEngine(queryJourneyData.assignment.assigned_engine) : '—'
                         },
                         {
                           label: 'Workload Fit',

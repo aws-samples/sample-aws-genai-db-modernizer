@@ -1,6 +1,8 @@
 // Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
 // SPDX-License-Identifier: MIT-0
 
+import { formatMonthlyMoney } from './format';
+
 /**
  * The current-cost baseline / savings figure as every deliverable shows it
  * (#334): `tco_analysis.current_monthly_cost` and `savings_percent` are
@@ -40,7 +42,7 @@ export function formatSavingsPercent(value) {
 /** "$123.45/mo" for a known baseline. */
 export function formatCurrentCostStat(value) {
   const n = Number(value);
-  return `$${(Number.isFinite(n) ? n : 0).toFixed(2)}/mo`;
+  return formatMonthlyMoney(Number.isFinite(n) ? n : 0);
 }
 
 /**

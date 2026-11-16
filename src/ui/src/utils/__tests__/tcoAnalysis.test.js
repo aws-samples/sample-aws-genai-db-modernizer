@@ -62,6 +62,7 @@ describe('formatCurrentCostStat', () => {
   it('formats a known baseline as a monthly dollar figure', () => {
     expect(formatCurrentCostStat(500)).toBe('$500.00/mo');
     expect(formatCurrentCostStat(0)).toBe('$0.00/mo');
+    expect(formatCurrentCostStat(1178.33)).toBe('$1,178.33/mo');
   });
 });
 
