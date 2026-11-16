@@ -397,7 +397,9 @@ DDL_WRITERS = {
     # A view's CREATE OR REPLACE VIEW built from its collected pieces (#2082), kept in the
     # job's routine sources: the schema, name and every column backticked or double-quoted
     # with the quote doubled, a name with a NUL refused, the check option and SQL SECURITY
-    # only from fixed lists; the body is the source catalog's own text.
+    # only from fixed lists; the whole statement must then be exactly one view statement
+    # with no client command (src/tools/sql/view_statement.py, ADR-034 Decision 5);
+    # tests/unit/tools/sql/test_view_statement.py and
     # tests/unit/agents/test_view_sources.py::test_hostile_names_are_quoted_with_the_quote_doubled
     # and test_a_row_that_is_not_a_whole_view_gives_no_statement.
     "src/agents/collector/view_sources.py",

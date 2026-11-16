@@ -100,8 +100,10 @@ def test_a_view_not_carried_is_a_named_exception_with_what_to_do_not_a_failure()
 def test_no_view_carried_passes_without_a_file():
     inputs = _inputs([view("v_far", engine="aurora_mysql", tables=["shop.gone"])])
     check = views_check(inputs, None)
-    assert (check.status, check.summary) == ("pass", "views: 0 of 0 carried views confirmed, "
-                                                     "1 not carried (named exceptions)")  # fmt: skip
+    assert (check.status, check.summary) == ("pass", "views: 0 of 0 carried views confirmed; 1 view "
+                                                     "not created on Aurora by step 1: create each "
+                                                     "yourself (the exceptions name each one and "
+                                                     "why)")  # fmt: skip
     assert views_check(_inputs([]), None).summary == "views: none in the collection"
 
 
@@ -139,3 +141,25 @@ def test_write_gate_reads_the_views_check_file(tmp_path, monkeypatch):
     _, gate = write_gate(store, "shop", "job1", g.request(), g.clients(cred), now=g.NOW)
     views = next(c for c in gate.checks if c.id == "views")
     assert (views.status, views.reasons) == ("fail", ["views: v_orders: missing"])
+
+
+def test_a_carried_view_the_script_leaves_out_says_why_in_its_exception(tmp_path, monkeypatch):
+    """No VIEW_CARRIED for a view views-deploy.sql refused: the gate reads the same
+    refusal from the job's routine sources, and counts it among the views to create."""
+    from src.storage.local_store import LocalArtifactStore
+    from src.tools.data_movement import dms_gate
+
+    inputs = _inputs(_ROWS)  # no routine sources: v_orders is source_missing
+    store = LocalArtifactStore(base_dir=str(tmp_path))
+    monkeypatch.setattr(dms_gate, "load_step1", lambda *a, **k: inputs)
+    cred = StubbedCredMgr()
+    g.queue(cred, inputs.contract_sha256)
+    _, gate = write_gate(store, "shop", "job1", g.request(), g.clients(cred), now=g.NOW)
+    reasons = {e.table: e.reason for e in gate.exceptions if e.kind == "view"}
+    assert reasons["v_orders"].startswith(
+        "not carried: left out of views-deploy.sql, source_missing:"
+    )
+    assert "collect again" in reasons["v_orders"]
+    views = next(c for c in gate.checks if c.id == "views")
+    assert "2 views not created on Aurora by step 1: create each yourself" in views.summary
+    assert {e.table: e.reason for e in view_exceptions(inputs, {})}["v_orders"] == VIEW_CARRIED

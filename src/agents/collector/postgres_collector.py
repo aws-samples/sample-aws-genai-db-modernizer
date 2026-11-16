@@ -596,11 +596,11 @@ def _build_tables(schema_raw: dict) -> list[Table]:
 def _build_views(raw: list[dict]) -> list[View] | None:
     if not raw:
         return None
-    from src.agents.collector.view_sources import view_fields
+    from src.agents.collector.view_sources import view_fields, view_id
 
     return [
         View(
-            view_id=v.get("view_name", ""),
+            view_id=view_id(v),
             view_name=v.get("view_name", ""),
             definition=v.get("definition") or "",
             # #2082: what step 1 needs to create the view again (its CREATE is kept apart)

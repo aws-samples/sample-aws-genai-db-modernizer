@@ -93,13 +93,14 @@ def test_the_script_and_the_live_collector_read_the_same_views(shop):
         assert view_fields(live_rows[name]) == view_fields(row)
     top = view_create("mysql", script_rows["top"])
     assert top.startswith(
-        "CREATE OR REPLACE SQL SECURITY DEFINER VIEW `shop`.`top` (`order_id`, `note`) AS"
+        "CREATE OR REPLACE SQL SECURITY INVOKER VIEW `shop`.`top` (`order_id`, `note`) AS"
     )
+    assert view_fields(script_rows["top"])["security_type"] == "DEFINER"
     assert top.endswith("WITH CASCADED CHECK OPTION;")
     assert "SQL SECURITY INVOKER" in view_create("mysql", script_rows["base"])
     views = {v["view_id"]: v for v in output["database_schema"]["views"]}
-    assert {v: views[v]["body_status"] for v in views} == {"base": "collected", "top": "collected",
-                                                         "we`ird": "collected"}  # fmt: skip
+    assert {v: views[v]["body_status"] for v in views} == {
+        "shop.base": "collected", "shop.top": "collected", "shop.we`ird": "collected"}  # fmt: skip
     assert SENTINEL not in str(output)  # the collector output's definitions stay redacted
 
 
@@ -109,10 +110,14 @@ def test_the_scripts_deploy_twice_and_confirm_on_mysql_then_name_each_drift(shop
     contract = make_contract("aurora_mysql")
     section = build_step_views(output["database_schema"], contract, source_engine="mysql")
     assert [(v.view_id, v.carry) for v in section.views] == [
-        ("base", "carried"), ("top", "carried"), ("we`ird", "carried")]  # fmt: skip
+        ("shop.base", "carried"), ("shop.top", "carried"), ("shop.we`ird", "carried")]  # fmt: skip
     contract = contract.model_copy(update={"views_section": section})
     store = job(tmp_path, list(iter_collection_sources(raw)), "mysql")
-    assert write(tmp_path, store, contract).in_script == 3
+    scripts = write(tmp_path, store, contract)
+    assert scripts.in_script == 3
+    # The source's DEFINER views are named: they read with their readers' rights here.
+    assert scripts.definer_views == ["shop.top", "shop.we`ird"]
+    assert "`shop.top`" in (tmp_path / "step" / "views.md").read_text()
     step = tmp_path / "step"
     assert _mysql(client, sock, DROP).returncode == 0
     for _ in range(2):  # the second run replaces each view with itself
@@ -132,7 +137,7 @@ def test_the_scripts_deploy_twice_and_confirm_on_mysql_then_name_each_drift(shop
                   "information_schema.VIEWS WHERE TABLE_SCHEMA = 'shop' ORDER BY 1",
                   "--batch", "--skip-column-names").stdout.decode().splitlines()  # fmt: skip
     assert [ln.split("\t")[:3] for ln in kept] == [
-        ["base", "INVOKER", "NONE"], ["top", "DEFINER", "CASCADED"], ["we`ird", "DEFINER", "NONE"]]  # fmt: skip
+        ["base", "INVOKER", "NONE"], ["top", "INVOKER", "CASCADED"], ["we`ird", "INVOKER", "NONE"]]  # fmt: skip
     assert {ln.split("\t")[3] for ln in kept} == {"root@localhost"}  # the user who ran it
     assert SENTINEL not in (step / CHECK_OUTPUT).read_text()
 
@@ -140,12 +145,84 @@ def test_the_scripts_deploy_twice_and_confirm_on_mysql_then_name_each_drift(shop
         client, sock, "DROP VIEW shop.top; CREATE VIEW shop.top AS SELECT note, id FROM shop.base;"
     )
     assert {m.view_id: (m.problem, m.columns) for m in check().mismatches} == {
-        "top": ("columns_differ", ["order_id", "note"])}  # fmt: skip
+        "shop.top": ("columns_differ", ["order_id", "note"])}  # fmt: skip
     _mysql(
         client,
         sock,
         "DROP VIEW shop.top; CREATE TABLE shop.top (order_id bigint, note varchar(40));",
     )
-    assert {m.view_id: m.problem for m in check().mismatches} == {"top": "not_a_view"}
+    assert {m.view_id: m.problem for m in check().mismatches} == {"shop.top": "not_a_view"}
     _mysql(client, sock, "DROP TABLE shop.top;")
-    assert {m.view_id: m.problem for m in check().mismatches} == {"top": "missing"}
+    assert {m.view_id: m.problem for m in check().mismatches} == {"shop.top": "missing"}
+    _mysql(client, sock, "CREATE VIEW shop.top (order_id, note) AS SELECT b.id, b.note FROM "
+           "shop.base b WITH CASCADED CHECK OPTION;")  # fmt: skip
+
+
+def test_with_another_target_database_the_check_looks_where_the_customer_creates_the_view(
+    shop, tmp_path
+):
+    """A view refused for another target database is created there by hand; the check then
+    looks for it in the target database, not the source's (#2333 review)."""
+    client, sock = shop
+    raw, output = _collect(client, sock)
+    contract = make_contract("aurora_mysql")
+    section = build_step_views(output["database_schema"], contract, source_engine="mysql")
+    contract = contract.model_copy(update={"views_section": section})
+    store = job(tmp_path, list(iter_collection_sources(raw)), "mysql")
+    scripts = write(tmp_path, store, contract, target_database="shop_tgt")
+    assert {c for _, c in scripts.refused} == {"target_database_differs"}
+    step = tmp_path / "step"
+    assert "('shop_tgt', 'base')" in (step / CHECK_FILE).read_text()
+    done = _mysql(client, sock, "CREATE DATABASE shop_tgt; CREATE TABLE shop_tgt.orders (id bigint "
+                  "PRIMARY KEY, note varchar(40)); CREATE TABLE shop_tgt.customers (id bigint PRIMARY "
+                  "KEY, bio text); CREATE VIEW shop_tgt.base AS SELECT id, note FROM shop_tgt.orders;"
+                  "CREATE VIEW shop_tgt.top (order_id, note) AS SELECT b.id, b.note FROM shop_tgt.base b;"
+                  "CREATE VIEW shop_tgt.`we``ird` AS SELECT count(*) AS n FROM shop_tgt.customers;")  # fmt: skip
+    assert done.returncode == 0, done.stderr.decode()
+    try:
+        ran = _mysql(client, sock, None, "--batch", "--skip-column-names", stdin=step / CHECK_FILE)
+        assert ran.returncode == 0, ran.stderr.decode()
+        (step / CHECK_OUTPUT).write_bytes(ran.stdout)
+        result = read_view_check(step / CHECK_OUTPUT, contract, job_id="job1", database_name="shop",
+                                 contract_sha=SHA, target_database="shop_tgt")  # fmt: skip
+        assert (result.status, result.confirmed, result.mismatches) == ("pass", 3, [])
+    finally:
+        _mysql(client, sock, "DROP DATABASE shop_tgt;")
+
+
+@pytest.mark.parametrize(
+    "definition,code",
+    __import__("tests.unit.tools.sql.test_view_statement", fromlist=["MY_HOSTILE"]).MY_HOSTILE,
+)
+def test_a_hostile_definition_never_runs_when_the_customer_runs_the_script(
+    shop, tmp_path, definition, code
+):
+    """An edited collection file's view text (ADR-034 Decision 5): refused by code, and the
+    script the customer runs drops nothing and runs no client command."""
+    from tests.unit.tools.data_movement.view_fixtures import (
+        contract_with_views,
+        mysql_view_source,
+        view,
+    )
+
+    client, sock = shop
+    marker = Path("/tmp/v2082-pwned")
+    marker.unlink(missing_ok=True)
+    hostile = (
+        "CREATE OR REPLACE SQL SECURITY INVOKER VIEW `shop`.`evil` (`id`) AS\n" + definition + ";"
+    )
+    good = "CREATE OR REPLACE SQL SECURITY INVOKER VIEW `shop`.`fine` (`id`) AS\nselect 1 AS `id`;"
+    contract = contract_with_views([view("evil", engine="aurora_mysql"),
+                                    view("fine", engine="aurora_mysql")], "aurora_mysql")  # fmt: skip
+    store = job(tmp_path, [mysql_view_source("evil", hostile), mysql_view_source("fine", good)],
+                "mysql")  # fmt: skip
+    scripts = write(tmp_path, store, contract)
+    assert scripts.refused == [("evil", code)] and scripts.in_script == 1
+    ran = _mysql(client, sock, None, stdin=tmp_path / "step" / DEPLOY_FILE)
+    assert ran.returncode == 0, ran.stderr.decode()
+    tables = _mysql(client, sock, "SELECT TABLE_NAME FROM information_schema.TABLES WHERE "
+                    "TABLE_SCHEMA = 'shop' ORDER BY 1", "--batch", "--skip-column-names")  # fmt: skip
+    names = tables.stdout.decode().split()
+    assert {"audit_log", "orders", "customers", "fine"} <= set(names) and "evil" not in names
+    assert not marker.exists()
+    _mysql(client, sock, "DROP VIEW IF EXISTS shop.fine;")

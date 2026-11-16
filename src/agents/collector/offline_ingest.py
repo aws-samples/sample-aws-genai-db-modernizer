@@ -130,7 +130,8 @@ def build_offline_contract(
         source_engine=inp.engine.value,
         source_version=str(offline_meta.get("version") or offline_meta.get("version_full") or ""),
     )
-    views = _build_views(parsed.get("views", []))
+    # #2082: a PostgreSQL or MySQL view's id names its schema (two schemas may share a name).
+    views = _build_views(parsed.get("views", []), inp.engine.value)
     procedures = _build_procedures(parsed.get("procedures", []))
     triggers = _build_triggers(parsed.get("triggers", []))
     # #2023: the triggers the DML list cannot hold, kept apart; routing never reads them.

@@ -2,5 +2,5 @@
 # uv run python scripts/resolve_contract_versions.py --release at release (a MAJOR: in its pull request).
 contract = "transformation_contract.StepContract"
 kind = "minor"
-reason = "Added optional ``StepContract.views_section`` (``StepViews``, ``StepView``, ``StepViewColumn``): the views step 1 creates in its views deploy script, in dependency order, with their columns, and why each other one is not; left out of the dump when None."
+reason = "Added optional ``StepContract.views_section`` (``StepViews``, ``StepView``, ``StepViewColumn``, with ``StepView.source_security``): the views step 1 creates in its views deploy script, in dependency order, with their columns, and why each other one is not; left out of the dump when None."
 issue = 2082

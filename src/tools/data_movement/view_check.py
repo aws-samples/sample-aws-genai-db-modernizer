@@ -85,7 +85,11 @@ def parse_view_output(
     if not lines:
         raise RoutineCheckOutputError(f"the check output is empty: run {spec.script} again")
     header = (spec.magic, CHECK_FORMAT, engine, contract_sha, target_database or "", "", "")
-    asked = {check_key(v, engine) for v in section.views if v.carry == "carried" and _names_safe(v)}
+    asked = {
+        check_key(v, engine, target_database)
+        for v in section.views
+        if v.carry == "carried" and _names_safe(v)
+    }
     rows: dict[tuple[str, str], list[Line]] = {}
     seen: set[tuple[tuple[str, str], int | None]] = set()
     end = False
@@ -164,7 +168,10 @@ def _compare(row: StepView, found: list[Line], engine: str) -> tuple[str, list[s
     if [fold(f[1]) for f in have] != want:
         names = [c.name for i, c in enumerate(row.columns)
                  if i >= len(have) or fold(have[i][1]) != want[i]]  # fmt: skip
-        return "columns_differ", (names or [c.name for c in row.columns])[:_SHOWN]
+        # A column the target has past the source's last: named by its position, never by
+        # the file's text.
+        names += [f"column {i + 1}, not on the source" for i in range(len(want), len(have))]
+        return "columns_differ", names[:_SHOWN]
     differ = [
         c.name for c, f in zip(row.columns, have, strict=True)
         if c.data_type is not None and _type(c.data_type, engine) != _type(f[2], engine)
@@ -182,6 +189,7 @@ def check_views(
     contract_sha: str,
     rows_read: int = 0,
     now: datetime | None = None,
+    target_database: str | None = None,
 ) -> ViewCheckResult:
     """The result for ``section`` from the parsed output ``rows``."""
     rows = rows or {}
@@ -192,7 +200,7 @@ def check_views(
         if view.carry == "not_carried":
             not_carried.append(ViewNotCarried(view_id=view.view_id, reasons=view.reasons))
             continue
-        problem = _compare(view, rows.get(check_key(view, engine), []), engine)
+        problem = _compare(view, rows.get(check_key(view, engine, target_database), []), engine)
         if problem is None:
             confirmed += 1
         else:
@@ -244,4 +252,5 @@ def read_view_check(
                                    contract_sha=contract_sha, target_database=target_database)  # fmt: skip
         count = sum(len(v) for v in parsed.values())
     return check_views(section, parsed, job_id=job_id, database_name=database_name, engine=engine,
-                       contract_sha=contract_sha, rows_read=count, now=now)  # fmt: skip
+                       contract_sha=contract_sha, rows_read=count, now=now,
+                       target_database=target_database)  # fmt: skip

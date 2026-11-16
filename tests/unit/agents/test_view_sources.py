@@ -44,8 +44,10 @@ def test_a_postgresql_view_is_created_again_with_its_columns_options_and_check_o
     assert view_create("postgresql", _pg()).endswith("WHERE o.note = 'x';")  # no option, no check
 
 
-def test_a_mysql_view_keeps_its_security_and_check_option_and_drops_the_definer():
-    text = view_create("mysql", _my(security_type="invoker", check_option="LOCAL"))
+def test_a_mysql_definer_view_is_created_invoker_with_its_check_option():
+    # A DEFINER view would read its tables with the deploying user's rights: never widened.
+    text = view_create("mysql", _my(security_type="DEFINER", check_option="LOCAL"))
+    assert view_fields(_my(security_type="definer"))["security_type"] == "DEFINER"
     assert text.startswith(
         "CREATE OR REPLACE SQL SECURITY INVOKER VIEW `shop`.`order_totals` (`id`, `total`) AS\n"
     )
@@ -59,7 +61,7 @@ def test_hostile_names_are_quoted_with_the_quote_doubled():
     pg = view_create("postgresql", _pg(schema_name='s"x', view_name='v"; DROP', columns=cols))
     assert pg.startswith('CREATE OR REPLACE VIEW "s""x"."v""; DROP" ("a""b", "c`d") AS')
     my = view_create("mysql", _my(schema_name="s`x", view_name="v`; DROP", columns=cols))
-    assert my.startswith("CREATE OR REPLACE SQL SECURITY DEFINER VIEW `s``x`.`v``; DROP` "
+    assert my.startswith("CREATE OR REPLACE SQL SECURITY INVOKER VIEW `s``x`.`v``; DROP` "
                          '(`a"b`, `c``d`) AS')  # fmt: skip
 
 

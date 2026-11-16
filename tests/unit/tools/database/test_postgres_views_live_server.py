@@ -49,31 +49,33 @@ def server(tmp_path_factory):
     srv.cleanup()
 
 
-def _run(server, sql: str) -> list[dict]:
+def _run(server, sql: str, role: str | None = None) -> list[dict]:
     wrapped = f"SELECT coalesce(jsonb_agg(to_jsonb(t)), '[]')::text FROM ({sql}) t;"
-    out = server.psql(f"\\set QUIET on\n\\t on\n\\a\n{wrapped}\n")
+    set_role = f"SET ROLE {role};\n" if role else ""
+    out = server.psql(f"\\set QUIET on\n\\t on\n\\a\n{set_role}{wrapped}\n")
     rows: list[dict] = json.loads([ln for ln in out.splitlines() if ln.strip()][-1])
     return rows
 
 
-def _live(server) -> PostgreSQLRemoteCollector:
+def _live(server, role: str | None = None) -> PostgreSQLRemoteCollector:
     class Live(PostgreSQLRemoteCollector):
         def _query(self, sql):
-            return _run(server, sql.strip().rstrip(";"))
+            return _run(server, sql.strip().rstrip(";"), role)
 
     return Live.__new__(Live)
 
 
-def _script(server) -> list[dict]:
+def _script(server, role: str | None = None) -> list[dict]:
     script = (_ROOT / "scripts/collect-postgresql.sql").read_text()
     cte = script.split("views_data AS (", 1)[1].split("\n),\n", 1)[0]
     sql = f"WITH views_data AS ({cte}\n) SELECT json_array_elements(data) AS r FROM views_data"
-    return sorted((r["r"] for r in _run(server, sql)), key=lambda r: r["view_name"])
+    return sorted((r["r"] for r in _run(server, sql, role)),
+                  key=lambda r: (r["view_name"], r["schema_name"]))  # fmt: skip
 
 
 def _shape(rows: list[dict]) -> list[tuple]:
     return [tuple(json.dumps(r.get(f), sort_keys=True) for f in _FIELDS)
-            for r in sorted(rows, key=lambda r: r["view_name"])]  # fmt: skip
+            for r in sorted(rows, key=lambda r: (r["view_name"], r["schema_name"]))]  # fmt: skip
 
 
 def test_the_live_read_and_the_script_give_the_same_view_fields(server):
@@ -106,3 +108,36 @@ def test_every_view_create_loads_back_to_the_same_view(server):
     # A second load replaces each view with itself.
     server.psql("\\set ON_ERROR_STOP on\n" + "\n".join(loads))
     assert _shape(_script(server)) == _shape(rows)
+
+
+def test_a_role_that_owns_no_view_reads_every_definition_in_every_user_schema(server):
+    """pg_get_viewdef, not information_schema.views (NULL for a non-owner), and every user
+    schema (#2275's filter), on both paths; two same-named views stay two (#2082 review)."""
+    from src.agents.collector.postgres_collector import _build_views
+    from src.tools.data_movement.step1_views import build_step_views
+    from tests.unit.tools.data_movement.dms_step_fixtures import make_contract
+
+    server.psql("\\set ON_ERROR_STOP on\nCREATE SCHEMA reports; CREATE ROLE vw_reader;"
+                "CREATE VIEW public.dup AS SELECT id FROM public.vw_orders;"
+                "CREATE VIEW reports.dup AS SELECT id, note FROM public.vw_orders;")  # fmt: skip
+    try:
+        live = _live(server, "vw_reader").collect_views()
+        script = _script(server, "vw_reader")
+        assert _shape(live) == _shape(script)
+        assert all(r["definition"] for r in live)
+        assert sorted((r["schema_name"], r["view_name"]) for r in live if r["view_name"] == "dup") == [
+            ("public", "dup"), ("reports", "dup")]  # fmt: skip
+        views = _build_views(live)
+        assert sorted(v.view_id for v in views if v.view_name == "dup") == [
+            "public.dup",
+            "reports.dup",
+        ]
+        rows = [{**v.model_dump(mode="json"), "body_status": "collected", "lineage_status": "resolved",
+                 "referenced_tables": ["public.orders"]} for v in views if v.view_name == "dup"]  # fmt: skip
+        section = build_step_views({"views": rows}, make_contract("aurora_postgresql"),
+                                   source_engine="postgresql")  # fmt: skip
+        assert sorted(v.view_id for v in section.views) == ["public.dup", "reports.dup"]
+    finally:
+        server.psql(
+            "DROP VIEW public.dup; DROP VIEW reports.dup; DROP SCHEMA reports; DROP ROLE vw_reader;"
+        )

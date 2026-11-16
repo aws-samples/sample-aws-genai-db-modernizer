@@ -1021,6 +1021,13 @@ class View(BaseModel):
             "so step 1 never creates it (#2082); None when not reported"
         ),
     )
+    security_type: Literal["DEFINER", "INVOKER"] | None = Field(
+        None,
+        description=(
+            "MySQL: the view's SQL SECURITY on the source (#2082); step 1 creates every view "
+            "SQL SECURITY INVOKER and names each DEFINER one. None when not reported"
+        ),
+    )
 
 
 class ViewRead(BaseModel):
