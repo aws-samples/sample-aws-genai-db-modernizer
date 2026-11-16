@@ -1022,8 +1022,9 @@ class LocalExecutionService:
     def _read_source_engine(self, db_name: str, job_id: str) -> str | None:
         """Return the source engine recorded by the collector, or None if unknown.
 
-        Jobs run by the local scripts and skills have no ``_meta.json``, so the
-        collector output is the only record of the source engine.
+        A job run by the local scripts and skills has a ``_meta.json`` with its start
+        time but no request input (#2304), so the collector output is the only record
+        of the source engine.
         """
         path = f"{db_name}/{job_id}/collector/output.json"
         if not self._store.exists(path):
