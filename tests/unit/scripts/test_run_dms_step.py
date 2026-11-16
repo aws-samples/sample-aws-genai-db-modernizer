@@ -3383,6 +3383,156 @@ def test_a_task_stopped_line_with_an_unknown_failure_carries_no_hint(tmp_path, c
     assert out["phase"] == "task_stopped" and "hint" in out and out["hint"] is None
 
 
+# #2364: live DMS puts only its generic fatal error in LastFailureMessage; the denial is in the
+# task's CloudWatch log only. The two denial lines of the #2135 Discourse rehearsal's log.
+from tests.unit.tools.data_movement.test_dms_failures import (  # noqa: E402
+    GENERIC_FATAL,
+    PG_DENIAL_LOG,
+)
+
+GENERIC = {"LastFailureMessage": GENERIC_FATAL, "StopReason": GENERIC_FATAL}
+LOG_GROUP = "dms-tasks-dm-job1-ri"
+
+
+def _log_failed_status(cred, log_lines, *, status="failed", instance="dm-job1-ri", **fields):
+    """A Prove poll of a failed task, the instance's identifier and its task log's error events."""
+    _stack(cred)
+    _connections(cred)
+    stop = datetime(2026, 11, 16, 15, 15, 40, tzinfo=UTC)
+    cred.stub("dms").add_response("describe_replication_tasks", {"ReplicationTasks": [{
+        "ReplicationTaskArn": TASK, "Status": status, **(fields or GENERIC),
+        "ReplicationTaskStats": {"FullLoadProgressPercent": 0, "TablesQueued": 1,
+                                 "StopDate": stop}}]})  # fmt: skip
+    if log_lines is not None:
+        cred.stub("dms").add_response("describe_replication_instances", {"ReplicationInstances": [
+            {"ReplicationInstanceArn": INSTANCE, "ReplicationInstanceIdentifier": instance}]},
+            {"Filters": [{"Name": "replication-instance-arn", "Values": [INSTANCE]}]})  # fmt: skip
+        start = int((stop - timedelta(minutes=15)).timestamp() * 1000)
+        end = int((stop + timedelta(seconds=60)).timestamp() * 1000)
+        cred.stub("logs").add_response(
+            "filter_log_events",
+            {"events": [{"logStreamName": "dms-task-TASK", "timestamp": end - 1, "message": m}
+                        for m in log_lines]},
+            {"logGroupName": LOG_GROUP, "startTime": start, "endTime": end,
+             "filterPattern": '"]E:"', "limit": 100},
+        )  # fmt: skip
+    cred.stub("dms").add_response("describe_table_statistics", {
+        "ReplicationTaskArn": TASK, "TableStatistics": [_before_load("posts")]})  # fmt: skip
+
+
+def _status_with_logs(tmp_path, cred):
+    code = script.main(["status", "--job-id", "job1", "--db", "shop", "--artifact-root",
+                        str(tmp_path)], clients=_clients(cred), sleep=lambda _s: None,
+                       logs=cred.client("logs"))  # fmt: skip
+    return code
+
+
+def test_prove_matches_the_hint_against_the_task_log_and_prints_no_log_text(tmp_path, capsys):
+    _job(tmp_path)
+    _pg_plan(tmp_path)
+    cred = StubbedCredMgr()
+    _log_failed_status(cred, PG_DENIAL_LOG)
+    code = _status_with_logs(tmp_path, cred)
+    printed = capsys.readouterr().out
+    out = json.loads(printed.splitlines()[-1])
+    assert code == 0 and out["phase"] == "task_stopped" and out["hint_source"] == "task_log"
+    assert 'GRANT USAGE, CREATE ON SCHEMA "awsdms_control"' in out["hint"]
+    assert out["last_failure"] == GENERIC_FATAL  # DMS's own message, as before
+    for text in ("permission denied", "42501", "SQL_ERROR", "ar_odbc_stmt", "1022502",
+                 "TARGET_APPLY", "VALIDATOR_TARGE", "2026-11-16T15:15"):  # fmt: skip
+        assert text not in printed, text  # no log text, anywhere on the output
+    assert out["recovery"] == "retry"  # and nothing loaded, so retry is offered (#2365)
+    _no_pending(cred)
+
+
+def test_prove_names_the_mysql_control_grant_from_the_task_log(tmp_path, capsys):
+    _job(tmp_path)
+    cred = StubbedCredMgr()
+    line = ("2026-11-16T15:15:39 [TARGET_APPLY    ]E:  RetCode: SQL_ERROR  SqlState: 42000 "
+            "NativeError: 1142 Message: [MySQL][ODBC 8.0(w) Driver][mysqld-8.0.39]CREATE command "
+            "denied to user 'dms_user'@'10.0.0.1' for table 'awsdms_apply_exceptions' [1022502]")  # fmt: skip
+    _log_failed_status(cred, [line])
+    _status_with_logs(tmp_path, cred)
+    printed = capsys.readouterr().out
+    out = json.loads(printed.splitlines()[-1])
+    assert "GRANT ALL PRIVILEGES ON `awsdms\\_control`.*" in out["hint"]
+    assert out["hint_source"] == "task_log" and "dms_user" not in printed
+    assert "CREATE command denied" not in printed
+    _no_pending(cred)
+
+
+def test_a_task_log_with_no_known_error_leaves_the_hint_null(tmp_path, capsys):
+    _job(tmp_path)
+    cred = StubbedCredMgr()
+    _log_failed_status(cred, ["2026-11-16T15:15:40 [TASK_MANAGER    ]E:  Task 'TASK' "
+                              "encountered a fatal error  (repository.c:5751)"])  # fmt: skip
+    _status_with_logs(tmp_path, cred)
+    out = _lines(capsys)[-1]
+    assert out["hint"] is None and "hint_source" not in out and "repository.c" not in str(out)
+    _no_pending(cred)
+
+
+@pytest.mark.parametrize("refused", ["describe_replication_instances", "filter_log_events"])
+def test_a_profile_that_may_not_read_the_task_log_leaves_the_hint_null(tmp_path, capsys, refused):
+    """A read_profile without dms:DescribeReplicationInstances or logs:FilterLogEvents still
+    polls: the hint stays null, as before #2364."""
+    _job(tmp_path)
+    cred = StubbedCredMgr()
+    _stack(cred)
+    _connections(cred)
+    cred.stub("dms").add_response("describe_replication_tasks", {"ReplicationTasks": [{
+        "ReplicationTaskArn": TASK, "Status": "failed", **GENERIC,
+        "ReplicationTaskStats": {"FullLoadProgressPercent": 0}}]})  # fmt: skip
+    if refused == "describe_replication_instances":
+        cred.stub("dms").add_client_error(refused, "AccessDeniedFault", "not allowed")
+    else:
+        cred.stub("dms").add_response("describe_replication_instances", {"ReplicationInstances": [
+            {"ReplicationInstanceArn": INSTANCE, "ReplicationInstanceIdentifier": "ri"}]})  # fmt: skip
+        cred.stub("logs").add_client_error(refused, "AccessDeniedException", "not allowed")
+    cred.stub("dms").add_response("describe_table_statistics", {
+        "ReplicationTaskArn": TASK, "TableStatistics": []})  # fmt: skip
+    code = _status_with_logs(tmp_path, cred)
+    out = _lines(capsys)[-1]
+    assert code == 0 and out["phase"] == "task_stopped" and out["hint"] is None
+    _no_pending(cred)
+
+
+@pytest.mark.parametrize("fields", [
+    GRANTS,  # DMS's own message names the failure: its hint, and no log read
+    {"StopReason": "Stop Reason NORMAL", "LastFailureMessage": GENERIC_FATAL},  # stopped by hand
+])  # fmt: skip
+def test_the_task_log_is_read_only_for_a_failure_dms_message_names_no_hint_for(
+    tmp_path, capsys, fields
+):
+    _job(tmp_path)
+    cred = StubbedCredMgr()
+    _log_failed_status(cred, None, status="failed" if fields is GRANTS else "stopped", **fields)
+    _status_with_logs(tmp_path, cred)
+    out = _lines(capsys)[-1]
+    assert "hint_source" not in out
+    assert (out["hint"] is not None) == (fields is GRANTS)
+    _no_pending(cred)  # no DescribeReplicationInstances and no FilterLogEvents was stubbed
+
+
+def test_only_status_asks_for_a_cloudwatch_logs_client(tmp_path, capsys, monkeypatch):
+    """status, a read, asks for a CloudWatch Logs client (with read_profile, as every read);
+    a write never does."""
+    _job(tmp_path)
+    made: list[StubbedCredMgr] = []
+
+    class Cred(StubbedCredMgr):
+        def __init__(self, region):
+            super().__init__()
+            made.append(self)
+
+    monkeypatch.setattr("src.tools.aws.credentials.AWSCredentialManager", Cred)
+    for command in (["status"], ["stop", "--approve"], ["teardown", "--approve"]):
+        script.main([*command, "--job-id", "job1", "--db", "shop", "--artifact-root",
+                     str(tmp_path)], sleep=lambda _s: None)  # fmt: skip
+    capsys.readouterr()
+    assert [("logs" in c.asked_for) for c in made] == [True, False, False]
+
+
 def test_the_task_stopped_wait_and_stop_lines_carry_the_hint():
     cred = StubbedCredMgr()
     _stack(cred)
