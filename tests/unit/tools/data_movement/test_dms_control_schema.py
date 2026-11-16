@@ -81,7 +81,9 @@ def test_the_mysql_ddl_creates_the_control_database_and_the_dms_user_gets_it() -
     ddl = render_ddl(make_step1_inputs("aurora_mysql"))
     create = f"\nCREATE DATABASE IF NOT EXISTS `{CONTROL_SCHEMA}`;\n"
     assert create in ddl and ddl.index(create) < ddl.index("CREATE TABLE")
-    assert f"-- GRANT ALL PRIVILEGES ON `{CONTROL_SCHEMA}`.* TO 'dms_user'@'%';" in ddl
+    # The grant escapes the underscore (grant_database, #1970): `awsdms_control`.* would also
+    # cover every database named like awsdms?control.
+    assert "-- GRANT ALL PRIVILEGES ON `awsdms\\_control`.* TO 'dms_user'@'%';" in ddl
     # The target database stays the one the tables go in.
     assert ddl.index(create) < ddl.index("\nUSE `shop`;")
     assert "DROP " not in ddl
@@ -154,12 +156,26 @@ def _mismatch_status(tmp_path, capsys, settings, engine="mysql"):
     return out
 
 
-OLD_TASK = {"ValidationSettings": {"EnableValidation": True}}  # rendered before #2133
-NEW_TASK = {"ControlTablesSettings": {"ControlSchema": CONTROL_SCHEMA}}
+# What describe-replication-tasks returns for a task rendered before #2133: the full settings
+# document, whose ControlTablesSettings has an empty ControlSchema (or none at all).
+_CONTROL_DEFAULTS = {"HistoryTimeslotInMinutes": 5, "HistoryTableEnabled": False,
+                     "SuspendedTablesTableEnabled": False, "StatusTableEnabled": False}  # fmt: skip
+OLD_TASK = {"ValidationSettings": {"EnableValidation": True},
+            "ControlTablesSettings": {**_CONTROL_DEFAULTS, "ControlSchema": ""}}  # fmt: skip
+OLD_TASK_NO_KEY = {"ValidationSettings": {"EnableValidation": True},
+                   "ControlTablesSettings": dict(_CONTROL_DEFAULTS)}  # fmt: skip
+NEW_TASK = {"ValidationSettings": {"EnableValidation": True},
+            "ControlTablesSettings": {**_CONTROL_DEFAULTS, "ControlSchema": CONTROL_SCHEMA}}  # fmt: skip
 
 
 def _note(check) -> list[str]:
     return [s for s in check["check_on_target"] if "control schema" in s]
+
+
+@pytest.mark.parametrize("settings", [OLD_TASK_NO_KEY], ids=["no-ControlSchema-key"])
+def test_an_older_task_without_the_key_reads_as_no_control_schema(tmp_path, capsys, settings):
+    check = _mismatch_status(tmp_path, capsys, settings)["validation_failures_check"]
+    assert check["task_control_schema"] == "" and _note(check)
 
 
 def test_an_older_mysql_task_gets_steps_that_work_on_a_running_task(tmp_path, capsys):
@@ -179,7 +195,15 @@ def test_an_older_mysql_task_gets_steps_that_work_on_a_running_task(tmp_path, ca
              "aws dms start-replication-task", "resume-processing", "revalidate"]  # fmt: skip
     at = [flat.index(w) for w in order]
     assert at == sorted(at)
-    assert f'"ControlTablesSettings": {{"ControlSchema": "{CONTROL_SCHEMA}"}}' in flat
+    # The saved document already has a ControlTablesSettings object: set the key inside it,
+    # never add a second object (a duplicate key).
+    assert (f'set "ControlSchema" to "{CONTROL_SCHEMA}" inside its existing '
+            '"ControlTablesSettings" object') in flat  # fmt: skip
+    assert '"ControlTablesSettings": {' not in flat and "add " not in flat
+    # A stop costs the source: its binary logs are purged once the retention period passes.
+    assert "as long as the source still keeps its change log" in flat
+    assert "purges its binary logs once their retention period passes" in flat
+    assert "the source keeps its change log for it" not in flat
     assert f"--replication-task-arn {TASK}" in flat and "--region us-east-1" in flat
     # Never a redeploy through /move, which goes back to Prove on a running task.
     assert "render" not in note and "deploy" not in note
@@ -188,12 +212,10 @@ def test_an_older_mysql_task_gets_steps_that_work_on_a_running_task(tmp_path, ca
 
 
 def test_the_note_steps_lead_back_to_prove_with_no_note_once_the_task_carries_it(tmp_path, capsys):
-    # Following the note: the customer modifies and resumes the task; /move step-1 resumes at
-    # Prove (status), whose line then has no note, the same query and the revalidate path.
+    # Prove's status before and after the customer's modify: the note goes, the queries stay.
+    # (/move's Resume routing to Prove is prose in move.md, not exercised here.)
     before = _mismatch_status(tmp_path, capsys, OLD_TASK)["validation_failures_check"]
-    after = _mismatch_status(tmp_path, capsys, {**OLD_TASK, **NEW_TASK})[
-        "validation_failures_check"
-    ]
+    after = _mismatch_status(tmp_path, capsys, NEW_TASK)["validation_failures_check"]
     assert _note(before) and not _note(after)
     assert after["task_control_schema"] == CONTROL_SCHEMA
     assert [s for s in after["check_on_target"] if s.startswith("SELECT")] == [

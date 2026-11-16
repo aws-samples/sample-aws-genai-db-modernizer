@@ -22,7 +22,8 @@ import re
 from dataclasses import dataclass
 from typing import Any
 
-from src.tools.data_movement.dms_control import CONTROL_SCHEMA
+from src.tools.data_movement.dms_control import CONTROL_SCHEMA, CONTROL_TABLE_PATTERN
+from src.tools.database.mysql_grants import grant_database
 
 FAILED = frozenset({"failed", "failed-move"})
 # StopReason values that mean the task stopped by itself on a problem (DMS API Reference,
@@ -75,12 +76,17 @@ FAILURE_HINTS: tuple[FailureHint, ...] = (
           "secret>; then retry.",
           "AWS DMS User Guide, Using a PostgreSQL database as a target (security requirements); "
           "Control table task settings (ControlSchema)"),
+    # MySQL's own text (8.0 and 8.4): a CREATE on a control table names it unqualified
+    # (ERROR 1142, "CREATE command denied to user ... for table 'awsdms_apply_exceptions'"),
+    # a USE names the database (ERROR 1044, "... to database '<it>'"). Only DMS's
+    # control table names, unqualified or in the control database.
     _hint("mysql_control_database",
           rf"\bdenied (?:for|to) user \S+ (?:to database '{re.escape(CONTROL_SCHEMA)}'"
-          rf"|for table '{re.escape(CONTROL_SCHEMA)}\.)",
-          f"DMS cannot create its control tables in {CONTROL_SCHEMA} (the task's ControlSchema): "
-          f"on Aurora, run GRANT ALL PRIVILEGES ON `{CONTROL_SCHEMA}`.* TO <the user in the target "
-          "secret>@'%'; then retry.",
+          rf"|for table '(?:{re.escape(CONTROL_SCHEMA)}\.)?{CONTROL_TABLE_PATTERN}')",
+          f"DMS cannot create or write its control tables in {CONTROL_SCHEMA} (the task's "
+          "ControlSchema): on Aurora, as the administrator, run GRANT ALL PRIVILEGES ON "
+          f"{grant_database(CONTROL_SCHEMA)}.* TO '<the user in the target secret>'@'%'; "
+          "then retry.",
           "AWS DMS User Guide, Using a MySQL-compatible database as a target (prerequisites); "
           "Control table task settings (ControlSchema)"),
     # Binary logging said to be off, never a message that merely names a binlog variable.
