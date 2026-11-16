@@ -148,13 +148,15 @@ def failure_hint(task: dict[str, Any] | None) -> str | None:
 
 # The task log Prove reads for a failed task no hint matched (#2364). DMS writes a task's log to
 # the log group ``dms-tasks-<replication instance identifier>`` (AWS DMS User Guide, Logging
-# task settings); step 1's stack makes its own instance, so that group holds this task only.
+# task settings); step 1's stack makes its own instance, so that group holds this task only,
+# but every run of it: the window starts no earlier than the run that failed.
 LOG_GROUP_PREFIX = "dms-tasks-"
-LOG_WINDOW_MINUTES = 15  # read back this far from when the task stopped
+LOG_WINDOW_MINUTES = 15  # read back at most this far from when the task stopped
 LOG_AFTER_SECONDS = 60  # and this far past it (DMS flushes its last lines after the stop)
-LOG_EVENTS = 500  # read at most this many events in all
+LOG_EVENTS = 500  # match at most this many events in all, the newest first
 LOG_PAGE = 100  # events asked for per FilterLogEvents call
-LOG_PAGES = 5  # FilterLogEvents calls at most (a page can come back empty with a next token)
+LOG_CALLS = 10  # FilterLogEvents calls at most
+LOG_SLICE_SECONDS = 300  # read the window newest slice first, so the cap keeps the newest events
 # DMS's error lines only, as it tags them: "[TARGET_APPLY    ]E:  ...".
 LOG_ERRORS = '"]E:"'
 
@@ -164,31 +166,57 @@ def task_log_group(instance_identifier: str) -> str:
     return f"{LOG_GROUP_PREFIX}{instance_identifier}"
 
 
+def _ms(when: datetime) -> int:
+    return int(when.timestamp() * 1000)
+
+
 def log_window(stats: dict[str, Any], now: datetime) -> tuple[int, int]:
-    """(start, end) in epoch milliseconds: ``LOG_WINDOW_MINUTES`` before the task's
-    ``StopDate`` to ``LOG_AFTER_SECONDS`` after it; before ``now`` when DMS gives no stop date."""
-    stop = stats.get("StopDate")
-    end = stop if isinstance(stop, datetime) else now
-    end = end if end.tzinfo else end.replace(tzinfo=now.tzinfo)
-    start = end - timedelta(minutes=LOG_WINDOW_MINUTES)
-    if isinstance(stop, datetime):
-        end = end + timedelta(seconds=LOG_AFTER_SECONDS)
-    return int(start.timestamp() * 1000), int(end.timestamp() * 1000)
+    """(start, end) in epoch milliseconds of the run that failed: from the later of its
+    ``StartDate`` (DMS's last start, fresh or resume) and ``LOG_WINDOW_MINUTES`` before its
+    ``StopDate``, to ``LOG_AFTER_SECONDS`` after the stop; an earlier run's errors are never
+    read. Without a stop date, the minutes before ``now``."""
+
+    def aware(when: Any) -> datetime | None:
+        if not isinstance(when, datetime):
+            return None
+        return when if when.tzinfo else when.replace(tzinfo=now.tzinfo)
+
+    stop, started = aware(stats.get("StopDate")), aware(stats.get("StartDate"))
+    end = now if stop is None else stop + timedelta(seconds=LOG_AFTER_SECONDS)
+    start = (now if stop is None else stop) - timedelta(minutes=LOG_WINDOW_MINUTES)
+    if started is not None and started > start:
+        start = started
+    return _ms(start), max(_ms(end), _ms(start))
 
 
 def log_hint(logs: Any, log_group: str, start_ms: int, end_ms: int) -> FailureHint | None:
-    """The first ``FAILURE_HINTS`` entry whose pattern matches one of the task log's error events
-    in [``start_ms``, ``end_ms``]; None for none. Read-only (``FilterLogEvents``), at most
-    ``LOG_EVENTS`` events over ``LOG_PAGES`` calls; the messages are matched and dropped here,
-    and only the entry (its own fixed text) is returned. AWS errors propagate to the caller."""
-    kwargs: dict[str, Any] = {"logGroupName": log_group, "startTime": start_ms,
-                              "endTime": end_ms, "filterPattern": LOG_ERRORS, "limit": LOG_PAGE}  # fmt: skip
-    messages: list[str] = []
-    for _ in range(LOG_PAGES):
-        page = logs.filter_log_events(**kwargs)
-        messages += [str(e.get("message") or "") for e in page.get("events") or []]
-        if len(messages) >= LOG_EVENTS or not page.get("nextToken"):
-            break
-        kwargs["nextToken"] = page["nextToken"]
-    read = messages[:LOG_EVENTS]
-    return next((h for h in FAILURE_HINTS if any(h.pattern.search(m) for m in read)), None)
+    """The hint of the newest error event in [``start_ms``, ``end_ms``] that a ``FAILURE_HINTS``
+    entry matches (the first entry, for that event); None for none. Read-only
+    (``FilterLogEvents``), newest ``LOG_SLICE_SECONDS`` slice first, at most ``LOG_EVENTS``
+    events over at most ``LOG_CALLS`` calls, so the cap keeps the events nearest the stop. The
+    messages are matched and dropped here, and only the entry (its own fixed text) is returned.
+    AWS errors propagate to the caller."""
+    calls, read = 0, 0
+    slice_end = end_ms
+    while slice_end > start_ms and calls < LOG_CALLS and read < LOG_EVENTS:
+        slice_start = max(start_ms, slice_end - LOG_SLICE_SECONDS * 1000)
+        kwargs: dict[str, Any] = {"logGroupName": log_group, "startTime": slice_start,
+                                  "endTime": slice_end, "filterPattern": LOG_ERRORS,
+                                  "limit": LOG_PAGE}  # fmt: skip
+        events: list[dict[str, Any]] = []
+        while calls < LOG_CALLS:
+            page = logs.filter_log_events(**kwargs)
+            calls += 1
+            events += page.get("events") or []
+            if not page.get("nextToken"):
+                break
+            kwargs["nextToken"] = page["nextToken"]
+        newest = sorted(events, key=lambda e: int(e.get("timestamp") or 0), reverse=True)
+        for event in newest[: LOG_EVENTS - read]:
+            message = str(event.get("message") or "")
+            found = next((h for h in FAILURE_HINTS if h.pattern.search(message)), None)
+            if found is not None:
+                return found
+        read += min(len(newest), LOG_EVENTS - read)
+        slice_end = slice_start
+    return None

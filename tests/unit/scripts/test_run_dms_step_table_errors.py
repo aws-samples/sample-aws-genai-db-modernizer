@@ -175,6 +175,22 @@ def test_an_errored_table_with_rows_and_the_epoch_start_is_named_by_its_rows(tmp
     assert "was loaded" not in json.dumps(out)
 
 
+def test_an_errored_table_with_a_real_start_time_and_no_write_is_offered_reload_tables(
+    tmp_path, capsys
+):
+    """Maintainer decision on #2380: only the write counters and the reloaded flag show a write.
+    A real (non-epoch) FullLoadStartTime with every counter 0 and no reload shows none, and a
+    reload of an errored table nothing was written to is safe."""
+    _job(tmp_path)
+    cred = StubbedCredMgr()
+    row = _row("shop.orders", state="Table error", FullLoadRows=0,
+               FullLoadStartTime=datetime(2026, 11, 9, tzinfo=UTC))  # fmt: skip
+    _running(cred, [row])
+    _, _, out = _status(tmp_path, capsys, cred)
+    assert out["phase"] == "table_errors" and out["table_recovery"] == "reload-tables"
+    assert "table_recovery_refused" not in out
+
+
 def test_retry_and_reload_tables_share_one_per_table_rule():
     from src.tools.data_movement import table_errors as te
 
