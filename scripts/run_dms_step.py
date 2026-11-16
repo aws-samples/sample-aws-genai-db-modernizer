@@ -42,9 +42,13 @@ Every subcommand prints one JSON line, its result (exit 1 only on ``"status": "e
   refused without ``--approve`` and under ``MODERNIZER_CI_SANDBOX=1``. A template over
   CloudFormation's inline limit goes to the inputs file's ``template_bucket`` first (deploy
   uploads ``<stack name>/dms-step-1.yaml`` there and creates the change set from its URL).
-- ``stop --approve`` (stop the task and wait until it has stopped) and ``teardown --approve``
-  (delete the step's stack once its task is not running, and wait until it is gone): the writes
-  that end the step (#1896), with the same refusals. Both are no-ops when there is nothing left
+- ``stop --approve`` (stop the task and wait until the stop has settled) and ``teardown
+  --approve`` (delete the step's stack once its task is not running and its stop has settled,
+  and wait until it is gone): the writes that end the step (#1896), with the same refusals. DMS
+  can read a task stopped and then running again a moment later (#2366), so a stop settles only
+  once the task reads not running ``STOP_SETTLE_READS`` polls in a row over
+  ``STOP_SETTLE_SECONDS``; a delete DMS refuses because the task "is running" is retried once,
+  after the stop settles again. Both are no-ops when there is nothing left
   to do, act only on this job's step stack (exactly the template's six resources, and a task whose
   identifier and ``modernizer:job-id`` tag name this job), wait up to ``--wait-seconds`` (default and maximum 540) and
   print one progress line per poll on stderr. ``teardown``'s line carries ``source_reminder``
@@ -170,6 +174,7 @@ import contextlib
 import functools
 import json
 import os
+import re
 import shlex
 import sys
 import time
@@ -235,6 +240,14 @@ MAX_WAIT_SECONDS = 540  # under the 600 s Bash timeout a command runs with
 TASK_STOPPED = {"failed", "stopped", "failed-move"}
 TASK_IDLE = TASK_STOPPED | {"ready"}  # not running: nothing to stop, and the stack may be deleted
 TASK_RUNNING = {"running", "starting"}  # stop-replication-task stops these
+# DMS can read a task stopped and, moments later, running again (#2366): a stop counts as
+# settled only once the task reads not running on this many polls in a row, spanning at least
+# this long. A read that it runs again starts the count over.
+STOP_SETTLE_READS = 3
+STOP_SETTLE_SECONDS = 60
+# The delete DMS refuses while it still treats the task as running (#2366): teardown waits for
+# the stop to settle again and deletes once more, at most once per run.
+DELETE_REFUSED_RUNNING = re.compile(r"\bis running\b", re.IGNORECASE)
 # Validation judged stalled (#1995): tables still Not enabled this long after the full load
 # finished although the task turns validation on, or this many polls over this long in a row
 # with no table changing its validation state and no pending record count falling.
@@ -1531,6 +1544,72 @@ def _wait_task(
     return current, state, waited
 
 
+class _StopSettle:
+    """A ``_wait_task`` predicate (#2366): the task is gone, or it read not running
+    (``TASK_IDLE``) on ``STOP_SETTLE_READS`` reads in a row spanning ``STOP_SETTLE_SECONDS``
+    at ``interval`` apart. Called once per read; a read that it runs again starts over."""
+
+    def __init__(self, interval: int) -> None:
+        self.interval = interval
+        self.reads = 0  # the not-running reads in a row so far
+        self.flapped = False  # it read not running, then running again
+        self.done = False
+
+    def __call__(self, state: str | None) -> bool:
+        if state == "deleted":
+            self.done = True
+            return True
+        if state in TASK_IDLE:
+            self.reads += 1
+        else:
+            self.flapped = self.flapped or self.reads > 0
+            self.reads = 0
+        span = (self.reads - 1) * self.interval
+        self.done = self.reads >= STOP_SETTLE_READS and span >= STOP_SETTLE_SECONDS
+        return self.done
+
+    def fields(self) -> dict[str, Any]:
+        """What the line says about the settle: the reads in a row, and a flap seen."""
+        out: dict[str, Any] = {"settled": self.done, "stopped_reads": self.reads}
+        if self.flapped:
+            out["settle_note"] = ("DMS read the task stopped, then running again a moment later, "
+                                  "so the wait went on until it read stopped "
+                                  f"{STOP_SETTLE_READS} times in a row over "
+                                  f"{STOP_SETTLE_SECONDS} s")  # fmt: skip
+        return out
+
+
+def _not_settled(task: dict[str, Any] | None, then: str) -> str:
+    """Why a stop is not settled at the deadline, for a task that reads not running, and
+    ``then``: what settles it."""
+    return (f"{dms_reports(task)}, but not yet on {STOP_SETTLE_READS} reads in a row over "
+            f"{STOP_SETTLE_SECONDS} s (DMS can read a stopped task running again a moment later): "
+            f"{then}")  # fmt: skip
+
+
+def _settle(
+    clients: MoveClients,
+    task: dict[str, Any],
+    command: str,
+    waited: int,
+    wait_seconds: int,
+    interval: int,
+    sleep: Callable[[float], None],
+    *,
+    fresh: bool = False,
+) -> tuple[dict[str, Any] | None, _StopSettle, int]:
+    """Wait until a task that reads not running settles (``_StopSettle``): (the task's last
+    read, None once gone; the settle; waited). ``task`` is a read made just now and counts as
+    the first read; ``fresh``: it is older, so only the reads from here on count."""
+    settle = _StopSettle(interval)
+    current, _, waited = _wait_task(clients, task["ReplicationTaskArn"], task,
+                                    None if fresh else task.get("Status"), settle, command,
+                                    waited, wait_seconds, interval, sleep)  # fmt: skip
+    if current is None:
+        settle.done = True
+    return current, settle, waited
+
+
 def _stop_task(
     clients: MoveClients,
     task: dict[str, Any],
@@ -1539,8 +1618,9 @@ def _stop_task(
     interval: int,
     sleep: Callable[[float], None],
 ) -> dict[str, Any]:
-    """Stop this job's running task and wait until it has stopped; a task not running is left as
-    is. ``reached`` true: DMS reports it not running, or it is gone."""
+    """Stop this job's running task and wait until the stop has settled (``_StopSettle``); a
+    task not running is left as is. ``reached`` true: the task read not running on
+    ``STOP_SETTLE_READS`` polls in a row over ``STOP_SETTLE_SECONDS``, or it is gone."""
     arn = task["ReplicationTaskArn"]
     state = task.get("Status")
     if state in TASK_IDLE:
@@ -1551,10 +1631,18 @@ def _stop_task(
     elif state != "stopping":
         raise MoveError(f"{dms_reports(task)}: wait until it is running or stopped, then run "
                         f"{command} again (status shows where it stands)")  # fmt: skip
-    current, state, waited = _wait_task(clients, arn, task, state, lambda s: s in TASK_IDLE,
-                                        command, 0, wait_seconds, interval, sleep)  # fmt: skip
-    return {"task": current, "already_stopped": False,
-            "reached": current is None or state in TASK_IDLE, "waited_seconds": waited}  # fmt: skip
+    settle = _StopSettle(interval)
+    current, state, waited = _wait_task(clients, arn, task, state, settle, command, 0,
+                                        wait_seconds, interval, sleep)  # fmt: skip
+    reached = current is None or settle.done
+    out = {"task": current, "already_stopped": False, "reached": reached,
+           "waited_seconds": waited, **settle.fields()}  # fmt: skip
+    if current is None:
+        out["settled"] = True
+    elif not reached and state in TASK_IDLE:
+        out["settle_message"] = _not_settled(current, "teardown reads the task until its stop "
+                                             "settles before it deletes the stack")  # fmt: skip
+    return out
 
 
 def stop(
@@ -1566,7 +1654,9 @@ def stop(
     *,
     sleep: Callable[[float], None] = time.sleep,
 ) -> dict[str, Any]:
-    """Stop the step's task and wait until it has stopped; a task not running is left as is."""
+    """Stop the step's task and wait until the stop has settled (``_stop_task``); a task not
+    running is left as is. ``stopping``: not settled by the deadline (``settle_message`` says so
+    when the last read was already not running)."""
     stack, task = _this_jobs_task(clients, name, job_id)
     if stack is None:
         return {"status": "no_stack", "stack_name": name}
@@ -1576,9 +1666,12 @@ def stop(
     stopped = _stop_task(clients, task, "stop", wait_seconds, interval, sleep)
     if stopped["already_stopped"]:
         return {"status": "stopped", **out, **_task_report(task), "already_stopped": True}
+    settle: dict[str, Any] = {k: stopped[k] for k in ("settled", "stopped_reads", "settle_note", "settle_message")
+              if k in stopped}  # fmt: skip
     return {"status": "stopped" if stopped["reached"] else "stopping", **out,
             **_task_report(stopped["task"]), "already_stopped": False,
-            "reached": stopped["reached"], "waited_seconds": stopped["waited_seconds"]}  # fmt: skip
+            "reached": stopped["reached"], "waited_seconds": stopped["waited_seconds"],
+            **settle}  # fmt: skip
 
 
 def _owned_task(clients: MoveClients, name: str, job_id: str, verb: str) -> dict[str, Any]:
@@ -1963,14 +2056,19 @@ def _delete_step_stack(
     *,
     sleep: Callable[[float], None] = time.sleep,
 ) -> dict[str, Any]:
-    """Delete the step's stack once its task is not running, and wait until it is gone.
+    """Delete the step's stack once its task is not running and its stop has settled, and wait
+    until it is gone.
 
-    At most one ``DeleteStack`` per run, on the step's own stack only, established from AWS state and
-    never from a local file: exactly the six resources of ``dms-step-1.yaml``, no other job's tag
-    on the stack, and a task whose identifier and tag name this job or, once the task is gone, a
-    replication instance or endpoint carrying this job's tag (or this job's stack tag). A stack
-    already being deleted is only waited on; a ``DELETE_FAILED`` seen while waiting is an error,
-    so a new delete needs a new run (and a new approval)."""
+    Only on the step's own stack, established from AWS state and never from a local file:
+    exactly the six resources of ``dms-step-1.yaml``, no other job's tag on the stack, and a
+    task whose identifier and tag name this job or, once the task is gone, a replication
+    instance or endpoint carrying this job's tag (or this job's stack tag). A stopped or failed
+    task is read until its stop settles (``_StopSettle``, #2366) before any delete. One
+    ``DeleteStack`` per run, and one more only when that delete fails because DMS still treated
+    the task as running (the ``ReplicationTask``'s ``DELETE_FAILED`` event says it "is
+    running"): the stop is settled again first. A stack already being deleted is only waited
+    on; any other ``DELETE_FAILED`` seen while waiting is reported, so a new delete needs a new
+    run (and a new approval)."""
     stack = _step_stack(clients, name)
     if stack is None:
         return {"status": "deleted", "stack_name": name, "already_deleted": True}
@@ -1984,16 +2082,24 @@ def _delete_step_stack(
                         "cannot delete a running replication task")  # fmt: skip
     # The stack checked above, by its id: a stack re-created under the same name is not it.
     stack_id = stack.get("StackId") or name
-    if stack["StackStatus"] != "DELETE_IN_PROGRESS":
-        if stack.get("EnableTerminationProtection"):
-            from src.tools.data_movement.stack_states import protection_message
+    deleting = stack["StackStatus"] == "DELETE_IN_PROGRESS"
+    if not deleting and stack.get("EnableTerminationProtection"):
+        from src.tools.data_movement.stack_states import protection_message
 
-            raise MoveError(f"teardown sends no delete: {protection_message(name)}")
+        raise MoveError(f"teardown sends no delete: {protection_message(name)}")
+    waited, settle_fields = 0, dict[str, Any]()
+    if not deleting and task is not None:
+        try:
+            task, waited, settle_fields = _settled_before_delete(clients, task, waited,
+                                                                 wait_seconds, interval, sleep)  # fmt: skip
+        except MoveError as exc:
+            raise MoveError(f"{exc}; teardown sent no delete for stack {name}") from None
+    if not deleting:
         clients.cloudformation.delete_stack(StackName=stack_id)
-    waited, state = 0, "DELETE_IN_PROGRESS"
+    state, retried = "DELETE_IN_PROGRESS", None
     # What DMS reported for the task when the delete was decided (gone: no such task).
     out = {"stack_name": name, "stack_id": stack_id, "already_deleted": False,
-           **_task_report(task)}  # fmt: skip
+           **_task_report(task), **settle_fields}  # fmt: skip
     while waited + interval <= wait_seconds:
         sleep(interval)
         waited += interval
@@ -2003,14 +2109,78 @@ def _delete_step_stack(
         _progress("teardown", f"stack is {state}", waited, wait_seconds)
         if state == "deleted":
             break
-        if state == "DELETE_FAILED":
+        if state != "DELETE_FAILED":
+            continue
+        refused = None if retried or task is None else _delete_refused_running(clients, current)
+        if refused is None or task is None:
             # Not an error: the same state status --until stack reports; a new delete needs a
             # new run and a new approval.
             return {"status": "delete_failed", **out, "reached": False, "waited_seconds": waited,
-                    "stack_reason": (current or {}).get("StackStatusReason")}  # fmt: skip
+                    "stack_reason": (current or {}).get("StackStatusReason"),
+                    **({"delete_retried": True, "first_delete_failure": retried}
+                       if retried else {})}  # fmt: skip
+        # DMS refused the delete as running although the task read stopped: settle the stop
+        # again, then delete once more (#2366).
+        retried = refused
+        _progress("teardown", "delete was refused: DMS still treated the task as running; "
+                  "waiting for the stop to settle, then deleting again", waited, wait_seconds)  # fmt: skip
+        try:
+            task, waited, settle_fields = _settled_before_delete(
+                clients, task, waited, wait_seconds, interval, sleep, fresh=True
+            )
+        except MoveError as exc:
+            return {"status": "delete_failed", **out, "reached": False, "waited_seconds": waited,
+                    "stack_reason": (current or {}).get("StackStatusReason"),
+                    "first_delete_failure": refused,
+                    "retry_refused": f"{exc}; teardown sent no second delete"}  # fmt: skip
+        out.update({**_task_report(task), **settle_fields})
+        clients.cloudformation.delete_stack(StackName=stack_id)
+        state = "DELETE_IN_PROGRESS"
     reached = state == "deleted"
     return {"status": "deleted" if reached else "deleting", **out, "reached": reached,
-            "waited_seconds": waited}  # fmt: skip
+            "waited_seconds": waited,
+            **({"delete_retried": True, "first_delete_failure": retried} if retried else {})}  # fmt: skip
+
+
+def _settled_before_delete(
+    clients: MoveClients,
+    task: dict[str, Any],
+    waited: int,
+    wait_seconds: int,
+    interval: int,
+    sleep: Callable[[float], None],
+    *,
+    fresh: bool = False,
+) -> tuple[dict[str, Any] | None, int, dict[str, Any]]:
+    """Teardown's wait before a delete (#2366): a task that never started has no stop to settle;
+    a stopped or failed one (``TASK_STOPPED``) is read until its stop settles. Refuses, sending no
+    delete, a task that runs again or that has not settled by the deadline."""
+    if task.get("Status") not in TASK_STOPPED:
+        return task, waited, {}
+    current, settle, waited = _settle(clients, task, "teardown", waited, wait_seconds, interval,
+                                      sleep, fresh=fresh)  # fmt: skip
+    if settle.done:
+        return current, waited, settle.fields()
+    if current is not None and current.get("Status") not in TASK_IDLE:
+        raise MoveError(f"{dms_reports(current)}: it read stopped, then running again; run stop "
+                        "first, then teardown (CloudFormation cannot delete a running "
+                        "replication task)")  # fmt: skip
+    raise MoveError(_not_settled(current, "run teardown again to finish the wait"))
+
+
+def _delete_refused_running(clients: MoveClients, stack: dict[str, Any] | None) -> str | None:
+    """The reason of a delete that failed because DMS still treated the task as running (the
+    ``ReplicationTask``'s failure in the latest operation says it "is running"); else None.
+    Read-only (``DescribeStackEvents``)."""
+    from src.tools.data_movement.stack_states import first_failure
+
+    if stack is None:
+        return None
+    failure = first_failure(_stack_events(clients, stack)) or {}
+    reason = str(failure.get("reason") or "")
+    if failure.get("logical_id") == "ReplicationTask" and DELETE_REFUSED_RUNNING.search(reason):
+        return reason
+    return None
 
 
 # --- Verify (#1998): optional scripts the customer runs; nothing connects to a database ---
