@@ -3,6 +3,7 @@
 
 import fs from 'fs';
 import path from 'path';
+import { formatFigure } from '../reportFacts';
 import { formatCount, formatMoney, formatMonthlyMoney, formatPercent, formatRate, formatShortId } from '../format';
 
 describe('formatMoney (#2309)', () => {
@@ -29,21 +30,23 @@ describe('formatMoney (#2309)', () => {
 });
 
 describe('formatRate (#2309)', () => {
-  it('keeps three significant digits below 100 and whole numbers above', () => {
-    expect(formatRate(8.2765)).toBe('8.28');
-    expect(formatRate(0.0042123)).toBe('0.00421');
-    expect(formatRate(29795.38)).toBe('29,795');
-    expect(formatRate(100.4)).toBe('100');
-    expect(formatRate(12.345)).toBe('12.3');
+  // A rate prints as the reports and the cost tiles print it (fmt_num, #2285),
+  // so a query table and its "Sized for ... calls/s" line never disagree.
+  it.each([185.07, 96.51, 0.0042, 12.345, 29795.38, 0, -0.001])('prints %p as formatFigure does', (value) => {
+    expect(formatRate(value)).toBe(formatFigure(value));
+  });
+
+  it('pins the values the reports print', () => {
+    expect(formatRate(185.07)).toBe('185.07');
+    expect(formatRate(96.51)).toBe('96.51');
+    expect(formatRate(0.0042)).toBe('<0.01');
+    expect(formatRate(29795.38)).toBe('29,795.38');
   });
 
   it('reads a missing amount as a dash', () => {
     expect(formatRate(null)).toBe('—');
     expect(formatRate(undefined)).toBe('—');
-  });
-
-  it('prints zero as 0', () => {
-    expect(formatRate(0)).toBe('0');
+    expect(formatRate('abc')).toBe('—');
   });
 });
 
@@ -68,7 +71,9 @@ describe('formatPercent, formatCount, formatShortId (#2309)', () => {
 
 // The rule the issue asks for: new figures go through format.js, not toFixed.
 // The counts below are the calls that existed when the formatter arrived; a
-// file may only go down. Lower a count when you move a call to format.js.
+// file may only go down. Lower a count when you move a call to format.js: the
+// test that fails when a call is gone but its count is still listed is meant to
+// make you do that in the same change, it is not a bug.
 describe('toFixed is not spreading (#2309)', () => {
   const ALLOWED = {
     'components/QueryDecisionTrace.js': 1,

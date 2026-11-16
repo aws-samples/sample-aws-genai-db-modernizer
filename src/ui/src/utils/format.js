@@ -5,13 +5,13 @@
 // never how it is computed: the figures come from the report facts (ADR-032).
 // An absent or non-numeric value prints as a dash, never "NaN" or "$NaN".
 
+import { formatFigure } from './reportFacts';
+
 export const NO_FIGURE = '—';
 
 const MONEY = new Intl.NumberFormat('en-US', { style: 'currency', currency: 'USD' });
 const WHOLE_MONEY = new Intl.NumberFormat('en-US', { style: 'currency', currency: 'USD', maximumFractionDigits: 0 });
 const COUNT = new Intl.NumberFormat('en-US');
-const RATE_SMALL = new Intl.NumberFormat('en-US', { maximumSignificantDigits: 3 });
-const RATE_LARGE = new Intl.NumberFormat('en-US', { maximumFractionDigits: 0 });
 
 function numberOrNull(value) {
   if (value === null || value === undefined || value === '') return null;
@@ -32,11 +32,13 @@ export function formatMonthlyMoney(value, options) {
   return text === NO_FIGURE ? text : `${text}/mo`;
 }
 
-/** A rate: whole numbers from 100 up ("29,795"), three significant digits below ("8.28"). */
+/**
+ * A rate as the reports and the cost tiles print it (`formatFigure`, the twin of
+ * the deliverables' `fmt_num`): "185.07", "29,795.38", "<0.01".
+ */
 export function formatRate(value) {
   const n = numberOrNull(value);
-  if (n === null) return NO_FIGURE;
-  return (Math.abs(n) >= 100 ? RATE_LARGE : RATE_SMALL).format(n);
+  return n === null ? NO_FIGURE : formatFigure(n);
 }
 
 /** "44.3%" (one decimal by default). */
