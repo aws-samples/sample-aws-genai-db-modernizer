@@ -331,7 +331,7 @@ jobs:
         uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
         with:
           path: ~/.cache/db-modernizer-security
-          key: security-${{ runner.os }}-${{ hashFiles('ci/security.toml', 'ci/semgrep-requirements.txt') }}
+          key: security-${{ runner.os }}-${{ hashFiles('ci/security.toml', 'ci/semgrep-requirements.txt', 'ci/semgrep-overrides.txt') }}
       - name: Security scan (semgrep, gitleaks, bandit)
         # The one entry point (#1844): the same script, rules and versions as the
         # pre-commit hook and ci/pre_merge.sh, here over every tracked file.
