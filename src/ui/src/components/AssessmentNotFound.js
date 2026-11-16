@@ -12,15 +12,15 @@ import Container from '@cloudscape-design/components/container';
 import Header from '@cloudscape-design/components/header';
 import SideNavigation from '@cloudscape-design/components/side-navigation';
 import SpaceBetween from '@cloudscape-design/components/space-between';
+import StatusIndicator from '@cloudscape-design/components/status-indicator';
 import AppHeader from './AppHeader';
 import { SideNavigationConfigurations } from '../config/GlobalConfigurations';
 
-// The one not-found state of every job route (#2307).
-export default function AssessmentNotFound({ jobId }) {
+// The page chrome both states share: header, navigation and a breadcrumb that
+// ends on the page the reader is on.
+function JobRouteShell({ lastCrumb, children }) {
   const { t } = useTranslation();
-  const navigate = useNavigate();
   const [navigationOpen, setNavigationOpen] = useState(false);
-
   return (
     <>
       <div id="top-nav">
@@ -43,20 +43,51 @@ export default function AssessmentNotFound({ jobId }) {
             items={[
               { href: '/', text: t('dashboard.breadcrumb.home') },
               { href: '/dashboard', text: t('dashboard.breadcrumb.dashboard') },
+              { href: '#', text: lastCrumb },
             ]}
           />
         }
-        content={
-          <Container header={<Header variant="h1">{t('assessment-not-found.title')}</Header>}>
-            <SpaceBetween size="m">
-              <Box>{t('assessment-not-found.body', { id: jobId })}</Box>
-              <Button variant="primary" onClick={() => navigate('/dashboard')}>
-                {t('assessment-not-found.go-to-assessments')}
-              </Button>
-            </SpaceBetween>
-          </Container>
-        }
+        content={children}
       />
     </>
+  );
+}
+
+// Shown while a job route's lookup is pending (#2307), so the page is never blank.
+export function AssessmentLookupPending() {
+  const { t } = useTranslation();
+  return (
+    <JobRouteShell lastCrumb={t('assessment-lookup.breadcrumb')}>
+      <Container>
+        <div role="status">
+          <StatusIndicator type="loading">{t('assessment-lookup.loading')}</StatusIndicator>
+        </div>
+      </Container>
+    </JobRouteShell>
+  );
+}
+
+// The one not-found state of every job route (#2307).
+export default function AssessmentNotFound({ jobId }) {
+  const { t } = useTranslation();
+  const navigate = useNavigate();
+  return (
+    <JobRouteShell lastCrumb={t('assessment-not-found.breadcrumb')}>
+      <Container header={<Header variant="h1">{t('assessment-not-found.title')}</Header>}>
+        <SpaceBetween size="m">
+          <Box>{t('assessment-not-found.body', { id: jobId })}</Box>
+          <Button
+            variant="primary"
+            href="/dashboard"
+            onFollow={(event) => {
+              event.preventDefault();
+              navigate('/dashboard');
+            }}
+          >
+            {t('assessment-not-found.go-to-assessments')}
+          </Button>
+        </SpaceBetween>
+      </Container>
+    </JobRouteShell>
   );
 }
