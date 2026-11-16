@@ -14,7 +14,9 @@ one SQL query over it (``src/tools/invariants/checks.py``). The queries check; t
 decide nothing.
 
 Prints one compact JSON line: ``status`` (``pass`` or ``fail``), the job, each check's
-``status`` / ``checked`` / ``failed`` counts, the first lines of each failing check, and
+``status`` / ``checked`` / ``failed`` / ``warned`` counts, the first lines of each failing
+check, the first lines of each warning (a legacy exception the ADR allows, which does not
+fail the job), and
 ``legacy`` (what an older artifact did not record). ``--out`` also writes that object to
 a file, and ``--duckdb`` keeps the loaded database in a file for ad-hoc queries. Exits 0
 when every check passes or has nothing to check, 1 when one fails, 2 when the job
@@ -52,10 +54,16 @@ def check_job(job_dir: Path, database: str = ":memory:") -> dict:
         "status": "fail" if failing else "pass",
         "job": f"{job_dir.parent.name}/{job_dir.name}",
         "checks": {
-            r["name"]: {"status": r["status"], "checked": r["checked"], "failed": r["failed"]}
+            r["name"]: {
+                "status": r["status"],
+                "checked": r["checked"],
+                "failed": r["failed"],
+                "warned": r["warned"],
+            }
             for r in results
         },
         "failures": {r["name"]: r["examples"] for r in failing},
+        "warnings": {r["name"]: r["warnings"] for r in results if r["warnings"]},
         "legacy": tables.legacy,
     }
 

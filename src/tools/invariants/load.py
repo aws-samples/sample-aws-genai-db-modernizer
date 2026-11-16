@@ -19,10 +19,14 @@ pipeline's own guards use (``split_invariant``, ``design_coverage``).
 Older artifacts load (CONTRIBUTING.md, "Renaming an id or an enum value"): a file kept
 compressed (``<name>.gz``, as the saved replay fixtures keep them) is read decompressed;
 an engine id an older artifact spelt differently is mapped with ``canonical_engine_id``;
-an assignment written before the move ledger (no ``moves``), write groups (no
-``write_groups``) or routine units (no ``routine_units``) loads with that fact absent,
-the same way the product reads it, and :func:`load_job` lists each such gap in
-``JobTables.legacy``.
+an assignment written before write groups (no ``write_groups``) or routine units (no
+``routine_units``) loads with that fact absent, the same way the product reads it, and
+:func:`load_job` lists each such gap in ``JobTables.legacy``. Only an assignment saved
+before the move ledger (no ``contract_version``, or one below 1.15) may lack ``moves``;
+a versioned one without them is loaded as having recorded none, which the ledger check
+reports (the review of #2370). A version saved before contract 1.26 is marked
+``units_legacy``, as ``assignment_validator.saved_before_units`` decides, so a split it
+already had is a warning, as the validator's legacy baseline makes it.
 """
 
 from __future__ import annotations
@@ -41,10 +45,13 @@ _VERSION_DIR = re.compile(r"^v(\d+)$")
 
 # One table per saved fact: name -> column definitions. The checks read only these.
 SCHEMA: dict[str, str] = {
-    "versions": "version INTEGER, previous_version INTEGER, has_moves BOOLEAN",
+    "versions": (
+        "version INTEGER, previous_version INTEGER, has_moves BOOLEAN, contract VARCHAR, "
+        "ledger_legacy BOOLEAN, units_legacy BOOLEAN"
+    ),
     "query_assignments": (
         "version INTEGER, query_id VARCHAR, engine VARCHAR, in_scope BOOLEAN, "
-        "tied VARCHAR, cache_engine VARCHAR"
+        "tied VARCHAR, cache_engine VARCHAR, customer_override BOOLEAN"
     ),
     "unservable": "version INTEGER, query_id VARCHAR",
     "moves": "version INTEGER, seq INTEGER, query_id VARCHAR, to_engine VARCHAR, tied VARCHAR",
@@ -76,6 +83,20 @@ SCHEMA: dict[str, str] = {
     "report_ranking": "version INTEGER, engine VARCHAR, in_scope_queries INTEGER",
     "report_open_risks": "version INTEGER, severity VARCHAR, risk_count INTEGER",
 }
+
+
+#: The contract version every assignment has recorded ``moves`` since (#616): a file
+#: with no ``contract_version``, or a lower one, predates the move ledger.
+LEDGER_SINCE = (1, 15)
+
+
+def _before(contract: str | None, since: tuple[int, int]) -> bool:
+    """Whether ``contract`` (``MAJOR.MINOR``) is absent, unreadable or below ``since``."""
+    try:
+        major, minor = (int(p) for p in str(contract or "").split(".", 1))
+    except ValueError:
+        return True
+    return (major, minor) < since
 
 
 @dataclass
@@ -210,6 +231,7 @@ def _load_statements(rows: _Rows, collector: Mapping[str, Any]) -> None:
 def _load_assignment(
     rows: _Rows, version: int, a: Mapping[str, Any], collector: Mapping, legacy: list[str]
 ) -> None:
+    from src.agents.referee.assignment_validator import saved_before_units
     from src.agents.referee.routine_units import records_routine_units, routine_units_of
     from src.agents.referee.write_groups import assignment_placement_groups
     from src.agents.schema_design.placement_units import unit_id_of
@@ -217,9 +239,19 @@ def _load_assignment(
 
     prev = a.get("previous_version")
     has_moves = "moves" in a
-    if not has_moves:
+    contract = str(a["contract_version"]) if a.get("contract_version") else None
+    ledger_legacy = _before(contract, LEDGER_SINCE)
+    if not has_moves and ledger_legacy:
         legacy.append(f"assignment v{version}: no moves (saved before the move ledger)")
-    rows.add("versions", version, int(prev) if prev is not None else None, has_moves)
+    rows.add(
+        "versions",
+        version,
+        int(prev) if prev is not None else None,
+        has_moves,
+        contract,
+        ledger_legacy,
+        saved_before_units(dict(a)),
+    )
     for qa in a.get("query_assignments") or []:
         if not isinstance(qa, Mapping):
             continue
@@ -231,6 +263,7 @@ def _load_assignment(
             qa.get("in_scope", True) is not False,
             _tied(qa.get("tied_engines")),
             _engine(qa.get("cache_engine")),
+            qa.get("customer_override") is True,
         )
     for u in a.get("unservable_queries") or []:
         rows.add("unservable", version, _qid(u))
@@ -268,15 +301,25 @@ def _load_assignment(
             rows.add("table_roles", version, "assignment", tid, "write_engine", _engine(e))
 
 
-def _design_query_ids(design: Mapping[str, Any]) -> list[str]:
-    """The statements a design's access patterns name, as served (``in_scope`` not false):
-    ``query_ids`` (DynamoDB, OpenSearch) and ``source_query_ids`` (the others)."""
+def _design_query_ids(engine: str | None, design: Mapping[str, Any]) -> list[str]:
+    """The statements a design serves, read as the product's coverage check reads them
+    (``scope.covered_query_ids``): its access patterns' ``query_ids`` (DynamoDB,
+    OpenSearch) and ``source_query_ids`` (the others), an access pattern marked
+    ``in_scope: false`` serving none, and for DocumentDB its collections' indexes'
+    ``source_query_ids`` too."""
     ids: list[str] = []
     for ap in design.get("access_patterns") or []:
         if not isinstance(ap, Mapping) or ap.get("in_scope") is False:
             continue
         for key in ("query_ids", "source_query_ids"):
             ids.extend(str(q) for q in ap.get(key) or [])
+    if engine == "documentdb":
+        for collection in design.get("collections") or []:
+            if not isinstance(collection, Mapping):
+                continue
+            for index in collection.get("indexes") or []:
+                if isinstance(index, Mapping):
+                    ids.extend(str(q) for q in index.get("source_query_ids") or [])
     return list(dict.fromkeys(ids))
 
 
@@ -294,7 +337,7 @@ def _load_designs(rows: _Rows, job_dir: Path) -> None:
                 and "access_patterns" in design
             ):
                 rows.add("designs", engine, version)
-                for qid in _design_query_ids(design):
+                for qid in _design_query_ids(engine, design):
                     rows.add("design_names", engine, version, qid)
                 for q in design.get("excluded_queries") or []:
                     rows.add("design_excluded", engine, version, _qid(q))
