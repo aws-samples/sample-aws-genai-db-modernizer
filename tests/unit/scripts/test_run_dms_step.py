@@ -2882,7 +2882,7 @@ def test_resume_starts_a_stopped_task_whose_full_load_finished_and_waits_until_i
 
 
 @pytest.mark.parametrize(("stats", "state", "why"), [
-    (PART_LOADED, "Table completed", "its full load started"),
+    (PART_LOADED, "Table completed", "its full load made progress"),
     ({"ReplicationTaskStats": {"FullLoadProgressPercent": 100}}, "Table completed",
      "its full load made progress"),  # no FullLoadFinishDate: not proven finished
     (LOADED, "Full load", "shop.orders is Full load"),
@@ -3019,7 +3019,8 @@ def test_retry_reloads_a_task_whose_full_load_never_started_and_waits_until_it_r
     _job(tmp_path)
     cred = StubbedCredMgr()
     _owned_task(cred, status, **GRANTS, **stats)
-    _loaded(cred, ("shop", "orders", 0, 0), ("shop", "customers", 0, 0), pages=2)
+    _loaded(cred, ("shop", "orders", 0, 0), ("shop", "customers", 0, 0), pages=2,
+            state="Before load")  # fmt: skip
     _start(cred, "reload-target")
     _poll_task(cred, "starting")
     _poll_task(cred, "running")
@@ -3045,7 +3046,7 @@ def test_a_retry_that_reads_failed_until_the_deadline_is_reported_failed(tmp_pat
     _job(tmp_path)
     cred = StubbedCredMgr()
     _owned_task(cred, "failed", **GRANTS)
-    _loaded(cred, ("shop", "orders", 0, 0))
+    _loaded(cred, ("shop", "orders", 0, 0), state="Before load")
     _start(cred, "reload-target")
     for _ in range(2):
         _poll_task(cred, "failed", **GRANTS)
@@ -3056,17 +3057,23 @@ def test_a_retry_that_reads_failed_until_the_deadline_is_reported_failed(tmp_pat
 
 
 @pytest.mark.parametrize(("status", "stats", "rows", "counters", "why"), [
-    # DMS restarts its table statistics on a reload: a started full load refuses at 0 rows.
-    ("failed", LOADED, (("shop", "orders", 0, 0),), {}, "its full load started"),
-    ("stopped", PART_LOADED, (("shop", "orders", 0, 0),), {}, "its full load started"),
+    # DMS restarts its table statistics on a reload: a full load that made progress refuses at
+    # 0 rows.
+    ("failed", LOADED, (("shop", "orders", 0, 0),), {}, "its full load made progress"),
+    ("stopped", PART_LOADED, (("shop", "orders", 0, 0),), {}, "its full load made progress"),
     ("failed", {}, (("shop", "orders", 10, 0),), {}, "shop.orders FullLoadRows is 10"),
     ("failed", {}, (("shop", "orders", 0, 3),), {}, "shop.orders Inserts is 3"),
     ("failed", {}, (("shop", "orders", 0, 0),), {"Updates": 2}, "shop.orders Updates is 2"),
     ("failed", {}, (("shop", "orders", 0, 0),), {"AppliedDeletes": 1}, "AppliedDeletes is 1"),
     ("failed", {}, (("shop", "orders", 0, 0),), {"Ddls": 1}, "shop.orders Ddls is 1"),
     ("failed", {}, (("shop", "orders", 0, 0),), {"FullLoadErrorRows": 4}, "FullLoadErrorRows"),
-    ("failed", {}, (("shop", "orders", 0, 0),), {"FullLoadReloaded": True}, "shop.orders was loaded"),
-    ("failed", {}, (("shop", "orders", 0, 0),), {"FullLoadStartTime": HOUR_AGO}, "was loaded"),
+    ("failed", {}, (("shop", "orders", 0, 0),), {"FullLoadReloaded": True},
+     "shop.orders was reloaded"),
+    # A table past Before load refuses at 0 rows (#2365), named by its state.
+    ("failed", {}, (("shop", "orders", 0, 0),), {"TableState": "Table completed"},
+     "shop.orders is Table completed"),
+    ("failed", {}, (("shop", "orders", 0, 0),), {"TableState": "Table error"},
+     "shop.orders is Table error"),
     ("failed", {"ReplicationTaskStats": {"TablesLoaded": 1}}, (("shop", "orders", 0, 0),), {},
      "TablesLoaded is 1"),
 ])  # fmt: skip
@@ -3076,7 +3083,7 @@ def test_retry_refuses_a_task_that_may_have_written_to_aurora_and_prints_the_cus
     _job(tmp_path)
     cred = StubbedCredMgr()
     _owned_task(cred, status, **GRANTS, **stats)
-    _loaded(cred, *rows, ("shop", "customers", 0, 0), **counters)
+    _loaded(cred, *rows, ("shop", "customers", 0, 0), state="Before load", **counters)
     code, out = _cli(tmp_path, capsys, cred, "retry")
     assert code == 1 and out["status"] == "error" and out["kind"] == "target_may_hold_rows"
     assert why in out["message"] and "never connects to your databases" in out["message"]
@@ -3103,6 +3110,108 @@ def test_retry_with_no_table_statistics_names_the_steps_tables_in_words(tmp_path
     assert code == 1 and out["kind"] == "target_may_hold_rows" and out["tables_to_empty"] == []
     assert any("every table step-1.ddl.sql created" in s for s in out["customer_steps"])
     assert not any("TRUNCATE" in s for s in out["customer_steps"])
+    _no_pending(cred)
+
+
+# #2365: a task that failed at once (the Discourse rehearsal's control-schema denial). DMS set
+# the task's FullLoadStartDate, and gave every table the epoch as its FullLoadStartTime, but
+# every table was still Before load with 0 rows, inserts and updates.
+EPOCH = datetime(1970, 1, 1, tzinfo=UTC)
+FAILED_AT_ONCE = {"ReplicationTaskStats": {
+    "FullLoadProgressPercent": 0, "ElapsedTimeMillis": 0, "TablesLoaded": 0, "TablesLoading": 0,
+    "TablesQueued": 3, "TablesErrored": 0, "FreshStartDate": HOUR_AGO, "StartDate": HOUR_AGO,
+    "StopDate": HOUR_AGO, "FullLoadStartDate": HOUR_AGO, "FullLoadFinishDate": HOUR_AGO}}  # fmt: skip
+FATAL = {"LastFailureMessage": "Last Error ;\n Stream Component Fatal error. Stop Reason "
+                               "FATAL_ERROR Error Level FATAL",
+         "StopReason": "Last Error ;\n Stream Component Fatal error. Stop Reason FATAL_ERROR "
+                       "Error Level FATAL"}  # fmt: skip
+
+
+def _before_load(table, state="Before load", rows=0, **counters):
+    return {"SchemaName": "public", "TableName": table, "TableState": state, "FullLoadRows": rows,
+            "Inserts": 0, "Updates": 0, "Deletes": 0, "AppliedInserts": 0, "AppliedUpdates": 0,
+            "FullLoadStartTime": EPOCH, "FullLoadEndTime": EPOCH, "FullLoadReloaded": False,
+            **counters}  # fmt: skip
+
+
+def _table_stats(cred, rows):
+    cred.stub("dms").add_response(
+        "describe_table_statistics", {"ReplicationTaskArn": TASK, "TableStatistics": rows},
+        {"ReplicationTaskArn": TASK},
+    )  # fmt: skip
+
+
+AT_ONCE_TABLES = ("plugin_store_rows", "llm_quotas", "posts")
+
+
+def test_retry_reloads_a_task_that_failed_before_any_table_loaded(tmp_path, capsys):
+    _job(tmp_path)
+    _pg_plan(tmp_path)
+    cred = StubbedCredMgr()
+    _owned_task(cred, "failed", **FATAL, **FAILED_AT_ONCE)
+    _table_stats(cred, [_before_load(t) for t in AT_ONCE_TABLES])
+    _start(cred, "reload-target")
+    _poll_task(cred, "running")
+    code, out = _cli(tmp_path, capsys, cred, "retry")
+    assert code == 0 and out["status"] == "retried" and out["tables_checked"] == 3
+    _no_pending(cred)
+
+
+def test_the_prove_line_offers_retry_for_a_task_that_failed_before_any_table_loaded(
+    tmp_path, capsys
+):
+    _job(tmp_path)
+    _pg_plan(tmp_path)
+    cred = StubbedCredMgr()
+    _failed_status(cred, stats=FAILED_AT_ONCE["ReplicationTaskStats"],
+                   tables=[_before_load(t) for t in AT_ONCE_TABLES], **FATAL)  # fmt: skip
+    _status_cli(tmp_path, cred)
+    out = _lines(capsys)[-1]
+    assert out["phase"] == "task_stopped" and out["recovery"] == "retry"
+    assert "recovery_refused" not in out and "customer_steps" not in out
+    _no_pending(cred)
+
+
+def test_retry_refuses_when_one_table_loaded_rows_and_names_only_that_table(tmp_path, capsys):
+    _job(tmp_path)
+    _pg_plan(tmp_path)
+    cred = StubbedCredMgr()
+    _owned_task(cred, "failed", **FATAL, **FAILED_AT_ONCE)
+    _table_stats(cred, [_before_load("plugin_store_rows"), _before_load("llm_quotas"),
+                        _before_load("posts", state="Before load", rows=9)])  # fmt: skip
+    code, out = _cli(tmp_path, capsys, cred, "retry")
+    assert code == 1 and out["kind"] == "target_may_hold_rows"
+    message = out["message"]
+    assert "public.posts FullLoadRows is 9" in message
+    # The tables with no row are named by their state only (an unfinished load), never as
+    # loaded and never by a counter.
+    for table in ("public.plugin_store_rows", "public.llm_quotas"):
+        assert f"{table} is Before load" in message
+        assert f"{table} was" not in message and f"{table} FullLoad" not in message
+    assert "loaded" not in message and "its full load started" not in message
+    _no_pending(cred)  # no start of any kind
+
+
+def test_retry_refuses_a_mix_of_table_states_naming_each_by_what_it_shows(tmp_path, capsys):
+    _job(tmp_path)
+    _pg_plan(tmp_path)
+    cred = StubbedCredMgr()
+    _owned_task(cred, "failed", **FATAL, **FAILED_AT_ONCE)
+    _table_stats(cred, [_before_load("plugin_store_rows"),
+                        _before_load("llm_quotas", state="Table completed"),
+                        _before_load("posts", state="Full load", Inserts=4),
+                        _before_load("topics", FullLoadReloaded=True)])  # fmt: skip
+    code, out = _cli(tmp_path, capsys, cred, "retry")
+    assert code == 1 and out["kind"] == "target_may_hold_rows"
+    message = out["message"]
+    assert "public.llm_quotas is Table completed" in message
+    assert "public.posts Inserts is 4" in message and "public.posts is Full load" in message
+    assert "public.topics was reloaded" in message
+    assert "was loaded" not in message  # a table with 0 rows is never named loaded
+    # The Before load table is named by its state only, never as loaded or by a counter.
+    assert "public.plugin_store_rows is Before load" in message
+    assert "public.plugin_store_rows was" not in message
+    assert "public.plugin_store_rows FullLoad" not in message
     _no_pending(cred)
 
 
