@@ -25,7 +25,9 @@
 
 [semgrep]
 # The engine's version; it and every dependency are pinned with hashes in
-# ci/semgrep-requirements.txt (the file's header says how to regenerate it).
+# ci/semgrep-requirements.txt (the file's header says how to regenerate it). The
+# opentelemetry packages are raised past semgrep's own pins by ci/semgrep-overrides.txt
+# (known denial of service in opentelemetry-api before 1.45.2).
 version = "1.183.0"
 # SHA-256 over every listed rule file (source, path, bytes). A run refuses rule files that
 # don't match it. After moving a commit or changing a list, write the value that
