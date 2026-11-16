@@ -113,6 +113,20 @@ def md_text(value: Any) -> str:
     return "".join(out)
 
 
+def md_cell_text(value: Any) -> str:
+    """Escape untrusted text for a **Markdown table cell** (#1801 review).
+
+    :func:`md_cell` keeps a value inside its cell but leaves link, image and emphasis
+    syntax live, so ``![x](http://e/x.png)`` in a cell is a remote image fetch. This
+    applies :func:`md_text` (newlines, inline HTML, the backslash, backticks and
+    ``[ ] ( ) ! * _``, each escaped once) and then escapes the pipe, inside a code span
+    too: GFM splits a table row on a pipe even there, and ``\\|`` is its escape. Use it
+    for a cell that holds collection, DMS or model text; :func:`md_cell` remains for a
+    cell whose markup is the renderer's own.
+    """
+    return md_text(value).replace("|", "\\|")
+
+
 def md_code(value: Any) -> str:
     """Escape a value rendered inside an **inline code span** (`` `...` ``).
 

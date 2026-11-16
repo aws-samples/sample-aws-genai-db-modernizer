@@ -421,3 +421,28 @@ def test_md_text_with_ids_quotes_access_pattern_ids_only_when_asked() -> None:
     assert md_text_with_ids(text, {qid}).startswith("DDB-AP-15 / wp\\_x \\(query `7ead756f`")
     assert md_text_with_ids("DDB-AP-1", set(), pattern_ids=True) == "`DDB-AP-1`"
     assert md_text_with_ids("DDB-AP-1", set()) == "DDB-AP-1"
+
+
+# #1801 review: a table cell that holds untrusted text needs md_text's link, image and
+# emphasis escaping as well as md_cell's pipe escaping, with each backslash escaped once.
+
+
+@pytest.mark.parametrize(
+    ("raw", "cell"),
+    [
+        ("![x](http://e/x.png)", "\\!\\[x\\]\\(http://e/x.png\\)"),
+        ("[click](http://e)", "\\[click\\]\\(http://e\\)"),
+        ("No | primary *key*", "No \\| primary \\*key\\*"),
+        ("snake_case", "snake\\_case"),
+        ("a\\b", "a\\\\b"),
+        ("<b>x</b>", "&lt;b&gt;x&lt;/b&gt;"),
+        ("one\ntwo", "one two"),
+        ("lone ` tick", "lone \\` tick"),
+    ],
+)
+def test_md_cell_text_escapes_markup_and_pipes_once(raw: str, cell: str) -> None:
+    assert escaping.md_cell_text(raw) == cell
+
+
+def test_md_cell_text_keeps_a_pipe_in_a_code_span_inside_its_cell() -> None:
+    assert escaping.md_cell_text("`a|b` c") == "`a\\|b` c"

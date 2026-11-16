@@ -4811,15 +4811,32 @@ def routing_detail_facts(
 STEP_GATE_FILE = "data-movement/step-1/gate.json"
 #: The findings the deliverables list; the rest are counted (``gate_findings_not_shown``).
 STEP_GATE_FINDINGS = 20
-# nosec B105 below: "pass" is the gate's status value, not a password.
-STEP_GATE_STATUS_TEXT = {"pass": "Passed", "pending": "Pending", "fail": "Failed"}  # nosec B105
+STEP_GATE_STATUS_TEXT = {
+    "pass": "Passed",  # nosec B105 -- "pass" is a gate status, not a password
+    "pending": "Pending",
+    "fail": "Failed",
+}
 #: What a gate that has not passed says instead of ``REPLICATING_MESSAGE``: no claim either way.
 STEP_GATE_PENDING_LINE = "The gate has not passed yet: some of its evidence is still arriving."
 STEP_GATE_FAIL_LINE = "The gate did not pass: the findings below name each check that did not."
+#: The same lines for a deliverable that lists no finding, table or exception (the executive
+#: report, #1801 review): they point to the engineering report, never "below".
+STEP_GATE_FAIL_LINE_BRIEF = (
+    "The gate did not pass: the engineering report names each check that did not."
+)
+STEP_GATE_EXCEPTIONS_LISTED = "listed below"
+STEP_GATE_EXCEPTIONS_LISTED_BRIEF = "named in the engineering report"
+#: A gate value a newer gate contract adds before these maps name it reads generically
+#: rather than dropping the whole block (the maps are held to the contract by a test).
+STEP_GATE_GENERIC_EXCEPTION_TEXT = "Named exception"
 STEP_GATE_CHECK_TEXT = {"load": "Full load", "lag": "Lag", "parity": "Validation",
                         "routines": "Routines"}  # fmt: skip
-STEP_GATE_TABLE_TEXT = {"pass": "Validated", "pending": "Validating", "fail": "Validation failed",  # nosec B105
-                        "exception": "Named exception"}  # fmt: skip
+STEP_GATE_TABLE_TEXT = {
+    "pass": "Validated",  # nosec B105 -- "pass" is a gate status, not a password
+    "pending": "Validating",
+    "fail": "Validation failed",
+    "exception": "Named exception",
+}
 STEP_GATE_EXCEPTION_TEXT = {
     "table": "Not validated",
     "view": "View, not validated",
@@ -4858,7 +4875,7 @@ def _lag_line(window: int, limit: int, source: str | None, target: str | None) -
 
 
 def _validation_line(keyed: int, validated: int, validating: int, failed: int,
-                     exceptions: int) -> str:  # fmt: skip
+                     exceptions: int, listed: str = STEP_GATE_EXCEPTIONS_LISTED) -> str:  # fmt: skip
     if keyed:
         line = f"{validated} of {keyed} {_gate_noun(keyed, 'table', 'tables')} with a key validated"
     else:
@@ -4867,7 +4884,9 @@ def _validation_line(keyed: int, validated: int, validating: int, failed: int,
              f"{failed} with validation failures" if failed else ""]  # fmt: skip
     line += "".join(f"; {e}" for e in extra if e) + "."
     if exceptions:
-        line += f" {exceptions} named {_gate_noun(exceptions, 'exception', 'exceptions')}, listed below."
+        line += (
+            f" {exceptions} named {_gate_noun(exceptions, 'exception', 'exceptions')}, {listed}."
+        )
     return line
 
 
@@ -4902,7 +4921,7 @@ def step_gate_facts(gate: Mapping[str, Any] | None) -> dict[str, Any] | None:
     verdicts = [t.status for t in g.tables]
     keyed = len([v for v in verdicts if v != "exception"])
     validated, validating, failed = (verdicts.count(s) for s in ("pass", "pending", "fail"))
-    findings = [{"check": c.id, "check_text": STEP_GATE_CHECK_TEXT[c.id], "text": r}
+    findings = [{"check": c.id, "check_text": STEP_GATE_CHECK_TEXT.get(c.id, c.id.capitalize()), "text": r}
                 for c in g.checks for r in c.reasons]  # fmt: skip
     at = g.checked_at.astimezone(UTC) if g.checked_at.tzinfo else g.checked_at.replace(tzinfo=UTC)
     result = {"pass": REPLICATING_MESSAGE, "pending": STEP_GATE_PENDING_LINE,
@@ -4915,7 +4934,7 @@ def step_gate_facts(gate: Mapping[str, Any] | None) -> dict[str, Any] | None:
             "failed_records": t.validation_failed_records,
             "suspended_records": t.validation_suspended_records,
             "status": t.status,
-            "status_text": STEP_GATE_TABLE_TEXT[t.status],
+            "status_text": STEP_GATE_TABLE_TEXT.get(t.status, t.status.capitalize()),
         }
         for t in g.tables
     ]
@@ -4924,7 +4943,7 @@ def step_gate_facts(gate: Mapping[str, Any] | None) -> dict[str, Any] | None:
             "table": e.table,
             "column": e.column,
             "kind": e.kind,
-            "kind_text": STEP_GATE_EXCEPTION_TEXT[e.kind],
+            "kind_text": STEP_GATE_EXCEPTION_TEXT.get(e.kind, STEP_GATE_GENERIC_EXCEPTION_TEXT),
             "reason": e.reason,
             "rows_loaded": e.rows_loaded,
         }
@@ -4938,7 +4957,7 @@ def step_gate_facts(gate: Mapping[str, Any] | None) -> dict[str, Any] | None:
         {
             "step": g.step,
             "status": g.status,
-            "status_text": STEP_GATE_STATUS_TEXT[g.status],
+            "status_text": STEP_GATE_STATUS_TEXT.get(g.status, g.status.capitalize()),
             "result_line": result,
             "read_at": at.strftime("%Y-%m-%dT%H:%M:%SZ"),
             "read_at_text": at.strftime("%Y-%m-%d %H:%M UTC"),
@@ -4959,6 +4978,15 @@ def step_gate_facts(gate: Mapping[str, Any] | None) -> dict[str, Any] | None:
             "exception_count": len(exceptions),
             "validation_line": _validation_line(
                 keyed, validated, validating, failed, len(exceptions)
+            ),
+            "brief_result_line": STEP_GATE_FAIL_LINE_BRIEF if g.status == "fail" else result,
+            "brief_validation_line": _validation_line(
+                keyed,
+                validated,
+                validating,
+                failed,
+                len(exceptions),
+                STEP_GATE_EXCEPTIONS_LISTED_BRIEF,
             ),
             "gate_tables": tables,
             "named_exceptions": exceptions,
