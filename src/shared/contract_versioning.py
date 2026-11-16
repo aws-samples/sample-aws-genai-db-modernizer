@@ -475,8 +475,10 @@ INTERNAL_ARTIFACTS: tuple[tuple[str, str], ...] = (
     # Job bookkeeping
     (
         r"^[^/]+/[^/]+/_meta\.json",
-        "the local API runner's own job record (start time, request input), read only by "
-        "the local API and its stored-input redaction, never by a phase",
+        "a job's own record (start time, and the request input when the local API started it), "
+        "written by the local API runner and by run_assessment.py's collect phase, read only "
+        "by the local API, its stored-input redaction and the collector's engines_in_use "
+        "lookup, never as a phase's input",
     ),
     (
         r"^[^/]+/[^/]+/_status\.json",
