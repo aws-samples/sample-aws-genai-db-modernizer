@@ -2727,6 +2727,30 @@ def query_move_facts(report: dict[str, Any], engines: list[dict[str, Any]]) -> d
     return {"in_scope_query_count": in_scope, "moving_query_count": moving}
 
 
+def engine_query_count_facts(
+    report: dict[str, Any], engines: list[dict[str, Any]]
+) -> dict[str, int]:
+    """Each owner engine's final in-scope query count (#2358), left out when it owns none.
+
+    From the ranking, which follows the final assignment version (a later ``--auto``
+    pick or post-schema reroute included), never ``reality_check.after_distribution``,
+    which is the reality check's own result. The same counts ``query_move_facts`` totals.
+    """
+    counts: dict[str, int] = {}
+    for r in report.get("ranking") or []:
+        if not isinstance(r, dict) or not r.get("target"):
+            continue
+        n = r.get("assigned_queries_in_scope", r.get("assigned_queries"))
+        if isinstance(n, int) and not isinstance(n, bool):
+            counts[str(r["target"])] = n
+    out: dict[str, int] = {}
+    for e in engines:
+        n = counts.get(str(e.get("engine")), 0)
+        if _owns_queries(e) and n:
+            out[str(e["engine"])] = n
+    return out
+
+
 def query_total_facts(report: dict[str, Any], in_scope_query_count: int) -> dict[str, int]:
     """The queries with no engine in the customer's engine scope (#1329), in no engine's
     count, and the total the headline names with them ("65 of 107 queries move; 42 have
@@ -4015,6 +4039,8 @@ def compute_report_facts(
         **(moves := query_move_facts(report, engines)),
         # #1329: the queries with no engine in the scope, and the headline total.
         **query_total_facts(report, moves["in_scope_query_count"]),
+        # #2358: each owner engine's final query count; the results page reads it.
+        "engine_query_counts": engine_query_count_facts(report, engines),
         "workload_total_percent": _unrounded(sum(e["workload_percent"] or 0.0 for e in engines)),
         "engine_cost_total_usd": round(sum(costs), 2),
         # #1197: the read I/O basis a cost rests on, stated wherever the cost is shown.

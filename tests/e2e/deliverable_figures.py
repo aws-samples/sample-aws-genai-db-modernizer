@@ -104,10 +104,27 @@ class Figures:
 # --------------------------------------------------------------------------
 
 
+def final_query_counts(report: dict[str, Any]) -> dict[str, int]:
+    """Each engine's query count in the final assignment version (#2358): the facts'
+    ``engine_query_counts``, or, for a report saved before it, the ranking's counts.
+    Never the reality check's ``after_distribution``: a later version (an ``--auto``
+    pick, a post-schema reroute) moves queries after it."""
+    stored = (report.get("facts") or {}).get("engine_query_counts")
+    if isinstance(stored, dict):
+        return {str(e): int(n) for e, n in stored.items()}
+    out: dict[str, int] = {}
+    for r in report.get("ranking") or []:
+        if isinstance(r, dict) and r.get("target"):
+            n = r.get("assigned_queries_in_scope", r.get("assigned_queries"))
+            if isinstance(n, int) and not isinstance(n, bool):
+                out[str(r["target"])] = n
+    return out
+
+
 def final_architecture(report: dict[str, Any]) -> set[str]:
-    """Engines in the final architecture: every engine that owns queries after
-    the reality check, plus the cache layer (it owns none, #296)."""
-    after = (report.get("reality_check") or {}).get("after_distribution") or {}
+    """Engines in the final architecture: every engine that owns queries in the
+    final assignment version, plus the cache layer (it owns none, #296)."""
+    after = final_query_counts(report)
     engines = {e for e, n in after.items() if n}
     cache = (report.get("cache_overlay") or {}).get("engine")
     if cache:
@@ -173,8 +190,7 @@ def expected_figures(report: dict[str, Any]) -> dict[str, Any]:
     """Every key figure, computed from report.json fields only (never through a
     renderer helper, so a renderer bug cannot hide in both sides)."""
     exp: dict[str, Any] = {}
-    after = (report.get("reality_check") or {}).get("after_distribution") or {}
-    for e, n in after.items():
+    for e, n in final_query_counts(report).items():
         if n:
             exp[f"queries:{e}"] = int(n)
     overlay = report.get("cache_overlay") or {}
@@ -288,7 +304,7 @@ def expected_figures(report: dict[str, Any]) -> dict[str, Any]:
     # #949: "N of M queries move to a new engine". Every owned query moves except the
     # ones that stay on wave 1's Aurora engine when the source already speaks its
     # dialect (a homogeneous wave 1); after a cross-engine wave 1 every query moves.
-    owned = {e: int(n) for e, n in after.items() if n}
+    owned = {e: int(n) for e, n in final_query_counts(report).items() if n}
     waves = [w for w in report.get("migration_waves") or [] if isinstance(w, dict)]
     first = next((w for w in waves if w.get("homogeneity") is not None), None)
     stays = 0
@@ -632,19 +648,18 @@ def report_invariant_violations(report: dict[str, Any]) -> list[tuple[str, str]]
     ranking = {str(r.get("target")) for r in report.get("ranking") or [] if isinstance(r, dict)}
     if ranking != final:
         out.append(("ranking", f"ranking engines {sorted(ranking)} != final {sorted(final)}"))
+    after = final_query_counts(report)
     for r in report.get("ranking") or []:
-        after = (report.get("reality_check") or {}).get("after_distribution") or {}
-        if r.get("target") in after and r.get("assigned_queries") != after[r["target"]]:
+        owned = r.get("assigned_queries_in_scope", r.get("assigned_queries"))
+        if r.get("target") in after and owned != after[r["target"]]:
             out.append(
                 (
                     f"queries:{r['target']}",
-                    f"ranking says {r['target']} owns {r.get('assigned_queries')} queries, "
-                    f"after_distribution says {after[r['target']]}",
+                    f"ranking says {r['target']} owns {owned} queries, "
+                    f"the facts say {after[r['target']]}",
                 )
             )
-    owned_total = sum(
-        ((report.get("reality_check") or {}).get("after_distribution") or {}).values()
-    )
+    owned_total = sum(after.values())
     if queries_analyzed and owned_total != queries_analyzed:
         out.append(
             (

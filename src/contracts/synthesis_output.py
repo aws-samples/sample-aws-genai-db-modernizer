@@ -5138,6 +5138,14 @@ class ReportFacts(BaseModel):
             "the source engine (#1020)"
         ),
     )
+    engine_query_counts: dict[str, int] | None = Field(
+        None,
+        description=(
+            "Each owner engine's final in-scope query count, from the final assignment "
+            "version (#2358); an engine with no query is left out. None in a report "
+            "written before it"
+        ),
+    )
     no_engine_in_scope_query_count: int = Field(
         0,
         ge=0,

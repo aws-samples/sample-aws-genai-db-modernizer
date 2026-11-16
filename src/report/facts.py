@@ -29,6 +29,7 @@ from src.shared.report_facts import (
     cost_assumptions,
     dynamodb_merge_conflict_facts,
     dynamodb_merge_review_facts,
+    engine_query_count_facts,
     engine_served_split,
     engine_table_split_facts,
     map_split_facts,
@@ -134,6 +135,9 @@ def report_facts(report: dict[str, Any]) -> dict[str, Any]:
             # A block written before #1329: the no-engine count and the total, from the
             # same function (no scope_unservable before it, so 0 and the stored count).
             missing.update(query_total_facts(report, int(facts.get("in_scope_query_count") or 0)))
+        if "engine_query_counts" not in facts:
+            # A block written before #2358: each engine's final count, from the ranking.
+            missing["engine_query_counts"] = engine_query_count_facts(report, facts["engines"])
         if "cost_assumptions" not in facts:
             # A block written before #1195: the TCO's own assumption lines.
             missing["cost_assumptions"] = cost_assumptions(report)
