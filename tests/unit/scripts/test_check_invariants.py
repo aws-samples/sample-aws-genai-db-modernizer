@@ -141,12 +141,12 @@ def _cases() -> list[Any]:
                 # The saved discourse run predates #2153's coverage check: its DynamoDB
                 # design (v3 and v4) leaves 4582415969089977699, the parenthesized UNION
                 # #2159 typed OTHER, unnamed, and v3 also 8521344751852874806, which it
-                # lists only as unsupported. #2357 re-records the fixture; this strict
+                # lists only as unsupported. #2378 re-records the fixture; this strict
                 # mark then fails until it is removed.
                 marks.append(
                     pytest.mark.xfail(
                         strict=True,
-                        reason="#2357: the saved discourse design predates #2153's coverage check",
+                        reason="#2378: the saved discourse design predates #2153's coverage check",
                     )
                 )
             cases.append(pytest.param(name, check_name, marks=marks, id=f"{name}-{check_name}"))
