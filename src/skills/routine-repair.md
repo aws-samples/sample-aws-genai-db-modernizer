@@ -22,11 +22,12 @@ A candidate that breaks any of these is refused, whatever else it fixes. Each ru
 
 - Exactly one `CREATE` statement of the routine's own kind (function, procedure, trigger or event), with no other statement before or after it, hidden behind a comment or after an early end of its body.
 - The same name, in the same schema, and for a trigger the same table. Do not rename anything, not even by quoting a name in another case.
-- The same signature: the same argument types in the same order, and for a function the same return type. A trigger keeps its timing, its events, its `FOR EACH` level, its order (`FOLLOWS`/`PRECEDES`) and the function it executes.
+- The same signature: the same argument types in the same order, and for a function the same return type. A trigger keeps its timing, its events, its `FOR EACH` level, its `WHEN` condition, its order (`FOLLOWS`/`PRECEDES`) and the function it executes.
 - The same privileges: keep the `DEFINER` clause and the `SECURITY` clause exactly as they are, and add none.
-- The same literals: the same `'?'` placeholders, in the same number, order and quote form. Do not add, drop, move or requote a literal.
-- No new object: create only the objects the original creates, of the same kind, name and temporary or permanent form, and nothing through `EXECUTE` either.
-- No new write: do not add an `INSERT`, `UPDATE`, `DELETE`, `MERGE`, `TRUNCATE`, `ALTER` or `DROP` the original does not run.
+- The same literals: the same `'?'` placeholders, in the same count and quote form. Do not add, drop, move or requote a literal: a moved one is not caught here, but the side-by-side proof on the rebuilt text tells it apart, and the repair fails there.
+- No new object: create only the objects the original creates, of the same kind, name and temporary or permanent form, and nothing through `EXECUTE` or `SELECT ... INTO` a table either.
+- No new write statement: do not add an `INSERT`, `UPDATE`, `DELETE`, `MERGE`, `TRUNCATE`, `ALTER`, `DROP`, `COPY`, `REPLACE`, `NOTIFY`, `COMMENT ON`, `LOCK`, `CALL`, `REFRESH MATERIALIZED VIEW` or MySQL `RENAME TABLE` the original does not run.
+- No new call: call only the functions the original calls, and the replacements the failed rules' fix hints name (written unqualified, or in `pg_catalog`).
 - No other schema: name only the schemas the original already names, never through a Unicode-escaped (`U&"..."`) name.
 - Nothing the side-by-side proof's own screen refuses: no `search_path` or `set_config`, no role or session-authorization change (also in `EXECUTE`d text), no `GRANT` or `REVOKE`, no user, role, database or schema statement, and no MySQL versioned comment (`/*! ... */`).
 - A real change: a candidate that differs from the original only in whitespace is refused.

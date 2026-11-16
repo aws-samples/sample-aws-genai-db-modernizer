@@ -70,7 +70,7 @@ from src.storage.routine_repair_store import (
     routine_repair_response_path,
 )
 from src.tools.routines.migration import collection_routines
-from src.tools.routines.repair_screen import RepairedRoutine, refusal_of
+from src.tools.routines.repair_screen import RepairedRoutine, hinted_calls, refusal_of
 
 __all__ = [
     "LLM_MODE_NONE_REASON",
@@ -311,6 +311,7 @@ def repair_refusal(c: RepairCandidate, text: str, engine: str) -> tuple[RefusalC
         name=c.name,
         create_text=c.create_text,
         sql_mode=c.sql_mode,
+        allowed_calls=hinted_calls(str(r.get("fix_hint") or "") for r in c.failed_rules),
     )
     return refusal_of(routine, text, engine)
 

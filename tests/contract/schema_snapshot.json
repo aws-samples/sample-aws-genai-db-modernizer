@@ -25406,6 +25406,7 @@
                     {
                       "kind": "enum",
                       "values": [
+                        "adds_calls",
                         "adds_objects",
                         "adds_statements",
                         "changes_privileges",
@@ -25538,7 +25539,7 @@
         }
       }
     },
-    "schema_hash": "16caf22feae13f3ca049a70e0876ac00e655787882b9b52afaba991677dd5c2b",
+    "schema_hash": "19bafa828863cc39c7a023256f030c49a9b469cbd196f048121ae984a236cb1c",
     "version": "1.0"
   },
   "routine_repair.RoutineRepairResponse": {
