@@ -16,7 +16,7 @@ charset-normalizer==3.4.7
 click==8.4.1
 colorama==0.4.6 ; sys_platform == 'win32'
 cryptography==50.0.0
-dnspython==2.9.0
+dnspython==2.9.2
 docstring-parser==0.18.0
 h11==0.16.0
 httpcore==1.0.9
@@ -31,11 +31,11 @@ ladybug==0.20.4
 markupsafe==3.0.3
 mcp==1.30.0
 mysql-connector-python==26.7.0
-opentelemetry-api==1.45.1
-opentelemetry-instrumentation-threading==0.66b1
-opentelemetry-instrumentation==0.66b1
-opentelemetry-sdk==1.45.1
-opentelemetry-semantic-conventions==0.66b1
+opentelemetry-api==1.45.2
+opentelemetry-instrumentation-threading==0.66b2
+opentelemetry-instrumentation==0.66b2
+opentelemetry-sdk==1.45.2
+opentelemetry-semantic-conventions==0.66b2
 packaging==26.3
 pillow==13.0.0
 psycopg2-binary==2.9.13
