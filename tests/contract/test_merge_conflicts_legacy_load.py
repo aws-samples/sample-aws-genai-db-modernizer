@@ -82,6 +82,7 @@ def test_status_is_required_only_inside_a_new_entry() -> None:
         DynamoDBModelOutputContract.model_validate(design)
 
 
+@pytest.mark.passes_on_main  # an old block reads back as stored; it only gains the new figure
 def test_a_report_written_before_1_72_validates_and_reads_back_unchanged() -> None:
     """The v0.4.0-beta.2 job's report (synthesis output 1.69)."""
     old = json.loads(OLD_REPORT.read_text(encoding="utf-8"))
@@ -101,5 +102,5 @@ def test_a_report_written_before_1_72_validates_and_reads_back_unchanged() -> No
     # #1128: and the slice plan and adoption paths, filled at read time (ADR-032 Decision 4).
     assert facts["slice_plan"] == (plan := slice_plan_facts(old))
     assert facts["adoption"] == adoption_facts(old, plan)
-    filled = ("trade_off_topics", SAID, "slice_plan", "adoption")
+    filled = ("trade_off_topics", SAID, "slice_plan", "adoption", "engine_query_counts")
     assert {k: v for k, v in facts.items() if k not in filled} == (as_read_back(stored))

@@ -403,7 +403,7 @@ def test_an_old_job_loads_and_renders_unchanged() -> None:
     # #2107: and the cutover sentence, which a block written before it reads back with.
     assert facts["cutover_responsibility"] == CUTOVER_MESSAGE
     # The reader fills these for an older report (ADR-032 Decision 4; #1221, #2107, #1128).
-    READ_TIME_FILLED = ("trade_off_topics", SAID, "slice_plan", "adoption")
+    READ_TIME_FILLED = ("trade_off_topics", SAID, "slice_plan", "adoption", "engine_query_counts")
     assert {k: v for k, v in facts.items() if k not in READ_TIME_FILLED} == (as_read_back(stored))
     assert facts["trade_off_topics"] == trade_off_topic_facts(
         old, stored["reality_check_trade_offs"]

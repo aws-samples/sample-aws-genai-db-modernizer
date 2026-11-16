@@ -24,6 +24,17 @@ function factsOf(synthesis) {
   return (synthesis && synthesis.facts) || null;
 }
 
+// #2358: each engine's query count in the final assignment version
+// (facts.engine_query_counts), never the reality check's own after_distribution: a later
+// version (an --auto pick, a post-schema reroute) moves queries again. A report saved before
+// the figure (the /results API fills it in; a hand-built one has none) has only the reality
+// check's distribution, so that is the answer for it.
+export function finalEngineCounts(synthesis) {
+  const counts = factsOf(synthesis) && factsOf(synthesis).engine_query_counts;
+  if (counts && typeof counts === 'object') return counts;
+  return (synthesis && synthesis.reality_check && synthesis.reality_check.after_distribution) || {};
+}
+
 // "CRITICAL (3)": the open risks at one severity (facts.open_risks_by_severity
 // omits a severity with none).
 export function openRiskCountAt(synthesis, severity, shownAtSeverity) {

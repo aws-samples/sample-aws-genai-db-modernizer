@@ -90,7 +90,7 @@ import EngineBadge from "../components/EngineBadge";
 import { WORKLOAD_FIT_DEFINITION } from "../utils/workloadFitLabels";
 import { optimizationLabel } from "../utils/optimizationLabels";
 import { displayTables } from "../utils/tableNames";
-import { accessPatternTotals, assumptionLinesOf, cacheLayerFactsOf, costAssumptionsOf, rateWindowRiskNoteOf, rateWindowScenarioOf, rateWindowStatementOf, rowCountStatementOf, derivedCopySyncOf, costCaveatOf, costScopeLabelOf, costSizingOf, costSizingText, defaultRiskSeverity, designTableCountOf, noEngineInScopeOf, openRiskCountAt, procedureInternalQueryCountOf, procedureInternalRoutineCountOn, procedureInternalRoutineCountsOf, queryPatternCountsOf, resolvedRiskCountOf, resolvedRisksBySeverityText, routingHistoryRecorded, routingKindsById, tradeOffsByTab, tradeOffTabLabel, tradeOffTopicGroupsOf } from "../utils/reportFacts";
+import { accessPatternTotals, assumptionLinesOf, cacheLayerFactsOf, costAssumptionsOf, rateWindowRiskNoteOf, rateWindowScenarioOf, rateWindowStatementOf, rowCountStatementOf, derivedCopySyncOf, costCaveatOf, costScopeLabelOf, costSizingOf, costSizingText, defaultRiskSeverity, designTableCountOf, finalEngineCounts, noEngineInScopeOf, openRiskCountAt, procedureInternalQueryCountOf, procedureInternalRoutineCountOn, procedureInternalRoutineCountsOf, queryPatternCountsOf, resolvedRiskCountOf, resolvedRisksBySeverityText, routingHistoryRecorded, routingKindsById, tradeOffsByTab, tradeOffTabLabel, tradeOffTopicGroupsOf } from "../utils/reportFacts";
 
 
 // ============================================
@@ -429,15 +429,14 @@ const AnalysisResultsPage = memo(() => {
     () => buildQueryRoutingRows(queryJourneyList.items, routingKindsById(resultsData?.synthesis), ENGINE_LABELS),
     [queryJourneyList.items, resultsData],
   );
-  const realityCheck = synthesis?.reality_check || {};
   // #296 cache overlay: a top-level synthesis.cache_overlay signals that
   // ElastiCache is a cache layer here, not an owner -- defensively strip it
   // from the owner distribution so it can't show up as its own Sankey/target
   // engine node with a workload share. Legacy reports with no cache_overlay
   // (ElastiCache still a real owner) are unaffected. Plain consts (not
-  // useMemo) to match realityCheck/synthesis above, which are the same.
+  // useMemo) to match synthesis above, which is the same.
   const cacheOverlay = getCacheOverlay(synthesis);
-  const afterDist = ownerDistribution(realityCheck?.after_distribution, !!cacheOverlay);
+  const afterDist = ownerDistribution(finalEngineCounts(synthesis), !!cacheOverlay);
   // #1252: the designed cached reads, from the facts (the reads the ElastiCache design covers).
   const cacheFacts = cacheLayerFactsOf(synthesis);
   const cacheChange = cacheChangeSentence(cacheFacts, { t });
@@ -526,7 +525,7 @@ const AnalysisResultsPage = memo(() => {
     [synthesis]
   );
 
-  // Build Sankey from after_distribution
+  // Build Sankey from the final engine counts (facts.engine_query_counts, #2358)
   const sankeyData = useMemo(() => {
     if (Object.keys(afterDist).length === 0) return null;
     const nodes = [{ id: 'queries' }];
