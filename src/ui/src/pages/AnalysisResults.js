@@ -59,7 +59,10 @@ import EngineChoicesNote from "../components/EngineChoicesNote";
 import MigrationWavePlan from "../components/MigrationWavePlan";
 import StepGateEvidence from "../components/StepGateEvidence";
 import { schemaSectionIdOf } from "../utils/adoptionPaths";
-import { engineFromSearch, linkedEngineTarget, activeDesignEngine } from "../utils/resultsLinks";
+import { engineFromSearch, linkedEngineTarget, linkedSectionId, activeDesignEngine } from "../utils/resultsLinks";
+import useResultsTabs, { ResultsSectionNav, useSectionsOnPage } from "../hooks/useResultsTabs";
+import { RESULTS_TABS, hashId, onThisPageAnchors } from "../utils/resultsTabs";
+import ResultsOnThisPage from "../components/ResultsOnThisPage";
 import { schemaDesignsRefusal } from "../utils/schemaDesignsLoad";
 import RoutineMigrationSection from "../components/RoutineMigrationSection";
 import ExecutiveSummaryStats from "../components/ExecutiveSummaryStats";
@@ -245,6 +248,18 @@ const AnalysisResultsPage = memo(() => {
   const [collectorData, setCollectorData] = useState(null);
   const [loading, setLoading] = useState(true);
   const [flashbarItems, setFlashbarItems] = useState([]);
+  // #2313: the tabs follow the URL (?tab=, or the tab of the section a hash names).
+  const { activeTab, selectTab, goToSection } = useResultsTabs({ ready: !loading && !!resultsData });
+  const [tabsRoot, setTabsRoot] = useState(null);
+  const sectionsOnPage = useSectionsOnPage(activeTab, tabsRoot);
+  const onThisPage = onThisPageAnchors(activeTab, sectionsOnPage, t);
+  // A tab with one section or none needs no navigation.
+  const toolsHidden = onThisPage.length < 2;
+  // "On this page" opens with the page on a wide screen; on a narrow one it would cover it.
+  const [toolsOpen, setToolsOpen] = useState(
+    () => typeof window !== 'undefined' && typeof window.matchMedia === 'function'
+      && window.matchMedia('(min-width: 1400px)').matches,
+  );
 
   // Explorer state
   const [browseMode, setBrowseMode] = useState('pattern'); // 'pattern' | 'source'
@@ -552,6 +567,9 @@ const AnalysisResultsPage = memo(() => {
     navigation: t('analysis-results.layout.navigation'),
     navigationToggle: t('analysis-results.layout.navigation-toggle'),
     navigationClose: t('analysis-results.layout.navigation-close'),
+    tools: t('analysis-results.layout.tools'),
+    toolsToggle: t('analysis-results.layout.tools-toggle'),
+    toolsClose: t('analysis-results.layout.tools-close'),
   }), [t]);
 
 
@@ -1110,9 +1128,8 @@ const AnalysisResultsPage = memo(() => {
     setEngineFilter([]);
     setOpFilter([]);
     setCurrentPage(1);
-    const el = document.getElementById('access-patterns-section');
-    if (el) el.scrollIntoView({ behavior: 'smooth', block: 'start' });
-  }, []);
+    goToSection('access-patterns-section');
+  }, [goToSection]);
 
   const fetchQueryJourney = useCallback(async (queryId) => {
     setSelectedQueryId(queryId);
@@ -1696,8 +1713,9 @@ const AnalysisResultsPage = memo(() => {
   // #2300: a link from the Sankey (or an old pattern-analysis link) names an
   // engine (?engine=) and a section (#hash). Once the page has its data, filter
   // the explorer to that engine (its Table design tab for a relational one), say so
-  // when the plan has no part for it, then scroll to the section and move focus
-  // there. Done once per page load, so the user's own filter changes stand.
+  // when the plan has no part for it, then open the section's tab (#2313), scroll to
+  // the section and move focus there. Done once per page load, so the user's own
+  // filter changes stand.
   const linkedEngineHandled = useRef(false);
   useEffect(() => {
     if (loading || linkedEngineHandled.current) return;
@@ -1709,13 +1727,12 @@ const AnalysisResultsPage = memo(() => {
       auroraDesigns.map(d => d.engine),
       Object.keys(afterDist || {}),
     );
-    let sectionId = locationHash.replace(/^#/, '');
+    // #2313: the section's tab opens first (a section on a closed tab is not in the DOM).
+    const sectionId = linkedSectionId(target, locationHash);
     if (target === 'explorer') {
       // The same label a user-picked token carries ("DynamoDB (55)").
       const option = engineOptions.find(o => o.value === engine);
       setEngineFilter([{ label: option?.label || ENGINE_LABELS[engine] || engine, value: engine }]);
-    } else if (target === 'design') {
-      sectionId = 'table-design-section';
     } else if (target === 'absent' || target === 'not-designed') {
       addFlashbarMessage({
         type: 'info',
@@ -1724,19 +1741,10 @@ const AnalysisResultsPage = memo(() => {
         id: `engine-link-${engine}`,
       });
     }
-    if (sectionId) {
-      // Wait a frame so the sections the data just unlocked are in the DOM.
-      requestAnimationFrame(() => {
-        const el = document.getElementById(sectionId);
-        if (el) {
-          el.scrollIntoView({ block: 'start' });
-          // scrollIntoView leaves focus where it was; a screen reader starts at the section.
-          el.setAttribute('tabindex', '-1');
-          el.focus({ preventScroll: true });
-        }
-      });
-    }
-  }, [loading, locationSearch, locationHash, explorerPatterns, auroraDesigns, afterDist, engineOptions, addFlashbarMessage, t]);
+    // useResultsTabs lands on the hash's section already; a linked engine's section can
+    // differ from it (its Table design).
+    if (sectionId && sectionId !== hashId(locationHash)) goToSection(sectionId);
+  }, [loading, locationSearch, locationHash, explorerPatterns, auroraDesigns, afterDist, engineOptions, addFlashbarMessage, goToSection, t]);
 
   const enginePieData = useMemo(() => {
     const engines = Object.entries(filteredEngineDist);
@@ -1941,6 +1949,9 @@ const AnalysisResultsPage = memo(() => {
               <Box margin={{ top: 'm' }} color="text-body-secondary">{t('analysis-results.states.loading')}</Box>
             </Box>
           }
+          // Controlled from the first render (Cloudscape decides that once, and the page
+          // keeps this layout when its results arrive), so On this page can open then.
+          toolsOpen={false}
           toolsHide
         />
       </>
@@ -1951,6 +1962,1192 @@ const AnalysisResultsPage = memo(() => {
   // ============================================
   // Main render
   // ============================================
+
+  // #2313: one tab per reader question, each in the order of the decision: what to do
+  // and what it costs, how to do it, the evidence, and what can go wrong. The sections
+  // are the ones the page always had, moved, not changed; RESULTS_TABS
+  // (utils/resultsTabs.js) lists which tab holds which, for the URL and On this page.
+  const tabContent = {
+    summary: (
+      <SpaceBetween size="l">
+        {/* Executive Summary. #1028: the access-pattern count sits below
+            the database name; a cost tile with no figure is left out. */}
+        <Container id="executive-summary-section" header={<Header variant="h2">{t('analysis-results.executive-summary.title')}</Header>}>
+          <SpaceBetween size="m">
+            {/* #1403: one paragraph per part (recommendation, risk, decision), as
+                the engineering report prints them. */}
+            <Box variant="div" fontSize="body-m">
+              {synthesis?.summary ? <ProseText text={synthesis.summary} paragraphs /> : 'No summary available.'}
+            </Box>
+            <PinRuleNote note={resultsData?.pin_rule_note} />
+            {summaryFallback.isFallback && (
+              <SummaryFallbackNotice
+                text={t('analysis-results.executive-summary.fallback-notice', {
+                  reason: fallbackWithheldReason(summaryFallback.warnings),
+                })}
+              />
+            )}
+            <ExecutiveSummaryStats
+              t={t}
+              databaseName={synthesis?.database_name}
+              accessPatternCount={totalAccessPatterns}
+              ownerQueryCount={ownerQueryCount}
+              cachePatternCount={cachePatternCount}
+              projectedCost={projectedCost}
+              costBaseline={costBaseline}
+              retiredEngines={synthesis?.facts?.retired_in_use_engines}
+              engineScope={synthesis?.facts?.engine_scope}
+              noEngineInScope={noEngineInScopeOf(synthesis)}
+              queryPatterns={queryPatternCountsOf(synthesis)}
+              priceList={synthesis?.facts?.price_list}
+              costScopeLabel={costScopeLabelOf(synthesis)}
+              costCaveat={costCaveatOf(synthesis)}
+              targetEngines={(
+                <>
+                  <Box fontSize="heading-m">
+                    <SpaceBetween direction="horizontal" size="xxs">
+                      {/* #358: the cache layer is listed here too (labeled
+                          distinctly, e.g. "ElastiCache (cache layer)") -- it
+                          owns no queries, but it is still a target engine
+                          the deliverables name and price. */}
+                      {targetEngines.map(({ engine, isCacheLayer }) => (
+                        <EngineBadge key={engine} engine={engine}>
+                          {ENGINE_LABELS[engine] || engine}
+                          {isCacheLayer ? t('cache-layer.engine-badge-suffix', { defaultValue: ' (cache layer)' }) : ''}
+                        </EngineBadge>
+                      ))}
+                    </SpaceBetween>
+                  </Box>
+                  {/* #296: additional cache-layer stats (reads fronted, %
+                      of calls) shown as a note below the badges above. */}
+                  {cacheLayerLine && (
+                    <Box fontSize="body-s" color="text-body-secondary" padding={{ top: 'xxs' }}>
+                      {cacheLayerLine}
+                    </Box>
+                  )}
+                  {/* #399: why the cache layer is cache-aside, from
+                      facts.cache_layer.role_sentence, as every deliverable states it. */}
+                  {cacheLayerLine && cacheFacts?.roleSentence && (
+                    <Box fontSize="body-s" color="text-body-secondary" padding={{ top: 'xxs' }}>
+                      {cacheFacts.roleSentence}
+                    </Box>
+                  )}
+                  {/* #1891: per non-Aurora engine, its statements on temporary objects
+                      that follow their routine (facts.query_group_counts.
+                      procedure_internal_routine_counts); an Aurora engine states its
+                      own on its tab. */}
+                  {Object.entries(procedureInternalRoutineCountsOf(synthesis))
+                    .filter(([engine, count]) => count > 0 && !isAuroraEngine(engine))
+                    .map(([engine, count]) => (
+                      <Box key={`follows-${engine}`} fontSize="body-s" color="text-body-secondary" padding={{ top: 'xxs' }}>
+                        {t('analysis-results.procedure-internal-routine-on', {
+                          engine: ENGINE_LABELS[engine] || engine,
+                          count,
+                        })}
+                      </Box>
+                    ))}
+                  {/* #1252: the gate's cache candidates and the design's cached reads
+                      can differ (the post-schema-design safety net drops reads the
+                      design does not cover). The sentence comes from facts.cache_layer,
+                      once, as a plain text child. */}
+                  {cacheChange && (
+                    <Box
+                      fontSize="body-s"
+                      color="text-status-warning"
+                      padding={{ top: 'xxs' }}
+                    >
+                      {cacheChange}
+                    </Box>
+                  )}
+                </>
+              )}
+            />
+          </SpaceBetween>
+        </Container>
+
+        {/* Cost Breakdown */}
+        {costBreakdown.length > 0 && (
+          <Container id="cost-breakdown-section" header={<Header variant="h2" description={t('analysis-results.cost-breakdown.description')}>{t('analysis-results.cost-breakdown.title')}</Header>}>
+            <SpaceBetween size="m">
+              <Box fontSize="body-s" color="text-body-secondary">
+                <span data-figure="cost-scope">{costScopeLabelOf(synthesis)}</span>
+              </Box>
+              <ColumnLayout columns={costBreakdown.length} variant="text-grid">
+                {costBreakdown.map((cb, idx) => {
+                  // #358: the cache layer's card is labeled the same way
+                  // as its "Target engines" badge, so the two sections
+                  // agree on what ElastiCache is here.
+                  const isCacheLayer = cb.database === cacheOverlay?.engine;
+                  return (
+                    <Box key={idx} textAlign="center">
+                      <EngineBadge engine={cb.database}>
+                        {ENGINE_LABELS[cb.database] || cb.database}
+                        {isCacheLayer ? t('cache-layer.engine-badge-suffix', { defaultValue: ' (cache layer)' }) : ''}
+                      </EngineBadge>
+                      <Box fontSize="display-l" fontWeight="bold" margin={{ top: 'xs' }}>
+                        {formatMoney(cb.monthly_cost_usd)}
+                      </Box>
+                      <Box fontSize="body-s" color="text-body-secondary">/month · {cb.pricing_mode}</Box>
+                      {costSizingText(t, costSizingOf(synthesis, cb.database)) && (
+                        <Box fontSize="body-s" color="text-body-secondary">
+                          <span data-figure="cost-sizing" data-engine={cb.database}>
+                            {costSizingText(t, costSizingOf(synthesis, cb.database))}
+                          </span>
+                        </Box>
+                      )}
+                    </Box>
+                  );
+                })}
+              </ColumnLayout>
+              {costAssumptionsOf(synthesis).length > 0 && (
+                <Box fontSize="body-s" color="text-body-secondary">
+                  <span data-figure="cost-assumptions">{costAssumptionsOf(synthesis).join(' · ')}</span>
+                </Box>
+              )}
+              {/* #1636: the tables with no row count, and the sizing assumption (a report fact) */}
+              {rowCountStatementOf(synthesis) && (
+                <Box fontSize="body-s" color="text-body-secondary">
+                  <span data-figure="row-counts">{t('analysis-results.cost-breakdown.row-counts')}: {rowCountStatementOf(synthesis)}.</span>
+                </Box>
+              )}
+              {/* #1893: what the call rates rest on (a report fact) */}
+              {rateWindowStatementOf(synthesis) && (
+                <Box fontSize="body-s" color="text-body-secondary">
+                  <span data-figure="rate-windows">{t('analysis-results.cost-breakdown.rate-windows')}: {rateWindowStatementOf(synthesis)}.</span>
+                </Box>
+              )}
+              {/* #1991: a rate window that is not representative makes the costs a scenario */}
+              {rateWindowScenarioOf(synthesis) && (
+                <Box fontSize="body-s" color="text-status-warning">
+                  <span data-figure="rate-window-scenario">{rateWindowScenarioOf(synthesis)}.</span>
+                </Box>
+              )}
+              {/* #1990: the assumptions block and the growth scenario (report facts) */}
+              {assumptionLinesOf(synthesis).length > 0 && (
+                <Box fontSize="body-s" color="text-body-secondary" data-figure="assumptions">
+                  <ul>
+                    {assumptionLinesOf(synthesis).map((line) => (
+                      <li key={line}>{line}.</li>
+                    ))}
+                  </ul>
+                </Box>
+              )}
+              <Box fontSize="body-s" color="text-body-secondary">
+                <span data-figure="cost-caveat">{costCaveatOf(synthesis)}</span>
+              </Box>
+              {/* #1197: the read I/O basis a figure rests on, a report fact (ADR-032) */}
+              {(synthesis?.facts?.cost_basis_notes || []).map((note, idx) => (
+                <Box key={`cost-basis-${idx}`} fontSize="body-s" color="text-body-secondary">
+                  <span data-figure="cost-basis">{note}</span>
+                </Box>
+              ))}
+            </SpaceBetween>
+          </Container>
+        )}
+
+        {/* Query Flow (Sankey) */}
+        {sankeyData && (
+          <Container id="query-flow-section" header={
+            <Header variant="h2" description={t('analysis-results.query-flow.description')}>
+              {t('analysis-results.query-flow.title')}
+            </Header>
+          }>
+            <ChartSankey
+              width={900}
+              height={Math.max(250, Object.keys(afterDist).length * 120)}
+              data={sankeyData}
+            />
+          </Container>
+        )}
+
+        {/* #1991: the assumptions a customer can change, re-running only what a
+            change affects (the server checks and records it). */}
+        <AssumptionsPanel jobId={jobId} t={t} onChanged={reloadAfterAssumptionChange} />
+      </SpaceBetween>
+    ),
+    plan: (
+      <SpaceBetween size="l">
+        {/* Migration roadmap (#957): report.json's waves, the same ones the
+            PDF and the engineering report show. */}
+        <MigrationWavePlan
+          synthesis={synthesis}
+          t={t}
+          schemaSectionId={schemaSectionIdOf(totalAccessPatterns > 0 || cachePatternCount > 0, auroraDesigns.length > 0)}
+        />
+        <StepGateEvidence synthesis={synthesis} t={t} />
+
+        {/* Queries on a fallback engine (#729): where each landed and why,
+            its gates, a redesign hint and the assignment review that
+            re-runs. Warning first, as in both reports. */}
+        <UnservableQueriesCallout
+          synthesis={resultsData?.synthesis}
+          jobId={jobId}
+          onOpen={fetchQueryJourney}
+          t={t}
+        />
+
+        {/* Close calls (#730): queries a kept engine could serve almost
+            as well, with the way into each one's decision trace and the
+            assignment review that moves them. */}
+        <CloseCallCallout
+          synthesis={resultsData?.synthesis}
+          jobId={jobId}
+          onOpen={fetchQueryJourney}
+          t={t}
+        />
+
+        {/* Reality-check moves no model reviewed (#746): one line when any. */}
+        <UnreviewedMovesNote synthesis={resultsData?.synthesis} t={t} />
+        <EngineChoicesNote synthesis={resultsData?.synthesis} t={t} />
+
+        {/* Routines (#1939): how the job's routines migrate, the to-do and each
+            routine behind a routine risk, from facts.routines, as both reports
+            state them. Collapsed. */}
+        <RoutineMigrationSection synthesis={synthesis} t={t} />
+      </SpaceBetween>
+    ),
+    queries: (
+      <SpaceBetween size="l">
+        {/* Query routing (#822): every query, and the way into its
+            journey and decision trace without schema design. #1028:
+            collapsed when the page opens. */}
+        <QueryRoutingTable
+          rows={queryRoutingRows}
+          loading={queryJourneyList.loading}
+          error={queryJourneyList.error}
+          hasLedger={routingHistoryRecorded(resultsData?.synthesis)}
+          truncated={queryJourneyList.truncated}
+          onOpen={fetchQueryJourney}
+          t={t}
+        />
+
+        {/* ============================================ */}
+        {/* Access Pattern Explorer                      */}
+        {/* ============================================ */}
+        {(totalAccessPatterns > 0 || cachePatternCount > 0) && (
+          <Container
+            id="access-patterns-section"
+            header={
+              <Header
+                variant="h2"
+                // #429 part 2: once there's a cache layer, the header
+                // breaks the combined total down into owned vs. cache
+                // layer ("64 (54 owned + 10 cache layer)") instead of
+                // just a bare count -- filtering still falls back to the
+                // simpler "(N of M)" form, same as before #429.
+                counter={
+                  hasActiveFilters
+                    ? `(${filteredOwnerPatterns.length + filteredCacheLayerPatterns.length} of ${explorerTotal})`
+                    : cachePatternCount > 0
+                      ? `(${t('analysis-results.explorer.header-count', {
+                          count: explorerTotal,
+                          total: explorerTotal,
+                          owned: totalAccessPatterns,
+                          cache: cachePatternCount,
+                        })})`
+                      : `(${totalAccessPatterns})`
+                }
+                description={t('analysis-results.explorer.description')}
+                actions={
+                  <SpaceBetween direction="horizontal" size="xs">
+                    <SegmentedControl
+                      selectedId={browseMode}
+                      onChange={({ detail }) => { setBrowseMode(detail.selectedId); setCurrentPage(1); setSelectedItems([]); }}
+                      options={[
+                        { id: 'pattern', text: t('analysis-results.explorer.by-access-pattern') },
+                        { id: 'source', text: t('analysis-results.explorer.by-source-table') },
+                      ]}
+                    />
+                  </SpaceBetween>
+                }
+              >
+                {t('analysis-results.explorer.title')}
+              </Header>
+            }
+          >
+            <SpaceBetween size="m">
+
+              {/* Visual navigators: engine bar + operation donut */}
+              <ColumnLayout columns={2}>
+                <Box>
+                  <Box variant="awsui-key-label" margin={{ bottom: 'xs' }}>{t('analysis-results.explorer.filter-by-engine')}</Box>
+                  {renderEngineBar()}
+                </Box>
+                <Box>
+                  <Box variant="awsui-key-label" margin={{ bottom: 'xs' }}>{t('analysis-results.explorer.filter-by-operation-type')}</Box>
+                  <Multiselect
+                    selectedOptions={opFilter}
+                    onChange={({ detail }) => {
+                      setOpFilter(detail.selectedOptions);
+                      setCurrentPage(1);
+                    }}
+                    options={operationOptions}
+                    placeholder="Select operations"
+                    filteringType="auto"
+                    tokenLimit={3}
+                  />
+                  <Box margin={{ top: 's' }}>
+                    <div style={{ cursor: 'pointer' }} onClick={(e) => {
+                      // Get the clicked element
+                      const target = e.target;
+
+                      // Try to find if we clicked on a legend item or segment
+                      let legendText = null;
+
+                      // Check if clicked on legend text
+                      if (target.tagName === 'text' || target.closest('text')) {
+                        const textElement = target.tagName === 'text' ? target : target.closest('text');
+                        legendText = textElement.textContent;
+                      }
+
+                      // Check if clicked on a path (segment)
+                      if (target.tagName === 'path' || target.closest('path')) {
+                        // Try to find associated legend text from the chart data
+                        const pathElement = target.tagName === 'path' ? target : target.closest('path');
+                        const fill = pathElement.getAttribute('fill');
+
+                        // Find the operation by color
+                        const operation = donutData.find(o => o.color === fill);
+                        if (operation) {
+                          legendText = operation.title;
+                        }
+                      }
+
+                      if (legendText) {
+                        // Find the operation from the legend text
+                        const operation = donutData.find(o => o.title === legendText);
+                        if (operation) {
+                          console.log('Clicked operation:', operation.id);
+
+                          // Add to PropertyFilter
+                          const newToken = {
+                            propertyKey: 'op_type',
+                            operator: '=',
+                            value: operation.id
+                          };
+
+                          // Check if this filter already exists
+                          const existingTokens = filterQuery.tokens || [];
+                          const alreadyExists = existingTokens.some(
+                            t => t.propertyKey === 'op_type' && t.value === operation.id
+                          );
+
+                          if (!alreadyExists) {
+                            console.log('Adding operation filter token:', newToken);
+                            setFilterQuery({
+                              tokens: [...existingTokens, newToken],
+                              operation: filterQuery.operation || 'and'
+                            });
+                            setCurrentPage(1);
+                          }
+                        }
+                      }
+                    }}>
+                      <PieChart
+                        data={donutData}
+                        variant="donut"
+                        size="medium"
+                        innerMetricValue={filteredPatterns.length.toString()}
+                        innerMetricDescription="patterns"
+                        hideFilter
+                        hideLegend={false}
+                        segmentDescription={(datum, sum) => `${datum.value} patterns, ${((datum.value / sum) * 100).toFixed(0)}%`}
+                        detailPopoverContent={(datum, sum) => [
+                          { key: 'Operation', value: datum.title },
+                          { key: 'Patterns', value: datum.value },
+                          { key: 'Percentage', value: `${((datum.value / sum) * 100).toFixed(1)}%` }
+                        ]}
+                        empty={<Box textAlign="center" color="inherit">{t('common.labels.no-data')}</Box>}
+                        noMatch={<Box textAlign="center" color="inherit">{t('common.labels.no-data')}</Box>}
+                        ariaLabel="Operation type distribution"
+                      />
+                    </div>
+                  </Box>
+                </Box>
+              </ColumnLayout>
+
+              {/* Property filter + active filter chips */}
+              <PropertyFilter
+                query={filterQuery}
+                onChange={({ detail }) => { setFilterQuery(detail); setCurrentPage(1); }}
+                filteringProperties={filterProperties}
+                filteringOptions={filterOptions}
+                filteringPlaceholder={t('analysis-results.explorer.filter-placeholder')}
+                countText={t('analysis-results.explorer.count-text', { count: filteredPatterns.length })}
+                expandToViewport
+                i18nStrings={{
+                  filteringAriaLabel: t('analysis-results.explorer.filtering-aria-label'),
+                  dismissAriaLabel: t('analysis-results.explorer.dismiss-aria-label'),
+                  filteringPlaceholder: t('analysis-results.explorer.filter-placeholder'),
+                  groupValuesText: t('analysis-results.explorer.group-values-text'),
+                  groupPropertiesText: t('analysis-results.explorer.group-properties-text'),
+                  operatorsText: t('analysis-results.explorer.operators-text'),
+                  operationAndText: t('analysis-results.explorer.operation-and-text'),
+                  operationOrText: t('analysis-results.explorer.operation-or-text'),
+                  operatorLessText: t('analysis-results.explorer.operator-less-text'),
+                  operatorLessOrEqualText: t('analysis-results.explorer.operator-less-or-equal-text'),
+                  operatorGreaterText: t('analysis-results.explorer.operator-greater-text'),
+                  operatorGreaterOrEqualText: t('analysis-results.explorer.operator-greater-or-equal-text'),
+                  operatorContainsText: t('analysis-results.explorer.operator-contains-text'),
+                  operatorDoesNotContainText: t('analysis-results.explorer.operator-does-not-contain-text'),
+                  operatorEqualsText: t('analysis-results.explorer.operator-equals-text'),
+                  operatorDoesNotEqualText: t('analysis-results.explorer.operator-does-not-equal-text'),
+                  editTokenHeader: t('analysis-results.explorer.edit-token-header'),
+                  propertyText: t('analysis-results.explorer.property-text'),
+                  operatorText: t('analysis-results.explorer.operator-text'),
+                  valueText: t('analysis-results.explorer.value-text'),
+                  cancelActionText: t('common.actions.cancel'),
+                  applyActionText: t('analysis-results.explorer.apply-action-text'),
+                  allPropertiesLabel: t('analysis-results.explorer.all-properties-label'),
+                  tokenLimitShowMore: t('analysis-results.explorer.token-limit-show-more'),
+                  tokenLimitShowFewer: t('analysis-results.explorer.token-limit-show-fewer'),
+                  clearFiltersText: t('analysis-results.explorer.clear-filters-text'),
+                  removeTokenButtonAriaLabel: (token) => t('analysis-results.explorer.remove-token-aria-label', { propertyLabel: token.propertyLabel, operator: token.operator, value: token.value }),
+                  enteredTextLabel: (text) => t('analysis-results.explorer.entered-text-label', { text }),
+                }}
+              />
+
+              {hasActiveFilters && (
+                <div className="active-filters">
+                  <Button variant="link" onClick={clearAllFilters}>{t('analysis-results.explorer.clear-all-filters')}</Button>
+                </div>
+              )}
+
+              {/* Pagination at top */}
+              {displayItems.length > PAGE_SIZE && (
+                <Box float="right">
+                  <Pagination
+                    currentPageIndex={currentPage}
+                    pagesCount={Math.ceil(displayItems.length / PAGE_SIZE)}
+                    onChange={({ detail }) => setCurrentPage(detail.currentPageIndex)}
+                    ariaLabels={explorerPaginationLabels}
+                  />
+                </Box>
+              )}
+
+
+              {/* ---- Access Pattern view ---- */}
+              {browseMode === 'pattern' && (
+                <Table
+                  columnDefinitions={patternColumnDefinitions}
+                  items={paginatedItems}
+                  loading={loading}
+                  variant="embedded"
+                  selectionType="single"
+                  ariaLabels={explorerSelectionLabels(t('analysis-results.explorer.table-patterns'))}
+                  selectedItems={selectedItems}
+                  onSelectionChange={({ detail }) => setSelectedItems(detail.selectedItems)}
+                  empty={
+                    <Box textAlign="center" padding="l">
+                      <Box variant="strong">{t('analysis-results.explorer.no-matching-patterns')}</Box>
+                      <Box variant="p" color="text-body-secondary">{t('analysis-results.explorer.try-adjusting-filters')}</Box>
+                    </Box>
+                  }
+                />
+              )}
+
+
+              {/* ---- Source Table view ---- */}
+              {browseMode === 'source' && (
+                <Table
+                  columnDefinitions={sourceTableColumnDefinitions}
+                  items={paginatedItems}
+                  loading={loading}
+                  variant="embedded"
+                  selectionType="single"
+                  ariaLabels={explorerSelectionLabels(t('analysis-results.explorer.table-sources'))}
+                  selectedItems={selectedItems}
+                  onSelectionChange={({ detail }) => setSelectedItems(detail.selectedItems)}
+                  empty={
+                    <Box textAlign="center" padding="l">
+                      <Box variant="strong">{t('analysis-results.explorer.no-matching-source-tables')}</Box>
+                      <Box variant="p" color="text-body-secondary">{t('analysis-results.explorer.try-adjusting-filters')}</Box>
+                    </Box>
+                  }
+                />
+              )}
+
+              {/* Bottom pagination */}
+              {displayItems.length > PAGE_SIZE && (
+                <Box float="right">
+                  <Pagination
+                    currentPageIndex={currentPage}
+                    pagesCount={Math.ceil(displayItems.length / PAGE_SIZE)}
+                    onChange={({ detail }) => setCurrentPage(detail.currentPageIndex)}
+                    ariaLabels={explorerPaginationLabels}
+                  />
+                </Box>
+              )}
+
+              {/* ============================================ */}
+              {/* Cache layer section (#429 part 2)             */}
+              {/* ============================================ */}
+              {/* The cache layer's own access patterns/key designs, as a
+                  distinct group after the owner rows above -- in both
+                  browse modes -- instead of mixed into the owner table
+                  or left out of the explorer entirely (#361/#405 only
+                  excluded them from the owner total/pie). Hidden
+                  whenever the current filters leave no cache-layer rows
+                  (e.g. the engine filter is set to an owner engine only),
+                  same as the owner table's own empty state. */}
+              {browseMode === 'pattern' && filteredCacheLayerPatterns.length > 0 && (
+                <Box margin={{ top: 'l' }}>
+                  <Header
+                    variant="h3"
+                    counter={`(${filteredCacheLayerPatterns.length})`}
+                  >
+                    {t('analysis-results.explorer.cache-layer-section-title', {
+                      engine: ENGINE_LABELS[cacheOverlay?.engine] || cacheOverlay?.engine,
+                    })}
+                  </Header>
+                  <Table
+                    columnDefinitions={patternColumnDefinitions}
+                    items={filteredCacheLayerPatterns}
+                    variant="embedded"
+                    selectionType="single"
+                    ariaLabels={explorerSelectionLabels(t('analysis-results.explorer.table-cache-patterns'))}
+                    selectedItems={selectedItems}
+                    onSelectionChange={({ detail }) => setSelectedItems(detail.selectedItems)}
+                  />
+                </Box>
+              )}
+
+              {browseMode === 'source' && cacheSourceTableGroups.length > 0 && (
+                <Box margin={{ top: 'l' }}>
+                  <Header
+                    variant="h3"
+                    counter={`(${cacheSourceTableGroups.length})`}
+                  >
+                    {t('analysis-results.explorer.cache-layer-section-title', {
+                      engine: ENGINE_LABELS[cacheOverlay?.engine] || cacheOverlay?.engine,
+                    })}
+                  </Header>
+                  <Table
+                    columnDefinitions={sourceTableColumnDefinitions}
+                    items={cacheSourceTableGroups}
+                    variant="embedded"
+                    selectionType="single"
+                    ariaLabels={explorerSelectionLabels(t('analysis-results.explorer.table-cache-sources'))}
+                    selectedItems={selectedItems}
+                    onSelectionChange={({ detail }) => setSelectedItems(detail.selectedItems)}
+                  />
+                </Box>
+              )}
+            </SpaceBetween>
+          </Container>
+        )}
+      </SpaceBetween>
+    ),
+    'data-model': (
+      <SpaceBetween size="l">
+        {/* Sources of truth and replicas (#992): each table read on a
+            replica, its CDC direction and its replica reads, with the
+            eventual-consistency risk stated once. #1232: collapsed, after
+            the access pattern explorer. */}
+        {/* Table owners (#212): each mapped table's owner, the engines that
+            also read it through CDC replicas and its cache, as the
+            engineering report's Migration map states them. Collapsed. */}
+        <TableOwnersCallout synthesis={synthesis} t={t} />
+
+        <SourcesOfTruthCallout synthesis={synthesis} t={t} />
+
+        {/* Table design (#478; "Aurora design" until #1232, every section
+            collapsed when the page opens): Aurora's schema design has no
+            access_patterns, so it never shows up in the explorer above --
+            this section is its own view of what the design already has:
+            tables, DDL, optimizations and the queries the assignment
+            routed here. */}
+        {auroraDesigns.length > 0 && (
+          <Container
+            id="table-design-section"
+            header={
+              <Header
+                variant="h2"
+                description={t('analysis-results.aurora-design.description')}
+              >
+                {t('analysis-results.aurora-design.title')}
+              </Header>
+            }
+          >
+            <Tabs
+              activeTabId={activeDesignEngine(designTab, auroraDesigns.map(d => d.engine))}
+              onChange={({ detail }) => setDesignTab(detail.activeTabId)}
+              tabs={auroraDesigns.map(design => {
+                const queryCount = design.queryGroups.reduce((sum, g) => sum + g.queries.length, 0);
+                return {
+                  id: design.engine,
+                  label: t('analysis-results.aurora-design.tab-label', {
+                    name: design.displayName,
+                    count: designTableCountOf(synthesis, design.engine, design.tables),
+                  }),
+                  content: (
+                    <SpaceBetween size="l">
+                      {design.migrationStrategy && (
+                        <Box fontSize="body-s" color="text-body-secondary">
+                          {t(
+                            `analysis-results.aurora-design.migration-strategy-${design.migrationStrategy}`,
+                            { defaultValue: design.migrationStrategy }
+                          )}
+                        </Box>
+                      )}
+
+                      <ExpandableSection
+                        headerText={t('analysis-results.aurora-design.tables-header', { count: design.tables.length })}
+                        defaultExpanded={false}
+                      >
+                        {design.tables.length === 0 ? (
+                          <Box color="text-body-secondary" fontSize="body-s">{t('analysis-results.aurora-design.no-tables')}</Box>
+                        ) : (
+                          <SpaceBetween size="s">
+                            {design.tables.map(table => (
+                              <ExpandableSection
+                                key={table.tableName}
+                                headerText={table.tableName}
+                                variant="footer"
+                                defaultExpanded={false}
+                              >
+                                <SpaceBetween size="s">
+                                  <Table
+                                    variant="embedded"
+                                    columnDefinitions={[
+                                      { id: 'name', header: t('analysis-results.aurora-design.col-column'), cell: c => c.name },
+                                      { id: 'type', header: t('analysis-results.aurora-design.col-aurora-type'), cell: c => c.auroraType },
+                                    ]}
+                                    items={table.columns}
+                                    ariaLabels={{
+                                      tableLabel: t('analysis-results.aurora-design.columns-table-label', {
+                                        engine: design.displayName,
+                                        table: table.tableName,
+                                      }),
+                                    }}
+                                  />
+                                  <KeyValuePairs
+                                    columns={1}
+                                    items={[
+                                      {
+                                        label: t('analysis-results.aurora-design.primary-key'),
+                                        value: table.primaryKey.join(', ') || '—',
+                                      },
+                                      ...(table.indexes.length > 0 ? [{
+                                        label: t('analysis-results.aurora-design.indexes', { count: table.indexes.length }),
+                                        value: (
+                                          <SpaceBetween size="xxs">
+                                            {table.indexes.map((ix, idx) => (
+                                              <Box key={idx} fontFamily="monospace" fontSize="body-s">{ix}</Box>
+                                            ))}
+                                          </SpaceBetween>
+                                        ),
+                                      }] : []),
+                                      ...(table.foreignKeys.length > 0 ? [{
+                                        label: t('analysis-results.aurora-design.foreign-keys', { count: table.foreignKeys.length }),
+                                        value: (
+                                          <SpaceBetween size="xxs">
+                                            {table.foreignKeys.map((fk, idx) => (
+                                              <Box key={idx} fontFamily="monospace" fontSize="body-s">{fk}</Box>
+                                            ))}
+                                          </SpaceBetween>
+                                        ),
+                                      }] : []),
+                                    ]}
+                                  />
+                                </SpaceBetween>
+                              </ExpandableSection>
+                            ))}
+                          </SpaceBetween>
+                        )}
+                      </ExpandableSection>
+
+                      {design.ddl && (
+                        <ExpandableSection
+                          headerText={t('analysis-results.aurora-design.ddl-header')}
+                          defaultExpanded={false}
+                        >
+                          {aceLoading ? (
+                            <Box textAlign="center" padding="l">
+                              <StatusIndicator type="loading">{t('analysis-results.query-journey.loading-editor')}</StatusIndicator>
+                            </Box>
+                          ) : (
+                            <CodeEditor
+                              ace={ace}
+                              language="sql"
+                              value={design.ddl}
+                              preferences={{ wrapLines: false, theme: 'cloud_editor_dark' }}
+                              editorContentHeight={400}
+                              i18nStrings={codeEditorI18nStrings(t, {
+                                loadingState: t('analysis-results.query-journey.loading'),
+                                errorState: t('analysis-results.query-journey.error'),
+                                errorStateRecovery: t('common.actions.retry'),
+                              })}
+                              readOnly
+                            />
+                          )}
+                        </ExpandableSection>
+                      )}
+
+                      {design.optimizations.length > 0 && (
+                        <ExpandableSection
+                          headerText={t('analysis-results.aurora-design.optimizations-header', { count: design.optimizations.length })}
+                          defaultExpanded={false}
+                        >
+                          <SpaceBetween size="xs">
+                            {design.optimizations.map((opt, idx) => (
+                              <Box key={idx} padding={{ vertical: 'xs', horizontal: 's' }}
+                                style={{ borderLeft: '3px solid #0972d3', backgroundColor: '#f2f8fd', borderRadius: '4px' }}>
+                                <SpaceBetween size="xxs">
+                                  <Box fontSize="body-s" fontWeight="bold">
+                                    {opt.target ? `${opt.category ? `${optimizationLabel(opt.category)}: ` : ''}${opt.target}` : optimizationLabel(opt.category)}
+                                  </Box>
+                                  <Box fontSize="body-s"><ProseText text={opt.recommendation} /></Box>
+                                  {opt.rationale && (
+                                    <Box fontSize="body-s" color="text-body-secondary"><ProseText text={opt.rationale} /></Box>
+                                  )}
+                                </SpaceBetween>
+                              </Box>
+                            ))}
+                          </SpaceBetween>
+                        </ExpandableSection>
+                      )}
+
+                      <ExpandableSection
+                        headerText={t('analysis-results.aurora-design.queries-header', { count: queryCount })}
+                        defaultExpanded={false}
+                      >
+                        {design.queryGroups.length === 0 ? (
+                          <Box color="text-body-secondary" fontSize="body-s">{t('analysis-results.aurora-design.no-queries')}</Box>
+                        ) : (
+                          <SpaceBetween size="s">
+                            {procedureInternalQueryCountOf(synthesis) > 0 &&
+                              design.queryGroups.some(g => g.sourceTable === PROCEDURE_INTERNAL_GROUP) && (
+                              <Box color="text-body-secondary" fontSize="body-s">
+                                {t('analysis-results.aurora-design.procedure-internal', {
+                                  count: procedureInternalQueryCountOf(synthesis),
+                                })}
+                              </Box>
+                            )}
+                            {procedureInternalRoutineCountOn(synthesis, design.engine) > 0 && (
+                              <Box color="text-body-secondary" fontSize="body-s">
+                                {t('analysis-results.aurora-design.procedure-internal-routine', {
+                                  count: procedureInternalRoutineCountOn(synthesis, design.engine),
+                                })}
+                              </Box>
+                            )}
+                            {design.queryGroups.map(group => (
+                              <ExpandableSection
+                                key={group.sourceTable}
+                                headerText={t('analysis-results.aurora-design.source-table-header', {
+                                  table: group.sourceTable,
+                                  count: group.queries.length,
+                                })}
+                                variant="footer"
+                                defaultExpanded={false}
+                              >
+                                <Table
+                                  variant="embedded"
+                                  columnDefinitions={[
+                                    {
+                                      id: 'excerpt',
+                                      header: t('analysis-results.aurora-design.col-query'),
+                                      cell: q => <Box fontFamily="monospace" fontSize="body-s">{q.excerpt}</Box>,
+                                    },
+                                    {
+                                      id: 'type',
+                                      header: t('analysis-results.aurora-design.col-type'),
+                                      cell: q => q.queryType || '—',
+                                    },
+                                    {
+                                      id: 'rps',
+                                      header: t('analysis-results.aurora-design.col-calls-per-second'),
+                                      cell: q => formatRate(q.callsPerSecond),
+                                    },
+                                    {
+                                      id: 'reason',
+                                      header: t('analysis-results.aurora-design.col-reason'),
+                                      cell: q => (q.reason ? <ProseText text={q.reason} /> : '—'),
+                                    },
+                                  ]}
+                                  items={group.queries}
+                                  ariaLabels={{
+                                    tableLabel: t('analysis-results.aurora-design.queries-table-label', {
+                                      engine: design.displayName,
+                                      table: group.sourceTable,
+                                    }),
+                                  }}
+                                />
+                              </ExpandableSection>
+                            ))}
+                          </SpaceBetween>
+                        )}
+                      </ExpandableSection>
+                    </SpaceBetween>
+                  ),
+                };
+              })}
+            />
+          </Container>
+        )}
+      </SpaceBetween>
+    ),
+    risks: (
+      <SpaceBetween size="l">
+        <div id="risk-assessment-section">
+          {/* Risk Assessment (#373): synthesis.risk_assessment, including
+              any CRITICAL risk, with one tab per severity (always present,
+              even empty) and the risks the assignment already resolved.
+              An UNRATED tab (#270 round-1 review) joins them only when a
+              risk's severity is none of the four known ones -- matching
+              the deck's "only show UNRATED when present" rule, rather than
+              an always-empty fifth tab on every ordinary run. */}
+          {!(openRisks.length > 0 || resolvedRisksList.length > 0 || overallRiskLevel) && (
+            <NoOpenRisksSection
+              synthesis={resultsData?.synthesis}
+              caveat={resultsData?.no_open_risks_caveat}
+              title={t('analysis-results.risk-assessment.title')}
+            />
+          )}
+          {(openRisks.length > 0 || resolvedRisksList.length > 0 || overallRiskLevel) && (
+            <Container header={<Header variant="h2" description={t('analysis-results.risk-assessment.description')}>{t('analysis-results.risk-assessment.title')}</Header>}>
+              <SpaceBetween size="m">
+                {overallRiskLevel && (
+                  <StatusIndicator type={riskSeverityStatus(overallRiskLevel)}>
+                    {t('analysis-results.risk-assessment.overall-risk')}: {overallRiskLevel}
+                  </StatusIndicator>
+                )}
+                {/* #1991: the rate-driven risks rest on a window that is not representative */}
+                {rateWindowRiskNoteOf(synthesis) && (
+                  <Box fontSize="body-s" color="text-status-warning">
+                    <span data-figure="rate-window-scenario-risks">{rateWindowRiskNoteOf(synthesis)}.</span>
+                  </Box>
+                )}
+                <NoOpenRisksNote
+                  synthesis={resultsData?.synthesis}
+                  shownRisks={openRisks}
+                  caveat={resultsData?.no_open_risks_caveat}
+                />
+                <Tabs
+                  activeTabId={
+                    riskTabIds.includes(riskTab)
+                      ? riskTab
+                      : defaultRiskSeverity(synthesis, risksBySeverity, riskTabIds)
+                  }
+                  onChange={({ detail }) => setRiskTab(detail.activeTabId)}
+                  tabs={riskTabIds.map((severity) => {
+                    const risksAtSeverity = risksBySeverity[severity] || [];
+                    const severityCount = openRiskCountAt(synthesis, severity, risksAtSeverity);
+                    const status = riskSeverityStatus(severity);
+                    return {
+                      id: severity,
+                      label: t('analysis-results.risk-assessment.tab-label', { severity, count: severityCount }),
+                      content: risksAtSeverity.length === 0 ? (
+                        <Box color="text-body-secondary" padding="s">
+                          {t('analysis-results.risk-assessment.no-risks-at-severity')}
+                        </Box>
+                      ) : (
+                        <SpaceBetween size="s">
+                          {risksAtSeverity.map((risk, idx) => {
+                            const { engine, body } = splitRiskDescription(risk.description);
+                            const showMitigation = risk.mitigation
+                              && !mitigationRepeatsDescription(risk.mitigation, body);
+                            const mitigationRef = sharedMitigationRef(resultsData?.mitigation_refs, risk);
+                            const affectedTables = Array.isArray(risk.affected_tables) ? risk.affected_tables : [];
+                            const copySync = derivedCopySyncOf(synthesis, risk.risk_id);
+                            return (
+                              <Box
+                                key={risk.risk_id || idx}
+                                padding={{ vertical: 'xs', horizontal: 's' }}
+                                style={{ borderLeft: `4px solid ${RISK_BORDER_COLOR[status]}`, backgroundColor: '#fff', borderRadius: '4px' }}
+                              >
+                                <SpaceBetween size="xxs">
+                                  <SpaceBetween direction="horizontal" size="xs" alignItems="center">
+                                    <StatusIndicator type={status}>{severity}</StatusIndicator>
+                                    {engine !== '(general)' && (
+                                      <EngineBadge engine={engine}>
+                                        {ENGINE_LABELS[engine] || engine}
+                                      </EngineBadge>
+                                    )}
+                                    {risk.risk_id && (
+                                      <Box fontSize="body-s" color="text-body-secondary">{risk.risk_id}</Box>
+                                    )}
+                                  </SpaceBetween>
+                                  <Box fontSize="body-s"><ProseText text={body} /></Box>
+                                  {showMitigation && (
+                                    <Box fontSize="body-s" color="text-body-secondary">
+                                      <b>{t('analysis-results.risk-assessment.mitigation')}:</b>{' '}
+                                      {mitigationRef
+                                        ? t('analysis-results.risk-assessment.mitigation-as-for', { risk: mitigationRef })
+                                        : <ProseText text={risk.mitigation} />}
+                                    </Box>
+                                  )}
+                                  {affectedTables.length > 0 && (
+                                    <Box fontSize="body-s" color="text-body-secondary">
+                                      {t('analysis-results.risk-assessment.affected-tables')}: {affectedTables.join(', ')}
+                                    </Box>
+                                  )}
+                                  {copySync && (
+                                    <ul className="risk-details" style={{ margin: 0, paddingLeft: '1.25em' }}>
+                                      {copySync.lines.map((line, i) => (
+                                        <li key={i}><Box fontSize="body-s" color="text-body-secondary"><ProseText text={line} /></Box></li>
+                                      ))}
+                                      {copySync.basis && (
+                                        <li><Box fontSize="body-s" color="text-body-secondary">{t('analysis-results.risk-assessment.sync-basis')}: <ProseText text={copySync.basis} /></Box></li>
+                                      )}
+                                    </ul>
+                                  )}
+                                  {Array.isArray(risk.details) && risk.details.length > 0 && (
+                                    <ul className="risk-details" style={{ margin: 0, paddingLeft: '1.25em' }}>
+                                      {risk.details.map((detail, i) => (
+                                        <li key={i}><Box fontSize="body-s" color="text-body-secondary"><ProseText text={detail} /></Box></li>
+                                      ))}
+                                    </ul>
+                                  )}
+                                </SpaceBetween>
+                              </Box>
+                            );
+                          })}
+                        </SpaceBetween>
+                      ),
+                    };
+                  })}
+                />
+                {resolvedRisksList.length > 0 && (
+                  <ExpandableSection headerText={
+                    resolvedRisksBySeverityText(synthesis, t)
+                      ? t('analysis-results.risk-assessment.resolved-count-by-severity', { count: resolvedRiskCountOf(synthesis, resolvedRisksList), severities: resolvedRisksBySeverityText(synthesis, t) })
+                      : t('analysis-results.risk-assessment.resolved-count', { count: resolvedRiskCountOf(synthesis, resolvedRisksList) })
+                  }>
+                    <SpaceBetween size="s">
+                      {resolvedRisksList.map((risk, idx) => {
+                        const { body } = splitRiskDescription(risk.description);
+                        const fromEngine = ENGINE_LABELS[risk.engine] || risk.engine;
+                        const toEngine = ENGINE_LABELS[risk.resolved_on] || risk.resolved_on;
+                        return (
+                          <Box key={risk.risk_id || idx} padding={{ vertical: 'xs', horizontal: 's' }}>
+                            <SpaceBetween size="xxs">
+                              <SpaceBetween direction="horizontal" size="xs" alignItems="center">
+                                <StatusIndicator type={riskSeverityStatus(risk.severity)}>{risk.severity}</StatusIndicator>
+                                {risk.resolved_on ? (
+                                  <Box fontSize="body-s" color="text-body-secondary">
+                                    {t('analysis-results.risk-assessment.resolved-where', { from: fromEngine, to: toEngine })}
+                                  </Box>
+                                ) : (
+                                  <Box fontSize="body-s" color="text-body-secondary">{fromEngine}</Box>
+                                )}
+                              </SpaceBetween>
+                              <Box fontSize="body-s"><ProseText text={body} /></Box>
+                              {risk.reason && (
+                                <Box fontSize="body-s" color="text-body-secondary">
+                                  {t('analysis-results.risk-assessment.resolved-reason', { reason: risk.reason })}
+                                </Box>
+                              )}
+                              {Array.isArray(risk.affected_tables) && risk.affected_tables.length > 0 && (
+                                <Box fontSize="body-s" color="text-body-secondary">
+                                  {t('analysis-results.risk-assessment.affected-tables')}: {risk.affected_tables.join(', ')}
+                                </Box>
+                              )}
+                            </SpaceBetween>
+                          </Box>
+                        );
+                      })}
+                    </SpaceBetween>
+                  </ExpandableSection>
+                )}
+              </SpaceBetween>
+            </Container>
+          )}
+        </div>
+
+        {/* DynamoDB merge conflicts (#802): the access patterns the merged
+            design does not serve, as both reports state them. */}
+        <DynamoDBMergeConflictsCallout synthesis={resultsData?.synthesis} t={t} />
+
+        {/* Engine-specific Trade-offs */}
+        {Object.entries(engineTradeOffs).some(([, tradeOffList]) => tradeOffList.length > 0) && (
+          <Container
+            id="tradeoffs-section"
+            header={<Header variant="h2">{t('analysis-results.tradeoffs.title')}</Header>}
+          >
+            <Tabs
+              tabs={Object.entries(engineTradeOffs)
+                .filter(([, tradeOffList]) => tradeOffList.length > 0)
+                .map(([engine, tradeoffs]) => {
+                  // Separate PE notes from design decisions. Only the fallback below
+                  // (a tab the facts list no topic groups for, e.g. a design the report
+                  // does not carry) reads the `[PE note]` marker out of the text;
+                  // otherwise the facts' review-note group is the PE notes (#1221).
+                  const normalized = tradeoffs.map(tradeOff =>
+                    typeof tradeOff === 'object' && tradeOff !== null && tradeOff.description
+                      ? tradeOff
+                      : { description: String(tradeOff), impact: '', source_tables: [], target_tables: [], query_ids: [] }
+                  );
+                  const peNotes = normalized.filter(tradeOff => tradeOff.description.startsWith('[PE note]'));
+                  const decisions = normalized.filter(tradeOff => !tradeOff.description.startsWith('[PE note]'));
+
+                  // #1221: the design decisions by topic, as facts.trade_off_topics groups
+                  // them (labels and counts too), the design review notes apart; a tab with
+                  // no groups (a design the report does not list) lists them as before.
+                  const topicGroups = tradeOffTopicGroupsOf(resultsData?.synthesis, engine);
+                  const shownPeNotes = topicGroups ? topicGroups.reviewNotes : peNotes;
+                  const peNoteCount = topicGroups ? topicGroups.reviewNoteCount : peNotes.length;
+                  // One label with the engineering report: the facts' own, and the same
+                  // words in the fallback's string.
+                  const peNotesHeader = topicGroups
+                    ? t('analysis-results.tradeoffs.topic-heading', { label: topicGroups.reviewNoteLabel, count: peNoteCount })
+                    : t('analysis-results.trade-offs.pe-notes-header', { count: peNoteCount });
+                  const renderDecision = (tradeOff, idx) => (
+                    <Box key={idx} padding={{ vertical: 'xs', horizontal: 's' }}
+                      style={{ borderLeft: '3px solid #0972d3', backgroundColor: '#f2f8fd', borderRadius: '4px' }}>
+                      <SpaceBetween size="xxs">
+                        <SpaceBetween direction="horizontal" size="xs" alignItems="center">
+                          <Icon name="status-positive" />
+                          <Link variant="primary" fontSize="body-s" fontWeight="bold" onFollow={() => {}} external={false}>
+                            <span style={{ textDecoration: 'underline' }}><ProseText text={tradeOff.description} /></span>
+                          </Link>
+                        </SpaceBetween>
+                        {tradeOff.impact && (
+                          <Box fontSize="body-s" color="text-body-secondary"><ProseText text={tradeOff.impact} /></Box>
+                        )}
+                        {(tradeOff.source_tables?.length > 0 || tradeOff.target_tables?.length > 0) && (
+                          <Box fontSize="body-s" padding={{ left: 'xl' }}>
+                            <Link variant="secondary" fontSize="body-s" onFollow={() => {}}>{t('analysis-results.tradeoffs.mapping')}</Link>
+                            <Box margin={{ top: 'xxxs' }}>
+                              <SpaceBetween direction="horizontal" size="xxs" alignItems="center">
+                                {tradeOff.source_tables?.length > 0 && (
+                                  <SpaceBetween direction="horizontal" size="xxs">
+                                    {tradeOff.source_tables.map((table, ti) => (
+                                      <span key={ti} data-mapping="source" style={{
+                                        display: 'inline-block',
+                                        padding: '1px 4px',
+                                        fontSize: '10px',
+                                        backgroundColor: SOURCE_TABLE_CHIP,
+                                        color: badgeTextColor(SOURCE_TABLE_CHIP),
+                                        borderRadius: '2px',
+                                        fontWeight: '500'
+                                      }}>
+                                        {table}
+                                      </span>
+                                    ))}
+                                  </SpaceBetween>
+                                )}
+                                {tradeOff.source_tables?.length > 0 && tradeOff.target_tables?.length > 0 && (
+                                  <span style={{ fontSize: '11px', fontWeight: 'bold', padding: '0 2px' }}>→</span>
+                                )}
+                                {tradeOff.target_tables?.length > 0 && (
+                                  <SpaceBetween direction="horizontal" size="xxs">
+                                    {tradeOff.target_tables.map((table, ti) => (
+                                      <span key={ti} data-mapping="target" data-engine={engine} style={{
+                                        display: 'inline-block',
+                                        padding: '1px 4px',
+                                        fontSize: '10px',
+                                        backgroundColor: engineHex(engine),
+                                        color: badgeTextColor(engineHex(engine)),
+                                        borderRadius: '2px',
+                                        fontWeight: '500'
+                                      }}>
+                                        {table}
+                                      </span>
+                                    ))}
+                                  </SpaceBetween>
+                                )}
+                              </SpaceBetween>
+                            </Box>
+                          </Box>
+                        )}
+                        {tradeOff.query_ids?.length > 0 && (
+                          <Box fontSize="body-s" margin={{ top: 's' }} padding={{ left: 'xl' }}>
+                            <Link variant="secondary" fontSize="body-s" onFollow={() => {}}>{t('analysis-results.tradeoffs.sql-ids')}</Link>
+                            <Box margin={{ top: 'xxxs' }}>
+                              <SpaceBetween direction="horizontal" size="xxs">
+                                {tradeOff.query_ids.map((qid, qi) => (
+                                  <span key={qi}
+                                    role="button"
+                                    tabIndex={0}
+                                    aria-label={t('analysis-results.query-routing.open-label', { id: qid })}
+                                    onClick={() => fetchQueryJourney(qid)}
+                                    onKeyDown={(e) => {
+                                      if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); fetchQueryJourney(qid); }
+                                    }}
+                                    style={{
+                                      display: 'inline-block',
+                                      padding: '1px 4px',
+                                      fontSize: '10px',
+                                      fontFamily: 'monospace',
+                                      backgroundColor: QUERY_CHIP_BG,
+                                      color: QUERY_CHIP_TEXT,
+                                      borderRadius: '2px',
+                                      cursor: 'pointer',
+                                      transition: 'background-color 0.15s',
+                                    }}
+                                    onMouseEnter={e => { e.target.style.backgroundColor = QUERY_CHIP_ACTIVE_BG; e.target.style.color = '#fff'; }}
+                                    onMouseLeave={e => { e.target.style.backgroundColor = QUERY_CHIP_BG; e.target.style.color = QUERY_CHIP_TEXT; }}
+                                    onFocus={e => { e.target.style.backgroundColor = QUERY_CHIP_ACTIVE_BG; e.target.style.color = '#fff'; }}
+                                    onBlur={e => { e.target.style.backgroundColor = QUERY_CHIP_BG; e.target.style.color = QUERY_CHIP_TEXT; }}
+                                    title={`View query history for ${qid}`}
+                                  >
+                                    {qid}
+                                  </span>
+                                ))}
+                              </SpaceBetween>
+                            </Box>
+                          </Box>
+                        )}
+                      </SpaceBetween>
+                    </Box>
+                  );
+
+                  return {
+                    id: engine,
+                    label: tradeOffTabLabel(engine, tradeoffs.length, t, ENGINE_LABELS),
+                    content: (
+                      <SpaceBetween size="m">
+                        {/* Design Decisions */}
+                        {topicGroups ? (
+                          <TradeOffTopicGroups groups={topicGroups.topics} renderTradeOff={renderDecision} t={t} />
+                        ) : decisions.length > 0 && (
+                          <SpaceBetween size="xs">
+                            {decisions.map(renderDecision)}
+                          </SpaceBetween>
+                        )}
+
+                        {/* Principal Engineer Notes */}
+                        {shownPeNotes.length > 0 && (
+                          <ExpandableSection
+                            headerText={peNotesHeader}
+                            variant="footer"
+                            defaultExpanded={false}
+                          >
+                            <SpaceBetween size="xs">
+                              {shownPeNotes.map((tradeOff, idx) => (
+                                <Box key={idx} padding={{ vertical: 'xs', horizontal: 's' }}
+                                  style={{ borderLeft: '3px solid #ff9900', backgroundColor: '#fff8e6', borderRadius: '4px' }}>
+                                  <SpaceBetween size="xxs">
+                                    <div style={{ display: 'flex', alignItems: 'flex-start', gap: '8px' }}>
+                                      <Badge color="blue">{idx + 1}</Badge>
+                                      <Box fontSize="body-s" style={{ flex: 1 }}><ProseText text={tradeOff.description.replace(/^\[PE note\]\s*/, '')} /></Box>
+                                    </div>
+                                    {tradeOff.impact && (
+                                      <Box fontSize="body-s" color="text-body-secondary" padding={{ left: 'xl' }}><ProseText text={tradeOff.impact} /></Box>
+                                    )}
+                                  </SpaceBetween>
+                                </Box>
+                              ))}
+                            </SpaceBetween>
+                          </ExpandableSection>
+                        )}
+                      </SpaceBetween>
+                    )
+                  };
+                })
+              }
+            />
+          </Container>
+        )}
+
+        {/* DynamoDB merge-review decisions (#1780): the authoritative home the
+            merge chose for each overlap and its derived copies, as both reports
+            state them. */}
+        <DynamoDBMergeReviewsCallout synthesis={resultsData?.synthesis} t={t} />
+      </SpaceBetween>
+    ),
+  };
 
   return (
     <>
@@ -1969,1201 +3166,57 @@ const AnalysisResultsPage = memo(() => {
           />
         }
         content={
-          <SpaceBetween size="l">
+          <ResultsSectionNav.Provider value={goToSection}>
+            <SpaceBetween size="l">
+              {flashbarItems.length > 0 && (
+                <Flashbar items={flashbarItems.map(item => ({ ...item, onDismiss: () => handleFlashbarDismiss(item.id) }))} />
+              )}
 
-            {flashbarItems.length > 0 && (
-              <Flashbar items={flashbarItems.map(item => ({ ...item, onDismiss: () => handleFlashbarDismiss(item.id) }))} />
-            )}
-
-            <Header
-              variant="h1"
-              actions={
-                <SpaceBetween direction="horizontal" size="xs">
-                  <Button iconName="refresh" variant="normal" onClick={fetchData} loading={loading} ariaLabel={t('common.actions.refresh')} />
-                  {graphExplorer.enabled && <ExploreGraphButton jobId={jobId} enabled={graphExplorer.enabled} />}
-                  <Button href={`/analysis/monitor/summary/${jobId}`}>{t('analysis-results.actions.back-to-assessment')}</Button>
-                </SpaceBetween>
-              }
-            >
-              {t('analysis-results.header.title')}
-            </Header>
-
-            {/* Deliverables (#957, #1028): three download buttons, first. */}
-            <DeliverablesPanel
-              files={deliverables.files}
-              loading={deliverables.loading}
-              error={deliverables.error}
-              baseUrl={ApiConfigurations.baseUrl}
-              t={t}
-            />
-
-            {/* Executive Summary. #1028: the access-pattern count sits below
-                the database name; a cost tile with no figure is left out. */}
-            <Container id="executive-summary-section" header={<Header variant="h2">{t('analysis-results.executive-summary.title')}</Header>}>
-              <SpaceBetween size="m">
-                {/* #1403: one paragraph per part (recommendation, risk, decision), as
-                    the engineering report prints them. */}
-                <Box variant="div" fontSize="body-m">
-                  {synthesis?.summary ? <ProseText text={synthesis.summary} paragraphs /> : 'No summary available.'}
-                </Box>
-                <PinRuleNote note={resultsData?.pin_rule_note} />
-                {summaryFallback.isFallback && (
-                  <SummaryFallbackNotice
-                    text={t('analysis-results.executive-summary.fallback-notice', {
-                      reason: fallbackWithheldReason(summaryFallback.warnings),
-                    })}
-                  />
-                )}
-                <ExecutiveSummaryStats
-                  t={t}
-                  databaseName={synthesis?.database_name}
-                  accessPatternCount={totalAccessPatterns}
-                  ownerQueryCount={ownerQueryCount}
-                  cachePatternCount={cachePatternCount}
-                  projectedCost={projectedCost}
-                  costBaseline={costBaseline}
-                  retiredEngines={synthesis?.facts?.retired_in_use_engines}
-                  engineScope={synthesis?.facts?.engine_scope}
-                  noEngineInScope={noEngineInScopeOf(synthesis)}
-                  queryPatterns={queryPatternCountsOf(synthesis)}
-                  priceList={synthesis?.facts?.price_list}
-                  costScopeLabel={costScopeLabelOf(synthesis)}
-                  costCaveat={costCaveatOf(synthesis)}
-                  targetEngines={(
-                    <>
-                      <Box fontSize="heading-m">
-                        <SpaceBetween direction="horizontal" size="xxs">
-                          {/* #358: the cache layer is listed here too (labeled
-                              distinctly, e.g. "ElastiCache (cache layer)") -- it
-                              owns no queries, but it is still a target engine
-                              the deliverables name and price. */}
-                          {targetEngines.map(({ engine, isCacheLayer }) => (
-                            <EngineBadge key={engine} engine={engine}>
-                              {ENGINE_LABELS[engine] || engine}
-                              {isCacheLayer ? t('cache-layer.engine-badge-suffix', { defaultValue: ' (cache layer)' }) : ''}
-                            </EngineBadge>
-                          ))}
-                        </SpaceBetween>
-                      </Box>
-                      {/* #296: additional cache-layer stats (reads fronted, %
-                          of calls) shown as a note below the badges above. */}
-                      {cacheLayerLine && (
-                        <Box fontSize="body-s" color="text-body-secondary" padding={{ top: 'xxs' }}>
-                          {cacheLayerLine}
-                        </Box>
-                      )}
-                      {/* #399: why the cache layer is cache-aside, from
-                          facts.cache_layer.role_sentence, as every deliverable states it. */}
-                      {cacheLayerLine && cacheFacts?.roleSentence && (
-                        <Box fontSize="body-s" color="text-body-secondary" padding={{ top: 'xxs' }}>
-                          {cacheFacts.roleSentence}
-                        </Box>
-                      )}
-                      {/* #1891: per non-Aurora engine, its statements on temporary objects
-                          that follow their routine (facts.query_group_counts.
-                          procedure_internal_routine_counts); an Aurora engine states its
-                          own on its tab. */}
-                      {Object.entries(procedureInternalRoutineCountsOf(synthesis))
-                        .filter(([engine, count]) => count > 0 && !isAuroraEngine(engine))
-                        .map(([engine, count]) => (
-                          <Box key={`follows-${engine}`} fontSize="body-s" color="text-body-secondary" padding={{ top: 'xxs' }}>
-                            {t('analysis-results.procedure-internal-routine-on', {
-                              engine: ENGINE_LABELS[engine] || engine,
-                              count,
-                            })}
-                          </Box>
-                        ))}
-                      {/* #1252: the gate's cache candidates and the design's cached reads
-                          can differ (the post-schema-design safety net drops reads the
-                          design does not cover). The sentence comes from facts.cache_layer,
-                          once, as a plain text child. */}
-                      {cacheChange && (
-                        <Box
-                          fontSize="body-s"
-                          color="text-status-warning"
-                          padding={{ top: 'xxs' }}
-                        >
-                          {cacheChange}
-                        </Box>
-                      )}
-                    </>
-                  )}
-                />
-              </SpaceBetween>
-            </Container>
-
-            {/* Query Flow (Sankey) */}
-            {sankeyData && (
-              <Container id="query-flow-section" header={
-                <Header variant="h2" description={t('analysis-results.query-flow.description')}>
-                  {t('analysis-results.query-flow.title')}
-                </Header>
-              }>
-                <ChartSankey
-                  width={900}
-                  height={Math.max(250, Object.keys(afterDist).length * 120)}
-                  data={sankeyData}
-                />
-              </Container>
-            )}
-
-            {/* Cost Breakdown */}
-            {costBreakdown.length > 0 && (
-              <Container id="cost-breakdown-section" header={<Header variant="h2" description={t('analysis-results.cost-breakdown.description')}>{t('analysis-results.cost-breakdown.title')}</Header>}>
-                <SpaceBetween size="m">
-                  <Box fontSize="body-s" color="text-body-secondary">
-                    <span data-figure="cost-scope">{costScopeLabelOf(synthesis)}</span>
-                  </Box>
-                  <ColumnLayout columns={costBreakdown.length} variant="text-grid">
-                    {costBreakdown.map((cb, idx) => {
-                      // #358: the cache layer's card is labeled the same way
-                      // as its "Target engines" badge, so the two sections
-                      // agree on what ElastiCache is here.
-                      const isCacheLayer = cb.database === cacheOverlay?.engine;
-                      return (
-                        <Box key={idx} textAlign="center">
-                          <EngineBadge engine={cb.database}>
-                            {ENGINE_LABELS[cb.database] || cb.database}
-                            {isCacheLayer ? t('cache-layer.engine-badge-suffix', { defaultValue: ' (cache layer)' }) : ''}
-                          </EngineBadge>
-                          <Box fontSize="display-l" fontWeight="bold" margin={{ top: 'xs' }}>
-                            {formatMoney(cb.monthly_cost_usd)}
-                          </Box>
-                          <Box fontSize="body-s" color="text-body-secondary">/month · {cb.pricing_mode}</Box>
-                          {costSizingText(t, costSizingOf(synthesis, cb.database)) && (
-                            <Box fontSize="body-s" color="text-body-secondary">
-                              <span data-figure="cost-sizing" data-engine={cb.database}>
-                                {costSizingText(t, costSizingOf(synthesis, cb.database))}
-                              </span>
-                            </Box>
-                          )}
-                        </Box>
-                      );
-                    })}
-                  </ColumnLayout>
-                  {costAssumptionsOf(synthesis).length > 0 && (
-                    <Box fontSize="body-s" color="text-body-secondary">
-                      <span data-figure="cost-assumptions">{costAssumptionsOf(synthesis).join(' · ')}</span>
-                    </Box>
-                  )}
-                  {/* #1636: the tables with no row count, and the sizing assumption (a report fact) */}
-                  {rowCountStatementOf(synthesis) && (
-                    <Box fontSize="body-s" color="text-body-secondary">
-                      <span data-figure="row-counts">{t('analysis-results.cost-breakdown.row-counts')}: {rowCountStatementOf(synthesis)}.</span>
-                    </Box>
-                  )}
-                  {/* #1893: what the call rates rest on (a report fact) */}
-                  {rateWindowStatementOf(synthesis) && (
-                    <Box fontSize="body-s" color="text-body-secondary">
-                      <span data-figure="rate-windows">{t('analysis-results.cost-breakdown.rate-windows')}: {rateWindowStatementOf(synthesis)}.</span>
-                    </Box>
-                  )}
-                  {/* #1991: a rate window that is not representative makes the costs a scenario */}
-                  {rateWindowScenarioOf(synthesis) && (
-                    <Box fontSize="body-s" color="text-status-warning">
-                      <span data-figure="rate-window-scenario">{rateWindowScenarioOf(synthesis)}.</span>
-                    </Box>
-                  )}
-                  {/* #1990: the assumptions block and the growth scenario (report facts) */}
-                  {assumptionLinesOf(synthesis).length > 0 && (
-                    <Box fontSize="body-s" color="text-body-secondary" data-figure="assumptions">
-                      <ul>
-                        {assumptionLinesOf(synthesis).map((line) => (
-                          <li key={line}>{line}.</li>
-                        ))}
-                      </ul>
-                    </Box>
-                  )}
-                  <Box fontSize="body-s" color="text-body-secondary">
-                    <span data-figure="cost-caveat">{costCaveatOf(synthesis)}</span>
-                  </Box>
-                  {/* #1197: the read I/O basis a figure rests on, a report fact (ADR-032) */}
-                  {(synthesis?.facts?.cost_basis_notes || []).map((note, idx) => (
-                    <Box key={`cost-basis-${idx}`} fontSize="body-s" color="text-body-secondary">
-                      <span data-figure="cost-basis">{note}</span>
-                    </Box>
-                  ))}
-                </SpaceBetween>
-              </Container>
-            )}
-
-
-            {/* #1991: the assumptions a customer can change, re-running only what a
-                change affects (the server checks and records it). */}
-            <AssumptionsPanel jobId={jobId} t={t} onChanged={reloadAfterAssumptionChange} />
-
-            {/* Migration roadmap (#957): report.json's waves, the same ones the
-                PDF and the engineering report show. */}
-            <MigrationWavePlan
-              synthesis={synthesis}
-              t={t}
-              schemaSectionId={schemaSectionIdOf(totalAccessPatterns > 0 || cachePatternCount > 0, auroraDesigns.length > 0)}
-            />
-            <StepGateEvidence synthesis={synthesis} t={t} />
-
-            {/* Routines (#1939): how the job's routines migrate, the to-do and each
-                routine behind a routine risk, from facts.routines, as both reports
-                state them. Collapsed. */}
-            <RoutineMigrationSection synthesis={synthesis} t={t} />
-
-            {/* Reality-check moves no model reviewed (#746): one line when any. */}
-            <UnreviewedMovesNote synthesis={resultsData?.synthesis} t={t} />
-            <EngineChoicesNote synthesis={resultsData?.synthesis} t={t} />
-
-            {/* Queries on a fallback engine (#729): where each landed and why,
-                its gates, a redesign hint and the assignment review that
-                re-runs. Warning first, as in both reports. */}
-            <UnservableQueriesCallout
-              synthesis={resultsData?.synthesis}
-              jobId={jobId}
-              onOpen={fetchQueryJourney}
-              t={t}
-            />
-
-            {/* DynamoDB merge conflicts (#802): the access patterns the merged
-                design does not serve, as both reports state them. */}
-            <DynamoDBMergeConflictsCallout synthesis={resultsData?.synthesis} t={t} />
-
-            {/* DynamoDB merge-review decisions (#1780): the authoritative home the
-                merge chose for each overlap and its derived copies, as both reports
-                state them. */}
-            <DynamoDBMergeReviewsCallout synthesis={resultsData?.synthesis} t={t} />
-
-            {/* Close calls (#730): queries a kept engine could serve almost
-                as well, with the way into each one's decision trace and the
-                assignment review that moves them. */}
-            <CloseCallCallout
-              synthesis={resultsData?.synthesis}
-              jobId={jobId}
-              onOpen={fetchQueryJourney}
-              t={t}
-            />
-
-            {/* Query routing (#822): every query, and the way into its
-                journey and decision trace without schema design. #1028:
-                collapsed when the page opens. */}
-            <QueryRoutingTable
-              rows={queryRoutingRows}
-              loading={queryJourneyList.loading}
-              error={queryJourneyList.error}
-              hasLedger={routingHistoryRecorded(resultsData?.synthesis)}
-              truncated={queryJourneyList.truncated}
-              onOpen={fetchQueryJourney}
-              t={t}
-            />
-
-            {/* ============================================ */}
-            {/* Access Pattern Explorer                      */}
-            {/* ============================================ */}
-            {(totalAccessPatterns > 0 || cachePatternCount > 0) && (
-              <Container
-                id="access-patterns-section"
-                header={
-                  <Header
-                    variant="h2"
-                    // #429 part 2: once there's a cache layer, the header
-                    // breaks the combined total down into owned vs. cache
-                    // layer ("64 (54 owned + 10 cache layer)") instead of
-                    // just a bare count -- filtering still falls back to the
-                    // simpler "(N of M)" form, same as before #429.
-                    counter={
-                      hasActiveFilters
-                        ? `(${filteredOwnerPatterns.length + filteredCacheLayerPatterns.length} of ${explorerTotal})`
-                        : cachePatternCount > 0
-                          ? `(${t('analysis-results.explorer.header-count', {
-                              count: explorerTotal,
-                              total: explorerTotal,
-                              owned: totalAccessPatterns,
-                              cache: cachePatternCount,
-                            })})`
-                          : `(${totalAccessPatterns})`
-                    }
-                    description={t('analysis-results.explorer.description')}
-                    actions={
-                      <SpaceBetween direction="horizontal" size="xs">
-                        <SegmentedControl
-                          selectedId={browseMode}
-                          onChange={({ detail }) => { setBrowseMode(detail.selectedId); setCurrentPage(1); setSelectedItems([]); }}
-                          options={[
-                            { id: 'pattern', text: t('analysis-results.explorer.by-access-pattern') },
-                            { id: 'source', text: t('analysis-results.explorer.by-source-table') },
-                          ]}
-                        />
-                      </SpaceBetween>
-                    }
-                  >
-                    {t('analysis-results.explorer.title')}
-                  </Header>
+              <Header
+                variant="h1"
+                actions={
+                  <SpaceBetween direction="horizontal" size="xs">
+                    <Button iconName="refresh" variant="normal" onClick={fetchData} loading={loading} ariaLabel={t('common.actions.refresh')} />
+                    {graphExplorer.enabled && <ExploreGraphButton jobId={jobId} enabled={graphExplorer.enabled} />}
+                    <Button href={`/analysis/monitor/summary/${jobId}`}>{t('analysis-results.actions.back-to-assessment')}</Button>
+                  </SpaceBetween>
                 }
               >
-                <SpaceBetween size="m">
+                {t('analysis-results.header.title')}
+              </Header>
 
-                  {/* Visual navigators: engine bar + operation donut */}
-                  <ColumnLayout columns={2}>
-                    <Box>
-                      <Box variant="awsui-key-label" margin={{ bottom: 'xs' }}>{t('analysis-results.explorer.filter-by-engine')}</Box>
-                      {renderEngineBar()}
-                    </Box>
-                    <Box>
-                      <Box variant="awsui-key-label" margin={{ bottom: 'xs' }}>{t('analysis-results.explorer.filter-by-operation-type')}</Box>
-                      <Multiselect
-                        selectedOptions={opFilter}
-                        onChange={({ detail }) => {
-                          setOpFilter(detail.selectedOptions);
-                          setCurrentPage(1);
-                        }}
-                        options={operationOptions}
-                        placeholder="Select operations"
-                        filteringType="auto"
-                        tokenLimit={3}
-                      />
-                      <Box margin={{ top: 's' }}>
-                        <div style={{ cursor: 'pointer' }} onClick={(e) => {
-                          // Get the clicked element
-                          const target = e.target;
-
-                          // Try to find if we clicked on a legend item or segment
-                          let legendText = null;
-
-                          // Check if clicked on legend text
-                          if (target.tagName === 'text' || target.closest('text')) {
-                            const textElement = target.tagName === 'text' ? target : target.closest('text');
-                            legendText = textElement.textContent;
-                          }
-
-                          // Check if clicked on a path (segment)
-                          if (target.tagName === 'path' || target.closest('path')) {
-                            // Try to find associated legend text from the chart data
-                            const pathElement = target.tagName === 'path' ? target : target.closest('path');
-                            const fill = pathElement.getAttribute('fill');
-
-                            // Find the operation by color
-                            const operation = donutData.find(o => o.color === fill);
-                            if (operation) {
-                              legendText = operation.title;
-                            }
-                          }
-
-                          if (legendText) {
-                            // Find the operation from the legend text
-                            const operation = donutData.find(o => o.title === legendText);
-                            if (operation) {
-                              console.log('Clicked operation:', operation.id);
-
-                              // Add to PropertyFilter
-                              const newToken = {
-                                propertyKey: 'op_type',
-                                operator: '=',
-                                value: operation.id
-                              };
-
-                              // Check if this filter already exists
-                              const existingTokens = filterQuery.tokens || [];
-                              const alreadyExists = existingTokens.some(
-                                t => t.propertyKey === 'op_type' && t.value === operation.id
-                              );
-
-                              if (!alreadyExists) {
-                                console.log('Adding operation filter token:', newToken);
-                                setFilterQuery({
-                                  tokens: [...existingTokens, newToken],
-                                  operation: filterQuery.operation || 'and'
-                                });
-                                setCurrentPage(1);
-                              }
-                            }
-                          }
-                        }}>
-                          <PieChart
-                            data={donutData}
-                            variant="donut"
-                            size="medium"
-                            innerMetricValue={filteredPatterns.length.toString()}
-                            innerMetricDescription="patterns"
-                            hideFilter
-                            hideLegend={false}
-                            segmentDescription={(datum, sum) => `${datum.value} patterns, ${((datum.value / sum) * 100).toFixed(0)}%`}
-                            detailPopoverContent={(datum, sum) => [
-                              { key: 'Operation', value: datum.title },
-                              { key: 'Patterns', value: datum.value },
-                              { key: 'Percentage', value: `${((datum.value / sum) * 100).toFixed(1)}%` }
-                            ]}
-                            empty={<Box textAlign="center" color="inherit">{t('common.labels.no-data')}</Box>}
-                            noMatch={<Box textAlign="center" color="inherit">{t('common.labels.no-data')}</Box>}
-                            ariaLabel="Operation type distribution"
-                          />
-                        </div>
-                      </Box>
-                    </Box>
-                  </ColumnLayout>
-
-                  {/* Property filter + active filter chips */}
-                  <PropertyFilter
-                    query={filterQuery}
-                    onChange={({ detail }) => { setFilterQuery(detail); setCurrentPage(1); }}
-                    filteringProperties={filterProperties}
-                    filteringOptions={filterOptions}
-                    filteringPlaceholder={t('analysis-results.explorer.filter-placeholder')}
-                    countText={t('analysis-results.explorer.count-text', { count: filteredPatterns.length })}
-                    expandToViewport
-                    i18nStrings={{
-                      filteringAriaLabel: t('analysis-results.explorer.filtering-aria-label'),
-                      dismissAriaLabel: t('analysis-results.explorer.dismiss-aria-label'),
-                      filteringPlaceholder: t('analysis-results.explorer.filter-placeholder'),
-                      groupValuesText: t('analysis-results.explorer.group-values-text'),
-                      groupPropertiesText: t('analysis-results.explorer.group-properties-text'),
-                      operatorsText: t('analysis-results.explorer.operators-text'),
-                      operationAndText: t('analysis-results.explorer.operation-and-text'),
-                      operationOrText: t('analysis-results.explorer.operation-or-text'),
-                      operatorLessText: t('analysis-results.explorer.operator-less-text'),
-                      operatorLessOrEqualText: t('analysis-results.explorer.operator-less-or-equal-text'),
-                      operatorGreaterText: t('analysis-results.explorer.operator-greater-text'),
-                      operatorGreaterOrEqualText: t('analysis-results.explorer.operator-greater-or-equal-text'),
-                      operatorContainsText: t('analysis-results.explorer.operator-contains-text'),
-                      operatorDoesNotContainText: t('analysis-results.explorer.operator-does-not-contain-text'),
-                      operatorEqualsText: t('analysis-results.explorer.operator-equals-text'),
-                      operatorDoesNotEqualText: t('analysis-results.explorer.operator-does-not-equal-text'),
-                      editTokenHeader: t('analysis-results.explorer.edit-token-header'),
-                      propertyText: t('analysis-results.explorer.property-text'),
-                      operatorText: t('analysis-results.explorer.operator-text'),
-                      valueText: t('analysis-results.explorer.value-text'),
-                      cancelActionText: t('common.actions.cancel'),
-                      applyActionText: t('analysis-results.explorer.apply-action-text'),
-                      allPropertiesLabel: t('analysis-results.explorer.all-properties-label'),
-                      tokenLimitShowMore: t('analysis-results.explorer.token-limit-show-more'),
-                      tokenLimitShowFewer: t('analysis-results.explorer.token-limit-show-fewer'),
-                      clearFiltersText: t('analysis-results.explorer.clear-filters-text'),
-                      removeTokenButtonAriaLabel: (token) => t('analysis-results.explorer.remove-token-aria-label', { propertyLabel: token.propertyLabel, operator: token.operator, value: token.value }),
-                      enteredTextLabel: (text) => t('analysis-results.explorer.entered-text-label', { text }),
-                    }}
-                  />
-
-                  {hasActiveFilters && (
-                    <div className="active-filters">
-                      <Button variant="link" onClick={clearAllFilters}>{t('analysis-results.explorer.clear-all-filters')}</Button>
-                    </div>
-                  )}
-
-                  {/* Pagination at top */}
-                  {displayItems.length > PAGE_SIZE && (
-                    <Box float="right">
-                      <Pagination
-                        currentPageIndex={currentPage}
-                        pagesCount={Math.ceil(displayItems.length / PAGE_SIZE)}
-                        onChange={({ detail }) => setCurrentPage(detail.currentPageIndex)}
-                        ariaLabels={explorerPaginationLabels}
-                      />
-                    </Box>
-                  )}
-
-
-                  {/* ---- Access Pattern view ---- */}
-                  {browseMode === 'pattern' && (
-                    <Table
-                      columnDefinitions={patternColumnDefinitions}
-                      items={paginatedItems}
-                      loading={loading}
-                      variant="embedded"
-                      selectionType="single"
-                      ariaLabels={explorerSelectionLabels(t('analysis-results.explorer.table-patterns'))}
-                      selectedItems={selectedItems}
-                      onSelectionChange={({ detail }) => setSelectedItems(detail.selectedItems)}
-                      empty={
-                        <Box textAlign="center" padding="l">
-                          <Box variant="strong">{t('analysis-results.explorer.no-matching-patterns')}</Box>
-                          <Box variant="p" color="text-body-secondary">{t('analysis-results.explorer.try-adjusting-filters')}</Box>
-                        </Box>
-                      }
-                    />
-                  )}
-
-
-                  {/* ---- Source Table view ---- */}
-                  {browseMode === 'source' && (
-                    <Table
-                      columnDefinitions={sourceTableColumnDefinitions}
-                      items={paginatedItems}
-                      loading={loading}
-                      variant="embedded"
-                      selectionType="single"
-                      ariaLabels={explorerSelectionLabels(t('analysis-results.explorer.table-sources'))}
-                      selectedItems={selectedItems}
-                      onSelectionChange={({ detail }) => setSelectedItems(detail.selectedItems)}
-                      empty={
-                        <Box textAlign="center" padding="l">
-                          <Box variant="strong">{t('analysis-results.explorer.no-matching-source-tables')}</Box>
-                          <Box variant="p" color="text-body-secondary">{t('analysis-results.explorer.try-adjusting-filters')}</Box>
-                        </Box>
-                      }
-                    />
-                  )}
-
-                  {/* Bottom pagination */}
-                  {displayItems.length > PAGE_SIZE && (
-                    <Box float="right">
-                      <Pagination
-                        currentPageIndex={currentPage}
-                        pagesCount={Math.ceil(displayItems.length / PAGE_SIZE)}
-                        onChange={({ detail }) => setCurrentPage(detail.currentPageIndex)}
-                        ariaLabels={explorerPaginationLabels}
-                      />
-                    </Box>
-                  )}
-
-                  {/* ============================================ */}
-                  {/* Cache layer section (#429 part 2)             */}
-                  {/* ============================================ */}
-                  {/* The cache layer's own access patterns/key designs, as a
-                      distinct group after the owner rows above -- in both
-                      browse modes -- instead of mixed into the owner table
-                      or left out of the explorer entirely (#361/#405 only
-                      excluded them from the owner total/pie). Hidden
-                      whenever the current filters leave no cache-layer rows
-                      (e.g. the engine filter is set to an owner engine only),
-                      same as the owner table's own empty state. */}
-                  {browseMode === 'pattern' && filteredCacheLayerPatterns.length > 0 && (
-                    <Box margin={{ top: 'l' }}>
-                      <Header
-                        variant="h3"
-                        counter={`(${filteredCacheLayerPatterns.length})`}
-                      >
-                        {t('analysis-results.explorer.cache-layer-section-title', {
-                          engine: ENGINE_LABELS[cacheOverlay?.engine] || cacheOverlay?.engine,
-                        })}
-                      </Header>
-                      <Table
-                        columnDefinitions={patternColumnDefinitions}
-                        items={filteredCacheLayerPatterns}
-                        variant="embedded"
-                        selectionType="single"
-                        ariaLabels={explorerSelectionLabels(t('analysis-results.explorer.table-cache-patterns'))}
-                        selectedItems={selectedItems}
-                        onSelectionChange={({ detail }) => setSelectedItems(detail.selectedItems)}
-                      />
-                    </Box>
-                  )}
-
-                  {browseMode === 'source' && cacheSourceTableGroups.length > 0 && (
-                    <Box margin={{ top: 'l' }}>
-                      <Header
-                        variant="h3"
-                        counter={`(${cacheSourceTableGroups.length})`}
-                      >
-                        {t('analysis-results.explorer.cache-layer-section-title', {
-                          engine: ENGINE_LABELS[cacheOverlay?.engine] || cacheOverlay?.engine,
-                        })}
-                      </Header>
-                      <Table
-                        columnDefinitions={sourceTableColumnDefinitions}
-                        items={cacheSourceTableGroups}
-                        variant="embedded"
-                        selectionType="single"
-                        ariaLabels={explorerSelectionLabels(t('analysis-results.explorer.table-cache-sources'))}
-                        selectedItems={selectedItems}
-                        onSelectionChange={({ detail }) => setSelectedItems(detail.selectedItems)}
-                      />
-                    </Box>
-                  )}
-                </SpaceBetween>
-              </Container>
-            )}
-
-            {/* Sources of truth and replicas (#992): each table read on a
-                replica, its CDC direction and its replica reads, with the
-                eventual-consistency risk stated once. #1232: collapsed, after
-                the access pattern explorer. */}
-            {/* Table owners (#212): each mapped table's owner, the engines that
-                also read it through CDC replicas and its cache, as the
-                engineering report's Migration map states them. Collapsed. */}
-            <TableOwnersCallout synthesis={synthesis} t={t} />
-
-            <SourcesOfTruthCallout synthesis={synthesis} t={t} />
-
-            {/* Risk Assessment (#373): synthesis.risk_assessment, including
-                any CRITICAL risk, with one tab per severity (always present,
-                even empty) and the risks the assignment already resolved.
-                An UNRATED tab (#270 round-1 review) joins them only when a
-                risk's severity is none of the four known ones -- matching
-                the deck's "only show UNRATED when present" rule, rather than
-                an always-empty fifth tab on every ordinary run. */}
-            {!(openRisks.length > 0 || resolvedRisksList.length > 0 || overallRiskLevel) && (
-              <NoOpenRisksSection
-                synthesis={resultsData?.synthesis}
-                caveat={resultsData?.no_open_risks_caveat}
-                title={t('analysis-results.risk-assessment.title')}
+              {/* Deliverables (#957, #1028): three download buttons, first. */}
+              <DeliverablesPanel
+                files={deliverables.files}
+                loading={deliverables.loading}
+                error={deliverables.error}
+                baseUrl={ApiConfigurations.baseUrl}
+                t={t}
               />
-            )}
-            {(openRisks.length > 0 || resolvedRisksList.length > 0 || overallRiskLevel) && (
-              <Container header={<Header variant="h2" description={t('analysis-results.risk-assessment.description')}>{t('analysis-results.risk-assessment.title')}</Header>}>
-                <SpaceBetween size="m">
-                  {overallRiskLevel && (
-                    <StatusIndicator type={riskSeverityStatus(overallRiskLevel)}>
-                      {t('analysis-results.risk-assessment.overall-risk')}: {overallRiskLevel}
-                    </StatusIndicator>
-                  )}
-                  {/* #1991: the rate-driven risks rest on a window that is not representative */}
-                  {rateWindowRiskNoteOf(synthesis) && (
-                    <Box fontSize="body-s" color="text-status-warning">
-                      <span data-figure="rate-window-scenario-risks">{rateWindowRiskNoteOf(synthesis)}.</span>
-                    </Box>
-                  )}
-                  <NoOpenRisksNote
-                    synthesis={resultsData?.synthesis}
-                    shownRisks={openRisks}
-                    caveat={resultsData?.no_open_risks_caveat}
-                  />
-                  <Tabs
-                    activeTabId={
-                      riskTabIds.includes(riskTab)
-                        ? riskTab
-                        : defaultRiskSeverity(synthesis, risksBySeverity, riskTabIds)
-                    }
-                    onChange={({ detail }) => setRiskTab(detail.activeTabId)}
-                    tabs={riskTabIds.map((severity) => {
-                      const risksAtSeverity = risksBySeverity[severity] || [];
-                      const severityCount = openRiskCountAt(synthesis, severity, risksAtSeverity);
-                      const status = riskSeverityStatus(severity);
-                      return {
-                        id: severity,
-                        label: t('analysis-results.risk-assessment.tab-label', { severity, count: severityCount }),
-                        content: risksAtSeverity.length === 0 ? (
-                          <Box color="text-body-secondary" padding="s">
-                            {t('analysis-results.risk-assessment.no-risks-at-severity')}
-                          </Box>
-                        ) : (
-                          <SpaceBetween size="s">
-                            {risksAtSeverity.map((risk, idx) => {
-                              const { engine, body } = splitRiskDescription(risk.description);
-                              const showMitigation = risk.mitigation
-                                && !mitigationRepeatsDescription(risk.mitigation, body);
-                              const mitigationRef = sharedMitigationRef(resultsData?.mitigation_refs, risk);
-                              const affectedTables = Array.isArray(risk.affected_tables) ? risk.affected_tables : [];
-                              const copySync = derivedCopySyncOf(synthesis, risk.risk_id);
-                              return (
-                                <Box
-                                  key={risk.risk_id || idx}
-                                  padding={{ vertical: 'xs', horizontal: 's' }}
-                                  style={{ borderLeft: `4px solid ${RISK_BORDER_COLOR[status]}`, backgroundColor: '#fff', borderRadius: '4px' }}
-                                >
-                                  <SpaceBetween size="xxs">
-                                    <SpaceBetween direction="horizontal" size="xs" alignItems="center">
-                                      <StatusIndicator type={status}>{severity}</StatusIndicator>
-                                      {engine !== '(general)' && (
-                                        <EngineBadge engine={engine}>
-                                          {ENGINE_LABELS[engine] || engine}
-                                        </EngineBadge>
-                                      )}
-                                      {risk.risk_id && (
-                                        <Box fontSize="body-s" color="text-body-secondary">{risk.risk_id}</Box>
-                                      )}
-                                    </SpaceBetween>
-                                    <Box fontSize="body-s"><ProseText text={body} /></Box>
-                                    {showMitigation && (
-                                      <Box fontSize="body-s" color="text-body-secondary">
-                                        <b>{t('analysis-results.risk-assessment.mitigation')}:</b>{' '}
-                                        {mitigationRef
-                                          ? t('analysis-results.risk-assessment.mitigation-as-for', { risk: mitigationRef })
-                                          : <ProseText text={risk.mitigation} />}
-                                      </Box>
-                                    )}
-                                    {affectedTables.length > 0 && (
-                                      <Box fontSize="body-s" color="text-body-secondary">
-                                        {t('analysis-results.risk-assessment.affected-tables')}: {affectedTables.join(', ')}
-                                      </Box>
-                                    )}
-                                    {copySync && (
-                                      <ul className="risk-details" style={{ margin: 0, paddingLeft: '1.25em' }}>
-                                        {copySync.lines.map((line, i) => (
-                                          <li key={i}><Box fontSize="body-s" color="text-body-secondary"><ProseText text={line} /></Box></li>
-                                        ))}
-                                        {copySync.basis && (
-                                          <li><Box fontSize="body-s" color="text-body-secondary">{t('analysis-results.risk-assessment.sync-basis')}: <ProseText text={copySync.basis} /></Box></li>
-                                        )}
-                                      </ul>
-                                    )}
-                                    {Array.isArray(risk.details) && risk.details.length > 0 && (
-                                      <ul className="risk-details" style={{ margin: 0, paddingLeft: '1.25em' }}>
-                                        {risk.details.map((detail, i) => (
-                                          <li key={i}><Box fontSize="body-s" color="text-body-secondary"><ProseText text={detail} /></Box></li>
-                                        ))}
-                                      </ul>
-                                    )}
-                                  </SpaceBetween>
-                                </Box>
-                              );
-                            })}
-                          </SpaceBetween>
-                        ),
-                      };
-                    })}
-                  />
-                  {resolvedRisksList.length > 0 && (
-                    <ExpandableSection headerText={
-                      resolvedRisksBySeverityText(synthesis, t)
-                        ? t('analysis-results.risk-assessment.resolved-count-by-severity', { count: resolvedRiskCountOf(synthesis, resolvedRisksList), severities: resolvedRisksBySeverityText(synthesis, t) })
-                        : t('analysis-results.risk-assessment.resolved-count', { count: resolvedRiskCountOf(synthesis, resolvedRisksList) })
-                    }>
-                      <SpaceBetween size="s">
-                        {resolvedRisksList.map((risk, idx) => {
-                          const { body } = splitRiskDescription(risk.description);
-                          const fromEngine = ENGINE_LABELS[risk.engine] || risk.engine;
-                          const toEngine = ENGINE_LABELS[risk.resolved_on] || risk.resolved_on;
-                          return (
-                            <Box key={risk.risk_id || idx} padding={{ vertical: 'xs', horizontal: 's' }}>
-                              <SpaceBetween size="xxs">
-                                <SpaceBetween direction="horizontal" size="xs" alignItems="center">
-                                  <StatusIndicator type={riskSeverityStatus(risk.severity)}>{risk.severity}</StatusIndicator>
-                                  {risk.resolved_on ? (
-                                    <Box fontSize="body-s" color="text-body-secondary">
-                                      {t('analysis-results.risk-assessment.resolved-where', { from: fromEngine, to: toEngine })}
-                                    </Box>
-                                  ) : (
-                                    <Box fontSize="body-s" color="text-body-secondary">{fromEngine}</Box>
-                                  )}
-                                </SpaceBetween>
-                                <Box fontSize="body-s"><ProseText text={body} /></Box>
-                                {risk.reason && (
-                                  <Box fontSize="body-s" color="text-body-secondary">
-                                    {t('analysis-results.risk-assessment.resolved-reason', { reason: risk.reason })}
-                                  </Box>
-                                )}
-                                {Array.isArray(risk.affected_tables) && risk.affected_tables.length > 0 && (
-                                  <Box fontSize="body-s" color="text-body-secondary">
-                                    {t('analysis-results.risk-assessment.affected-tables')}: {risk.affected_tables.join(', ')}
-                                  </Box>
-                                )}
-                              </SpaceBetween>
-                            </Box>
-                          );
-                        })}
-                      </SpaceBetween>
-                    </ExpandableSection>
-                  )}
-                </SpaceBetween>
-              </Container>
-            )}
 
-
-            {/* Engine-specific Trade-offs */}
-            {Object.entries(engineTradeOffs).some(([, tradeOffList]) => tradeOffList.length > 0) && (
-              <Container
-                header={<Header variant="h2">{t('analysis-results.tradeoffs.title')}</Header>}
-              >
+              <div ref={setTabsRoot}>
                 <Tabs
-                  tabs={Object.entries(engineTradeOffs)
-                    .filter(([, tradeOffList]) => tradeOffList.length > 0)
-                    .map(([engine, tradeoffs]) => {
-                      // Separate PE notes from design decisions. Only the fallback below
-                      // (a tab the facts list no topic groups for, e.g. a design the report
-                      // does not carry) reads the `[PE note]` marker out of the text;
-                      // otherwise the facts' review-note group is the PE notes (#1221).
-                      const normalized = tradeoffs.map(tradeOff =>
-                        typeof tradeOff === 'object' && tradeOff !== null && tradeOff.description
-                          ? tradeOff
-                          : { description: String(tradeOff), impact: '', source_tables: [], target_tables: [], query_ids: [] }
-                      );
-                      const peNotes = normalized.filter(tradeOff => tradeOff.description.startsWith('[PE note]'));
-                      const decisions = normalized.filter(tradeOff => !tradeOff.description.startsWith('[PE note]'));
-
-                      // #1221: the design decisions by topic, as facts.trade_off_topics groups
-                      // them (labels and counts too), the design review notes apart; a tab with
-                      // no groups (a design the report does not list) lists them as before.
-                      const topicGroups = tradeOffTopicGroupsOf(resultsData?.synthesis, engine);
-                      const shownPeNotes = topicGroups ? topicGroups.reviewNotes : peNotes;
-                      const peNoteCount = topicGroups ? topicGroups.reviewNoteCount : peNotes.length;
-                      // One label with the engineering report: the facts' own, and the same
-                      // words in the fallback's string.
-                      const peNotesHeader = topicGroups
-                        ? t('analysis-results.tradeoffs.topic-heading', { label: topicGroups.reviewNoteLabel, count: peNoteCount })
-                        : t('analysis-results.trade-offs.pe-notes-header', { count: peNoteCount });
-                      const renderDecision = (tradeOff, idx) => (
-                        <Box key={idx} padding={{ vertical: 'xs', horizontal: 's' }}
-                          style={{ borderLeft: '3px solid #0972d3', backgroundColor: '#f2f8fd', borderRadius: '4px' }}>
-                          <SpaceBetween size="xxs">
-                            <SpaceBetween direction="horizontal" size="xs" alignItems="center">
-                              <Icon name="status-positive" />
-                              <Link variant="primary" fontSize="body-s" fontWeight="bold" onFollow={() => {}} external={false}>
-                                <span style={{ textDecoration: 'underline' }}><ProseText text={tradeOff.description} /></span>
-                              </Link>
-                            </SpaceBetween>
-                            {tradeOff.impact && (
-                              <Box fontSize="body-s" color="text-body-secondary"><ProseText text={tradeOff.impact} /></Box>
-                            )}
-                            {(tradeOff.source_tables?.length > 0 || tradeOff.target_tables?.length > 0) && (
-                              <Box fontSize="body-s" padding={{ left: 'xl' }}>
-                                <Link variant="secondary" fontSize="body-s" onFollow={() => {}}>{t('analysis-results.tradeoffs.mapping')}</Link>
-                                <Box margin={{ top: 'xxxs' }}>
-                                  <SpaceBetween direction="horizontal" size="xxs" alignItems="center">
-                                    {tradeOff.source_tables?.length > 0 && (
-                                      <SpaceBetween direction="horizontal" size="xxs">
-                                        {tradeOff.source_tables.map((table, ti) => (
-                                          <span key={ti} data-mapping="source" style={{
-                                            display: 'inline-block',
-                                            padding: '1px 4px',
-                                            fontSize: '10px',
-                                            backgroundColor: SOURCE_TABLE_CHIP,
-                                            color: badgeTextColor(SOURCE_TABLE_CHIP),
-                                            borderRadius: '2px',
-                                            fontWeight: '500'
-                                          }}>
-                                            {table}
-                                          </span>
-                                        ))}
-                                      </SpaceBetween>
-                                    )}
-                                    {tradeOff.source_tables?.length > 0 && tradeOff.target_tables?.length > 0 && (
-                                      <span style={{ fontSize: '11px', fontWeight: 'bold', padding: '0 2px' }}>→</span>
-                                    )}
-                                    {tradeOff.target_tables?.length > 0 && (
-                                      <SpaceBetween direction="horizontal" size="xxs">
-                                        {tradeOff.target_tables.map((table, ti) => (
-                                          <span key={ti} data-mapping="target" data-engine={engine} style={{
-                                            display: 'inline-block',
-                                            padding: '1px 4px',
-                                            fontSize: '10px',
-                                            backgroundColor: engineHex(engine),
-                                            color: badgeTextColor(engineHex(engine)),
-                                            borderRadius: '2px',
-                                            fontWeight: '500'
-                                          }}>
-                                            {table}
-                                          </span>
-                                        ))}
-                                      </SpaceBetween>
-                                    )}
-                                  </SpaceBetween>
-                                </Box>
-                              </Box>
-                            )}
-                            {tradeOff.query_ids?.length > 0 && (
-                              <Box fontSize="body-s" margin={{ top: 's' }} padding={{ left: 'xl' }}>
-                                <Link variant="secondary" fontSize="body-s" onFollow={() => {}}>{t('analysis-results.tradeoffs.sql-ids')}</Link>
-                                <Box margin={{ top: 'xxxs' }}>
-                                  <SpaceBetween direction="horizontal" size="xxs">
-                                    {tradeOff.query_ids.map((qid, qi) => (
-                                      <span key={qi}
-                                        role="button"
-                                        tabIndex={0}
-                                        aria-label={t('analysis-results.query-routing.open-label', { id: qid })}
-                                        onClick={() => fetchQueryJourney(qid)}
-                                        onKeyDown={(e) => {
-                                          if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); fetchQueryJourney(qid); }
-                                        }}
-                                        style={{
-                                          display: 'inline-block',
-                                          padding: '1px 4px',
-                                          fontSize: '10px',
-                                          fontFamily: 'monospace',
-                                          backgroundColor: QUERY_CHIP_BG,
-                                          color: QUERY_CHIP_TEXT,
-                                          borderRadius: '2px',
-                                          cursor: 'pointer',
-                                          transition: 'background-color 0.15s',
-                                        }}
-                                        onMouseEnter={e => { e.target.style.backgroundColor = QUERY_CHIP_ACTIVE_BG; e.target.style.color = '#fff'; }}
-                                        onMouseLeave={e => { e.target.style.backgroundColor = QUERY_CHIP_BG; e.target.style.color = QUERY_CHIP_TEXT; }}
-                                        onFocus={e => { e.target.style.backgroundColor = QUERY_CHIP_ACTIVE_BG; e.target.style.color = '#fff'; }}
-                                        onBlur={e => { e.target.style.backgroundColor = QUERY_CHIP_BG; e.target.style.color = QUERY_CHIP_TEXT; }}
-                                        title={`View query history for ${qid}`}
-                                      >
-                                        {qid}
-                                      </span>
-                                    ))}
-                                  </SpaceBetween>
-                                </Box>
-                              </Box>
-                            )}
-                          </SpaceBetween>
-                        </Box>
-                      );
-
-                      return {
-                        id: engine,
-                        label: tradeOffTabLabel(engine, tradeoffs.length, t, ENGINE_LABELS),
-                        content: (
-                          <SpaceBetween size="m">
-                            {/* Design Decisions */}
-                            {topicGroups ? (
-                              <TradeOffTopicGroups groups={topicGroups.topics} renderTradeOff={renderDecision} t={t} />
-                            ) : decisions.length > 0 && (
-                              <SpaceBetween size="xs">
-                                {decisions.map(renderDecision)}
-                              </SpaceBetween>
-                            )}
-
-                            {/* Principal Engineer Notes */}
-                            {shownPeNotes.length > 0 && (
-                              <ExpandableSection
-                                headerText={peNotesHeader}
-                                variant="footer"
-                                defaultExpanded={false}
-                              >
-                                <SpaceBetween size="xs">
-                                  {shownPeNotes.map((tradeOff, idx) => (
-                                    <Box key={idx} padding={{ vertical: 'xs', horizontal: 's' }}
-                                      style={{ borderLeft: '3px solid #ff9900', backgroundColor: '#fff8e6', borderRadius: '4px' }}>
-                                      <SpaceBetween size="xxs">
-                                        <div style={{ display: 'flex', alignItems: 'flex-start', gap: '8px' }}>
-                                          <Badge color="blue">{idx + 1}</Badge>
-                                          <Box fontSize="body-s" style={{ flex: 1 }}><ProseText text={tradeOff.description.replace(/^\[PE note\]\s*/, '')} /></Box>
-                                        </div>
-                                        {tradeOff.impact && (
-                                          <Box fontSize="body-s" color="text-body-secondary" padding={{ left: 'xl' }}><ProseText text={tradeOff.impact} /></Box>
-                                        )}
-                                      </SpaceBetween>
-                                    </Box>
-                                  ))}
-                                </SpaceBetween>
-                              </ExpandableSection>
-                            )}
-                          </SpaceBetween>
-                        )
-                      };
-                    })
-                  }
+                  ariaLabel={t('analysis-results.tabs.aria-label')}
+                  activeTabId={activeTab}
+                  onChange={({ detail }) => selectTab(detail.activeTabId)}
+                  tabs={RESULTS_TABS.map(tab => ({
+                    id: tab.id,
+                    label: t(tab.labelKey),
+                    // A tab once opened stays mounted, so what the reader expanded or
+                    // filtered there is as they left it.
+                    contentRenderStrategy: 'lazy',
+                    content: tabContent[tab.id],
+                  }))}
                 />
-              </Container>
-            )}
-
-            {/* Table design (#478; "Aurora design" until #1232, every section
-                collapsed when the page opens): Aurora's schema design has no
-                access_patterns, so it never shows up in the explorer above --
-                this section is its own view of what the design already has:
-                tables, DDL, optimizations and the queries the assignment
-                routed here. */}
-            {auroraDesigns.length > 0 && (
-              <Container
-                id="table-design-section"
-                header={
-                  <Header
-                    variant="h2"
-                    description={t('analysis-results.aurora-design.description')}
-                  >
-                    {t('analysis-results.aurora-design.title')}
-                  </Header>
-                }
-              >
-                <Tabs
-                  activeTabId={activeDesignEngine(designTab, auroraDesigns.map(d => d.engine))}
-                  onChange={({ detail }) => setDesignTab(detail.activeTabId)}
-                  tabs={auroraDesigns.map(design => {
-                    const queryCount = design.queryGroups.reduce((sum, g) => sum + g.queries.length, 0);
-                    return {
-                      id: design.engine,
-                      label: t('analysis-results.aurora-design.tab-label', {
-                        name: design.displayName,
-                        count: designTableCountOf(synthesis, design.engine, design.tables),
-                      }),
-                      content: (
-                        <SpaceBetween size="l">
-                          {design.migrationStrategy && (
-                            <Box fontSize="body-s" color="text-body-secondary">
-                              {t(
-                                `analysis-results.aurora-design.migration-strategy-${design.migrationStrategy}`,
-                                { defaultValue: design.migrationStrategy }
-                              )}
-                            </Box>
-                          )}
-
-                          <ExpandableSection
-                            headerText={t('analysis-results.aurora-design.tables-header', { count: design.tables.length })}
-                            defaultExpanded={false}
-                          >
-                            {design.tables.length === 0 ? (
-                              <Box color="text-body-secondary" fontSize="body-s">{t('analysis-results.aurora-design.no-tables')}</Box>
-                            ) : (
-                              <SpaceBetween size="s">
-                                {design.tables.map(table => (
-                                  <ExpandableSection
-                                    key={table.tableName}
-                                    headerText={table.tableName}
-                                    variant="footer"
-                                    defaultExpanded={false}
-                                  >
-                                    <SpaceBetween size="s">
-                                      <Table
-                                        variant="embedded"
-                                        columnDefinitions={[
-                                          { id: 'name', header: t('analysis-results.aurora-design.col-column'), cell: c => c.name },
-                                          { id: 'type', header: t('analysis-results.aurora-design.col-aurora-type'), cell: c => c.auroraType },
-                                        ]}
-                                        items={table.columns}
-                                        ariaLabels={{
-                                          tableLabel: t('analysis-results.aurora-design.columns-table-label', {
-                                            engine: design.displayName,
-                                            table: table.tableName,
-                                          }),
-                                        }}
-                                      />
-                                      <KeyValuePairs
-                                        columns={1}
-                                        items={[
-                                          {
-                                            label: t('analysis-results.aurora-design.primary-key'),
-                                            value: table.primaryKey.join(', ') || '—',
-                                          },
-                                          ...(table.indexes.length > 0 ? [{
-                                            label: t('analysis-results.aurora-design.indexes', { count: table.indexes.length }),
-                                            value: (
-                                              <SpaceBetween size="xxs">
-                                                {table.indexes.map((ix, idx) => (
-                                                  <Box key={idx} fontFamily="monospace" fontSize="body-s">{ix}</Box>
-                                                ))}
-                                              </SpaceBetween>
-                                            ),
-                                          }] : []),
-                                          ...(table.foreignKeys.length > 0 ? [{
-                                            label: t('analysis-results.aurora-design.foreign-keys', { count: table.foreignKeys.length }),
-                                            value: (
-                                              <SpaceBetween size="xxs">
-                                                {table.foreignKeys.map((fk, idx) => (
-                                                  <Box key={idx} fontFamily="monospace" fontSize="body-s">{fk}</Box>
-                                                ))}
-                                              </SpaceBetween>
-                                            ),
-                                          }] : []),
-                                        ]}
-                                      />
-                                    </SpaceBetween>
-                                  </ExpandableSection>
-                                ))}
-                              </SpaceBetween>
-                            )}
-                          </ExpandableSection>
-
-                          {design.ddl && (
-                            <ExpandableSection
-                              headerText={t('analysis-results.aurora-design.ddl-header')}
-                              defaultExpanded={false}
-                            >
-                              {aceLoading ? (
-                                <Box textAlign="center" padding="l">
-                                  <StatusIndicator type="loading">{t('analysis-results.query-journey.loading-editor')}</StatusIndicator>
-                                </Box>
-                              ) : (
-                                <CodeEditor
-                                  ace={ace}
-                                  language="sql"
-                                  value={design.ddl}
-                                  preferences={{ wrapLines: false, theme: 'cloud_editor_dark' }}
-                                  editorContentHeight={400}
-                                  i18nStrings={codeEditorI18nStrings(t, {
-                                    loadingState: t('analysis-results.query-journey.loading'),
-                                    errorState: t('analysis-results.query-journey.error'),
-                                    errorStateRecovery: t('common.actions.retry'),
-                                  })}
-                                  readOnly
-                                />
-                              )}
-                            </ExpandableSection>
-                          )}
-
-                          {design.optimizations.length > 0 && (
-                            <ExpandableSection
-                              headerText={t('analysis-results.aurora-design.optimizations-header', { count: design.optimizations.length })}
-                              defaultExpanded={false}
-                            >
-                              <SpaceBetween size="xs">
-                                {design.optimizations.map((opt, idx) => (
-                                  <Box key={idx} padding={{ vertical: 'xs', horizontal: 's' }}
-                                    style={{ borderLeft: '3px solid #0972d3', backgroundColor: '#f2f8fd', borderRadius: '4px' }}>
-                                    <SpaceBetween size="xxs">
-                                      <Box fontSize="body-s" fontWeight="bold">
-                                        {opt.target ? `${opt.category ? `${optimizationLabel(opt.category)}: ` : ''}${opt.target}` : optimizationLabel(opt.category)}
-                                      </Box>
-                                      <Box fontSize="body-s"><ProseText text={opt.recommendation} /></Box>
-                                      {opt.rationale && (
-                                        <Box fontSize="body-s" color="text-body-secondary"><ProseText text={opt.rationale} /></Box>
-                                      )}
-                                    </SpaceBetween>
-                                  </Box>
-                                ))}
-                              </SpaceBetween>
-                            </ExpandableSection>
-                          )}
-
-                          <ExpandableSection
-                            headerText={t('analysis-results.aurora-design.queries-header', { count: queryCount })}
-                            defaultExpanded={false}
-                          >
-                            {design.queryGroups.length === 0 ? (
-                              <Box color="text-body-secondary" fontSize="body-s">{t('analysis-results.aurora-design.no-queries')}</Box>
-                            ) : (
-                              <SpaceBetween size="s">
-                                {procedureInternalQueryCountOf(synthesis) > 0 &&
-                                  design.queryGroups.some(g => g.sourceTable === PROCEDURE_INTERNAL_GROUP) && (
-                                  <Box color="text-body-secondary" fontSize="body-s">
-                                    {t('analysis-results.aurora-design.procedure-internal', {
-                                      count: procedureInternalQueryCountOf(synthesis),
-                                    })}
-                                  </Box>
-                                )}
-                                {procedureInternalRoutineCountOn(synthesis, design.engine) > 0 && (
-                                  <Box color="text-body-secondary" fontSize="body-s">
-                                    {t('analysis-results.aurora-design.procedure-internal-routine', {
-                                      count: procedureInternalRoutineCountOn(synthesis, design.engine),
-                                    })}
-                                  </Box>
-                                )}
-                                {design.queryGroups.map(group => (
-                                  <ExpandableSection
-                                    key={group.sourceTable}
-                                    headerText={t('analysis-results.aurora-design.source-table-header', {
-                                      table: group.sourceTable,
-                                      count: group.queries.length,
-                                    })}
-                                    variant="footer"
-                                    defaultExpanded={false}
-                                  >
-                                    <Table
-                                      variant="embedded"
-                                      columnDefinitions={[
-                                        {
-                                          id: 'excerpt',
-                                          header: t('analysis-results.aurora-design.col-query'),
-                                          cell: q => <Box fontFamily="monospace" fontSize="body-s">{q.excerpt}</Box>,
-                                        },
-                                        {
-                                          id: 'type',
-                                          header: t('analysis-results.aurora-design.col-type'),
-                                          cell: q => q.queryType || '—',
-                                        },
-                                        {
-                                          id: 'rps',
-                                          header: t('analysis-results.aurora-design.col-calls-per-second'),
-                                          cell: q => formatRate(q.callsPerSecond),
-                                        },
-                                        {
-                                          id: 'reason',
-                                          header: t('analysis-results.aurora-design.col-reason'),
-                                          cell: q => (q.reason ? <ProseText text={q.reason} /> : '—'),
-                                        },
-                                      ]}
-                                      items={group.queries}
-                                      ariaLabels={{
-                                        tableLabel: t('analysis-results.aurora-design.queries-table-label', {
-                                          engine: design.displayName,
-                                          table: group.sourceTable,
-                                        }),
-                                      }}
-                                    />
-                                  </ExpandableSection>
-                                ))}
-                              </SpaceBetween>
-                            )}
-                          </ExpandableSection>
-                        </SpaceBetween>
-                      ),
-                    };
-                  })}
-                />
-              </Container>
-            )}
-
-          </SpaceBetween>
+              </div>
+            </SpaceBetween>
+          </ResultsSectionNav.Provider>
         }
         contentType="default"
-        toolsHide
+        tools={<ResultsOnThisPage anchors={onThisPage} onGo={goToSection} t={t} />}
+        toolsOpen={toolsOpen && !toolsHidden}
+        onToolsChange={({ detail }) => setToolsOpen(detail.open)}
+        toolsHide={toolsHidden}
       />
 
       {/* Pattern Detail Modal */}

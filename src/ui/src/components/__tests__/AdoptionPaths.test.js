@@ -26,6 +26,7 @@ import { createInstance } from 'i18next';
 import en from '../../locales/en.json';
 import fixture from '../../utils/__tests__/fixtures/waveHeadlines.json';
 import MigrationWavePlan from '../MigrationWavePlan';
+import { ResultsSectionNav } from '../../hooks/useResultsTabs';
 
 jest.mock('@cloudscape-design/components/container', () => ({
   __esModule: true,
@@ -609,6 +610,25 @@ describe('the one-step option', () => {
     expect(figure('one-step-adopt').textContent).toBe(
       'To take the full target in one step, adopt the target schemas below directly.',
     );
+  });
+
+  // #2313: the schemas and the Target engines are on other tabs than the roadmap, so the
+  // link goes through the results page's own navigation, which opens the section's tab.
+  test('the link opens its section through the results page\'s navigation', () => {
+    const s = synthesis();
+    s.schema_designs = { dynamodb: { status: 'completed' } };
+    const goTo = jest.fn();
+    act(() => {
+      root.render(
+        <ResultsSectionNav.Provider value={goTo}>
+          <MigrationWavePlan synthesis={s} t={t} schemaSectionId="access-patterns-section" />
+        </ResultsSectionNav.Provider>,
+      );
+    });
+    const event = new MouseEvent('click', { bubbles: true, cancelable: true });
+    act(() => { figure('one-step-adopt').querySelector('a').dispatchEvent(event); });
+    expect(goTo).toHaveBeenCalledWith('access-patterns-section');
+    expect(event.defaultPrevented).toBe(true);
   });
 
   test('a report with no schema designs at all points at the Target engines', () => {

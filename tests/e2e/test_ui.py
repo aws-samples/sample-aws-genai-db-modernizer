@@ -87,15 +87,101 @@ def _watch(page: Page) -> dict[str, list[str]]:
     return ev
 
 
+# #2313: the results page's tabs, by the id ``?tab=`` names, with their labels, in order,
+# and the sections each holds, in order (src/ui/src/utils/resultsTabs.js). A tab's
+# sections are in the page only once the tab is open.
+RESULTS_TABS = {
+    "summary": "Summary",
+    "plan": "Plan",
+    "queries": "Queries",
+    "data-model": "Data model",
+    "risks": "Risks and decisions",
+}
+TAB_SECTIONS = {
+    "summary": [
+        "executive-summary-section",
+        "cost-breakdown-section",
+        "query-flow-section",
+        "assumptions-panel",
+    ],
+    "plan": [
+        "migration-roadmap-section",
+        "step-gate-section",
+        "unservable-section",
+        "close-calls-section",
+        "unreviewed-moves-note",
+        "engine-choices-note",
+        "routines-section",
+    ],
+    "queries": ["query-routing-section", "access-patterns-section"],
+    "data-model": ["table-owners-section", "sources-of-truth-section", "table-design-section"],
+    "risks": [
+        "risk-assessment-section",
+        "dynamodb-merge-conflicts",
+        "tradeoffs-section",
+        "dynamodb-merge-reviews",
+    ],
+}
+# The section each tab always shows once the results are loaded (the loading state shows
+# none of them), so a wait on it is a wait on the data, never on network silence.
+TAB_READY = {
+    "summary": "#executive-summary-section",
+    "plan": "#migration-roadmap-section",
+    "queries": "#query-routing-section",
+    "data-model": "#sources-of-truth-section",
+    "risks": "#risk-assessment-section",
+}
+# The notes on the Plan tab that are on the tab but not in its On this page navigation.
+UNLISTED_SECTIONS = {"unreviewed-moves-note", "engine-choices-note"}
+
+
+def _results_tab(page: Page, tab: str) -> Locator:
+    """The results page's tab ``tab`` (#2313): a tab of the page's own tab list, not one of
+    the tabs inside a section (the risk severities, the Table design's engines)."""
+    return page.get_by_role("tablist", name="Assessment results").get_by_role(
+        "tab", name=RESULTS_TABS[tab], exact=True
+    )
+
+
+def _show_tab(page: Page, tab: str) -> None:
+    """Open the results page's tab ``tab`` (a click, as a reader would) and wait for its
+    content. A shared page may be on any tab: a test reading a section opens its tab."""
+    control = _results_tab(page, tab)
+    control.wait_for(timeout=READY_MS)
+    if control.get_attribute("aria-selected") != "true":
+        control.click()
+    expect(control).to_have_attribute("aria-selected", "true")
+    page.locator(TAB_READY[tab]).wait_for(timeout=READY_MS)
+
+
+def _goto_results(page: Page, ui: str, r: PipelineResult, tab: str) -> None:
+    """Open ``r``'s results page on tab ``tab`` by its link (``?tab=``) and wait for it."""
+    page.goto(f"{ui}/analysis/results/{r.job_id}?tab={tab}")
+    expect(_results_tab(page, tab)).to_have_attribute("aria-selected", "true", timeout=READY_MS)
+    page.locator(TAB_READY[tab]).wait_for(timeout=READY_MS)
+
+
+def _each_tab(page: Page) -> Iterator[str]:
+    """Open each tab of the results page in turn, yielding its id: a check of the whole
+    page runs on every tab, since a closed tab's sections are not on the page."""
+    for tab in RESULTS_TABS:
+        _show_tab(page, tab)
+        yield tab
+
+
 def _loaded(page: Page, r: PipelineResult) -> None:
-    """Wait until the results page has rendered ``r``'s data (#1320).
+    """Wait until the results page has rendered ``r``'s data (#1320), on the Summary tab it
+    opens on (#2313).
 
     Network idle can fire before the fetch that fills the page has started or finished,
-    leaving only "Loading assessment results...". The migration roadmap section and the
-    source database name render only once the results are loaded (the loading state shows
+    leaving only "Loading assessment results...". The executive summary and the source
+    database name render only once the results are loaded (the loading state shows
     neither), and ``expect`` retries until they do.
     """
-    page.locator("#migration-roadmap-section").wait_for(timeout=READY_MS)
+    expect(_results_tab(page, "summary")).to_have_attribute(
+        "aria-selected", "true", timeout=READY_MS
+    )
+    page.locator(TAB_READY["summary"]).wait_for(timeout=READY_MS)
     expect(page.get_by_text(r.db).first).to_be_visible(timeout=READY_MS)
 
 
@@ -137,7 +223,8 @@ def loaded_results(
     Each such test used to open its own page, so a large job's page (discourse: 1,654
     queries, about 11 MB of JSON) was fetched and rendered a dozen times per run. A
     test that clicks, types, resizes or expands anything opens its own ``page``
-    instead, so every shared page stays exactly as it loaded. The events ``_watch``
+    instead, so every shared page stays as it loaded; the one exception is the tab
+    (#2313): a test opens the tab it reads with ``_show_tab``, and never assumes one. The events ``_watch``
     records cover the shared page's whole life, so a test's "no console error, no
     failed request" check holds from the load to its own reads.
 
@@ -198,6 +285,7 @@ def test_results_page_shows_the_ranked_engines(
 ) -> None:
     for r in all_runs:
         page, ev = loaded_results(r)
+        _show_tab(page, "summary")
         text = page.inner_text("body")
         assert "undefined" not in text and "NaN" not in text, r.db
         assert r.db in text, (r.db, "source database name missing")
@@ -334,15 +422,22 @@ def test_old_pattern_analysis_link_lands_on_the_engine_in_the_results_page(
     page. A designed job lands on the explorer filtered to a NoSQL target, with the
     counter and the token the explorer's own picker would show, and on the Table design
     of an Aurora target; focus moves to that section. A job without a design only has to
-    reach the results page."""
+    reach the results page. #2313: the explorer is on the Queries tab and the Table design
+    on the Data model tab; the link opens that tab and the URL names it."""
     checked = 0
     for r in all_runs:
         ev = _watch(page)
         page.goto(f"{ui}/analysis/patterns/{r.job_id}?target=dynamodb")
-        expect(page.locator("#executive-summary-section")).to_be_visible(timeout=READY_MS)
-        assert page.url.endswith(
-            f"/analysis/results/{r.job_id}?engine=dynamodb#access-patterns-section"
-        ), (r.db, page.url)
+        expect(_results_tab(page, "queries")).to_have_attribute(
+            "aria-selected", "true", timeout=READY_MS
+        )
+        expect(page.locator(TAB_READY["queries"])).to_be_visible(timeout=READY_MS)
+        expect(page).to_have_url(
+            re.compile(
+                rf"/analysis/results/{r.job_id}\?engine=dynamodb&tab=queries#access-patterns-section$"
+            ),
+            timeout=READY_MS,
+        )
         text = page.inner_text("body")
         assert "undefined" not in text and "NaN" not in text, r.db
         assert ev == {"console": [], "pageerror": [], "failed": []}, (r.db, ev)
@@ -366,6 +461,8 @@ def test_old_pattern_analysis_link_lands_on_the_engine_in_the_results_page(
         for engine in _designed_aurora_engines(r):
             page.goto(f"{ui}/analysis/patterns/{r.job_id}?target={engine}")
             expect(page.locator("#table-design-section")).to_be_visible(timeout=READY_MS)
+            expect(_results_tab(page, "data-model")).to_have_attribute("aria-selected", "true")
+            expect(page).to_have_url(re.compile(r"&tab=data-model#table-design-section$"))
             selected = page.locator("#table-design-section [role=tab][aria-selected=true]")
             expect(selected).to_contain_text(ENGINE_LABELS[engine])
             assert page.evaluate("document.activeElement && document.activeElement.id") == (
@@ -383,7 +480,9 @@ def test_a_link_to_an_engine_the_plan_has_no_part_for_says_so(
     for r in all_runs:
         ev = _watch(page)
         page.goto(f"{ui}/analysis/patterns/{r.job_id}?target=no-such-engine")
-        expect(page.locator("#executive-summary-section")).to_be_visible(timeout=READY_MS)
+        # #2313: the link names the explorer's section, so the Queries tab opens.
+        expect(page.locator(TAB_READY["queries"])).to_be_visible(timeout=READY_MS)
+        expect(_results_tab(page, "queries")).to_have_attribute("aria-selected", "true")
         expect(page.get_by_text("no-such-engine is not in this plan")).to_be_visible(
             timeout=READY_MS
         )
@@ -412,7 +511,7 @@ def test_a_link_to_a_routed_engine_without_a_design_says_its_design_has_not_been
         for engine in engines[:1]:
             ev = _watch(page)
             page.goto(f"{ui}/analysis/patterns/{r.job_id}?target={engine}")
-            expect(page.locator("#executive-summary-section")).to_be_visible(timeout=READY_MS)
+            expect(page.locator(TAB_READY["queries"])).to_be_visible(timeout=READY_MS)
             notice = f"Queries are routed to {ENGINE_LABELS[engine]}, but its schema design has not been made"
             expect(page.get_by_text(notice)).to_be_visible(timeout=READY_MS)
             assert "is not in this plan" not in page.inner_text("body"), (r.job_id, engine)
@@ -432,7 +531,7 @@ def test_a_link_opens_the_linked_table_design_tab_when_it_is_not_the_first(
     served schema designs (no e2e job has two), and the link to it opens its tab."""
     checked = 0
     for r in all_runs:
-        page.goto(f"{ui}/analysis/results/{r.job_id}")
+        _goto_results(page, ui, r, "data-model")
         design = page.locator("#table-design-section")
         expect(design).to_be_visible(timeout=READY_MS)
         tabs = design.locator("[role=tab]").all_inner_texts()
@@ -502,7 +601,7 @@ def test_a_querys_trace_opens_from_the_routing_table(
     trace = _moved_query_trace(r)
 
     ev = _watch(page)
-    page.goto(f"{ui}/analysis/results/{r.job_id}")
+    _goto_results(page, ui, r, "queries")
     section = page.locator("#query-routing-section")
     expect(section).to_be_visible(timeout=READY_MS)
     # #1028: the section opens collapsed; its header expands it.
@@ -584,7 +683,7 @@ def test_a_consolidated_querys_journey_shows_its_new_engines_fit(
     qid, score, left = found
 
     ev = _watch(page)
-    page.goto(f"{ui}/analysis/results/{r.job_id}")
+    _goto_results(page, ui, r, "queries")
     section = page.locator("#query-routing-section")
     expect(section).to_be_visible(timeout=READY_MS)
     _expand_query_routing(page)
@@ -629,7 +728,7 @@ def test_a_utility_pins_journey_shows_pinned_not_a_percentage(
     if qid is None:
         return
     ev = _watch(page)
-    page.goto(f"{ui}/analysis/results/{r.job_id}")
+    _goto_results(page, ui, r, "queries")
     section = page.locator("#query-routing-section")
     expect(section).to_be_visible(timeout=READY_MS)
     _expand_query_routing(page)
@@ -717,7 +816,7 @@ def test_results_page_shows_the_reports_wave_plan(
         report = json.loads((r.artifact_root / r.report["report"]).read_text())
         gates = {str(w["wave"]): w.get("gate") or "" for w in report["migration_waves"]}
         ev = _watch(page)
-        page.goto(f"{ui}/analysis/results/{r.job_id}")
+        _goto_results(page, ui, r, "plan")
         section = page.locator("#migration-roadmap-section")
         section.wait_for(timeout=READY_MS)
         cards = section.locator("[data-wave]").all()
@@ -873,8 +972,7 @@ def test_results_page_shows_the_adoption_paths_stages_and_one_step_option(
         plan = (report.get("facts") or {}).get("slice_plan") or {}
         ev = _watch(page)
         writes.clear()
-        page.goto(f"{ui}/analysis/results/{r.job_id}")
-        _loaded(page, r)
+        _goto_results(page, ui, r, "plan")
         section = page.locator("#migration-roadmap-section")
         panel = section.locator("[data-figure=adoption-paths]")
         if not adoption.get("paths"):
@@ -988,8 +1086,24 @@ def test_results_page_shows_the_adoption_paths_stages_and_one_step_option(
             assert "adopt the target schemas in " in md, (r.db, adopt)
         else:
             assert f"{adopt}\n" in md, (r.db, adopt)
-        href = option.locator("[data-figure=one-step-adopt] a").get_attribute("href") or ""
-        assert href.startswith("#") and page.locator(href).count() == 1, (r.db, href)
+        # #2313: what it lands on is on another tab (the target schemas on Queries or
+        # Data model, the Target engines on Summary); following it opens that tab and
+        # moves focus to it, and the URL names both.
+        link = option.locator("[data-figure=one-step-adopt] a")
+        href = link.get_attribute("href") or ""
+        assert href.startswith("#"), (r.db, href)
+        target = href[1:]
+        target_tab = next(
+            (t for t, ids in TAB_SECTIONS.items() if target in ids),
+            "summary" if target == "target-engines" else None,
+        )
+        assert target_tab and target_tab != "plan", (r.db, href)
+        link.click()
+        expect(_results_tab(page, target_tab)).to_have_attribute("aria-selected", "true")
+        expect(page.locator(href)).to_be_visible(timeout=READY_MS)
+        assert page.locator(href).count() == 1, (r.db, href)
+        expect(page).to_have_url(re.compile(rf"tab={target_tab}{re.escape(href)}$"))
+        expect(page.locator(href)).to_be_focused()
         # Choosing a path changed only what is shown.
         assert writes == [], (r.db, writes)
         after = {p.name: p.read_bytes() for p in assignment.iterdir() if p.is_file()}
@@ -1018,7 +1132,7 @@ def test_results_page_states_each_tables_source_of_truth_and_replicas(
         rows = facts.get("replicated_tables") or []
         assert rows, r.db
         ev = _watch(page)
-        page.goto(f"{ui}/analysis/results/{r.job_id}")
+        _goto_results(page, ui, r, "data-model")
         section = page.locator("#sources-of-truth-section")
         section.wait_for(timeout=READY_MS)
         n = facts["written_table_count"]
@@ -1081,8 +1195,7 @@ def test_results_page_states_each_tables_owner_also_read_by_and_cache(
         report = json.loads((r.artifact_root / r.report["report"]).read_text())
         facts = (report.get("facts") or {}).get("table_owner_lines")
         ev = _watch(page)
-        page.goto(f"{ui}/analysis/results/{r.job_id}")
-        page.locator("#sources-of-truth-section").wait_for(timeout=READY_MS)
+        _goto_results(page, ui, r, "data-model")
         section = page.locator("#table-owners-section")
         if r not in designed:
             assert facts is None and section.count() == 0, r.job_id
@@ -1174,30 +1287,20 @@ def test_results_page_downloads_the_deliverables_folder(
         assert ev == {"console": [], "pageerror": [], "failed": []}, (r.db, ev)
 
 
-# #1028: the section order, from the top; the rest of the page follows.
-SECTION_ORDER = [
-    "deliverables-section",
+# #1028, #2313: the deliverables sit above the tabs; each tab lists its sections in
+# TAB_SECTIONS' order. These are on every job's page; the others are banners a report
+# without fallback-engine queries, close calls, routines or merge decisions leaves out,
+# the explorer (a job with no access patterns), the table owners and the Table design (a
+# job with no schema design), the assumptions panel (no assumption to change), the step
+# gate (no step 1 evidence) and the two Plan notes.
+REQUIRED_SECTIONS = {
     "executive-summary-section",
-    "query-flow-section",
     "cost-breakdown-section",
+    "query-flow-section",
     "migration-roadmap-section",
-    "unservable-section",
-    "close-calls-section",
     "query-routing-section",
-    # #1232: Sources of truth and replicas, collapsed, after the explorer.
-    "access-patterns-section",
-    # #212: Table owners, collapsed, before Sources of truth (a mapped job only).
-    "table-owners-section",
     "sources-of-truth-section",
-]
-# Banners a report without fallback-engine queries or close calls leaves out,
-# the explorer, which a job with no access patterns has none of, and the table
-# owners, which a job with no schema design (no table_mappings) has none of.
-OPTIONAL_SECTIONS = {
-    "unservable-section",
-    "close-calls-section",
-    "access-patterns-section",
-    "table-owners-section",
+    "risk-assessment-section",
 }
 
 
@@ -1212,6 +1315,7 @@ def test_results_page_states_the_price_date(
         report = json.loads((r.artifact_root / r.report["report"]).read_text())
         assert (report.get("facts") or {}).get("price_list"), r.db
         page, ev = loaded_results(r)
+        _show_tab(page, "summary")
         # The figure itself, not network silence (#1593): the page is loaded once
         # the figure renders, whatever else is still in flight.
         shown = page.locator("[data-figure=price-list]")
@@ -1236,6 +1340,7 @@ def test_results_page_states_what_each_engine_was_sized_for(
         }
         assert sizing, r.db
         page, ev = loaded_results(r)
+        _show_tab(page, "summary")
         page.locator("[data-figure=cost-sizing]").first.wait_for(timeout=READY_MS)
         for engine, basis in sizing.items():
             shown = page.locator(f"[data-figure=cost-sizing][data-engine={engine}]")
@@ -1249,30 +1354,55 @@ def test_results_page_states_what_each_engine_was_sized_for(
 def test_results_page_shows_the_headline_first(
     loaded_results: OpenResults, all_runs: list[PipelineResult]
 ) -> None:
-    """#1028: the results page opens with the deliverable buttons, the executive
-    summary, the query flow, the cost breakdown and the migration roadmap, in
-    that order, then the fallback-engine warning and close-call banners (when
-    the report has them), then query routing, collapsed. The close-call banner names its
-    first 3 queries by a 5-character id, then "+N more"."""
+    """#1028, #2313: the results page opens on its Summary tab, under the deliverable
+    buttons. Each tab holds its own sections, in the order of the decision (Summary: the
+    executive summary, the cost breakdown, the query flow, the assumptions; Plan: the
+    roadmap, then the fallback-engine warning and close-call banners when the report has
+    them, ...; Queries: query routing, collapsed, then the explorer; Data model: the
+    table owners and Sources of truth, collapsed, then the Table design; Risks and
+    decisions), and no other tab's. The close-call banner names its first 3 queries by a
+    5-character id, then "+N more"."""
+    find = "ids => ids.filter(id => document.getElementById(id))"
+    in_order = (
+        "ids => ids.map(id => document.getElementById(id))"
+        "  .every((el, i, all) => i === 0 ||"
+        "    (all[i - 1].compareDocumentPosition(el) & Node.DOCUMENT_POSITION_FOLLOWING))"
+    )
+    every_section = [i for ids in TAB_SECTIONS.values() for i in ids]
     for r in all_runs:
         page, ev = loaded_results(r)
-        page.locator("#migration-roadmap-section").wait_for(timeout=READY_MS)
-        present = page.evaluate(
-            "ids => ids.filter(id => document.getElementById(id))", SECTION_ORDER
-        )
-        assert set(SECTION_ORDER) - set(present) <= OPTIONAL_SECTIONS, (r.db, present)
+        _show_tab(page, "summary")
+        # The deliverables first, above the tabs.
+        assert page.evaluate(
+            "() => !!(document.getElementById('deliverables-section').compareDocumentPosition("
+            "document.querySelector('[role=tablist][aria-label=\"Assessment results\"]'))"
+            " & Node.DOCUMENT_POSITION_FOLLOWING)"
+        ), r.db
+        tabs = page.get_by_role("tablist", name="Assessment results").get_by_role("tab")
+        assert tabs.all_inner_texts() == list(RESULTS_TABS.values()), r.db
+        present_anywhere: set[str] = set()
+        for tab in _each_tab(page):
+            present = page.evaluate(find, TAB_SECTIONS[tab])
+            assert page.evaluate(in_order, present), (r.db, tab, present)
+            for section_id in present:
+                expect(page.locator(f"#{section_id}")).to_be_visible()
+            # A section of another tab is never shown here (a tab opened before stays
+            # mounted, hidden, so it may be in the DOM but not visible).
+            for section_id in every_section:
+                if section_id not in TAB_SECTIONS[tab]:
+                    assert not page.locator(f"#{section_id}").is_visible(), (r.db, tab, section_id)
+            present_anywhere |= set(present)
+        assert REQUIRED_SECTIONS <= present_anywhere, (r.db, REQUIRED_SECTIONS - present_anywhere)
         if not r.external and r.db == "wordpress":
-            assert "close-calls-section" in present, (r.db, "the wordpress sample has close calls")
-        in_order = page.evaluate(
-            "ids => ids.map(id => document.getElementById(id))"
-            "  .every((el, i, all) => i === 0 ||"
-            "    (all[i - 1].compareDocumentPosition(el) & Node.DOCUMENT_POSITION_FOLLOWING))",
-            present,
-        )
-        assert in_order, (r.db, present)
+            assert "close-calls-section" in present_anywhere, (
+                r.db,
+                "the wordpress sample has close calls",
+            )
+        _show_tab(page, "queries")
         routing = page.locator("#query-routing-section")
         assert routing.locator('[aria-expanded="false"]').count() >= 1, r.db
         assert not routing.get_by_role("table", name="Query routing").is_visible(), r.db
+        _show_tab(page, "data-model")
         sources = page.locator("#sources-of-truth-section")
         assert sources.locator('[aria-expanded="false"]').count() == 1, r.db
         assert sources.locator('[aria-expanded="true"]').count() == 0, r.db
@@ -1280,6 +1410,7 @@ def test_results_page_shows_the_headline_first(
         close_calls = (report.get("facts") or {}).get("close_calls") or {}
         pairs = close_calls.get("engine_pairs") or []
         if pairs and close_calls.get("close_call_query_count"):
+            _show_tab(page, "plan")
             first = pairs[0]["query_ids"]
             banner = page.locator("#close-calls-section")
             opener = banner.get_by_role(
@@ -1291,6 +1422,61 @@ def test_results_page_shows_the_headline_first(
             )
             assert shown.count() == sum(min(3, len(p["query_ids"])) for p in pairs), r.db
         assert ev == {"console": [], "pageerror": [], "failed": []}, (r.db, ev)
+
+
+def test_results_page_on_this_page_lists_the_open_tabs_sections(
+    page: Page, ui: str, all_runs: list[PipelineResult]
+) -> None:
+    """#2313: at 1440 px the tools panel is open on "On this page", listing the open tab's
+    sections in the tab's order, and only those; following an anchor scrolls to its
+    section, focuses it and names it in the URL. A tab with one section or none has no
+    such panel."""
+    page.set_viewport_size({"width": 1440, "height": 900})
+    listed_any = 0
+    for r in all_runs:
+        ev = _watch(page)
+        page.goto(f"{ui}/analysis/results/{r.job_id}")
+        _loaded(page, r)
+        for tab in _each_tab(page):
+            present = page.evaluate(
+                "ids => ids.filter(id => document.getElementById(id))", TAB_SECTIONS[tab]
+            )
+            listed = [i for i in present if i not in UNLISTED_SECTIONS]
+            nav = page.get_by_role("navigation", name="On this page")
+            if len(listed) < 2:
+                expect(nav).to_have_count(0)
+                continue
+            expect(nav).to_be_visible(timeout=READY_MS)
+            expect(nav.get_by_role("link")).to_have_count(len(listed))
+            hrefs = [a.get_attribute("href") for a in nav.get_by_role("link").all()]
+            assert hrefs == [f"#{i}" for i in listed], (r.db, tab, hrefs)
+            last = listed[-1]
+            nav.get_by_role("link").last.click()
+            expect(page).to_have_url(re.compile(rf"tab={tab}#{last}$"))
+            # The page scrolls and focuses on the next frame, so the check waits for it.
+            expect(page.locator(f"#{last}")).to_be_focused()
+            expect(_results_tab(page, tab)).to_have_attribute("aria-selected", "true")
+            listed_any += 1
+        assert ev == {"console": [], "pageerror": [], "failed": []}, (r.db, ev)
+    assert listed_any, "no tab of any job lists two sections"
+
+
+def test_an_old_results_anchor_opens_its_sections_tab(
+    page: Page, ui: str, all_runs: list[PipelineResult]
+) -> None:
+    """#2313: a link made before the tabs, to a section by its id, opens the section's
+    tab, names the tab in the URL, scrolls to the section and focuses it."""
+    r = all_runs[0]
+    for tab, ids in TAB_SECTIONS.items():
+        target = TAB_READY[tab][1:]
+        assert target in ids
+        ev = _watch(page)
+        page.goto(f"{ui}/analysis/results/{r.job_id}#{target}")
+        expect(page.locator(f"#{target}")).to_be_visible(timeout=READY_MS)
+        expect(_results_tab(page, tab)).to_have_attribute("aria-selected", "true")
+        expect(page).to_have_url(re.compile(rf"/analysis/results/{r.job_id}\?tab={tab}#{target}$"))
+        expect(page.locator(f"#{target}")).to_be_focused(timeout=READY_MS)
+        assert ev == {"console": [], "pageerror": [], "failed": []}, (tab, ev)
 
 
 def test_results_page_states_the_resolved_risks_by_severity(
@@ -1312,6 +1498,7 @@ def test_results_page_states_the_resolved_risks_by_severity(
         md = r.deliverable("engineering-report.md").read_text(encoding="utf-8")
         assert f"({severities})" in md, r.db
         page, ev = loaded_results(r)
+        _show_tab(page, "risks")
         # The risk section itself, not file order: this test may run first (-k).
         page.get_by_role("heading", name="Risk assessment").wait_for(timeout=READY_MS)
         header = page.get_by_text(expected, exact=True)
@@ -1334,7 +1521,7 @@ def test_results_page_states_the_routine_outcomes(
         if r.job_id in ("ui-word", "ui-disc"):
             assert routines and routines["migrate_yourself_line"], (r.db, "the sample's routines")
         page, ev = loaded_results(r)
-        page.locator("#migration-roadmap-section").wait_for(timeout=READY_MS)
+        _show_tab(page, "plan")
         section = page.locator("#routines-section")
         if not routines:
             assert section.count() == 0, r.db
@@ -1366,6 +1553,7 @@ def test_results_page_states_the_distinct_query_patterns(
         found = figure.search(md)
         assert found and tuple(int(g.replace(",", "")) for g in found.groups()) == expected, r.db
         page, ev = loaded_results(r)
+        _show_tab(page, "summary")
         line = page.locator('[data-figure="query-patterns"]')
         line.wait_for(timeout=READY_MS)
         shown = figure.fullmatch(line.inner_text().strip())
@@ -1394,12 +1582,14 @@ def test_results_page_states_the_cost_basis_the_deliverables_state(
             md = r.deliverable("engineering-report.md").read_text(encoding="utf-8")
             assert "- Cost basis:" not in md, r.db
             page, ev = loaded_results(r)
+            _show_tab(page, "summary")
             assert page.locator('[data-figure="cost-basis"]').count() == 0, r.db
             assert ev == {"console": [], "pageerror": [], "failed": []}, (r.db, ev)
             continue
         md = md_plain(r.deliverable("engineering-report.md").read_text(encoding="utf-8"))
         pdf = " ".join(" ".join(pdf_page_texts(str(r.deliverable("executive-report.pdf")))).split())
         page, ev = loaded_results(r)
+        _show_tab(page, "summary")
         lines = page.locator('[data-figure="cost-basis"]')
         lines.first.wait_for(timeout=READY_MS)
         assert [t.strip() for t in lines.all_inner_texts()] == notes, r.db
@@ -1426,6 +1616,7 @@ def test_results_page_states_the_no_open_risks_caveat_only_when_no_risk_is_open(
         md = r.deliverable("engineering-report.md").read_text(encoding="utf-8")
         assert (NO_OPEN_RISKS_CAVEAT in md) == no_open, r.db
         page, ev = loaded_results(r)
+        _show_tab(page, "risks")
         # The risk section itself: a count of 0 must not come from a page not drawn yet.
         page.get_by_role("heading", name="Risk assessment").wait_for(timeout=READY_MS)
         note = page.locator("#no-open-risks-note")
@@ -1453,8 +1644,7 @@ def test_results_page_states_the_caveat_even_with_no_other_risk_content(
 
     page.route(re.compile(rf"/assessments/{r.job_id}/results$"), strip_risks)
     ev = _watch(page)
-    page.goto(f"{ui}/analysis/results/{r.job_id}")
-    page.locator("#migration-roadmap-section").wait_for(timeout=READY_MS)
+    _goto_results(page, ui, r, "risks")
     note = page.locator("#no-open-risks-note")
     assert note.count() == 1
     assert note.inner_text().strip() == NO_OPEN_RISKS_CAVEAT
@@ -1484,8 +1674,7 @@ def test_results_page_names_a_resolved_risks_tables(
         )
         header = f"{n} {'risk' if n == 1 else 'risks'} resolved by the assignment: {severities}"
         ev = _watch(page)
-        page.goto(f"{ui}/analysis/results/{r.job_id}")
-        page.locator("#migration-roadmap-section").wait_for(timeout=READY_MS)
+        _goto_results(page, ui, r, "risks")
         page.get_by_text(header, exact=True).click()
         line = f"Affects: {', '.join(resolved[0]['affected_tables'])}"
         assert page.get_by_text(line, exact=True).count() >= 1, (r.db, line)
@@ -1506,8 +1695,7 @@ def test_results_page_shows_the_same_risks_as_report_json(
         risks = report["risk_assessment"]["risks"]
         refs = shared_mitigation_refs(backfill_report_risks(report))
         ev = _watch(page)
-        page.goto(f"{ui}/analysis/results/{r.job_id}")
-        page.locator("#migration-roadmap-section").wait_for(timeout=READY_MS)
+        _goto_results(page, ui, r, "risks")
         for severity in ("CRITICAL", "HIGH", "MEDIUM", "LOW"):
             n = int(by_severity.get(severity) or 0)
             tab = page.get_by_role("tab", name=f"{severity} ({n})", exact=True)
@@ -1543,8 +1731,7 @@ def test_results_page_states_the_sync_risks_cdc_copy_of_unwritten_tables(
         ]
         if not sync:
             continue
-        page.goto(f"{ui}/analysis/results/{r.job_id}")
-        page.locator("#migration-roadmap-section").wait_for(timeout=READY_MS)
+        _goto_results(page, ui, r, "risks")
         for risk in sync:
             page.get_by_role("tab", name=re.compile(rf"^{risk['severity']} \(")).click()
             sentence = re.search(
@@ -1584,7 +1771,11 @@ def test_ui_shows_only_the_product_name(
             page.locator("[data-sankey-node]").first.wait_for(timeout=READY_MS)
         else:
             _loaded(page, r)
-        text = page.inner_text("body")
+        if path.startswith("/analysis/results/"):
+            # #2313: the results page's text is the text of all its tabs.
+            text = "\n".join(page.inner_text("body") for _ in _each_tab(page))
+        else:
+            text = page.inner_text("body")
         # #2185: the one rule (tests/branding.py): "transformation" in model prose passes.
         assert product_name_hits(text) == [], path
         assert "Database Modernizer Assessment Tool" in text, path
@@ -1616,7 +1807,7 @@ def _leaked_forbidden_text(text: str) -> list[str]:
 def _open_results(page: Page, ui: str, r: PipelineResult) -> dict[str, list[str]]:
     ev = _watch(page)
     page.goto(f"{ui}/analysis/results/{r.job_id}")
-    page.locator("#migration-roadmap-section").wait_for(timeout=READY_MS)
+    _loaded(page, r)
     return ev
 
 
@@ -1627,10 +1818,12 @@ def test_results_page_text_is_clean(
 
     for r in all_runs:
         page, ev = loaded_results(r)
-        text = page.inner_text("body")
-        assert _leaked_forbidden_text(text) == [], r.db
-        findings = scan_text(text, f"results-page:{r.db}")
-        assert findings == [], (r.db, [(f.kind, f.text, f.excerpt) for f in findings])
+        # #2313: the page's text is every tab's.
+        for tab in _each_tab(page):
+            text = page.inner_text("body")
+            assert _leaked_forbidden_text(text) == [], (r.db, tab)
+            findings = scan_text(text, f"results-page:{r.db}:{tab}")
+            assert findings == [], (r.db, tab, [(f.kind, f.text, f.excerpt) for f in findings])
         assert ev == {"console": [], "pageerror": [], "failed": []}, (r.db, ev)
 
 
@@ -1641,7 +1834,11 @@ def test_results_page_has_no_horizontal_overflow(
     page.set_viewport_size({"width": width, "height": 900})
     for r in all_runs:
         _open_results(page, ui, r)
-        assert page.evaluate("document.documentElement.scrollWidth <= window.innerWidth + 1"), r.db
+        for tab in _each_tab(page):
+            assert page.evaluate("document.documentElement.scrollWidth <= window.innerWidth + 1"), (
+                r.db,
+                tab,
+            )
 
 
 def _expand_every_section(page: Page) -> None:
@@ -1692,19 +1889,21 @@ def test_results_page_has_no_moderate_or_worse_accessibility_violations(
 
     for r in all_runs:
         _open_results(page, ui, r)
-        _expand_every_section(page)
-        violations = Axe().run(page).response["violations"]
-        blocking = [v["id"] for v in violations if v.get("impact") in BLOCKING_IMPACTS]
-        minor = [v["id"] for v in violations if v.get("impact") not in BLOCKING_IMPACTS]
-        if minor:
-            print(f"\naxe minor findings on the results page for {r.db}: {minor}")
-        # Name the elements, so a failure on a headless run's job says what to fix.
-        where = {
-            v["id"]: [n.get("target") for n in v.get("nodes", [])][:5]
-            for v in violations
-            if v.get("impact") in BLOCKING_IMPACTS
-        }
-        assert blocking == [], (r.job_id, r.db, blocking, where)
+        # #2313: every tab, each with all its sections open.
+        for tab in _each_tab(page):
+            _expand_every_section(page)
+            violations = Axe().run(page).response["violations"]
+            blocking = [v["id"] for v in violations if v.get("impact") in BLOCKING_IMPACTS]
+            minor = [v["id"] for v in violations if v.get("impact") not in BLOCKING_IMPACTS]
+            if minor:
+                print(f"\naxe minor findings on the results page for {r.db} ({tab}): {minor}")
+            # Name the elements, so a failure on a headless run's job says what to fix.
+            where = {
+                v["id"]: [n.get("target") for n in v.get("nodes", [])][:5]
+                for v in violations
+                if v.get("impact") in BLOCKING_IMPACTS
+            }
+            assert blocking == [], (r.job_id, r.db, tab, blocking, where)
 
 
 def test_results_page_has_no_accessibility_violations_with_an_earlier_path_picked(
@@ -1724,24 +1923,29 @@ def test_results_page_has_no_accessibility_violations_with_an_earlier_path_picke
         if not earlier:
             continue
         _open_results(page, ui, r)
+        _show_tab(page, "plan")
         panel = page.locator("#migration-roadmap-section [data-figure=adoption-paths]")
         _choose_path(panel, earlier[0])
         expect(panel.locator("[data-figure=selected-path]")).to_have_attribute(
             "data-path", earlier[0]
         )
-        _expand_every_section(page)
-        section = page.locator("#migration-roadmap-section")
-        # The stage lists are open, and the earlier path leaves something out.
-        assert section.locator("[data-stage]").count() > 0, r.db
-        assert section.locator("[data-left-out]").count() > 0, r.db
-        violations = Axe().run(page).response["violations"]
-        blocking = [v["id"] for v in violations if v.get("impact") in BLOCKING_IMPACTS]
-        where = {
-            v["id"]: [n.get("target") for n in v.get("nodes", [])][:5]
-            for v in violations
-            if v.get("impact") in BLOCKING_IMPACTS
-        }
-        assert blocking == [], (r.job_id, r.db, earlier[0], blocking, where)
+        # #2313: every tab, the Plan tab (the roadmap) first; the path stays picked.
+        for tab in ["plan", *(t for t in RESULTS_TABS if t != "plan")]:
+            _show_tab(page, tab)
+            _expand_every_section(page)
+            if tab == "plan":
+                section = page.locator("#migration-roadmap-section")
+                # The stage lists are open, and the earlier path leaves something out.
+                assert section.locator("[data-stage]").count() > 0, r.db
+                assert section.locator("[data-left-out]").count() > 0, r.db
+            violations = Axe().run(page).response["violations"]
+            blocking = [v["id"] for v in violations if v.get("impact") in BLOCKING_IMPACTS]
+            where = {
+                v["id"]: [n.get("target") for n in v.get("nodes", [])][:5]
+                for v in violations
+                if v.get("impact") in BLOCKING_IMPACTS
+            }
+            assert blocking == [], (r.job_id, r.db, earlier[0], tab, blocking, where)
         scanned += 1
     assert scanned or any(r.external for r in all_runs), "no job offers an earlier path"
 
@@ -1766,7 +1970,8 @@ def test_the_designed_job_renders_the_schema_design_panels(
         assert [r.job_id for r in designed] == ["ui-desi"]
     for r in designed:
         page, ev = loaded_results(r)
-        text = page.inner_text("body")
+        # #2313: the panels are on the Queries, Data model and Risks and decisions tabs.
+        text = "\n".join(page.inner_text("body") for _ in _each_tab(page))
         headings = ["Access pattern explorer", "Trade-offs and design decisions"]
         aurora = any(
             p.parent.parent.name.startswith("schema-aurora_") for p in real_designs(r.job_dir())
@@ -1778,9 +1983,11 @@ def test_the_designed_job_renders_the_schema_design_panels(
         assert "Aurora design" not in text, r.job_id
         if aurora:
             # #1232: every section of the Table design opens collapsed.
+            _show_tab(page, "data-model")
             design = page.locator("#table-design-section")
             assert design.locator('[aria-expanded="false"]').count() >= 1, r.job_id
             assert design.locator('[aria-expanded="true"]').count() == 0, r.job_id
+        _show_tab(page, "queries")
         assert page.get_by_role("radio").count() > 0, r.job_id
         if not r.external:
             assert page.get_by_role("button", name="Next page").count() > 0, r.job_id
@@ -1805,6 +2012,7 @@ def test_the_trade_offs_tabs_list_each_topic_with_the_facts_label_and_count(
             if g["topic"] != "review_note":
                 by_engine.setdefault(g["engine"], []).append(g)
         ev = _open_results(page, ui, r)
+        _show_tab(page, "risks")
         for engine, topics in by_engine.items():
             tab = page.get_by_role(
                 "tab", name=re.compile(rf"^{re.escape(display_engine(engine))} \(")
@@ -1840,7 +2048,7 @@ def test_results_page_states_the_pending_engine_choices(
         d = facts.get("auto_decided_choice_count") or 0
         dq = facts.get("auto_decided_query_count") or 0
         page, ev = loaded_results(r)
-        page.locator("#sources-of-truth-section").wait_for(timeout=READY_MS)
+        _show_tab(page, "plan")
         note = page.locator("#engine-choices-note")
         if n:
             tables = "table still ties" if n == 1 else "tables still tie"
@@ -1869,7 +2077,7 @@ def test_query_routing_table_fits_its_card_at_1440(
     page.set_viewport_size({"width": 1440, "height": 900})
     for r in all_runs:
         ev = _watch(page)
-        page.goto(f"{ui}/analysis/results/{r.job_id}")
+        _goto_results(page, ui, r, "queries")
         section = page.locator("#query-routing-section")
         expect(section).to_be_visible(timeout=READY_MS)
         _expand_query_routing(page)
@@ -1921,22 +2129,26 @@ def test_each_engine_has_one_colour_across_the_ui(
     seen: dict[str, int] = {"badges": 0, "nodes": 0, "chips": 0}
     for r in all_runs:
         _open_results(page, ui, r)
-        _expand_every_section(page)
-        found = page.evaluate(_ENGINE_COLOURS_JS)
-        for b in found["badges"]:
-            assert b["colour"] == colour.get(b["engine"], neutral), (r.db, b)
-        for n in found["nodes"]:
-            if n["engine"] in colour:
-                assert n["colour"] == colour[n["engine"]], (r.db, n)
-                seen["nodes"] += 1
-        for c in found["chips"]:
-            expected = neutral if c["kind"] == "source" else colour.get(c["engine"], neutral)
-            assert c["colour"] == expected, (r.db, c)
-        seen["badges"] += len(found["badges"])
-        seen["chips"] += len(found["chips"])
-        # The roadmap's wave badges are engine badges too: every wave engine is drawn.
-        waves = page.locator("[data-wave] [data-engine] [data-engine-badge]")
-        assert waves.count() > 0, r.db
+        # #2313: every tab's badges, nodes and chips; a tab opened before stays in the
+        # DOM, so each is measured on the tab that shows it.
+        for tab in _each_tab(page):
+            _expand_every_section(page)
+            found = page.evaluate(_ENGINE_COLOURS_JS)
+            for b in found["badges"]:
+                assert b["colour"] == colour.get(b["engine"], neutral), (r.db, tab, b)
+            for n in found["nodes"]:
+                if n["engine"] in colour:
+                    assert n["colour"] == colour[n["engine"]], (r.db, tab, n)
+                    seen["nodes"] += 1
+            for c in found["chips"]:
+                expected = neutral if c["kind"] == "source" else colour.get(c["engine"], neutral)
+                assert c["colour"] == expected, (r.db, tab, c)
+            seen["badges"] += len(found["badges"])
+            seen["chips"] += len(found["chips"])
+            if tab == "plan":
+                # The roadmap's wave badges are engine badges too: every wave engine is drawn.
+                waves = page.locator("[data-wave] [data-engine] [data-engine-badge]")
+                assert waves.count() > 0, r.db
     assert seen["badges"] > 0 and seen["nodes"] > 0, seen
 
 
@@ -2032,6 +2244,7 @@ def test_results_page_lists_the_dynamodb_merge_review_decisions(
     for r in jobs:
         fact = json.loads(r.report_json().read_text())["facts"].get("dynamodb_merge_reviews")
         page, ev = loaded_results(r)
+        _show_tab(page, "risks")
         callout = page.locator("#dynamodb-merge-reviews")
         if not fact:
             assert callout.count() == 0, r.job_id
