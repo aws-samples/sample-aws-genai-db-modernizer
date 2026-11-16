@@ -610,6 +610,8 @@ SKILL_RULE = (
 CUSTOMER_PROSE_SKILLS = {
     "executive-summary.md": "Guardrails",
     "consolidation-review.md": "Executive Summary",
+    # #1940: the change note reaches the deliverables (facts.routines.interventions).
+    "routine-repair.md": "Response",
     **{
         f"{e}-data-modeling.md": "Customer-facing text"
         for e in ("aurora_mysql", "aurora_postgresql", "documentdb", "dynamodb", "elasticache")

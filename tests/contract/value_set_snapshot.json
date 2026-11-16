@@ -955,6 +955,39 @@
     ],
     "version": "1.0"
   },
+  "routine_repair.RefusalCode": {
+    "module": "routine_repair",
+    "values": [
+      "adds_objects",
+      "duplicate_answer",
+      "names_other_schema",
+      "not_one_statement",
+      "renamed",
+      "signature_changed",
+      "unchanged"
+    ],
+    "version": "1.0"
+  },
+  "routine_repair.RepairState": {
+    "module": "routine_repair",
+    "values": [
+      "no_answer",
+      "not_repaired",
+      "refused",
+      "repaired_pending_proof"
+    ],
+    "version": "1.0"
+  },
+  "routine_repair.RoutineKind": {
+    "module": "routine_repair",
+    "values": [
+      "event",
+      "function",
+      "procedure",
+      "trigger"
+    ],
+    "version": "1.0"
+  },
   "schema_design_input.Confidence": {
     "module": "schema_design_input",
     "values": [

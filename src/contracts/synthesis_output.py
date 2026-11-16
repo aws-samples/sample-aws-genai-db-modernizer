@@ -3338,6 +3338,27 @@ class RoutineNoteFact(BaseModel):
     more_count: int = Field(0, ge=0, description="How many more than routines lists")
 
 
+class RoutineInterventionFact(BaseModel):
+    """A routine that needed an intervention (#1940): the routine repair seam has a model's
+    candidate for it, waiting for the proof. What changed is the model's change note
+    (untrusted text, escaped when rendered); never the routine's text or a diff of it."""
+
+    kind: str = Field(..., description="function, procedure, trigger or event")
+    routine_id: str = Field(..., min_length=1, description="The routine's routine_id")
+    state: Literal["repaired_pending_proof"] = Field(
+        ...,
+        description=(
+            "repaired_pending_proof: not carried until the side-by-side proof accepts it; "
+            "never proved here"
+        ),
+    )
+    reasons: list[str] = Field(
+        default_factory=list,
+        description="Why it needed one: its failed rule ids and reasons, or target_error",
+    )
+    change_note: str = Field(..., min_length=1, description="What changed, in plain words")
+
+
 class RoutineFacts(BaseModel):
     """The routine-migration headline and the routines behind its risks (#1938, ADR-034
     Decision 7), computed once from the newest ``routines/v<N>/routine_migration.json``
@@ -3439,6 +3460,14 @@ class RoutineFacts(BaseModel):
     )
     rules: list[RoutineRuleFact] = Field(
         default_factory=list, description="Every rule the rows name, by id"
+    )
+    interventions: list[RoutineInterventionFact] = Field(
+        default_factory=list,
+        description=(
+            "The routines that needed an intervention and what changed (#1940): each "
+            "routine the repair seam holds a model's candidate for, in the artifact's "
+            "order; empty when no repair ran"
+        ),
     )
 
     @model_validator(mode="after")

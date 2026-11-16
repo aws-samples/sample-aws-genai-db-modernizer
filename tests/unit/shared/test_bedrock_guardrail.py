@@ -1028,6 +1028,7 @@ _SCRIPT_ARGS = {
     "run_reality_check.py": ["--job-id", "j", "--db", "d"],
     "run_schema_design.py": ["--job-id", "j", "--db", "d", "--engine", "dynamodb"],
     "run_synthesis.py": ["--job-id", "j", "--db", "d"],
+    "run_routine_repair.py": ["--job-id", "j", "--db", "d"],
     "test_local_phased.py": ["x.json"],
 }
 
