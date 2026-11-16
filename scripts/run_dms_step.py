@@ -2635,7 +2635,14 @@ def _proof_target(args: argparse.Namespace, sleep: Callable[[float], None]) -> d
             return pt.status(clients, inputs, job_id, wait, args.interval_seconds, sleep=sleep)
         if command == PROOF_RUN:
             return _proof_run(store, db, job_id, clients, inputs, cred, sleep)
-        return pt.teardown(clients, inputs, job_id, wait, args.interval_seconds, sleep=sleep)
+        done = pt.teardown(clients, inputs, job_id, wait, args.interval_seconds, sleep=sleep)
+        if done.get("status") in ("deleted", "deleting"):
+            # A run killed before its cleanup left its runner secret: none outlives the stack.
+            from src.tools.routines.data_api_target import delete_runner_secrets
+
+            count, left = delete_runner_secrets(_secrets(cred), job_id=job_id)
+            done.update(runner_secrets_deleted=count, runner_secrets_left=left)
+        return done
     except (MoveError, ValueError) as exc:
         return {"status": "error", "message": str(exc)}
     except Exception as exc:  # noqa: BLE001 - this script must always print JSON
