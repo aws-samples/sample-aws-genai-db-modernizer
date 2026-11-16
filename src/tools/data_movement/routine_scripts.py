@@ -441,6 +441,41 @@ def schema_statements(
     ]
 
 
+#: The placeholder line each PostgreSQL script carries for its standard_conforming_strings
+#: pin (#2082), until :func:`source_strings_pin` writes the source's value there.
+PIN_STRINGS = "SET standard_conforming_strings = on;"
+
+
+def source_strings(store: Any, db: str, job_id: str) -> str | None:
+    """The source's ``standard_conforming_strings`` as the collection recorded it (``on`` or
+    ``off``), or None when it records none."""
+    key = f"{db}/{job_id}/collector/output.json"
+    try:
+        out = store.read_json(key) if store.exists(key) is True else None
+    except (OSError, ValueError):
+        return None
+    source = ((out or {}).get("metadata") or {}).get("source_database") or {}
+    value = str((source.get("settings") or {}).get("standard_conforming_strings") or "").lower()
+    return value if value in ("on", "off") else None
+
+
+def source_strings_pin(text: str, recorded: str | None) -> str:
+    """``text`` with its :data:`PIN_STRINGS` line set to the source's value, as ``pg_dump``
+    pins the value it printed under: the collected text writes its literals for that setting
+    (with it off, ``pg_get_viewdef`` and ``pg_get_functiondef`` double each backslash). The
+    checks refuse any text whose two readings disagree on where a statement ends, so either
+    value is safe; ``on`` when the collection records none, as the header says."""
+    value = recorded or "on"
+    why = (
+        f"-- standard_conforming_strings {value}, as on the source when it was collected: the "
+        "collected text writes its literals for that setting (pg_dump pins it the same way)."
+        if recorded
+        else "-- standard_conforming_strings on: the collection does not record the source's "
+        "setting, so PostgreSQL's default is assumed."
+    )
+    return text.replace(PIN_STRINGS, f"{why}\nSET standard_conforming_strings = {value};", 1)
+
+
 def _deploy_header(
     engine: str,
     section: StepRoutines,
@@ -475,9 +510,7 @@ def _deploy_header(
             "",
             "\\set ON_ERROR_STOP on",
             "SET client_encoding = 'UTF8';",
-            # #2082: a backslash in a '...' literal is a plain character, as the checks read it,
-            # whatever the server's setting (pg_dump pins it the same way).
-            "SET standard_conforming_strings = on;",
+            PIN_STRINGS,  # #2082: replaced by the source's value (source_strings_pin)
             "SET check_function_bodies = on;",
             "BEGIN;",
             f"SET LOCAL lock_timeout = '{PG_LOCK_TIMEOUT}';",
@@ -976,7 +1009,7 @@ def write_routine_scripts(
             header = _deploy_header(
                 engine, section, in_script, contract_sha, schemas, contract.target
             )
-            yield header.encode("utf-8")
+            yield source_strings_pin(header, source_strings(store, db, job_id)).encode("utf-8")
             yield from spooled_chunks(spool, carried, spans)
             yield _deploy_footer(engine).encode("utf-8")
 

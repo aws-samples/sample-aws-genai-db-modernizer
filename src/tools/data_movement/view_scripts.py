@@ -57,6 +57,7 @@ from src.tools.data_movement.routine_scripts import (
     _DELIMITER_LINE,
     CHECK_FORMAT,
     PG_LOCK_TIMEOUT,
+    PIN_STRINGS,
     CheckScript,
     RoutineScriptError,
     _comment,
@@ -66,6 +67,8 @@ from src.tools.data_movement.routine_scripts import (
     _safe,
     _select_line,
     schema_statements,
+    source_strings,
+    source_strings_pin,
     step_schemas,
     write_atomic,
 )
@@ -277,8 +280,6 @@ def _deploy_header(
         lines += [
             "-- One transaction: if any statement fails, nothing is created; fix it and run "
             "the script again.",
-            "-- standard_conforming_strings on, whatever the server's setting: a backslash in a "
-            "'...' literal is a plain character, as the views' check read it.",
             "-- Each view runs under the search path its definition was collected with.",
             "-- A view without security_invoker reads its tables with its owner's rights, and "
             "its owner is the user who runs this script.",
@@ -288,7 +289,7 @@ def _deploy_header(
             "",
             "\\set ON_ERROR_STOP on",
             "SET client_encoding = 'UTF8';",
-            "SET standard_conforming_strings = on;",
+            PIN_STRINGS,  # replaced by the source's value (source_strings_pin)
             "BEGIN;",
             f"SET LOCAL lock_timeout = '{PG_LOCK_TIMEOUT}';",
             "",
@@ -308,6 +309,9 @@ def _deploy_header(
             "before each view: the view text is read with backslash escapes and backtick names, "
             "as its check read it, whatever the server's mode.",
             "",
+            "-- Run it with a utf8mb4 client character set (--default-character-set=utf8mb4): "
+            "a multibyte client set such as sjis or cp932 can read a backslash as part of a "
+            "character, so the client would split the text otherwise than its check.",
             "SET NAMES utf8mb4;",
             MYSQL_SQL_MODE,
             "",
@@ -449,6 +453,12 @@ def _instructions(engine: str, scripts: ViewScripts, section: StepViews, output_
                 "should own it, never the admin user."
             )
         lines.append(f"- {GRANT_WILDCARD_NOTE}")
+        lines.append(
+            "- Run both scripts with a utf8mb4 client character set "
+            "(`--default-character-set=utf8mb4`, as below): a multibyte client set such as "
+            "`sjis` or `cp932` can read a backslash as part of a character and split the "
+            "script otherwise than its check read it."
+        )
     lines += [
         "",
         "## Order",
@@ -568,8 +578,9 @@ def write_view_scripts(
         schemas = _view_schemas(in_rows, engine, step_schemas(contract))
 
         def deploy_chunks() -> Iterator[bytes]:
-            yield _deploy_header(engine, section, len(spans), contract_sha, schemas,
-                                 contract.target).encode("utf-8")  # fmt: skip
+            header = _deploy_header(engine, section, len(spans), contract_sha, schemas,
+                                    contract.target)  # fmt: skip
+            yield source_strings_pin(header, source_strings(store, db, job_id)).encode("utf-8")
             for row in in_rows:
                 offset, length = spans[row.view_id]
                 spool.seek(offset)

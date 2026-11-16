@@ -364,3 +364,14 @@ def test_each_mysql_view_block_pins_a_session_mode_without_no_backslash_escapes(
     blocks = text.split("-- 1/2 view ", 1)[1].split("-- 2/2 view ")
     assert all(MYSQL_SQL_MODE in b for b in blocks) and MYSQL_SQL_MODE in text.split("-- 1/2", 1)[0]
     assert "',NO_BACKSLASH_ESCAPES,'" in MYSQL_SQL_MODE and "',ANSI_QUOTES,'" in MYSQL_SQL_MODE
+
+
+def test_the_mysql_script_and_views_md_require_a_utf8mb4_client(tmp_path):
+    contract = contract_with_views([view("v", engine="aurora_mysql")], "aurora_mysql")
+    write(
+        tmp_path, job(tmp_path, [mysql_view_source("v", _MY.format(name="v"))], "mysql"), contract
+    )
+    deploy = (tmp_path / "step" / DEPLOY_FILE).read_text()
+    assert "utf8mb4 client character set (--default-character-set=utf8mb4)" in deploy
+    assert deploy.index("SET NAMES utf8mb4;") < deploy.index("CREATE OR REPLACE SQL")
+    assert "`sjis`" in (tmp_path / "step" / INSTRUCTIONS_FILE).read_text()

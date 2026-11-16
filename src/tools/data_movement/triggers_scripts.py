@@ -77,6 +77,7 @@ from src.tools.data_movement.routine_scripts import (
     CASE_DIFFERS,
     CASE_DIFFERS_TRIGGERS_WHY,
     PG_LOCK_TIMEOUT,
+    PIN_STRINGS,
     CheckScript,
     RoutineScriptError,
     _comment,
@@ -92,6 +93,8 @@ from src.tools.data_movement.routine_scripts import (
     require_section,
     routine_schemas,
     schema_statements,
+    source_strings,
+    source_strings_pin,
     spool_blocks,
     spooled_chunks,
     step_schemas,
@@ -410,9 +413,7 @@ def _header(
             "",
             "\\set ON_ERROR_STOP on",
             "SET client_encoding = 'UTF8';",
-            # #2082: a backslash in a '...' literal is a plain character, as the checks read it,
-            # whatever the server's setting (pg_dump pins it the same way).
-            "SET standard_conforming_strings = on;",
+            PIN_STRINGS,  # #2082: replaced by the source's value (source_strings_pin)
             "BEGIN;",
             f"SET LOCAL lock_timeout = '{PG_LOCK_TIMEOUT}';",
             "",
@@ -705,7 +706,8 @@ def write_triggers_scripts(
             head = _header(
                 engine, contract_sha, scripts, present is not None, schemas, contract.target
             )
-            yield ("\n".join(head) + "\n").encode("utf-8")
+            text = source_strings_pin("\n".join(head) + "\n", source_strings(store, db, job_id))
+            yield text.encode("utf-8")
             if pg:
                 for i, row in enumerate(keep, start=1):
                     yield _pg_state(row, i, len(keep)).encode("utf-8")

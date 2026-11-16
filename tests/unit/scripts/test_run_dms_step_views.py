@@ -41,7 +41,7 @@ def _job(tmp_path: Path, rows=None, *, sources=True) -> str:
                               [mysql_view_source("v_orders", _TEXT)])  # fmt: skip
     store.write_bytes("shop/job1/transformation-contract/v2/step-1.json", canonical_json(contract))
     store.write_json(f"{STEP}/plan.json", make_plan(contract).model_dump(mode="json"))
-    (tmp_path / STEP / "inputs.json").write_text(json.dumps(base.INPUTS))
+    store.write_json(f"{STEP}/inputs.json", dict(base.INPUTS))  # the step's inputs file, ids only
     return contract_sha256(contract)
 
 
@@ -133,7 +133,7 @@ def test_a_job_prepared_before_view_carrying_skips_views_and_never_stops(tmp_pat
     contract = make_contract("aurora_mysql")
     store.write_bytes("shop/job1/transformation-contract/v2/step-1.json", canonical_json(contract))
     store.write_json(f"{STEP}/plan.json", make_plan(contract).model_dump(mode="json"))
-    (tmp_path / STEP / "inputs.json").write_text(json.dumps(base.INPUTS))
+    store.write_json(f"{STEP}/inputs.json", dict(base.INPUTS))  # the step's inputs file, ids only
     before = (tmp_path / "shop/job1/transformation-contract/v2/step-1.json").read_bytes()
     code, line = base._run(
         tmp_path, "views", clients=base._clients(StubbedCredMgr()), capsys=capsys
