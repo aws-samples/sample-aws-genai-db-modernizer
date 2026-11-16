@@ -8,6 +8,8 @@ warn about database-name wildcards."""
 
 from __future__ import annotations
 
+import pytest
+
 from src.tools.data_movement.routine_scripts import INSTRUCTIONS_FILE, VIEW_LEFT_OUT
 from src.tools.data_movement.step1_routines import build_step_routines
 from src.tools.data_movement.step1_views import carried_view_names
@@ -122,3 +124,33 @@ def test_the_triggers_enable_script_pins_the_source_value_too(tmp_path):
     _write_scripts(tmp_path, store, contract)
     head = _read(tmp_path, "triggers-enable.sql").split("BEGIN;", 1)[0]
     assert "SET standard_conforming_strings = off;" in head and "as on the source" in head
+
+
+@pytest.mark.parametrize(
+    "recorded,pinned",
+    [
+        ("off; DROP TABLE public.audit_log", "on"),
+        ("true", "on"),
+        ("", "on"),
+        ("0", "on"),
+        (None, "on"),  # missing
+        ("OFF", "off"),
+    ],
+)
+def test_a_hand_edited_recorded_setting_never_reaches_the_pin(tmp_path, recorded, pinned):
+    """Only on or off (any case) is pinned; anything else in an edited collection file pins
+    on, never written into the script (#2333 review, round 4)."""
+    from src.tools.data_movement.view_scripts import write_view_scripts
+
+    text = 'CREATE OR REPLACE VIEW "public"."v" ("id") AS\n SELECT 1::bigint AS id;'
+    store = _job(tmp_path, migration([row("public.plain()", specific="pl_3")]),
+                 [pg_view_source("v", text)])  # fmt: skip
+    settings = {} if recorded is None else {"standard_conforming_strings": recorded}
+    store.write_json("shop/job1/collector/output.json", {"metadata": {"source_database": {
+        "engine": "postgresql", "settings": settings}}})  # fmt: skip
+    write_view_scripts(store, "shop", "job1", contract_with_views([view("v")]), "a" * 64,
+                       tmp_path / "step")  # fmt: skip
+    pins = [ln for ln in (tmp_path / "step" / "views-deploy.sql").read_text().splitlines()
+            if ln.startswith("SET standard_conforming_strings")]  # fmt: skip
+    assert pins == [f"SET standard_conforming_strings = {pinned};"]
+    assert "DROP" not in (tmp_path / "step" / "views-deploy.sql").read_text()
