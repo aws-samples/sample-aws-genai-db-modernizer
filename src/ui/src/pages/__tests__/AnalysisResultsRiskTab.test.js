@@ -21,4 +21,6 @@ test('the risk tabs are controlled and default to the highest open severity', ()
   expect(block).toMatch(/activeTabId=/);
   expect(block).toMatch(/onChange=/);
   expect(block).toMatch(/riskTab/);
+  // The default looks at every tab, UNRATED included (a report whose open risks are all unrated).
+  expect(block).toMatch(/defaultRiskSeverity\(synthesis, risksBySeverity, riskTabIds\)/);
 });
