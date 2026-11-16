@@ -400,6 +400,14 @@ class StepView(BaseModel):
         default_factory=list,
         description="The view ids of the section it reads, directly or through another view",
     )
+    source_security: Literal["DEFINER", "INVOKER"] | None = Field(
+        None,
+        exclude_if=lambda value: value is None,
+        description=(
+            "MySQL: its SQL SECURITY on the source; step 1 creates it SQL SECURITY INVOKER "
+            "(the DEFINER is not carried), so a DEFINER view's readers need their own rights"
+        ),
+    )
     reasons: list[str] = Field(
         default_factory=list,
         description="Why it is not carried: reason codes and object ids, never text",

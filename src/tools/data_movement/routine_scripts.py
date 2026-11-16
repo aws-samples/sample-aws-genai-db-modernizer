@@ -119,6 +119,13 @@ CASE_DIFFERS_TRIGGERS_WHY = (
     "these triggers and events by hand in the database the application uses, then run "
     "triggers-enable-check.sql again; until then the check reports them missing."
 )
+#: The refusal of a routine that reads a view views-deploy.sql leaves out (#2082): its
+#: CREATE would fail there, and on Aurora PostgreSQL roll back the whole deploy.
+VIEW_LEFT_OUT = "depends_on_view_left_out"
+VIEW_LEFT_OUT_WHY = (
+    "it reads a view views-deploy.sql leaves out (run_dms_step.py views names it and why): "
+    "create that view yourself, then generate the routine scripts again"
+)
 _DELIMITER_LINE = re.compile(r"(?im)^\s*delimiter\b")
 _BAD_CATEGORIES = {"Cc", "Cf", "Zl", "Zp", "Cs", "Co", "Cn"}
 
@@ -404,6 +411,9 @@ def schema_statements(
             *alter_comment(s, value, line),
         )
     ]
+    from src.tools.database.mysql_grants import GRANT_WILDCARD_NOTE
+
+    wildcards = f"-- {GRANT_WILDCARD_NOTE}"
     if triggers:  # the triggers-enable script (#2273): its databases hold triggers and events
         return [
             "-- The databases its triggers and events live in that step 1's DDL does not create "
@@ -412,6 +422,7 @@ def schema_statements(
             "creating a database gives its creator no privileges on it.",
             "-- Each event runs as its DEFINER, which needs the privileges its body uses; the "
             "script grants nothing.",
+            wildcards,
             f"-- Each CREATE DATABASE here is like step-1.ddl.sql's. {sentence}",
             *statements,
             "",
@@ -423,6 +434,7 @@ def schema_statements(
         "runs this script needs CREATE on them).",
         "-- Each is created by the user that runs this script, and the script grants nothing: "
         f"{grant} on each database for the application user is yours to add.",
+        wildcards,
         f"-- Each CREATE DATABASE here is like step-1.ddl.sql's. {sentence}",
         *statements,
         "",
@@ -648,6 +660,7 @@ def _instructions(
     output_path: str,
     user: str,
     created: int = 0,
+    views: bool = False,
 ) -> str:
     pg = engine == "aurora_postgresql"
     deploy = (
@@ -691,8 +704,12 @@ def _instructions(
             if pg
             else f"- Databases it creates, which step 1's DDL does not: {created} (`{DEPLOY_FILE}` "
             "names them). Each is created by the user that runs it, and the script grants "
-            "nothing: `EXECUTE` on each database for the application user is yours to add."
+            "nothing: `EXECUTE` on each database for the application user is yours to add. "
+            + _wildcards()
         )
+    left = sum(1 for _, _, code in scripts.refused if code == VIEW_LEFT_OUT)
+    if left:
+        lines.append(f"- Left out as `{VIEW_LEFT_OUT}`: {left}. For each, {VIEW_LEFT_OUT_WHY}.")
     clashes = sum(1 for _, _, code in scripts.refused if code == CASE_DIFFERS)
     if clashes:
         lines.append(f"- Left out as `{CASE_DIFFERS}`: {clashes}. For each, {CASE_DIFFERS_WHY}")
@@ -704,13 +721,19 @@ def _instructions(
     lines += [
         "- Checked, not load-tested: the routines passed the static checks; no load-and-run "
         "proof ran yet.",
-        "- Views: run views-deploy.sql (views.md) before this script. A routine that depends "
-        "on a view step 1 does not create is not carried in step 1.",
+        *(
+            [
+                "- Views: run views-deploy.sql (views.md) before this script. A routine that depends "
+                "on a view step 1 does not create is not carried in step 1."
+            ]
+            if views
+            else []
+        ),
         "",
         "## Order",
         "",
-        "1. Wait until the DMS full load is complete (`/move` shows it at 100%), and run "
-        "`views-deploy.sql` first when step 1 wrote one (`views.md`).",
+        "1. Wait until the DMS full load is complete (`/move` shows it at 100%)"
+        + (", and run `views-deploy.sql` first (`views.md`)." if views else "."),
         f"2. Run the deploy script once, as the user the routines should belong to:\n\n"
         f"   ```\n   {deploy}\n   ```",
         f"3. Run the read-only check script and save its output next to these files, at "
@@ -733,6 +756,12 @@ def _instructions(
             "another user, generate it again with `run_dms_step.py routines --target-user`."
         )
     return "\n".join(lines) + "\n"
+
+
+def _wildcards() -> str:
+    from src.tools.database.mysql_grants import GRANT_WILDCARD_NOTE
+
+    return GRANT_WILDCARD_NOTE
 
 
 def _routine_order(section: StepRoutines) -> list[StepRoutine]:
@@ -915,12 +944,21 @@ def write_routine_scripts(
     step_dir.mkdir(parents=True, exist_ok=True)
     tables_in = step_schemas(contract)
     write_block = block_of(engine, migration, user, target_database)
+    from src.tools.data_movement.view_scripts import left_out, left_out_names
+
+    held = left_out_names(contract, left_out(store, db, job_id, contract, target_database))
+    reads = {
+        (r.kind, r.routine_id): {d.name.lower() for d in r.dependencies if d.kind == "table"}
+        for r in migration.routines
+    }
 
     def block(
         row: StepRoutine, source: RoutineSource, position: int, total: int
     ) -> tuple[str | None, str | None]:
         if case_clash(_target_schema(row, engine, target_database), tables_in, engine):
             return None, CASE_DIFFERS
+        if reads.get((row.kind, row.routine_id), set()) & held:
+            return None, VIEW_LEFT_OUT
         return write_block(row, source, position, total)
 
     with tempfile.TemporaryFile(dir=step_dir) as spool:
@@ -953,7 +991,9 @@ def write_routine_scripts(
     output = str(step_dir / CHECK_OUTPUT)
     write_atomic(
         step_dir / INSTRUCTIONS_FILE,
-        iter([_instructions(engine, scripts, section, output, user, len(schemas)).encode("utf-8")]),
+        iter([_instructions(engine, scripts, section, output, user, len(schemas),
+                            bool(contract.views_section and contract.views_section.carried)
+                            ).encode("utf-8")]),  # fmt: skip
     )
     scripts.files = {
         name: str(step_dir / name) for name in (DEPLOY_FILE, CHECK_FILE, INSTRUCTIONS_FILE)

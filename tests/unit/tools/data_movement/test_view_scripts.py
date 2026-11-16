@@ -99,7 +99,10 @@ def test_a_mysql_view_runs_under_its_collation_with_no_definer_or_algorithm(tmp_
         "SET NAMES utf8mb4;\nSET SESSION collation_connection = 'utf8mb4_0900_ai_ci';\nCREATE OR "
         in text
     )
-    assert "DEFINER is left out" in text and "ALGORITHM is not in the collection" in text
+    assert (
+        "every view is SQL SECURITY INVOKER" in text
+        and "ALGORITHM is not in the collection" in text
+    )
     assert "BEGIN;" not in text and SENTINEL in text
 
 
@@ -110,7 +113,7 @@ def test_a_mysql_view_runs_under_its_collation_with_no_definer_or_algorithm(tmp_
         ("not exact", "source_text_not_exact"),
         ("CREATE TABLE `shop`.`v` (id int);", "not_a_view_statement"),
         ("collation", "session_not_allowed"),
-        ("delimiter", "delimiter_in_text"),
+        ("delimiter", "client_command_in_text"),
     ],
 )
 def test_a_view_the_script_cannot_hold_is_refused_by_code_and_so_is_its_reader(
@@ -263,6 +266,15 @@ def test_the_check_confirms_each_carried_view_and_lists_the_rest():
             ],
             "column_types_differ",
             ["id"],
+        ),
+        (
+            [
+                ["view", "public", "top", "1", "id", "bigint", "v"],
+                ["view", "public", "top", "2", "note", "text", "v"],
+                ["view", "public", "top", "3", "secret_extra", "text", "v"],
+            ],
+            "columns_differ",
+            ["column 3, not on the source"],
         ),
     ],
 )

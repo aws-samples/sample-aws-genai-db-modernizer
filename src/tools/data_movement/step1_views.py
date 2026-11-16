@@ -75,7 +75,8 @@ WHY: dict[str, str] = {
         "(MySQL: with SHOW VIEW), or create the view yourself"
     ),
     "body_not_supported": (
-        "no CREATE could be built from the collection for it: create the view yourself"
+        "no CREATE could be built from the collection for it, or its text is not exactly one "
+        "view statement (ADR-034 Decision 5): create the view yourself"
     ),
     LINEAGE: (
         "its base tables could not be resolved from its definition: create the view "
@@ -209,14 +210,18 @@ def build_step_views(
         name = str(v.get("view_name") or vid)
         reads = sorted({r for r in v.get("referenced_views") or () if r in views and r != vid})
         schema_name = v.get("schema_name") if isinstance(v.get("schema_name"), str) else None
+        security = (
+            v.get("security_type") if v.get("security_type") in ("DEFINER", "INVOKER") else None
+        )
         carry_of[vid] = not reasons
         if reasons:
             others.append(StepView(view_id=vid, schema_name=schema_name, name=name,
-                                   carry="not_carried", columns=columns, reads=reads,
+                                   carry="not_carried", columns=columns, reads=reads, source_security=security,
                                    reasons=reasons))  # fmt: skip
         else:
             carried.append(StepView(view_id=vid, schema_name=schema_name, name=name, carry="carried",
-                                    order=len(carried) + 1, columns=columns, reads=reads))  # fmt: skip
+                                    order=len(carried) + 1, columns=columns, reads=reads,
+                                    source_security=security))  # fmt: skip
     others.sort(key=lambda r: r.view_id)
     return StepViews(
         source="collection",

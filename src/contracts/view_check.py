@@ -52,7 +52,10 @@ class ViewMismatch(BaseModel):
     columns: list[str] = Field(
         default_factory=list,
         max_length=20,
-        description="The source columns (the contract's names) that differ, up to 20",
+        description=(
+            "The source columns (the contract's names) that differ, and each column the "
+            "target has past the source's last by its position, up to 20"
+        ),
     )
 
 

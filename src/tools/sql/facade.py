@@ -1206,6 +1206,15 @@ def _plain_oracle_strings(text: str) -> str:
     return "".join(out)
 
 
+def one_query(sql: str, source_engine: str) -> bool:
+    """True when sqlglot reads ``sql``, in the source dialect, as exactly one query (a
+    ``SELECT``, a set operation or a ``WITH`` over one): a view's body (#2082)."""
+    parsed = _parse_or_none(sql, sqlglot_dialect(source_engine))
+    if parsed is None or len(parsed) != 1:
+        return False
+    return isinstance(parsed[0], exp.Query)
+
+
 def _parse_or_none(text: str, dialect: str) -> list[exp.Expr] | None:
     """sqlglot's statements for ``text``, or None when it raises (a cut that does not
     parse is just not the one)."""

@@ -350,16 +350,21 @@ primary_keys_data AS (
 -- #2082: what step 1 needs to create each view again on Aurora: its schema, check option,
 -- security_barrier and security_invoker, its columns in order with their types, whether an
 -- extension owns it, and the search path its definition was printed for (pg_get_viewdef
--- leaves a name it finds there unqualified).
+-- leaves a name it finds there unqualified). Read from pg_class with pg_get_viewdef, which
+-- gives every view's definition to a role that does not own it (information_schema.views
+-- gives NULL then), in every user schema. Under include_routine_bodies = 0 the definition
+-- is still read, for the view's lineage: the raw file holds it as the server prints it,
+-- literals included, and the collection redacts them when it is read in (#1625).
 views_data AS (
   SELECT coalesce(json_agg(v ORDER BY v.view_name, v.schema_name), '[]'::json) AS data
   FROM (
     SELECT
-      iv.table_name AS view_name,
-      iv.table_schema AS schema_name,
-      iv.view_definition AS definition,
-      iv.is_updatable,
-      iv.check_option,
+      c.relname AS view_name,
+      n.nspname AS schema_name,
+      pg_get_viewdef(c.oid) AS definition,
+      CASE WHEN pg_relation_is_updatable(c.oid, false) & 20 = 20 THEN 'YES' ELSE 'NO' END AS is_updatable,
+      upper(coalesce((SELECT o.option_value FROM pg_options_to_table(c.reloptions) o
+                      WHERE o.option_name = 'check_option'), 'none')) AS check_option,
       coalesce((SELECT bool_or(o.option_value::boolean) FROM pg_options_to_table(c.reloptions) o
                 WHERE o.option_name = 'security_barrier'), false) AS security_barrier,
       coalesce((SELECT bool_or(o.option_value::boolean) FROM pg_options_to_table(c.reloptions) o
@@ -371,10 +376,12 @@ views_data AS (
          FROM pg_attribute a
         WHERE a.attrelid = c.oid AND a.attnum > 0 AND NOT a.attisdropped) AS columns,
       to_json(current_schemas(false)) AS search_path
-    FROM information_schema.views iv
-    JOIN pg_namespace n ON n.nspname = iv.table_schema
-    JOIN pg_class c ON c.relnamespace = n.oid AND c.relname = iv.table_name AND c.relkind = 'v'
-    WHERE iv.table_schema NOT IN ('pg_catalog', 'information_schema')
+    FROM pg_class c
+    JOIN pg_namespace n ON n.oid = c.relnamespace
+    WHERE c.relkind = 'v'
+      AND n.nspname NOT IN ('pg_catalog', 'information_schema')
+      AND n.nspname NOT LIKE 'pg_toast%'
+      AND n.nspname NOT LIKE 'pg_temp%'
   ) v
 ),
 

@@ -640,23 +640,35 @@ def routines_check(inputs: Step1Inputs, result: RoutineCheckResult | None) -> Ga
         "deferred": section.deferred, "proof": "static", "label": STATIC_LABEL})  # fmt: skip
 
 
-def view_exceptions(inputs: Step1Inputs) -> list[GateException]:
-    """The views the parity check names (#2082): with a views section, each of its views,
-    carried (``VIEW_CARRIED``) or not, with its reasons and what to do; without one (a
-    contract written before it), the contract's views, as before."""
+def view_exceptions(
+    inputs: Step1Inputs, left_out: Mapping[str, str] | None = None
+) -> list[GateException]:
+    """The views the parity check names (#2082): with a views section, each of its views:
+    a carried one ``VIEW_CARRIED``, unless ``views-deploy.sql`` leaves it out (``left_out``,
+    by view id: its code and what to do), and one not carried with its reasons and what to
+    do; without one (a contract written before it), the contract's views, as before."""
     section = inputs.contract.views_section
     if section is None:
         return [
             GateException(table=v, kind="view", reason=NOT_VALIDATED) for v in inputs.contract.views
         ]
     from src.tools.data_movement.step1_views import why
+    from src.tools.data_movement.view_scripts import REFUSED_WHY
 
-    return [GateException(table=v.view_id, kind="view", reason=VIEW_CARRIED if v.carry == "carried"
-                          else f"{VIEW_NOT_CARRIED_PREFIX}{', '.join(v.reasons)}: {why(v.reasons)}")
-            for v in section.views]  # fmt: skip
+    def reason(v: Any) -> str:
+        if v.carry != "carried":
+            return f"{VIEW_NOT_CARRIED_PREFIX}{', '.join(v.reasons)}: {why(v.reasons)}"
+        code = (left_out or {}).get(v.view_id)
+        if code:
+            return f"{VIEW_NOT_CARRIED_PREFIX}left out of views-deploy.sql, {code}: {REFUSED_WHY.get(code, '')}"
+        return VIEW_CARRIED
+
+    return [GateException(table=v.view_id, kind="view", reason=reason(v)) for v in section.views]
 
 
-def views_check(inputs: Step1Inputs, result: ViewCheckResult | None) -> GateCheck | None:
+def views_check(
+    inputs: Step1Inputs, result: ViewCheckResult | None, left_out: Mapping[str, str] | None = None
+) -> GateCheck | None:
     """The views check (#2082), for a contract with a views section (None without one):
     ``fail`` for a carried view the customer's check output does not confirm, named;
     ``pending`` until that output was read for this contract; ``pass`` when every carried
@@ -684,9 +696,12 @@ def views_check(inputs: Step1Inputs, result: ViewCheckResult | None) -> GateChec
         rest = len(reasons) - ROUTINES_NAMED
         reasons = [*reasons[:ROUTINES_NAMED],
                    ("fail", f"views: and {rest} more (views-check.json names each one)")]  # fmt: skip
+    missing = section.not_carried + len(left_out or {})
     summary = ("views: none in the collection" if section.total == 0
-               else f"views: {confirmed} of {section.carried} carried views confirmed, "
-               f"{section.not_carried} not carried (named exceptions)")  # fmt: skip
+               else f"views: {confirmed} of {section.carried} carried views confirmed"
+               + (f"; {missing} {'view' if missing == 1 else 'views'} not created on Aurora by "
+                  "step 1: create each yourself (the exceptions name each one and why)"
+                  if missing else ""))  # fmt: skip
     return _check("views", reasons, summary, {"carried": section.carried, "confirmed": confirmed,
                                               "not_carried": section.not_carried})  # fmt: skip
 
@@ -701,6 +716,7 @@ def run_gate(
     seen: ValidatedTables | None = None,
     observed: dict[str, Any] | None = None,
     views: ViewCheckResult | None = None,
+    views_left_out: Mapping[str, str] | None = None,
 ) -> DmsGate:
     """``observed``, when given, gets the task as DMS described it (``task``), for what the
     gate's line says beyond the gate contract (its control schema, #2133)."""
@@ -716,7 +732,12 @@ def run_gate(
         lag_check(view, max_lag, request.window_minutes, request.stale_seconds),
         parity,
     ]
-    checks += [c for c in (views_check(inputs, views), routines_check(inputs, routines)) if c]
+    if inputs.contract.views_section is not None:  # #2082: each view, with why it is not there
+        exceptions = sorted([e for e in exceptions if e.kind != "view"]
+                            + view_exceptions(inputs, views_left_out),
+                            key=lambda e: (e.table, e.kind, e.column or ""))  # fmt: skip
+    checks += [c for c in (views_check(inputs, views, views_left_out),
+                           routines_check(inputs, routines)) if c]  # fmt: skip
     status = _worst([c.status for c in checks])
     return DmsGate(
         job_id=inputs.plan.job_id, database_name=inputs.plan.database_name, region=request.region,
@@ -725,6 +746,19 @@ def run_gate(
         cutover_decision="customer", cutover_message_id=CUTOVER_MESSAGE_ID, checks=checks, tables=tables,
         exceptions=exceptions,
     )  # fmt: skip
+
+
+def _views_left_out(store: Any, db: str, job_id: str, inputs: Step1Inputs) -> dict[str, str]:
+    """The carried views views-deploy.sql leaves out (#2082), read from the job's files: the
+    routine sources, and the step's inputs file for its target database."""
+    if inputs.contract.views_section is None or not inputs.contract.views_section.carried:
+        return {}
+    from src.tools.data_movement.view_scripts import left_out
+
+    key = f"{db}/{job_id}/data-movement/step-1/inputs.json"
+    raw = store.read_json(key) if store.exists(key) else {}
+    target = raw.get("target_database_name") if isinstance(raw, dict) else None
+    return left_out(store, db, job_id, inputs.contract, target if isinstance(target, str) else None)
 
 
 def write_gate(store: Any, db: str, job_id: str, request: GateRequest, clients: GateClients, *,
@@ -740,8 +774,8 @@ def write_gate(store: Any, db: str, job_id: str, request: GateRequest, clients: 
     if inputs.contract.views_section is not None and store.exists(views_key):
         views = load_contract(ViewCheckResult, store.read_json(views_key), artifact=views_key)
     gate = run_gate(inputs, request, clients, now=now or datetime.now(UTC), routines=routines,
-                    seen=load_validated(store, db, job_id), observed=observed,
-                    views=views)  # fmt: skip
+                    seen=load_validated(store, db, job_id), observed=observed, views=views,
+                    views_left_out=_views_left_out(store, db, job_id, inputs))  # fmt: skip
     path = f"{db}/{job_id}/data-movement/step-1/gate.json"
     store.write_json(path, gate.model_dump(mode="json"))
     return path, gate

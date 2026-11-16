@@ -2090,6 +2090,8 @@ def routines(clients: MoveClients, root: str, db: str, job_id: str, inputs: Move
     from src.tools.data_movement.routine_scripts import (
         CASE_DIFFERS,
         CASE_DIFFERS_WHY,
+        VIEW_LEFT_OUT,
+        VIEW_LEFT_OUT_WHY,
         case_differs_keys,
         read_migration,
         write_routine_scripts,
@@ -2120,7 +2122,8 @@ def routines(clients: MoveClients, root: str, db: str, job_id: str, inputs: Move
                                 inputs.target_database_name)  # fmt: skip
     refused = [{"routine_id": i, "kind": k, "reason": c,
                 **({"why": CASE_DIFFERS_WHY} if c in (CASE_DIFFERS, "depends_on_refused")
-                   and (k, i) in clashes else {})}
+                   and (k, i) in clashes else {}),
+                **({"why": VIEW_LEFT_OUT_WHY} if c == VIEW_LEFT_OUT else {})}
                for k, i, c in scripts.refused]  # fmt: skip
     return {"status": "ready", **base, "in_script": scripts.in_script, "refused": len(refused),
             "refused_routines": refused[:ROUTINES_SHOWN], "files": scripts.files}  # fmt: skip
@@ -2183,6 +2186,15 @@ def routines_check(root: str, db: str, job_id: str, inputs: MoveInputs) -> dict[
 # --- Views (#2082): the customer's scripts; /move never runs them -----------------------
 
 
+#: What views and views-check say for a contract written before #2082: no stop, no rewrite.
+OLD_CONTRACT_VIEWS = ("views: the step 1 contract predates view carrying, so step 1 creates no "
+                      "views for this job; go on to Routines")  # fmt: skip
+#: What views says about the MySQL views that were SQL SECURITY DEFINER on the source.
+DEFINER_NOTE = ("these views were SQL SECURITY DEFINER on the source and are created SQL SECURITY "
+                "INVOKER: their readers need SELECT on the views' tables (views.md says how to "
+                "keep definer rights)")  # fmt: skip
+
+
 def _view_rows(rows: Any) -> list[dict[str, Any]]:
     from src.tools.data_movement.step1_views import why
 
@@ -2203,9 +2215,9 @@ def views(clients: MoveClients, root: str, db: str, job_id: str, inputs: MoveInp
     store = LocalArtifactStore(base_dir=root)
     step = load_step1(store, db, job_id, with_ddl=False)
     section = step.contract.views_section
-    if section is None:
-        raise MoveError("the step 1 contract has no views section (written before #2082): run "
-                        "Prepare's three commands again")  # fmt: skip
+    if section is None:  # a job prepared before #2082: nothing to write, never a stop
+        return {"status": "nothing_to_deploy", "carried": 0, "not_carried": 0,
+                "not_carried_views": [], "note": OLD_CONTRACT_VIEWS}  # fmt: skip
     not_carried = [v for v in section.views if v.carry == "not_carried"]
     base = {"carried": section.carried, "not_carried": len(not_carried),
             "not_carried_views": _view_rows(not_carried)}  # fmt: skip
@@ -2224,8 +2236,10 @@ def views(clients: MoveClients, root: str, db: str, job_id: str, inputs: MoveInp
     refused = [
         {"view_id": i, "reason": c, "why": REFUSED_WHY.get(c, "")} for i, c in scripts.refused
     ]
+    definer = {"definer_views": scripts.definer_views[:ROUTINES_SHOWN],
+               "definer_note": DEFINER_NOTE} if scripts.definer_views else {}  # fmt: skip
     return {"status": "ready", **base, "in_script": scripts.in_script, "refused": len(refused),
-            "refused_views": refused[:ROUTINES_SHOWN], "files": scripts.files,
+            "refused_views": refused[:ROUTINES_SHOWN], "files": scripts.files, **definer,
             "runs_it": "the customer, before routines-deploy.sql; /move never runs it"}  # fmt: skip
 
 
@@ -2242,6 +2256,8 @@ def views_check(root: str, db: str, job_id: str, inputs: MoveInputs) -> dict[str
 
     store = LocalArtifactStore(base_dir=root)
     step = load_step1(store, db, job_id, with_ddl=False)
+    if step.contract.views_section is None:
+        return {"status": "nothing_to_check", "note": OLD_CONTRACT_VIEWS}
     output = _step_dir(root, db, job_id) / CHECK_OUTPUT
     key = f"{db}/{job_id}/data-movement/step-1/views-check.json"
     try:

@@ -135,3 +135,34 @@ def test_the_check_script_is_read_only(server, tmp_path):
     (tmp_path / "poisoned.sql").write_text(poisoned)
     ran = _psql(server, "-f", str(tmp_path / "poisoned.sql"))
     assert ran.returncode != 0 and "read-only transaction" in ran.stderr
+
+
+@pytest.mark.parametrize(
+    "definition,code",
+    __import__("tests.unit.tools.sql.test_view_statement", fromlist=["PG_HOSTILE"]).PG_HOSTILE,
+)
+def test_a_hostile_definition_never_runs_when_the_customer_runs_the_script(
+    server, tmp_path, definition, code
+):
+    """An edited collection file's view text (ADR-034 Decision 5): refused by code, and the
+    script the customer runs drops nothing and runs no shell command."""
+    from tests.unit.tools.data_movement.view_fixtures import pg_view_source
+
+    server.psql("CREATE TABLE IF NOT EXISTS public.audit_log (msg text);")
+    marker = Path("/tmp/v2082-pwned")
+    marker.unlink(missing_ok=True)
+    hostile = 'CREATE OR REPLACE VIEW "public"."evil" ("id") AS\n' + definition + ";"
+    good = 'CREATE OR REPLACE VIEW "public"."fine" ("id") AS\n SELECT 1::bigint AS id;'
+    contract = contract_with_views([view("evil"), view("fine")])
+    store = job(tmp_path, [pg_view_source("evil", hostile), pg_view_source("fine", good)])
+    scripts = write(tmp_path, store, contract)
+    assert scripts.refused == [("evil", code)] and scripts.in_script == 1
+    deploy = (tmp_path / "step" / DEPLOY_FILE).read_text()
+    assert "evil" not in deploy.split("-- 1/2", 1)[-1] and "DROP" not in deploy
+    ran = _psql(server, "-f", str(tmp_path / "step" / DEPLOY_FILE))
+    assert ran.returncode == 0, ran.stderr
+    assert server.psql("\\t on\nSELECT to_regclass('public.audit_log') IS NOT NULL;").strip() == "t"
+    assert server.psql("\\t on\nSELECT to_regclass('public.orders') IS NOT NULL;").strip() == "t"
+    assert server.psql("\\t on\nSELECT to_regclass('public.evil') IS NULL;").strip() == "t"
+    assert not marker.exists()
+    server.psql("DROP VIEW IF EXISTS public.fine;")

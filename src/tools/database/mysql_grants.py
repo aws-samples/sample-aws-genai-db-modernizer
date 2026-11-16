@@ -12,7 +12,13 @@ the name this way; ``CREATE DATABASE`` and a ``USE`` take the plain quoted name.
 
 from __future__ import annotations
 
-__all__ = ["grant_database"]
+__all__ = ["GRANT_WILDCARD_NOTE", "grant_database"]
+
+#: What a grant note a script leaves to the customer says about these wildcards (#2082).
+GRANT_WILDCARD_NOTE = (
+    "In a GRANT ... ON db.*, MySQL reads _ and % in the database name as wildcards: write "
+    "each as \\_ and \\% (my\\_db, not my_db), so the grant covers that database only."
+)
 
 
 def grant_database(name: str) -> str:

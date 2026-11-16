@@ -202,32 +202,35 @@ def n_distinct_count(n_distinct: object, reltuples: object) -> int | None:
     return None
 
 
-# #2082: the offline script's section 7 fields, for the ``public`` schema the live collector
-# reads its tables from (tests/unit/tools/database/test_postgres_views_live_server.py keeps
-# the two in step).
+# #2082: the offline script's section 7 query, every user schema (#2275's filter), with
+# pg_get_viewdef so a role that does not own a view still reads its definition
+# (tests/unit/tools/database/test_postgres_views_live_server.py keeps the two in step).
 _VIEWS_SQL = """
 SELECT
-  iv.table_name AS view_name,
-  iv.table_schema AS schema_name,
-  iv.view_definition AS definition,
-  iv.is_updatable,
-  iv.check_option,
-  coalesce((SELECT bool_or(o.option_value::boolean) FROM pg_options_to_table(c.reloptions) o
-            WHERE o.option_name = 'security_barrier'), false) AS security_barrier,
-  coalesce((SELECT bool_or(o.option_value::boolean) FROM pg_options_to_table(c.reloptions) o
-            WHERE o.option_name = 'security_invoker'), false) AS security_invoker,
-  EXISTS (SELECT 1 FROM pg_depend d WHERE d.classid = 'pg_class'::regclass
-          AND d.objid = c.oid AND d.deptype = 'e') AS extension_owned,
-  (SELECT json_agg(json_build_object('name', a.attname, 'position', a.attnum,
-                   'data_type', format_type(a.atttypid, a.atttypmod)) ORDER BY a.attnum)
-     FROM pg_attribute a
-    WHERE a.attrelid = c.oid AND a.attnum > 0 AND NOT a.attisdropped) AS columns,
-  to_json(current_schemas(false)) AS search_path
-FROM information_schema.views iv
-JOIN pg_namespace n ON n.nspname = iv.table_schema
-JOIN pg_class c ON c.relnamespace = n.oid AND c.relname = iv.table_name AND c.relkind = 'v'
-WHERE iv.table_schema = 'public'
-ORDER BY iv.table_name
+c.relname AS view_name,
+n.nspname AS schema_name,
+pg_get_viewdef(c.oid) AS definition,
+CASE WHEN pg_relation_is_updatable(c.oid, false) & 20 = 20 THEN 'YES' ELSE 'NO' END AS is_updatable,
+upper(coalesce((SELECT o.option_value FROM pg_options_to_table(c.reloptions) o
+                WHERE o.option_name = 'check_option'), 'none')) AS check_option,
+coalesce((SELECT bool_or(o.option_value::boolean) FROM pg_options_to_table(c.reloptions) o
+          WHERE o.option_name = 'security_barrier'), false) AS security_barrier,
+coalesce((SELECT bool_or(o.option_value::boolean) FROM pg_options_to_table(c.reloptions) o
+          WHERE o.option_name = 'security_invoker'), false) AS security_invoker,
+EXISTS (SELECT 1 FROM pg_depend d WHERE d.classid = 'pg_class'::regclass
+        AND d.objid = c.oid AND d.deptype = 'e') AS extension_owned,
+(SELECT json_agg(json_build_object('name', a.attname, 'position', a.attnum,
+                 'data_type', format_type(a.atttypid, a.atttypmod)) ORDER BY a.attnum)
+   FROM pg_attribute a
+  WHERE a.attrelid = c.oid AND a.attnum > 0 AND NOT a.attisdropped) AS columns,
+to_json(current_schemas(false)) AS search_path
+FROM pg_class c
+JOIN pg_namespace n ON n.oid = c.relnamespace
+WHERE c.relkind = 'v'
+AND n.nspname NOT IN ('pg_catalog', 'information_schema')
+AND n.nspname NOT LIKE 'pg_toast%'
+AND n.nspname NOT LIKE 'pg_temp%'
+ORDER BY 2, 1
 """
 
 
@@ -460,8 +463,8 @@ class PostgreSQLRemoteCollector:
     # -------------------------------------------------------------------
 
     def collect_views(self) -> list[dict]:
-        """The ``public`` schema's views (the tables' schema), with the fields the offline
-        script's section 7 reads (#2082): step 1 creates each one again from them."""
+        """Every user schema's views, with the fields the offline script's section 7 reads
+        (#2082): step 1 creates each one again from them."""
         return self._query(_VIEWS_SQL)
 
     def collect_procedures(self, include_bodies: bool = True) -> list[dict]:

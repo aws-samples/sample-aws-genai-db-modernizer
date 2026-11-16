@@ -46,7 +46,7 @@ import tempfile
 from collections.abc import Iterator
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any
+from typing import IO, Any
 
 from src.agents.collector.routine_sources import read_routine_sources
 from src.contracts.routine_sources import RoutineSource
@@ -69,6 +69,8 @@ from src.tools.data_movement.routine_scripts import (
     step_schemas,
     write_atomic,
 )
+from src.tools.database.mysql_grants import GRANT_WILDCARD_NOTE
+from src.tools.sql.view_statement import CLIENT_COMMAND, NOT_ONE_STATEMENT, statement_problem
 
 __all__ = [
     "CHECK_FILE",
@@ -79,6 +81,8 @@ __all__ = [
     "VIEWS_CHECK",
     "ViewScripts",
     "check_key",
+    "left_out",
+    "left_out_names",
     "render_view_check_script",
     "require_views",
     "write_view_scripts",
@@ -111,7 +115,18 @@ REFUSED_WHY: dict[str, str] = {
     ),
     "target_database_differs": (
         "a MySQL view's text names its source database, and the step's target database is "
-        "another one: create the view yourself in the target database"
+        "another one: create the view yourself in the target database, its text naming that "
+        "database instead, then run views-check.sql again (it looks for the view there)"
+    ),
+    NOT_ONE_STATEMENT: (
+        "its collected text is not exactly one view statement (more than one statement, or "
+        "one left open): it is never written into a script; check the source view and "
+        "create it yourself"
+    ),
+    CLIENT_COMMAND: (
+        "its collected text holds a psql or mysql client command (a backslash command, a "
+        "psql variable or a client command line): it is never written into a script; check "
+        "the source view and create it yourself"
     ),
     "depends_on_refused": "it reads a view the script leaves out: create both yourself",
 }
@@ -126,6 +141,8 @@ class ViewScripts:
     in_script: int = 0
     refused: list[tuple[str, str]] = field(default_factory=list)  # view id, code
     files: dict[str, str] = field(default_factory=dict)
+    #: MySQL: the carried views that were SQL SECURITY DEFINER on the source.
+    definer_views: list[str] = field(default_factory=list)
 
 
 def require_views(contract: StepContract) -> StepViews:
@@ -143,10 +160,14 @@ def _carried(section: StepViews) -> list[StepView]:
     return [v for v in section.views if v.carry == "carried"]
 
 
-def check_key(row: StepView, engine: str) -> tuple[str, str]:
-    """A view's key in the check output: its schema and name (lower case on MySQL)."""
+def check_key(row: StepView, engine: str, target_database: str | None = None) -> tuple[str, str]:
+    """A view's key in the check output: its schema and name (lower case on MySQL). On Aurora
+    MySQL it is looked for in the step's target database when the inputs name one: where
+    the step's tables are, and where the customer was told to create it."""
     schema = row.schema_name or ""
-    return (schema.lower(), row.name.lower()) if engine == "aurora_mysql" else (schema, row.name)
+    if engine == "aurora_mysql":
+        return ((target_database or schema).lower(), row.name.lower())
+    return (schema, row.name)
 
 
 def _names_safe(row: StepView) -> bool:
@@ -197,6 +218,12 @@ def _block(
     text = source.create_statement.lstrip()
     if not text.upper().startswith(_STATEMENT_START) or " VIEW " not in text[:200].upper():
         return None, "not_a_view_statement"
+    # The routine sources may come from an edited collection file: the text reaches the
+    # script only as exactly one view statement (ADR-034 Decision 5).
+    problem = statement_problem(engine, source.create_statement.strip(), row.schema_name or "",
+                                row.name)  # fmt: skip
+    if problem:
+        return None, problem
     if engine == "aurora_postgresql":
         return _pg_block(row, source, position, total)
     return _mysql_block(row, source, position, total)
@@ -223,7 +250,7 @@ def _deploy_header(
         f"-- {in_script} of the {section.carried} views step 1 creates, in dependency order "
         "(each after the views it reads).",
         "-- Run it after the DMS full load is complete and before routines-deploy.sql, as the "
-        "user the views should belong to.",
+        "user the views should belong to, never the admin user: that user owns each view.",
         "-- Each view is CREATE OR REPLACE VIEW: running the script again replaces each one "
         "with itself.",
         "-- Then run views-check.sql (read-only) as views.md says.",
@@ -233,6 +260,8 @@ def _deploy_header(
             "-- One transaction: if any statement fails, nothing is created; fix it and run "
             "the script again.",
             "-- Each view runs under the search path its definition was collected with.",
+            "-- A view without security_invoker reads its tables with its owner's rights, and "
+            "its owner is the user who runs this script.",
             f"-- lock_timeout {PG_LOCK_TIMEOUT}, below PostgreSQL's default deadlock_timeout (1s): "
             "while DMS applies changes, a lock this script waits for makes the script fail, "
             "never DMS's apply; run the script again.",
@@ -246,8 +275,10 @@ def _deploy_header(
         ]
     else:
         lines += [
-            "-- DEFINER is left out: each view's definer is the user who runs this script; its "
-            "SQL SECURITY is the source's.",
+            "-- DEFINER is not carried, so every view is SQL SECURITY INVOKER: it reads its "
+            "tables with the rights of whoever selects from it, never with this script's user's.",
+            "-- A view that was SQL SECURITY DEFINER on the source needs its readers to have "
+            "their own rights on its tables (views.md names each one).",
             "-- ALGORITHM is not in the collection: each view gets the server's default "
             "(UNDEFINED).",
             "-- MySQL commits each CREATE on its own: the client stops at the first error; "
@@ -266,7 +297,9 @@ def render_view_check_script(
     """The read-only check script: catalog ``SELECT``\\s in a ``READ ONLY`` transaction,
     asking only for the section's carried views with safe names, one line per column."""
     spec = VIEWS_CHECK
-    keys = sorted({check_key(r, engine) for r in _carried(section) if _names_safe(r)})
+    keys = sorted(
+        {check_key(r, engine, target_database) for r in _carried(section) if _names_safe(r)}
+    )
     header = (spec.magic, CHECK_FORMAT, engine, contract_sha, target_database or "", "", "")
     end = (spec.end, "", "", "", "", "", "")
     if engine == "aurora_postgresql":
@@ -369,12 +402,28 @@ def _instructions(engine: str, scripts: ViewScripts, section: StepViews, output_
             f"- Left out of the script: {len(scripts.refused)} (`run_dms_step.py views` names "
             "each one and why); until you create them, the check reports them missing."
         )
-    if not pg:
+    if pg:
         lines.append(
-            "- Each view's `DEFINER` is the user who runs the script (its `SQL SECURITY` is the "
-            "source's), and its `ALGORITHM` the server's default: the collection cannot read "
-            "the source's."
+            "- Each view is owned by the user who runs the script, and a view without "
+            "`security_invoker` reads its tables with its owner's rights: run it as the user "
+            "the views should belong to, never the admin user."
         )
+    else:
+        lines.append(
+            "- Every view is created `SQL SECURITY INVOKER`: the `DEFINER` is not carried, and "
+            "a `SQL SECURITY DEFINER` view would read its tables with the rights of the user "
+            "who runs the script. Its `ALGORITHM` is the server's default: the collection "
+            "cannot read the source's."
+        )
+        if scripts.definer_views:
+            lines.append(
+                f"- `SQL SECURITY DEFINER` on the source, `INVOKER` here: "
+                f"{', '.join(f'`{_comment(v).replace(chr(96), chr(39))}`' for v in scripts.definer_views)}. "
+                "Their readers need `SELECT` on the views' tables; to keep definer rights, "
+                "`ALTER` the view `SQL SECURITY DEFINER` as the least-privileged user that "
+                "should own it, never the admin user."
+            )
+        lines.append(f"- {GRANT_WILDCARD_NOTE}")
     lines += [
         "",
         "## Order",
@@ -400,6 +449,73 @@ def _instructions(engine: str, scripts: ViewScripts, section: StepViews, output_
     return "\n".join(lines) + "\n"
 
 
+def _spool(
+    store: Any, db: str, job_id: str, contract: StepContract, target_database: str | None,
+    spool: IO[bytes],
+) -> tuple[dict[str, tuple[int, int]], dict[str, str]]:  # fmt: skip
+    """Each carried view's block spooled to ``spool`` (its ``(offset, length)``) and the
+    reason code of each view the script leaves out, in deploy order."""
+    engine = contract.target.engine
+    carried = _carried(require_views(contract))
+    total = len(carried)
+    refused: dict[str, str] = {}
+    pending: dict[tuple[str, str, str], StepView] = {}
+    for row in carried:
+        if not _names_safe(row):
+            refused[row.view_id] = "unsafe_name"
+        elif (engine == "aurora_mysql" and target_database
+              and target_database != (row.schema_name or "")):  # fmt: skip
+            refused[row.view_id] = "target_database_differs"
+        else:
+            pending[("view", row.schema_name or "", row.name)] = row
+    spans: dict[str, tuple[int, int]] = {}
+    for source in read_routine_sources(store, db, job_id):
+        if source.kind != "view":
+            continue
+        found = pending.pop(source.key(), None)
+        if found is None:
+            continue
+        text, code = _block(engine, found, source, found.order or 0, total)
+        if text is None:
+            refused[found.view_id] = code or "refused"
+            continue
+        data = text.encode("utf-8")
+        spans[found.view_id] = (spool.tell(), len(data))
+        spool.write(data)
+        del text, data
+    for row in pending.values():
+        refused[row.view_id] = "source_missing"
+    # A view reading one left out is left out too: its CREATE would fail on it.
+    for row in carried:  # deploy order: each view after the ones it reads
+        if row.view_id not in refused and any(r in refused for r in row.reads):
+            refused[row.view_id] = "depends_on_refused"
+            spans.pop(row.view_id, None)
+    return spans, refused
+
+
+def left_out(
+    store: Any, db: str, job_id: str, contract: StepContract, target_database: str | None
+) -> dict[str, str]:
+    """The carried views ``views-deploy.sql`` leaves out, with their codes, without writing
+    anything: what the routines deploy and the gate read (a routine on such a view would
+    fail its ``CREATE``; the gate names why). Empty without a views section."""
+    if contract.views_section is None or not contract.views_section.carried:
+        return {}
+    with tempfile.TemporaryFile() as spool:
+        return _spool(store, db, job_id, contract, target_database, spool)[1]
+
+
+def left_out_names(contract: StepContract, refused: dict[str, str]) -> set[str]:
+    """The left-out views by the names a routine's dependency uses: lower-case
+    ``schema.name`` and view id."""
+    out: set[str] = set()
+    for v in (contract.views_section.views if contract.views_section else ()):
+        if v.view_id in refused:
+            out.add(v.view_id.lower())
+            out.add(f"{v.schema_name}.{v.name}".lower() if v.schema_name else v.name.lower())
+    return out
+
+
 def write_view_scripts(
     store: Any,
     db: str,
@@ -421,40 +537,8 @@ def write_view_scripts(
             (step_dir / name).unlink(missing_ok=True)  # the deploy script holds view text
         return ViewScripts(status="nothing_to_deploy")
     step_dir.mkdir(parents=True, exist_ok=True)
-    total = len(carried)
-    refused: dict[str, str] = {}
-    pending: dict[tuple[str, str, str], StepView] = {}
-    for row in carried:
-        if not _names_safe(row):
-            refused[row.view_id] = "unsafe_name"
-        elif (engine == "aurora_mysql" and target_database
-              and target_database != (row.schema_name or "")):  # fmt: skip
-            refused[row.view_id] = "target_database_differs"
-        else:
-            pending[("view", row.schema_name or "", row.name)] = row
-    spans: dict[str, tuple[int, int]] = {}
     with tempfile.TemporaryFile(dir=step_dir) as spool:
-        for source in read_routine_sources(store, db, job_id):
-            if source.kind != "view":
-                continue
-            found = pending.pop(source.key(), None)
-            if found is None:
-                continue
-            text, code = _block(engine, found, source, found.order or 0, total)
-            if text is None:
-                refused[found.view_id] = code or "refused"
-                continue
-            data = text.encode("utf-8")
-            spans[found.view_id] = (spool.tell(), len(data))
-            spool.write(data)
-            del text, data
-        for row in pending.values():
-            refused[row.view_id] = "source_missing"
-        # A view reading one left out is left out too: its CREATE would fail on it.
-        for row in carried:  # deploy order: each view after the ones it reads
-            if row.view_id not in refused and any(r in refused for r in row.reads):
-                refused[row.view_id] = "depends_on_refused"
-                spans.pop(row.view_id, None)
+        spans, refused = _spool(store, db, job_id, contract, target_database, spool)
         in_rows = [r for r in carried if r.view_id in spans]
         schemas = _view_schemas(in_rows, engine, step_schemas(contract))
 
@@ -472,7 +556,9 @@ def write_view_scripts(
     check = render_view_check_script(section, engine, contract_sha, target_database)
     write_atomic(step_dir / CHECK_FILE, iter([check.encode("utf-8")]))
     scripts = ViewScripts(status="ready", carried=section.carried, in_script=len(in_rows),
-                          refused=sorted(refused.items()))  # fmt: skip
+                          refused=sorted(refused.items()),
+                          definer_views=[r.view_id for r in carried
+                                         if r.source_security == "DEFINER"])  # fmt: skip
     output = str(step_dir / CHECK_OUTPUT)
     write_atomic(
         step_dir / INSTRUCTIONS_FILE,

@@ -25,7 +25,7 @@ from tests.unit.tools.data_movement.view_fixtures import (
 )
 
 STEP = Path("shop") / "job1" / "data-movement" / "step-1"
-_TEXT = ("CREATE OR REPLACE SQL SECURITY DEFINER VIEW `shop`.`v_orders` (`id`) AS\n"
+_TEXT = ("CREATE OR REPLACE SQL SECURITY INVOKER VIEW `shop`.`v_orders` (`id`) AS\n"
          f"select `shop`.`orders`.`id` AS `id` from `shop`.`orders` where 'x' <> '{SENTINEL}';")  # fmt: skip
 
 
@@ -122,3 +122,35 @@ def test_views_check_reads_the_output_and_writes_the_result_with_no_aws_call(tmp
     code, line = base._run(tmp_path, "views-check", capsys=capsys)
     assert code == 1 and "refused" in line["message"] and "hidden_secret" not in line["message"]
     assert not (tmp_path / STEP / "views-check.json").exists()
+
+
+def test_a_job_prepared_before_view_carrying_skips_views_and_never_stops(tmp_path, capsys):
+    """A contract with no views section (#2333 review): views and views-check say so and
+    make no AWS call; nothing is rewritten, so the running task's contract SHA stays."""
+    from tests.unit.tools.data_movement.dms_step_fixtures import make_contract
+
+    store = LocalArtifactStore(base_dir=str(tmp_path))
+    contract = make_contract("aurora_mysql")
+    store.write_bytes("shop/job1/transformation-contract/v2/step-1.json", canonical_json(contract))
+    store.write_json(f"{STEP}/plan.json", make_plan(contract).model_dump(mode="json"))
+    (tmp_path / STEP / "inputs.json").write_text(json.dumps(base.INPUTS))
+    before = (tmp_path / "shop/job1/transformation-contract/v2/step-1.json").read_bytes()
+    code, line = base._run(
+        tmp_path, "views", clients=base._clients(StubbedCredMgr()), capsys=capsys
+    )
+    assert (code, line["status"], line["carried"]) == (0, "nothing_to_deploy", 0)
+    assert "predates view carrying" in line["note"] and "Routines" in line["note"]
+    code, line = base._run(tmp_path, "views-check", capsys=capsys)
+    assert (code, line["status"]) == (0, "nothing_to_check")
+    assert (tmp_path / "shop/job1/transformation-contract/v2/step-1.json").read_bytes() == before
+    assert not (tmp_path / STEP / "views-deploy.sql").exists()
+
+
+def test_a_source_definer_view_is_named_with_what_it_means(tmp_path, capsys):
+    _job(tmp_path, [view("v_orders", engine="aurora_mysql", security_type="DEFINER")])
+    cred = StubbedCredMgr()
+    _loaded(cred, 100)
+    code, line = base._run(tmp_path, "views", clients=base._clients(cred), capsys=capsys)
+    assert code == 0, line
+    assert line["definer_views"] == ["v_orders"]
+    assert "SQL SECURITY INVOKER" in line["definer_note"]

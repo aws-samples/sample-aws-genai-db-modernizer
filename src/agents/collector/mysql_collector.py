@@ -451,7 +451,7 @@ def _collect_live_stages(inp: CollectorInput, ckpt) -> CollectorOutputContract:
         source_engine="mysql",
     )
     schema_views = (
-        _build_views(schema_raw.get("views", [])) if isinstance(schema_raw, dict) else None
+        _build_views(schema_raw.get("views", []), "mysql") if isinstance(schema_raw, dict) else None
     )
     schema_procs = (
         _build_procedures(schema_raw.get("procedures", []))
@@ -1560,14 +1560,14 @@ def _build_metrics(
 # ---------------------------------------------------------------------------
 
 
-def _build_views(raw: list[dict]) -> list[View] | None:
+def _build_views(raw: list[dict], engine: str | None = None) -> list[View] | None:
     if not raw:
         return None
-    from src.agents.collector.view_sources import view_fields
+    from src.agents.collector.view_sources import VIEW_ENGINES, view_fields, view_id
 
     return [
         View(
-            view_id=f"{v.get('view_name', '')}",
+            view_id=view_id(v) if engine in VIEW_ENGINES else str(v.get("view_name", "")),
             view_name=v.get("view_name", ""),
             definition=v.get("definition") or "",
             is_updatable=v.get("is_updatable", "NO") == "YES",

@@ -13,13 +13,20 @@ the live collectors' view rows carry the same fields):
   LOCAL | CASCADED CHECK OPTION]``. ``pg_get_viewdef`` leaves a name visible on the
   collection's search path unqualified, so that path is kept with it (its session's
   ``search_path``) and the deploy script sets it before the statement.
-- MySQL: ``CREATE OR REPLACE SQL SECURITY DEFINER | INVOKER VIEW `db`.`name` (`col`,
-  ...) AS <VIEW_DEFINITION> [WITH LOCAL | CASCADED CHECK OPTION]``, the server's own
-  stored text after ``AS``, with its ``character_set_client`` and
-  ``collation_connection``. The ``DEFINER`` is left out, so the view's definer is the
-  user who runs the deploy script (the routines deploy script names that user too).
+- MySQL: ``CREATE OR REPLACE SQL SECURITY INVOKER VIEW `db`.`name` (`col`, ...) AS
+  <VIEW_DEFINITION> [WITH LOCAL | CASCADED CHECK OPTION]``, the server's own stored text
+  after ``AS``, with its ``character_set_client`` and ``collation_connection``. The
+  ``DEFINER`` is not carried (the user who runs the deploy script becomes it), so every
+  view is ``SQL SECURITY INVOKER``: a source ``SQL SECURITY DEFINER`` view would
+  otherwise read its tables with the deploying user's rights (often the admin user), for
+  anyone who may select from it. Readers then need their own rights on its tables; the
+  source's ``security_type`` is kept in the collection, and step 1 names each such view.
   ``information_schema`` does not give a view's ``ALGORITHM``: the statement leaves it
   out, so the server's default (``UNDEFINED``) applies.
+
+Every statement must be exactly one view statement (``src.tools.sql.view_statement``,
+ADR-034 Decision 5): a definition that ends its statement early, holds a client command
+or leaves its statement open gives no statement, so it never reaches a script.
 
 The column list is always written, from the view's columns in order: MySQL's
 ``VIEW_DEFINITION`` loses a view's own column names. A view an extension owns is never
@@ -39,6 +46,8 @@ __all__ = [
     "view_body_status",
     "view_columns",
     "view_create",
+    "view_fields",
+    "view_id",
 ]
 
 #: The engines whose views are carried (same family only: no MariaDB).
@@ -127,16 +136,25 @@ def view_create(engine: str, row: Mapping[str, Any]) -> str | None:
         with_ = f" WITH ({', '.join(f'{o} = true' for o in options)})" if options else ""
         cols = ", ".join(_pg_ident(c) for c, _ in columns)
         head = f"CREATE OR REPLACE VIEW {_pg_ident(schema)}.{_pg_ident(name)} ({cols}){with_} AS"
-        return f"{head}\n{body}{check};"
+        return _checked(engine, f"{head}\n{body}{check};", schema, name)
     security = str(row.get("security_type") or "DEFINER").strip().upper()
     if security not in _SECURITY:
         return None
     cols = ", ".join(_mysql_ident(c) for c, _ in columns)
+    # SQL SECURITY INVOKER always: the DEFINER is not carried, and a DEFINER view would read
+    # its tables with the rights of whoever runs the script (often the admin user).
     head = (
-        f"CREATE OR REPLACE SQL SECURITY {security} VIEW "
+        f"CREATE OR REPLACE SQL SECURITY INVOKER VIEW "
         f"{_mysql_ident(schema)}.{_mysql_ident(name)} ({cols}) AS"
     )
-    return f"{head}\n{body}{check};"
+    return _checked(engine, f"{head}\n{body}{check};", schema, name)
+
+
+def _checked(engine: str, text: str, schema: str, name: str) -> str | None:
+    """``text`` when it is exactly one view statement (ADR-034 Decision 5), else None."""
+    from src.tools.sql.view_statement import statement_problem
+
+    return None if statement_problem(engine, text, schema, name) else text
 
 
 def view_body_status(engine: str, row: Mapping[str, Any], *, include_bodies: bool) -> str | None:
@@ -159,6 +177,13 @@ def view_body_status(engine: str, row: Mapping[str, Any], *, include_bodies: boo
     )
 
 
+def view_id(row: Mapping[str, Any]) -> str:
+    """The view's ``view_id``: ``schema.name`` when the row names its schema (#2082: two
+    schemas may each hold a view of one name), else its name, as before."""
+    schema, name = _name(row.get("schema_name")), str(row.get("view_name") or "")
+    return f"{schema}.{name}" if schema and name else name
+
+
 def view_fields(row: Mapping[str, Any]) -> dict[str, Any]:
     """The collector output's #2082 fields of a view row (``View``): its schema, columns,
     body status and whether an extension owns it, each only when the row reports it."""
@@ -173,4 +198,7 @@ def view_fields(row: Mapping[str, Any]) -> dict[str, Any]:
         out["body_status"] = row["body_status"]
     if "extension_owned" in row:
         out["extension_owned"] = _flag(row.get("extension_owned"))
+    security = str(row.get("security_type") or "").strip().upper()
+    if security in _SECURITY:
+        out["security_type"] = security
     return out
