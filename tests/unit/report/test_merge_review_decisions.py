@@ -45,6 +45,7 @@ from src.shared.report_facts import (
     RECONSTRUCTED_NOTE,
     compute_report_facts,
     dynamodb_merge_review_facts,
+    engine_query_count_facts,
     trade_off_topic_facts,
 )
 from tests.executive_pdf import executive_text
@@ -389,7 +390,6 @@ def test_nothing_is_shown_without_decisions() -> None:
 # --- a report written before #1780 ----------------------------------------------------
 
 
-@pytest.mark.passes_on_main  # the old job already rendered without it
 def test_an_old_job_loads_and_renders_unchanged() -> None:
     old = json.loads(OLD_REPORT.read_text(encoding="utf-8"))
     stored = copy.deepcopy(old["facts"])
@@ -404,6 +404,9 @@ def test_an_old_job_loads_and_renders_unchanged() -> None:
     assert facts["cutover_responsibility"] == CUTOVER_MESSAGE
     # The reader fills these for an older report (ADR-032 Decision 4; #1221, #2107, #1128).
     READ_TIME_FILLED = ("trade_off_topics", SAID, "slice_plan", "adoption", "engine_query_counts")
+    # #2358: and each engine's final query count, from the ranking.
+    assert facts["engine_query_counts"] == engine_query_count_facts(old, facts["engines"])
+    assert facts["engine_query_counts"]
     assert {k: v for k, v in facts.items() if k not in READ_TIME_FILLED} == (as_read_back(stored))
     assert facts["trade_off_topics"] == trade_off_topic_facts(
         old, stored["reality_check_trade_offs"]

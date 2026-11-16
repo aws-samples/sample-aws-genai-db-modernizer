@@ -2701,32 +2701,6 @@ def _owns_queries(engine: Mapping[str, Any]) -> bool:
     return engine.get("role") != CACHE_LAYER and engine.get("cached_queries") is None
 
 
-def query_move_facts(report: dict[str, Any], engines: list[dict[str, Any]]) -> dict[str, int]:
-    """The in-scope queries the owner engines serve and how many of them move (#1020).
-
-    Each engine's count is its ranking entry's ``assigned_queries_in_scope``
-    (``assigned_queries`` for a report without it); the cache layer owns no query
-    (#296), and a query moves when its engine's role is one of ``MOVING_ROLES``. The
-    retained relational core keeps its queries where they run today.
-    """
-    counts: dict[str, int] = {}
-    for r in report.get("ranking") or []:
-        if not isinstance(r, dict) or not r.get("target"):
-            continue
-        n = r.get("assigned_queries_in_scope", r.get("assigned_queries"))
-        if isinstance(n, int) and not isinstance(n, bool):
-            counts[str(r["target"])] = n
-    in_scope = moving = 0
-    for e in engines:
-        if not _owns_queries(e):
-            continue
-        n = counts.get(str(e.get("engine")), 0)
-        in_scope += n
-        if e.get("role") in MOVING_ROLES:
-            moving += n
-    return {"in_scope_query_count": in_scope, "moving_query_count": moving}
-
-
 def engine_query_count_facts(
     report: dict[str, Any], engines: list[dict[str, Any]]
 ) -> dict[str, int]:
@@ -2734,7 +2708,7 @@ def engine_query_count_facts(
 
     From the ranking, which follows the final assignment version (a later ``--auto``
     pick or post-schema reroute included), never ``reality_check.after_distribution``,
-    which is the reality check's own result. The same counts ``query_move_facts`` totals.
+    which is the reality check's own result. ``query_move_facts`` sums these counts.
     """
     counts: dict[str, int] = {}
     for r in report.get("ranking") or []:
@@ -2749,6 +2723,26 @@ def engine_query_count_facts(
         if _owns_queries(e) and n:
             out[str(e["engine"])] = n
     return out
+
+
+def query_move_facts(report: dict[str, Any], engines: list[dict[str, Any]]) -> dict[str, int]:
+    """The in-scope queries the owner engines serve and how many of them move (#1020).
+
+    Summed from ``engine_query_count_facts`` (#2358), so the total and each engine's
+    count have one source; a query moves when its engine's role is one of
+    ``MOVING_ROLES``. The retained relational core keeps its queries where they run
+    today.
+    """
+    counts = engine_query_count_facts(report, engines)
+    in_scope = moving = 0
+    for e in engines:
+        if not _owns_queries(e):
+            continue
+        n = counts.get(str(e.get("engine")), 0)
+        in_scope += n
+        if e.get("role") in MOVING_ROLES:
+            moving += n
+    return {"in_scope_query_count": in_scope, "moving_query_count": moving}
 
 
 def query_total_facts(report: dict[str, Any], in_scope_query_count: int) -> dict[str, int]:

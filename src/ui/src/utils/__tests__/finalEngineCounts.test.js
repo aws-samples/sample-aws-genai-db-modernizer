@@ -7,11 +7,9 @@
  * assignment version (an `--auto` pick, a post-schema reroute) changes engines again, and the
  * reality check's counts are then older than the reports'.
  *
- * AnalysisResults.js cannot render under this Jest config (see AnalysisResultsSectionOrder.test.js),
- * so this checks the reader the page uses and reads the page's source for the one wiring that matters.
+ * This checks the reader the page uses; pages/__tests__/AnalysisResultsFinalEngineCounts.test.js
+ * renders the page with it.
  */
-const fs = require('fs');
-const path = require('path');
 const { finalEngineCounts } = require('../reportFacts');
 const { ownerDistribution } = require('../cacheLayer');
 
@@ -41,10 +39,4 @@ test('a report saved before the figure falls back to the reality check distribut
 test('a report with neither has no counts', () => {
   expect(finalEngineCounts({})).toEqual({});
   expect(finalEngineCounts(null)).toEqual({});
-});
-
-test('the page reads the final counts, and names the reality check one as such', () => {
-  const source = fs.readFileSync(path.join(__dirname, '..', '..', 'pages', 'AnalysisResults.js'), 'utf8');
-  expect(source).toMatch(/ownerDistribution\(finalEngineCounts\(synthesis\)/);
-  expect(source).not.toMatch(/ownerDistribution\(realityCheck\?\.after_distribution/);
 });
