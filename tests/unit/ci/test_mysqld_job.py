@@ -11,7 +11,11 @@ the two in step: the script lists exactly the files that need a server, runs the
 
 from __future__ import annotations
 
+import hashlib
+import itertools
+import os
 import re
+import subprocess
 from collections.abc import Callable
 from pathlib import Path
 
@@ -85,6 +89,57 @@ def script_problems(text: str) -> list[str]:
     if not any("binaries_ok" in c and c.startswith("if ! binaries_ok") for c in code):
         problems.append("the unpacked binaries must be checked on every run")
     return problems
+
+
+def _shell_function(text: str, name: str) -> str:
+    match = re.search(rf"^{name}\(\) \{{\n.*?^\}}\n", text, re.M | re.S)
+    assert match, f"{name}() not found in ci/test-mysqld.sh"
+    return match.group(0)
+
+
+def _binaries_ok_exit(text: str, tmp_path: Path, mysqld_sha: str, mysql_sha: str) -> int:
+    """Run the script's own binaries_ok() on a folder holding two stand-in binaries."""
+    for name in ("mysqld", "mysql"):
+        binary = tmp_path / "bin" / name
+        binary.parent.mkdir(exist_ok=True)
+        binary.write_text(f"stand-in {name}\n")
+        binary.chmod(0o755)
+    shell = "\n".join(
+        [
+            _shell_function(text, "sha256_of"),
+            _shell_function(text, "binaries_ok"),
+            f'MYSQLD_BIN_SHA256="{mysqld_sha}"',
+            f'MYSQL_BIN_SHA256="{mysql_sha}"',
+            f'binaries_ok "{tmp_path}"',
+        ]
+    )
+    return subprocess.run(["bash", "-c", shell], capture_output=True).returncode
+
+
+def _sha(text: str) -> str:
+    return hashlib.sha256(text.encode()).hexdigest()
+
+
+def _binaries_cases(text: str, tmp_path: Path) -> dict[str, int]:
+    good_d, good_c = _sha("stand-in mysqld\n"), _sha("stand-in mysql\n")
+    return {
+        "both match": _binaries_ok_exit(text, tmp_path, good_d, good_c),
+        "mysqld differs": _binaries_ok_exit(text, tmp_path, "0" * 64, good_c),
+        "mysql differs": _binaries_ok_exit(text, tmp_path, good_d, "0" * 64),
+    }
+
+
+def test_binaries_ok_accepts_the_pinned_binaries_and_rejects_any_other(tmp_path: Path) -> None:
+    cases = _binaries_cases(SCRIPT.read_text(), tmp_path)
+    assert cases == {"both match": 0, "mysqld differs": 1, "mysql differs": 1}
+
+
+def test_a_binaries_ok_that_accepts_anything_fails_the_behavioural_guard(tmp_path: Path) -> None:
+    text = SCRIPT.read_text()
+    body = _shell_function(text, "binaries_ok")
+    mutated = text.replace(body, "binaries_ok() {\n  true\n}\n")
+    assert mutated != text
+    assert _binaries_cases(mutated, tmp_path)["mysqld differs"] == 0
 
 
 def test_the_script_passes_its_own_guards() -> None:
@@ -162,6 +217,31 @@ def test_the_test_sh_guard_fails_on_a_weaker_marker(marker: str) -> None:
     assert '-m "not integration and not e2e"' not in cmd
 
 
+def _aggregate_exit(step: dict, results: dict[str, str]) -> int:
+    """Run the aggregate step's shell with each `needs.<job>.result` set from `results`."""
+    env = {"PATH": os.environ["PATH"]}
+    for name, value in step["env"].items():
+        match = re.fullmatch(r"\$\{\{ needs\.([\w-]+)\.result \}\}", str(value))
+        env[name] = results[match.group(1)] if match else str(value)
+    return subprocess.run(
+        ["bash", "-e", "-c", step["run"]], env=env, capture_output=True
+    ).returncode
+
+
+def _aggregate_problems(step: dict) -> list[str]:
+    """The step must succeed only when test-shard and mysqld-tests both succeeded."""
+    problems = []
+    states = ("success", "failure", "cancelled", "skipped")
+    for shard, mysqld in itertools.product(states, states):
+        code = _aggregate_exit(step, {"test-shard": shard, "mysqld-tests": mysqld})
+        want_ok = shard == "success" and mysqld == "success"
+        if (code == 0) != want_ok:
+            problems.append(
+                f"the aggregate step exits {code} for test-shard={shard}, mysqld-tests={mysqld}"
+            )
+    return problems
+
+
 def _job_problems(workflow: dict) -> list[str]:
     problems = []
     jobs = workflow["jobs"]
@@ -179,11 +259,15 @@ def _job_problems(workflow: dict) -> list[str]:
     needs = [needs] if isinstance(needs, str) else needs
     if "mysqld-tests" not in needs:
         problems.append("the required `test` job must need mysqld-tests")
-    checks = " ".join(
-        str(step.get("run", "")) + str(step.get("env", "")) for step in test.get("steps", [])
-    )
-    if "needs.mysqld-tests.result" not in checks:
-        problems.append("the required `test` job must check mysqld-tests' result")
+    aggregate = [
+        step
+        for step in test.get("steps", [])
+        if "needs.mysqld-tests.result" in str(step.get("env", ""))
+    ]
+    if len(aggregate) != 1:
+        problems.append("one step of the required `test` job must read needs.mysqld-tests.result")
+    else:
+        problems += _aggregate_problems(aggregate[0])
     return problems
 
 
@@ -217,7 +301,27 @@ def test_the_job_guard_fails_on_each_weakening() -> None:
     def inline(w: dict) -> None:
         w["jobs"]["mysqld-tests"]["steps"][-1]["run"] = "pytest -m integration"
 
-    for weaken in (drop_need, drop_result, job_continue, step_continue, inline):
+    def ignore_mysqld_result(w: dict) -> None:
+        for step in w["jobs"]["test"]["steps"]:
+            if "MYSQLD_RESULT" in step.get("env", {}):
+                step["run"] = '[ "$RESULT" = "success" ]'
+
+    def accept_skipped(w: dict) -> None:
+        for step in w["jobs"]["test"]["steps"]:
+            if "MYSQLD_RESULT" in step.get("env", {}):
+                step["run"] = step["run"].replace(
+                    '[ "$MYSQLD_RESULT" = "success" ]', '[ "$MYSQLD_RESULT" != "failure" ]'
+                )
+
+    for weaken in (
+        drop_need,
+        drop_result,
+        job_continue,
+        step_continue,
+        inline,
+        ignore_mysqld_result,
+        accept_skipped,
+    ):
         w = copy.deepcopy(base)
         weaken(w)
         assert _job_problems(w), weaken.__name__
