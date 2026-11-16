@@ -302,6 +302,16 @@ def routine_repair_prompt(request: Mapping[str, Any]) -> str:
 # --------------------------------------------------------------------------- seam 3
 
 
+def _catalog_calls(c: RepairCandidate) -> frozenset[str]:
+    """The replacements the catalog's own fix hints name for ``c``'s failed rules, read
+    now from the rule catalog, never from the artifact, so an edited artifact cannot widen
+    the calls a repair may add."""
+    from src.shared.catalog.routine_checks import routine_check_rules
+
+    hints = {rule.id: rule.fix_hint for rule in routine_check_rules()}
+    return hinted_calls(hints.get(str(r.get("rule_id")), "") for r in c.failed_rules)
+
+
 def repair_refusal(c: RepairCandidate, text: str, engine: str) -> tuple[RefusalCode, str] | None:
     """Why the candidate ``text`` for ``c`` is refused, as ``(code, words)``; None when it
     may wait for the proof (``src.tools.routines.repair_screen.refusal_of``)."""
@@ -311,7 +321,7 @@ def repair_refusal(c: RepairCandidate, text: str, engine: str) -> tuple[RefusalC
         name=c.name,
         create_text=c.create_text,
         sql_mode=c.sql_mode,
-        allowed_calls=hinted_calls(str(r.get("fix_hint") or "") for r in c.failed_rules),
+        allowed_calls=_catalog_calls(c),
     )
     return refusal_of(routine, text, engine)
 
