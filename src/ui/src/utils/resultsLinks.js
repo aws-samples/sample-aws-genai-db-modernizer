@@ -1,6 +1,8 @@
 // Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
 // SPDX-License-Identifier: MIT-0
 
+import { hashId } from './resultsTabs';
+
 // #2300: where an engine lives on the results page. The access pattern explorer
 // (its container's id) has an engine filter, so a link carries the engine in
 // `?engine=` and the section in the hash; the results page reads both.
@@ -25,6 +27,16 @@ export function linkedEngineTarget(engine, explorerEngines, designEngines, route
   if (designEngines.includes(engine)) return 'design';
   if (routedEngines.includes(engine)) return 'not-designed';
   return 'absent';
+}
+
+// #2313: the section a linked engine lands on: its Table design for a relational
+// engine with a design, else the section the link's hash names (the explorer for an
+// engine with rows), or null when it names none. The page opens the section's tab.
+export const TABLE_DESIGN_SECTION_ID = 'table-design-section';
+
+export function linkedSectionId(target, hash) {
+  if (target === 'design') return TABLE_DESIGN_SECTION_ID;
+  return hashId(hash);
 }
 
 // The Table design tab shown: the linked engine's when it has a design, else the

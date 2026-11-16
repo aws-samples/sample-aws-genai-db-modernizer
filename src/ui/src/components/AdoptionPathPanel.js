@@ -1,6 +1,7 @@
 // Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
 // SPDX-License-Identifier: MIT-0
 
+import { useContext } from "react";
 import Box from "@cloudscape-design/components/box";
 import SpaceBetween from "@cloudscape-design/components/space-between";
 import ColumnLayout from "@cloudscape-design/components/column-layout";
@@ -9,6 +10,7 @@ import Button from "@cloudscape-design/components/button";
 import ExpandableSection from "@cloudscape-design/components/expandable-section";
 import Link from "@cloudscape-design/components/link";
 import { displayEngine } from "../utils/engineNames";
+import { ResultsSectionNav } from "../hooks/useResultsTabs";
 import {
   costNote, costStated, defaultPathId, differenceStated, differenceText, formatCount, formatUsd,
   introText, notOfferedLines, oneStepChecks, oneStepOf, oneStepRuleText, pathLabel, TARGET_ENGINES_ID, relationalEngine, selectorIsCapped,
@@ -76,6 +78,7 @@ function PathTiles({ adoption, path, plan, t }) {
 }
 
 function OneStepOption({ adoption, pointer, schemaSectionId, t }) {
+  const goToSection = useContext(ResultsSectionNav);
   const one = oneStepOf(adoption);
   if (!one) return null;
   const checks = oneStepChecks(one);
@@ -85,6 +88,11 @@ function OneStepOption({ adoption, pointer, schemaSectionId, t }) {
   const targetId = toSchemas ? (schemaSectionId || 'access-patterns-section') : TARGET_ENGINES_ID;
   const follow = (event) => {
     if (event && event.preventDefault) event.preventDefault();
+    // #2313: on the results page the target is on another tab; the page opens it.
+    if (goToSection) {
+      goToSection(targetId);
+      return;
+    }
     const el = document.getElementById(targetId);
     if (el && el.scrollIntoView) el.scrollIntoView({ behavior: 'smooth', block: 'start' });
   };
