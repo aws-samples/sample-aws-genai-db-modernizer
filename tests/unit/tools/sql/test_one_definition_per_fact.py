@@ -77,6 +77,10 @@ OTHER_SQL_MODULES: dict[str, str] = {
         "the routine proof's own harness (#1945): which carried CREATE is PL/pgSQL, for the "
         "strict check; it reads no query fact"
     ),
+    "src/tools/invariants/checks.py": (
+        "the ADR invariant checks' own DuckDB queries over a job's saved artifacts (#2143); "
+        "it reads no customer statement and detects nothing in SQL text"
+    ),
     "src/shared/secret_scan.py": (
         "the credential scan's own allow rule: a column note naming a SQL type is no "
         "credential (moved from ci/llm/private_scan.py, #1933); it reads no query fact"

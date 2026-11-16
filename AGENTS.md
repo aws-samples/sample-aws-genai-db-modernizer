@@ -141,6 +141,8 @@ and `ci/e2e-llm.sh` build it for you.
   (one merged row: checks, cost, turns, `pass`, the per-agent `token_usage` table and soft-budget `warnings`; compare runs with `ci/llm/compare_costs.py`), `judge.json` (rubric scores,
   rubric in `ci/llm/rubric.md`), `transcript.jsonl`, `steps.json`,
   `deliverables/`, `job-logs/`.
+- `uv run python scripts/check_invariants.py <artifact root>/<db>/<job>` checks the ADR
+  invariants as queries on any saved job (#2143); the e2e suite and e2e-llm run it on every job.
 - Tests never call a real model; patch the model entry points.
 
 ## Headless rules (`/modernize --auto`)

@@ -336,6 +336,9 @@ DDL_WRITERS = {
     # An in-memory DuckDB table of VARCHAR columns for the contract check, never Aurora
     # DDL: column names through quote_ident (quotes doubled).
     "src/tools/transformation_contract/duckdb_backend.py",
+    # The invariant checks' in-memory DuckDB tables (#2143), never Aurora DDL: table names
+    # and column definitions from the fixed load.SCHEMA, no collector text.
+    "src/tools/invariants/load.py",
     # CREATE TYPE ... AS ENUM for step 1 (#1834): type names pass the identifier allowlist,
     # labels are string literals with quotes doubled; test_step1_enum_types_... below.
     "src/tools/transformation_contract/pg_enums.py",

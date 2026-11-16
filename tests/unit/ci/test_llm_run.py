@@ -763,6 +763,7 @@ def test_results_all_green_passes(tmp_path: Path) -> None:
         "judge": True,
         "judge_input": None,  # a judge.json from before #2146 carries none
         "explore": None,
+        "invariants": None,  # no --invariants: the step did not run
     }
     assert row["job_id"] == "dry00001"
     assert row["db"] == "wordpress"

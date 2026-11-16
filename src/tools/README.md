@@ -14,6 +14,7 @@ Custom Strands tools used by agents.
 - **sql/** - SQL-text tools shared across collectors, detectors and parsers
   - `normalize.py` — normalizes collector digest text before SQL parsing
 - **validation/** - Contract validation tools
+- **invariants/** - The ADR invariants as DuckDB queries over a job's saved artifacts (#2143): `load.py` reads the job once into DuckDB, `checks.py` holds one query per invariant; `scripts/check_invariants.py <job dir>` runs them
 
 ## Implementation Guidelines
 
