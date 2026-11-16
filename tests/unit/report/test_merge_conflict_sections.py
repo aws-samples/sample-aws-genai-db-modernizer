@@ -38,6 +38,7 @@ from src.shared.cutover_message import CUTOVER_MESSAGE
 from src.shared.report_facts import (
     compute_report_facts,
     dynamodb_merge_conflict_facts,
+    engine_query_count_facts,
     trade_off_topic_facts,
 )
 from tests.executive_pdf import executive_text
@@ -300,7 +301,6 @@ def test_no_section_without_conflicts() -> None:
 # --- a report written before #802 -----------------------------------------------------
 
 
-@pytest.mark.passes_on_main  # the old job already rendered without it
 def test_an_old_job_loads_and_renders_without_the_section() -> None:
     old = json.loads(OLD_REPORT.read_text(encoding="utf-8"))
     assert "dynamodb_merge_conflicts" not in old["facts"]
@@ -314,6 +314,9 @@ def test_an_old_job_loads_and_renders_without_the_section() -> None:
     assert facts["cutover_responsibility"] == CUTOVER_MESSAGE
     # The reader fills these for an older report (ADR-032 Decision 4; #1221, #2107, #1128).
     READ_TIME_FILLED = ("trade_off_topics", SAID, "slice_plan", "adoption", "engine_query_counts")
+    # #2358: and each engine's final query count, from the ranking.
+    assert facts["engine_query_counts"] == engine_query_count_facts(old, facts["engines"])
+    assert facts["engine_query_counts"]
     rest = {k: v for k, v in facts.items() if k not in READ_TIME_FILLED}
     assert rest == as_read_back(old["facts"])
     assert facts["trade_off_topics"] == trade_off_topic_facts(

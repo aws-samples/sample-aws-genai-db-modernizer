@@ -129,3 +129,71 @@ class TestInTheFactsBlock:
         stored["engine_query_counts"] = {"dynamodb": 3}
         report["facts"] = stored
         assert report_facts(report)["engine_query_counts"] == {"dynamodb": 3}
+
+
+class TestOneSource:
+    def test_the_move_counts_are_summed_from_the_engine_counts(self, monkeypatch: Any) -> None:
+        """``in_scope_query_count`` and the per-engine counts agree by construction: the
+        first is the sum of the second, not a second walk over the ranking."""
+        import src.shared.report_facts as rf
+
+        monkeypatch.setattr(rf, "engine_query_count_facts", lambda r, e: {"dynamodb": 5, "x": 2})
+        engines = [_engine("dynamodb", "Migration target"), _engine("x", "Retained")]
+        assert rf.query_move_facts({"ranking": []}, engines) == {
+            "in_scope_query_count": 7,
+            "moving_query_count": 5,
+        }
+
+    def test_the_counts_sum_to_the_in_scope_total(self) -> None:
+        report = json.loads((FIXTURES / "wordpress_report.json").read_text())
+        facts = compute_report_facts(report)
+        assert sum(facts["engine_query_counts"].values()) == facts["in_scope_query_count"]
+
+
+class TestTiedQuery:
+    def test_a_tied_query_counts_once_under_its_assigned_engine(self) -> None:
+        from types import SimpleNamespace
+
+        from src.agents.referee.synthesis_report import _compute_assignment_distribution
+
+        assignment = {
+            "query_assignments": [
+                {"assigned_engine": "dynamodb", "in_scope": True},
+                {
+                    "assigned_engine": "dynamodb",
+                    "in_scope": True,
+                    "tied_engines": ["dynamodb", "documentdb"],
+                },
+                {"assigned_engine": "documentdb", "in_scope": True},
+            ]
+        }
+        dist = _compute_assignment_distribution(
+            SimpleNamespace(assignment=assignment)  # type: ignore[arg-type]
+        )
+        ranking = [
+            {
+                "target": e,
+                "assigned_queries": d["query_count"],
+                "assigned_queries_in_scope": d["in_scope_count"],
+            }
+            for e, d in dist.items()
+        ]
+        engines = [
+            _engine("dynamodb", "Migration target"),
+            _engine("documentdb", "Migration target"),
+        ]
+        counts = engine_query_count_facts({"ranking": ranking}, engines)
+        assert counts == {"dynamodb": 2, "documentdb": 1}
+        assert sum(counts.values()) == 3  # the tied query is in no second engine's count
+
+
+class TestRoundTrippedBlock:
+    def test_a_none_value_is_filled_like_a_missing_key(self) -> None:
+        """A block saved before the figure and re-dumped through the contract reads it
+        back as None: the value decides, not the key (as ``unwritten_owner_rule``)."""
+        report = json.loads((FIXTURES / "wordpress_report.json").read_text())
+        stored = compute_report_facts(report)
+        expected = stored["engine_query_counts"]
+        stored["engine_query_counts"] = None
+        report["facts"] = stored
+        assert report_facts(report)["engine_query_counts"] == expected
