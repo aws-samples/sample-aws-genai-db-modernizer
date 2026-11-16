@@ -21,6 +21,8 @@
   "failed_table_count": 1,
   "exception_count": 2,
   "validation_line": "1 of 2 tables with a key validated; 1 with validation failures. 2 named exceptions, listed below.",
+  "brief_result_line": "The gate did not pass: the engineering report names each check that did not.",
+  "brief_validation_line": "1 of 2 tables with a key validated; 1 with validation failures. 2 named exceptions, named in the engineering report.",
   "gate_tables": [
     {
       "table": "shop.audit_log",

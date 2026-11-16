@@ -1231,17 +1231,18 @@ def _why(report: dict[str, Any], st: dict[str, ParagraphStyle], names: Any) -> l
 def _step_gate_flow(report: dict[str, Any], st: dict[str, ParagraphStyle]) -> list:
     """Step 1's gate evidence (#1801), once /move's gate has read it: the result, the
     time of the read, the full load, lag and validation lines and the cutover message,
-    as ``facts.step_gate`` words them; the engineering report lists each table."""
+    as ``facts.step_gate`` words them. It lists no finding, table or exception, so it
+    prints the brief lines, which point to the engineering report (#1801 review)."""
     gate = step_gate_block(report)
     if gate is None:
         return []
     head = f"Step 1 gate, read {gate.get('read_at_text')}"
     evidence = " ".join(
-        str(gate.get(k) or "") for k in ("load_line", "lag_line", "validation_line")
+        str(gate.get(k) or "") for k in ("load_line", "lag_line", "brief_validation_line")
     )
     return [
         _gap(12),
-        _labelled(head, f"{gate.get('status_text')}. {gate.get('result_line')}", st["sub"]),
+        _labelled(head, f"{gate.get('status_text')}. {gate.get('brief_result_line')}", st["sub"]),
         _para(evidence, st["small"]),
         _para(gate.get("cutover_message"), st["sub"]),
         _para(STEP_GATE_PDF_POINTER, st["small"]),

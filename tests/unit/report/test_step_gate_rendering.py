@@ -12,6 +12,7 @@ are escaped as data. A report whose step never ran its gate renders exactly as b
 from __future__ import annotations
 
 import json
+import re
 from typing import Any
 from unittest.mock import MagicMock
 
@@ -106,14 +107,18 @@ def test_findings_past_the_cap_are_stated_as_the_facts_count_them():
 def test_collection_and_dms_text_is_escaped():
     section = _section(render_engineering_report_md(_with_gate(fx.hostile())))
     assert "<script>" not in section and "<b>" not in section
+    # No live image, link or emphasis from the collection's or DMS's text.
+    assert re.search(r"(?<!\\)!(?<!\\)\[", section) is None
+    assert re.search(r"(?<!\\)\]\(", section) is None
+    assert re.search(r"(?<!\\)\*key(?<!\\)\*", section) is None
     rows = [line for line in section.splitlines() if line.startswith("| `shop.x")]
     assert len(rows) == 2
     for row in rows:
         # A pipe in a name or a reason never opens a new cell; backticks never close the span.
         assert row.startswith("| `shop.x\\|&lt;script&gt;alert(1)&lt;/script&gt;` |")
         assert row.replace("\\|", "").count("|") == row.count(" | ") + 2
-    assert "| No \\| primary *key* |" in rows[0]  # DMS's state, in its cell
-    assert "cannot \\| validate on &lt;b&gt;" in rows[1]
+    assert "| No \\| primary \\*key\\* |" in rows[0]  # DMS's state, in its cell
+    assert "cannot \\| validate on &lt;b&gt;\\!\\[x\\]\\(http://e/x.png\\)" in rows[1]
 
 
 @pytest.mark.parametrize("report", [_report_with_waves, _legacy_report], ids=["current", "legacy"])
@@ -138,10 +143,12 @@ def test_the_executive_report_states_the_result_the_lines_and_the_cutover_messag
     text = normalize(executive_text(_with_gate(fx.failed())))
     facts = step_gate_facts(fx.failed())
     gate = text.split("Step 1 gate, read 2026-11-14 09:30 UTC:", 1)[1]
-    assert gate.lstrip().startswith(f"Failed. {facts['result_line']}")
-    for key in ("load_line", "lag_line", "validation_line"):
+    assert gate.lstrip().startswith(f"Failed. {facts['brief_result_line']}")
+    for key in ("load_line", "lag_line", "brief_validation_line"):
         assert normalize(facts[key]) in gate
     assert CUTOVER_DISCLAIMER in gate and STEP_GATE_PDF_POINTER in gate
+    # It lists no finding, table or exception, so it never points "below".
+    assert "below" not in gate
     # After every wave card: the wave plan's own sentences are where they were.
     assert text.index("Step 1 gate, read") > text.rindex("WAVE ")
 

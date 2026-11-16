@@ -85,9 +85,9 @@ def step_gate_md(report: dict[str, Any]) -> list[str]:
         ]
         out += [
             f"| {_code_cell(t.get('table'))} | {_rows(t.get('rows_loaded'))} "
-            f"| {escaping.md_cell(t.get('validation_state') or NOT_REPORTED)} "
+            f"| {escaping.md_cell_text(t.get('validation_state') or NOT_REPORTED)} "
             f"| {_rows(t.get('failed_records'))} | {_rows(t.get('suspended_records'))} "
-            f"| {escaping.md_cell(t.get('status_text'))} |"
+            f"| {escaping.md_cell_text(t.get('status_text'))} |"
             for t in tables
         ]
         out.append("")
@@ -101,7 +101,7 @@ def step_gate_md(report: dict[str, Any]) -> list[str]:
         ]
         out += [
             f"| {_code_cell(e.get('table'))} | {_code_cell(e.get('column'))} "
-            f"| {escaping.md_cell(e.get('kind_text'))} | {escaping.md_cell(e.get('reason'))} "
+            f"| {escaping.md_cell_text(e.get('kind_text'))} | {escaping.md_cell_text(e.get('reason'))} "
             f"| {_rows(e.get('rows_loaded'))} |"
             for e in exceptions
         ]

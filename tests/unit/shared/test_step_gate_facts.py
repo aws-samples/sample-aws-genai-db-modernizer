@@ -210,3 +210,80 @@ def test_the_ui_fixture_is_the_facts_of_the_failed_gate():
     assert json.loads(path.read_text()) == step_gate_facts(
         fx.failed()
     ), "regenerate it: uv run python -m tests.unit.report.step_gate_fixtures"
+
+
+# #1801 review: a deliverable that lists no table, exception or finding gets lines that
+# point to the engineering report, never "below".
+
+
+@pytest.mark.parametrize("gate", ["passed", "pending", "failed"])
+def test_the_brief_lines_never_point_below(gate):
+    facts = step_gate_facts(getattr(fx, gate)())
+    for key in ("brief_result_line", "brief_validation_line"):
+        assert "below" not in facts[key], (gate, key)
+    if gate == "passed":
+        assert facts["brief_result_line"] == REPLICATING_MESSAGE
+    assert facts["brief_validation_line"].startswith(facts["validation_line"].split(".", 1)[0])
+
+
+def test_the_brief_lines_name_the_engineering_report_for_the_lists():
+    facts = step_gate_facts(fx.failed())
+    assert "below" in facts["result_line"] and "below" in facts["validation_line"]
+    assert facts["brief_result_line"] == (
+        "The gate did not pass: the engineering report names each check that did not."
+    )
+    assert facts["brief_validation_line"] == (
+        "1 of 2 tables with a key validated; 1 with validation failures. "
+        "2 named exceptions, named in the engineering report."
+    )
+
+
+# #1801 review: the wording maps and the facts contract's literals follow the gate contract.
+
+
+def test_the_wording_maps_cover_every_value_the_gate_contract_allows():
+    from typing import get_args
+
+    from src.contracts import dms_gate as gate
+    from src.contracts.synthesis_output import StepGateExceptionFact, StepGateFinding
+    from src.shared import report_facts as rf
+
+    kinds = set(get_args(gate.GateException.model_fields["kind"].annotation))
+    checks = set(get_args(gate.GateCheck.model_fields["id"].annotation))
+    verdicts = set(get_args(gate.GateTable.model_fields["status"].annotation))
+    statuses = set(get_args(gate.GateStatus))
+    assert set(rf.STEP_GATE_EXCEPTION_TEXT) == kinds
+    assert set(rf.STEP_GATE_CHECK_TEXT) == checks
+    assert set(rf.STEP_GATE_TABLE_TEXT) == verdicts
+    assert set(rf.STEP_GATE_STATUS_TEXT) == statuses
+    assert set(get_args(StepGateExceptionFact.model_fields["kind"].annotation)) == kinds
+    assert set(get_args(StepGateFinding.model_fields["check"].annotation)) == checks
+
+
+def test_a_kind_with_no_wording_yet_renders_generically(monkeypatch):
+    from src.shared import report_facts as rf
+
+    monkeypatch.delitem(rf.STEP_GATE_EXCEPTION_TEXT, "view")
+    monkeypatch.delitem(rf.STEP_GATE_CHECK_TEXT, "parity")
+    monkeypatch.delitem(rf.STEP_GATE_TABLE_TEXT, "pending")
+    facts = step_gate_facts(fx.pending())
+    assert facts is not None
+    view = next(e for e in facts["named_exceptions"] if e["kind"] == "view")
+    assert view["kind_text"] == rf.STEP_GATE_GENERIC_EXCEPTION_TEXT
+    assert facts["gate_findings"][0]["check_text"] == "Parity"
+    orders = next(t for t in facts["gate_tables"] if t["table"] == "shop.orders")
+    assert orders["status_text"] == "Pending"
+
+
+def test_the_intro_is_the_results_pages_description():
+    """The engineering report's intro and the results page's description are one sentence."""
+    from pathlib import Path
+
+    from src.report.step_gate import STEP_GATE_INTRO
+
+    en = json.loads(
+        (Path(__file__).resolve().parents[3] / "src/ui/src/locales/en.json").read_text()
+    )
+    assert en["analysis-results.step-gate.description"] == STEP_GATE_INTRO.format(
+        read_at="{{readAt}}"
+    )

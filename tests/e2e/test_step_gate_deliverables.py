@@ -93,9 +93,10 @@ def test_the_gate_evidence_reaches_every_deliverable(
     # The executive report: the result, the time of the read, the same lines, the message.
     text = normalize(body_text(folder / "executive-report.pdf", run.db))
     block = text.split(f"Step 1 gate, read {expected['read_at_text']}:", 1)[1]
-    assert block.lstrip().startswith(f"{expected['status_text']}. {expected['result_line']}")
-    for key in ("load_line", "lag_line", "validation_line"):
+    assert block.lstrip().startswith(f"{expected['status_text']}. {expected['brief_result_line']}")
+    for key in ("load_line", "lag_line", "brief_validation_line"):
         assert normalize(expected[key]) in block, key
+    assert "below" not in block
     assert CUTOVER_DISCLAIMER in block
 
     # No cutover advice anywhere the evidence now appears.

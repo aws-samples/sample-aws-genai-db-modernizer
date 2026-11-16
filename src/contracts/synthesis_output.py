@@ -5016,6 +5016,7 @@ class StepGateExceptionFact(BaseModel):
 
     table: str = Field(..., description="Source table or view id (schema.name)")
     column: str | None = Field(None, description="The column, for a field not moved")
+    # Held equal to src.contracts.dms_gate.GateException.kind by a test (#1801 review).
     kind: Literal[
         "table", "view", "keyless_lob", "unsupported_field", "skipped_rule", "not_moved"
     ] = Field(..., description="The gate's exception kind (src.contracts.dms_gate)")
@@ -5027,7 +5028,10 @@ class StepGateExceptionFact(BaseModel):
 class StepGateFinding(BaseModel):
     """One reason a check of the step's gate did not pass, as the gate states it."""
 
-    check: Literal["load", "lag", "parity", "routines"] = Field(..., description="The check")
+    # Held equal to src.contracts.dms_gate.GateCheck.id by a test (#1801 review).
+    check: Literal["load", "lag", "parity", "routines"] = Field(
+        ..., description="The check (src.contracts.dms_gate)"
+    )
     check_text: str = Field(..., min_length=1, description="The check in words")
     text: str = Field(..., min_length=1, description="The finding, as the gate states it")
 
@@ -5071,6 +5075,20 @@ class StepGateFacts(BaseModel):
     failed_table_count: int = Field(0, ge=0, description="Of those, the tables that failed")
     exception_count: int = Field(0, ge=0, description="Named exceptions")
     validation_line: str = Field(..., min_length=1, description="The validation evidence")
+    brief_result_line: str = Field(
+        "",
+        description=(
+            "result_line for a deliverable that lists no finding (the executive report): "
+            "it points to the engineering report, never below"
+        ),
+    )
+    brief_validation_line: str = Field(
+        "",
+        description=(
+            "validation_line for a deliverable that lists no exception (the executive "
+            "report): it points to the engineering report, never below"
+        ),
+    )
     gate_tables: list[StepGateTableFact] = Field(
         default_factory=list, description="Sorted by table"
     )
