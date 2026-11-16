@@ -2,7 +2,6 @@
 // SPDX-License-Identifier: MIT-0
 
 //##-- React
-import { formatRate } from "../utils/format";
 import { useState, useEffect, memo, useCallback, useMemo } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import { useTranslation } from 'react-i18next';
@@ -57,6 +56,7 @@ import { summaryFallbackInfo } from "../utils/summaryFallback";
 import { reroutedQueryIds, rowMoveKind } from "../utils/postSchemaReroutes";
 import { pinnedFitLabel } from "../utils/queryRouting";
 import { displayTables } from "../utils/tableNames";
+import { formatRate } from "../utils/format";
 import Checkbox from "@cloudscape-design/components/checkbox";
 
 import './AssignmentGate.css';
