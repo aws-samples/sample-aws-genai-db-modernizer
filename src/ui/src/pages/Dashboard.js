@@ -31,7 +31,7 @@ import ApiManager from "../classes/ApiManager";
 import CustomTable from "../components/CustomTable";
 import { getStatusType as sharedGetStatusType, getStatusText as sharedGetStatusText, isAlreadyFinishedMessage } from "../utils/jobStatus";
 import { buildDashboardActionItems } from "../utils/dashboardActions";
-import { assessmentHref, databaseLabel } from "../utils/assessmentRows";
+import { assessmentHref, copyJobIdLabel, databaseLabel } from "../utils/assessmentRows";
 
 
 
@@ -55,7 +55,7 @@ const ComponentPage = memo(() => {
   const tableColumnsList = useMemo(() => {
         return  [
             {id: 'databaseName', header: t('dashboard.table.col-database'), cell: item => (<Link href={assessmentHref(item.jobId, item.status)} variant="primary">{databaseLabel(item.databaseName, item.jobId)}</Link>), ariaLabel: createLabelFunction('database'), sortingField: 'databaseName'},
-            {id: 'jobId', header: t('dashboard.table.col-job-id'), cell: item => (<SpaceBetween direction="horizontal" size="xxs" alignItems="center"><Box fontFamily="monospace" fontSize="body-s">{item.jobId}</Box><CopyToClipboard variant="icon" textToCopy={item.jobId} copyButtonAriaLabel={t('common.actions.copy-job-id')} copySuccessText={t('common.success.copied')} copyErrorText={t('common.errors.copy-failed')} /></SpaceBetween>), ariaLabel: createLabelFunction('jobId'), sortingField: 'jobId'},
+            {id: 'jobId', header: t('dashboard.table.col-job-id'), cell: item => (<SpaceBetween direction="horizontal" size="xxs" alignItems="center"><Box fontFamily="monospace" fontSize="body-s">{item.jobId}</Box><CopyToClipboard variant="icon" textToCopy={item.jobId} copyButtonAriaLabel={copyJobIdLabel(t, item.databaseName, item.jobId)} copySuccessText={t('common.success.copied')} copyErrorText={t('common.errors.copy-failed')} /></SpaceBetween>), ariaLabel: createLabelFunction('jobId'), sortingField: 'jobId'},
             {id: 'status', header: t('dashboard.table.col-status'), cell: item => (<StatusIndicator type={getStatusType(item.status)}>{item.statusText}</StatusIndicator>), ariaLabel: createLabelFunction('Status'), sortingField: 'status'},
             {id: 'created', header: t('dashboard.table.col-created'), cell: item => item.created, ariaLabel: createLabelFunction('created'), sortingField: 'created'},
             {id: 'duration', header: t('dashboard.table.col-duration'), cell: item => item.duration, ariaLabel: createLabelFunction('duration'), sortingField: 'duration'},

@@ -819,7 +819,7 @@
   "analysis-results.deliverables.error": "Deliverables unavailable: {{error}}",
   "common.labels.sql": "SQL",
   "common.labels.all": "ALL",
-  "common.actions.copy-job-id": "Copy job ID",
+  "common.actions.copy-job-id-for": "Copy job ID for {{name}} ({{id}})",
   "common.actions.copy-sql-id": "Copy SQL ID",
   "common.errors.copy-failed": "Failed to copy",
   "common.success.copied": "Copied",
