@@ -582,7 +582,7 @@ def test_a_stopped_task_is_offered_one_resume_and_a_failed_one_one_retry() -> No
                   "`Stop Reason NORMAL`"):  # fmt: skip
         assert words in resume, words
     retry = recovery[recovery.index("`recovery` `retry`") : recovery.index(retry_q)]
-    for words in ("the full load never started", "`FullLoadRows`", "refuses and changes nothing",
+    for words in ("every table still `Before load`", "`FullLoadRows`", "refuses and changes nothing",
                   "may already hold rows"):  # fmt: skip
         assert words in retry, words
     assert "the Aurora tables are still empty" not in recovery  # more than the check proves

@@ -103,7 +103,8 @@ Every subcommand prints one JSON line, its result (exit 1 only on ``"status": "e
   load finished (every table ``Table completed``): CDC resumes from its checkpoint and nothing
   reloads. ``retry`` reloads this job's failed task, or a stopped one whose full load did not
   finish, from the start (``reload-target``) only when DMS's statistics show the task never
-  wrote to Aurora (no full load ever started, every table counter 0). When neither may run,
+  wrote to Aurora (every table still ``Before load`` with every counter 0, none reloaded;
+  #2365). When neither may run,
   both refuse with ``"kind": "target_may_hold_rows"``, the step's tables and the customer's own
   steps (empty them on Aurora, then reload the task themselves): nothing here connects to a
   database. Each points at the other only when the other would run. Both wait until the task
@@ -1760,6 +1761,7 @@ def restart_validation(
 # TableStatistics: "Table does not exist | Before load | Full load | Table completed | Table
 # cancelled | Table error | Table is being reloaded"); compared case-folded.
 TABLE_COMPLETED = "table completed"
+BEFORE_LOAD = "before load"  # a table DMS has not started to load (#2365)
 # Every per-table counter of TableStatistics that says DMS wrote something to the target.
 WRITE_COUNTERS = ("FullLoadRows", "FullLoadErrorRows", "FullLoadCondtnlChkFailedRows", "Inserts",
                   "Updates", "Deletes", "Ddls", "AppliedInserts", "AppliedUpdates",
@@ -1857,19 +1859,29 @@ def resume(
 
 def _never_wrote(task: dict[str, Any], rows: list[dict[str, Any]]) -> list[str]:
     """Why the task may have written to Aurora; empty only when DMS's statistics show it never
-    did: no ``FullLoadStartDate`` ("the date the replication task full load was started", DMS
-    API Reference, ReplicationTaskStats), no table loaded, loading or errored, and every table's
-    write counters 0 with no full load start time and no reload."""
+    did (#2365). Each table decides from its own statistics: it is still ``Before load``, every
+    write counter is 0 and it was never reloaded; and the task's own statistics show no full
+    load progress and no table loaded, loading or errored. Neither ``FullLoadStartDate`` ("the
+    date the replication task full load was started", DMS API Reference, ReplicationTaskStats)
+    nor a table's ``FullLoadStartTime`` decides it: DMS sets the first even for a task that fails
+    at once, before any table loads, and reports the second as the epoch for a table never
+    loaded. Only with no table statistics at all does a started full load still refuse: then
+    nothing shows what the full load did. A table is named with what its statistics show, never
+    as loaded when it holds no row."""
     stats = task.get("ReplicationTaskStats") or {}
-    why = ["its full load started" if stats.get("FullLoadStartDate") is not None else "",
+    started = not rows and stats.get("FullLoadStartDate") is not None
+    why = ["its full load started" if started else "",
            "its full load made progress" if stats.get("FullLoadProgressPercent") else "",
            *(f"{k} is {stats[k]}" for k in ("TablesLoaded", "TablesLoading", "TablesErrored")
              if stats.get(k))]  # fmt: skip
     for r in rows:
         table = f"{r.get('SchemaName')}.{r.get('TableName')}"
         why += [f"{table} {k} is {r[k]}" for k in WRITE_COUNTERS if r.get(k)]
-        if r.get("FullLoadStartTime") is not None or r.get("FullLoadReloaded"):
-            why.append(f"{table} was loaded")
+        if r.get("FullLoadReloaded"):
+            why.append(f"{table} was reloaded")
+        state = str(r.get("TableState") or "")
+        if state.casefold() != BEFORE_LOAD:
+            why.append(f"{table} is {state or 'in no state DMS names'}")
     return [w for w in why if w]
 
 
@@ -1930,8 +1942,8 @@ def retry(
 
     With ``TargetTablePrepMode: DO_NOTHING`` a reload over rows already on Aurora appends
     duplicates or hits key errors, and DMS's table statistics restart with each reload, so
-    counters of 0 alone do not prove the tables are empty: any sign of a full load refuses with
-    the customer's own steps (empty the tables on Aurora, then reload the task themselves), or
+    counters of 0 alone do not prove the tables are empty: any table past ``Before load``, any
+    reload and any task-level sign of a full load refuses with the customer's own steps (empty the tables on Aurora, then reload the task themselves), or
     with a pointer to ``resume`` when resume would run. Nothing here connects to a database."""
     return _recover(RETRY, clients, name, job_id, wait_seconds, interval, steps, sleep)
 
