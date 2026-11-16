@@ -25407,10 +25407,14 @@
                       "kind": "enum",
                       "values": [
                         "adds_objects",
+                        "adds_statements",
+                        "changes_privileges",
                         "duplicate_answer",
+                        "literals_changed",
                         "names_other_schema",
                         "not_one_statement",
                         "renamed",
+                        "screen_refused",
                         "signature_changed",
                         "unchanged"
                       ]
@@ -25534,7 +25538,7 @@
         }
       }
     },
-    "schema_hash": "f07fac1e114d7f91e73656593131e62ffafc7af2a87c4588a02c6eaf1de8f246",
+    "schema_hash": "16caf22feae13f3ca049a70e0876ac00e655787882b9b52afaba991677dd5c2b",
     "version": "1.0"
   },
   "routine_repair.RoutineRepairResponse": {

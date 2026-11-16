@@ -45,6 +45,7 @@ from collections.abc import Mapping
 from dataclasses import dataclass
 from typing import Any
 
+from src.agents.collector.routine_sources import collection_includes_bodies
 from src.agents.prompt_framing import (
     SYSTEM_PROMPT_DATA_DIRECTIVE,
     frame_untrusted,
@@ -185,7 +186,8 @@ def run_routine_repair_deterministic(
     ``target_errors`` gives a routine the target's error from an earlier attempt (the
     repair loop, #1941), keyed ``(kind, routine_id)``; it replaces the proof's."""
     rules = {r.rule_id: r for r in migration.rules if r.rule == "check"}
-    rows = collection_routines(collector)
+    # The collection-wide opt-out (#1933) wins over every row: nothing is sent.
+    rows = collection_routines(collector) if collection_includes_bodies(collector) else {}
     engine = migration.source_engine
     candidates: list[RepairCandidate] = []
     for row in migration.routines:

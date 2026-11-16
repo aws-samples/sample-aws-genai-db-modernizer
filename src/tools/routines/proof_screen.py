@@ -73,6 +73,7 @@ that names a time zone. None of these sees inside a dynamic statement.
 from __future__ import annotations
 
 import re
+from collections import Counter
 from collections.abc import Collection, Iterator, Sequence
 
 from src.tools.routines.mysql_checks import MySqlRoutine, check_mysql_routine
@@ -95,9 +96,14 @@ __all__ = [
     "create_count",
     "create_refusal",
     "created_identity",
+    "created_objects",
+    "literal_sequence",
     "dynamic_sql",
     "named_schemas",
     "named_time_zones",
+    "privilege_clauses",
+    "trigger_shape",
+    "written_statements",
     "nondeterministic_calls",
     "touched_tables",
 ]
@@ -799,3 +805,177 @@ def create_count(text: str, engine: str) -> int | None:
         return sum(1 for tok in _tokens_deep(text, engine) if tok.kind == "CREATE")
     except RoutineTokenError:
         return None
+
+
+#: Words between ``CREATE`` and the kind of object it creates.
+_CREATE_MODIFIERS = {
+    "OR", "REPLACE", "TEMP", "TEMPORARY", "UNLOGGED", "GLOBAL", "LOCAL", "UNIQUE",
+    "CONSTRAINT", "RECURSIVE", "MATERIALIZED", "DEFAULT", "TRUSTED", "PROCEDURAL",
+}  # fmt: skip
+#: The statements that write or change an object, named with the two words after them.
+_WRITES = {"INSERT", "UPDATE", "DELETE", "MERGE", "TRUNCATE", "ALTER", "DROP", "COPY", "REPLACE"}
+
+
+def _key(tok: RoutineToken, engine: str) -> str:
+    return _name_of(tok, engine) if tok.kind in _NAME else tok.text.upper()
+
+
+def _deep_levels(text: str, engine: str) -> list[list[RoutineToken]] | None:
+    try:
+        return list(_levels(text, engine))
+    except RoutineTokenError:
+        return None
+
+
+def created_objects(text: str, engine: str) -> Counter[tuple[str, ...]] | None:
+    """Each object ``text`` creates, its body and every string in it included (a
+    statement run with ``EXECUTE``): ``(TEMP or "", kind word, schema, name)``, counted;
+    None when it does not tokenize."""
+    levels = _deep_levels(text, engine)
+    if levels is None:
+        return None
+    found: Counter[tuple[str, ...]] = Counter()
+    for tokens in levels:
+        for i, tok in enumerate(tokens):
+            if tok.kind != "CREATE":
+                continue
+            j, temp = i + 1, ""
+            while j < len(tokens):
+                if engine == "mysql" and tokens[j].text.upper() == "DEFINER":
+                    after = _after_definer(tokens, j)
+                    j = after if after is not None else j + 1
+                    continue
+                word = tokens[j].text.upper()
+                if word not in _CREATE_MODIFIERS:
+                    break
+                temp = "TEMP" if word in ("TEMP", "TEMPORARY") else temp
+                j += 1
+            kind = tokens[j].text.upper() if j < len(tokens) else ""
+            j += 1
+            if [t.text.upper() for t in tokens[j : j + 3]] == ["IF", "NOT", "EXISTS"]:
+                j += 3
+            schema, name, _ = _qualified(tokens, j)
+            found[
+                (
+                    temp,
+                    kind,
+                    _name_of(schema, engine) if schema is not None else "",
+                    _key(name, engine) if name is not None else "",
+                )
+            ] += 1
+    return found
+
+
+def written_statements(text: str, engine: str) -> Counter[tuple[str, ...]] | None:
+    """Each statement ``text`` runs that writes or changes an object (``INSERT``,
+    ``UPDATE``, ``DELETE``, ``MERGE``, ``TRUNCATE``, ``ALTER``, ``DROP``, ...), with the two
+    tokens after it, counted, its body and strings included; None when it does not
+    tokenize."""
+    levels = _deep_levels(text, engine)
+    if levels is None:
+        return None
+    found: Counter[tuple[str, ...]] = Counter()
+    for tokens in levels:
+        for i, tok in enumerate(tokens):
+            if tok.text.upper() in _WRITES and tok.kind not in ("IDENTIFIER",):
+                found[(tok.text.upper(), *(_key(t, engine) for t in tokens[i + 1 : i + 3]))] += 1
+    return found
+
+
+def literal_sequence(text: str, engine: str) -> tuple[tuple[str, str], ...] | None:
+    """Every literal ``text`` holds, in order, with its kind (quote form) and any MySQL
+    character-set introducer, three levels of strings deep; a PostgreSQL routine's own
+    body (the string after ``AS``) is read through, not counted. None when it does not
+    tokenize."""
+    out: list[tuple[str, str]] = []
+
+    def walk(tokens: Sequence[RoutineToken], depth: int, top: bool) -> None:
+        previous: RoutineToken | None = None
+        for tok in tokens:
+            body = (
+                top
+                and engine == "postgresql"
+                and previous is not None
+                and previous.text.upper() == "AS"
+            )
+            if tok.kind == "INTRODUCER" or (tok.kind.endswith("STRING") and not body):
+                out.append((tok.kind, tok.text))
+            if depth < _DEPTH and (tok.command_rest or tok.kind.endswith("STRING")):
+                try:
+                    inner = list(routine_tokens(tok.text, engine))
+                except RoutineTokenError:
+                    inner = []
+                walk(inner, depth + 1, False)
+            previous = tok
+
+    try:
+        walk(list(routine_tokens(text, engine)), 0, True)
+    except RoutineTokenError:
+        return None
+    return tuple(out)
+
+
+def privilege_clauses(text: str, engine: str) -> tuple[tuple[str, ...], ...] | None:
+    """Who a routine runs as, as its header says it: a MySQL ``DEFINER = ...`` and ``SQL
+    SECURITY`` clause, a PostgreSQL ``[EXTERNAL] SECURITY DEFINER | INVOKER``, in order;
+    None when it does not tokenize."""
+    try:
+        tokens = list(routine_tokens(text, engine))
+    except RoutineTokenError:
+        return None
+    found: list[tuple[str, ...]] = []
+    for i, tok in enumerate(tokens):
+        word = tok.text.upper()
+        if (
+            engine == "mysql"
+            and word == "DEFINER"
+            and i + 1 < len(tokens)
+            and tokens[i + 1].kind == "EQ"
+        ):
+            end = _after_definer(tokens, i) or i + 1
+            found.append(("DEFINER", *(t.text for t in tokens[i + 1 : end])))
+        elif word in ("SECURITY", "SQL SECURITY") and i + 1 < len(tokens):
+            found.append(("SECURITY", tokens[i + 1].text.upper()))
+    return tuple(found)
+
+
+def trigger_shape(text: str, engine: str) -> tuple[str, ...] | None:
+    """What a trigger fires on and runs, from its header: the words between its name and
+    ``ON`` (timing and events), its ``FOR EACH`` level, the function it executes
+    (PostgreSQL) and the trigger it ``FOLLOWS`` or ``PRECEDES`` (MySQL); None when the
+    header does not read."""
+    identity = created_identity(text, engine)
+    if identity is None or identity[0] != "TRIGGER":
+        return None
+    tokens = list(routine_tokens(text, engine))
+    start = next((i for i, t in enumerate(tokens) if t.text.upper() == "TRIGGER"), None)
+    if start is None:
+        return None
+    _, _, i = _qualified(tokens, start + 1)
+    shape: list[str] = []
+    while i < len(tokens) and tokens[i].kind != "ON":
+        shape.append(_key(tokens[i], engine))
+        i += 1
+    for j, tok in enumerate(tokens[i:], start=i):
+        word = tok.text.upper()
+        if word == "EACH" and j + 1 < len(tokens):
+            shape += ["EACH", tokens[j + 1].text.upper()]
+        elif word in ("FOLLOWS", "PRECEDES") and j + 1 < len(tokens):
+            shape += [word, _key(tokens[j + 1], engine)]
+        elif engine == "postgresql" and word == "EXECUTE":
+            schema, name, _ = _qualified(tokens, j + 2)
+            shape += [
+                "EXECUTE",
+                _name_of(schema, engine) if schema is not None else "",
+                _key(name, engine) if name is not None else "",
+            ]
+            break
+        elif engine == "mysql" and word == "ROW":
+            if j + 1 < len(tokens) and tokens[j + 1].text.upper() in ("FOLLOWS", "PRECEDES"):
+                shape += (
+                    [tokens[j + 1].text.upper(), _key(tokens[j + 2], engine)]
+                    if j + 2 < len(tokens)
+                    else []
+                )
+            break
+    return tuple(shape)
