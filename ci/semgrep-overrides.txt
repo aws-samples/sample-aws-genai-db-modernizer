@@ -13,3 +13,5 @@ opentelemetry-sdk==1.45.2
 opentelemetry-exporter-otlp-proto-http==1.45.2
 opentelemetry-instrumentation-requests==0.66b2
 opentelemetry-instrumentation-threading==0.66b2
+# mcp stays at 1.30.0 (raised in #2072); semgrep 1.183.0 asks for 1.29.0.
+mcp==1.30.0
