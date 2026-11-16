@@ -410,6 +410,9 @@ def _header(
             "",
             "\\set ON_ERROR_STOP on",
             "SET client_encoding = 'UTF8';",
+            # #2082: a backslash in a '...' literal is a plain character, as the checks read it,
+            # whatever the server's setting (pg_dump pins it the same way).
+            "SET standard_conforming_strings = on;",
             "BEGIN;",
             f"SET LOCAL lock_timeout = '{PG_LOCK_TIMEOUT}';",
             "",

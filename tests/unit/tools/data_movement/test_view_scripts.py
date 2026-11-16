@@ -19,6 +19,7 @@ from src.tools.data_movement.view_scripts import (
     CHECK_OUTPUT,
     DEPLOY_FILE,
     INSTRUCTIONS_FILE,
+    MYSQL_SQL_MODE,
     VIEWS_CHECK,
 )
 from tests.unit.tools.data_movement.view_fixtures import (
@@ -96,7 +97,9 @@ def test_a_mysql_view_runs_under_its_collation_with_no_definer_or_algorithm(tmp_
     assert write(tmp_path, store, contract).in_script == 1
     text = (tmp_path / "step" / DEPLOY_FILE).read_text()
     assert (
-        "SET NAMES utf8mb4;\nSET SESSION collation_connection = 'utf8mb4_0900_ai_ci';\nCREATE OR "
+        "SET NAMES utf8mb4;\n"
+        + MYSQL_SQL_MODE
+        + "\nSET SESSION collation_connection = 'utf8mb4_0900_ai_ci';\nCREATE OR "
         in text
     )
     assert (
@@ -349,3 +352,15 @@ def test_no_output_yet_reads_none_and_a_section_with_nothing_carried_needs_none(
     result = read_view_check(tmp_path / CHECK_OUTPUT, nothing, job_id="job1", database_name="shop",
                              contract_sha=SHA, target_database=None)  # fmt: skip
     assert (result.status, result.carried, len(result.not_carried)) == ("pass", 0, 1)
+
+
+def test_each_mysql_view_block_pins_a_session_mode_without_no_backslash_escapes(tmp_path):
+    rows = [view("v", engine="aurora_mysql"), view("w", engine="aurora_mysql")]
+    contract = contract_with_views(rows, "aurora_mysql")
+    store = job(tmp_path, [mysql_view_source("v", _MY.format(name="v")),
+                           mysql_view_source("w", _MY.format(name="w"))], "mysql")  # fmt: skip
+    write(tmp_path, store, contract)
+    text = (tmp_path / "step" / DEPLOY_FILE).read_text()
+    blocks = text.split("-- 1/2 view ", 1)[1].split("-- 2/2 view ")
+    assert all(MYSQL_SQL_MODE in b for b in blocks) and MYSQL_SQL_MODE in text.split("-- 1/2", 1)[0]
+    assert "',NO_BACKSLASH_ESCAPES,'" in MYSQL_SQL_MODE and "',ANSI_QUOTES,'" in MYSQL_SQL_MODE

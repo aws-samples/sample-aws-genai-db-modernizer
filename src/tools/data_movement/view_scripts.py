@@ -70,7 +70,12 @@ from src.tools.data_movement.routine_scripts import (
     write_atomic,
 )
 from src.tools.database.mysql_grants import GRANT_WILDCARD_NOTE
-from src.tools.sql.view_statement import CLIENT_COMMAND, NOT_ONE_STATEMENT, statement_problem
+from src.tools.sql.view_statement import (
+    AMBIGUOUS,
+    CLIENT_COMMAND,
+    NOT_ONE_STATEMENT,
+    statement_problem,
+)
 
 __all__ = [
     "CHECK_FILE",
@@ -98,6 +103,13 @@ VIEWS_CHECK = CheckScript(
     CHECK_OUTPUT, "views",
 )  # fmt: skip
 _STATEMENT_START = "CREATE OR REPLACE "
+#: Before each MySQL view (#2082): the session's own sql_mode without the two flags that
+#: change where a statement ends (NO_BACKSLASH_ESCAPES, ANSI_QUOTES), every other flag kept;
+#: the mysql client follows the server's flag, so it splits the script as the check did.
+MYSQL_SQL_MODE = (
+    "SET SESSION sql_mode = TRIM(BOTH ',' FROM REPLACE(REPLACE(CONCAT(',', @@SESSION.sql_mode, "
+    "','), ',NO_BACKSLASH_ESCAPES,', ','), ',ANSI_QUOTES,', ','));"
+)
 #: What each refusal of the deploy script means and what to do.
 REFUSED_WHY: dict[str, str] = {
     "unsafe_name": "a name holds a control or separator character: create the view yourself",
@@ -117,6 +129,11 @@ REFUSED_WHY: dict[str, str] = {
         "a MySQL view's text names its source database, and the step's target database is "
         "another one: create the view yourself in the target database, its text naming that "
         "database instead, then run views-check.sql again (it looks for the view there)"
+    ),
+    AMBIGUOUS: (
+        "where its collected text ends depends on how the target reads backslashes "
+        "(standard_conforming_strings, NO_BACKSLASH_ESCAPES): it is never written into a "
+        "script; create the view yourself"
     ),
     NOT_ONE_STATEMENT: (
         "its collected text is not exactly one view statement (more than one statement, or "
@@ -203,7 +220,8 @@ def _mysql_block(
         return None, "session_not_allowed"
     if _DELIMITER_LINE.search(source.create_statement):
         return None, "delimiter_in_text"
-    lines = [f"-- {position}/{total} view {_comment(row.view_id)}", "SET NAMES utf8mb4;"]
+    lines = [f"-- {position}/{total} view {_comment(row.view_id)}", "SET NAMES utf8mb4;",
+             MYSQL_SQL_MODE]  # fmt: skip
     if collation:
         lines.append(f"SET SESSION collation_connection = {_mysql_literal(collation)};")
     lines.append(source.create_statement.rstrip())
@@ -259,6 +277,8 @@ def _deploy_header(
         lines += [
             "-- One transaction: if any statement fails, nothing is created; fix it and run "
             "the script again.",
+            "-- standard_conforming_strings on, whatever the server's setting: a backslash in a "
+            "'...' literal is a plain character, as the views' check read it.",
             "-- Each view runs under the search path its definition was collected with.",
             "-- A view without security_invoker reads its tables with its owner's rights, and "
             "its owner is the user who runs this script.",
@@ -268,6 +288,7 @@ def _deploy_header(
             "",
             "\\set ON_ERROR_STOP on",
             "SET client_encoding = 'UTF8';",
+            "SET standard_conforming_strings = on;",
             "BEGIN;",
             f"SET LOCAL lock_timeout = '{PG_LOCK_TIMEOUT}';",
             "",
@@ -283,8 +304,12 @@ def _deploy_header(
             "(UNDEFINED).",
             "-- MySQL commits each CREATE on its own: the client stops at the first error; "
             "views-check.sql then shows which views exist.",
+            "-- The session's sql_mode keeps every flag but NO_BACKSLASH_ESCAPES and ANSI_QUOTES, "
+            "before each view: the view text is read with backslash escapes and backtick names, "
+            "as its check read it, whatever the server's mode.",
             "",
             "SET NAMES utf8mb4;",
+            MYSQL_SQL_MODE,
             "",
             *made,
         ]

@@ -226,3 +226,43 @@ def test_a_hostile_definition_never_runs_when_the_customer_runs_the_script(
     assert {"audit_log", "orders", "customers", "fine"} <= set(names) and "evil" not in names
     assert not marker.exists()
     _mysql(client, sock, "DROP VIEW IF EXISTS shop.fine;")
+
+
+def test_a_target_with_no_backslash_escapes_runs_no_payload_and_keeps_backslashes(shop, tmp_path):
+    """NO_BACKSLASH_ESCAPES in the global sql_mode (#2333 review, round 2): the payload is
+    refused, and the script pins a session mode without it, so a legitimate backslash reads
+    as the check read it."""
+    from tests.unit.tools.data_movement.view_fixtures import (
+        contract_with_views,
+        mysql_view_source,
+        view,
+    )
+
+    client, sock = shop
+    old = _mysql(client, sock, "SELECT @@GLOBAL.sql_mode", "--batch", "--skip-column-names")
+    mode = old.stdout.decode().strip()
+    assert _mysql(client, sock, "SET GLOBAL sql_mode = CONCAT(@@GLOBAL.sql_mode, "
+                  "',NO_BACKSLASH_ESCAPES')").returncode == 0  # fmt: skip
+    try:
+        hostile = ("CREATE OR REPLACE SQL SECURITY INVOKER VIEW `shop`.`evil` (`id`, `x`, `z`, `w`) AS\n"
+                   "select 'a\\' AS id, 1 AS x; DROP TABLE shop.audit_log; select ' AS z, 2 AS w;")  # fmt: skip
+        legit = ("CREATE OR REPLACE SQL SECURITY INVOKER VIEW `shop`.`paths` (`id`) AS\n"
+                 "select 'C:\\\\temp' AS `id`;")  # fmt: skip
+        contract = contract_with_views(
+            [view("evil", engine="aurora_mysql", columns=[("id", None), ("x", None), ("z", None), ("w", None)]),
+             view("paths", engine="aurora_mysql")], "aurora_mysql")  # fmt: skip
+        store = job(tmp_path, [mysql_view_source("evil", hostile), mysql_view_source("paths", legit)],
+                    "mysql")  # fmt: skip
+        scripts = write(tmp_path, store, contract)
+        assert scripts.refused == [("evil", "statement_depends_on_backslashes")]
+        ran = _mysql(client, sock, None, stdin=tmp_path / "step" / DEPLOY_FILE)
+        assert ran.returncode == 0, ran.stderr.decode()
+        names = _mysql(client, sock, "SELECT TABLE_NAME FROM information_schema.TABLES WHERE "
+                       "TABLE_SCHEMA = 'shop'", "--batch", "--skip-column-names").stdout.decode().split()  # fmt: skip
+        assert "audit_log" in names and "evil" not in names
+        value = _mysql(
+            client, sock, "SELECT id FROM shop.paths", "--batch", "--skip-column-names", "--raw"
+        )
+        assert value.stdout.decode().strip() == "C:\\temp"
+    finally:
+        _mysql(client, sock, f"SET GLOBAL sql_mode = '{mode}'; DROP VIEW IF EXISTS shop.paths;")

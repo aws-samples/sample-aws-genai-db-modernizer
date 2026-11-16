@@ -1,0 +1,6 @@
+# A pending contract version bump (ADR-008 Decision 8). The number is assigned by
+# uv run python scripts/resolve_contract_versions.py --release at release (a MAJOR: in its pull request).
+contract = "synthesis_output.SynthesisOutputContract"
+kind = "minor"
+reason = "Added the ``views`` value to ``StepGateFinding.check``: the step 1 gate's views check (#2082), which the gate contract now names. Backward compatible: a new value only"
+issue = 2082

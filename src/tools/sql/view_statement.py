@@ -23,6 +23,13 @@ Decision 5): :func:`statement_problem` passes only
   reads in the MySQL dialect as exactly one query, with no backslash outside quotes and no
   line that starts with a ``mysql`` client command.
 
+Both engines can read a backslash two ways, by a setting an Aurora parameter group may
+change: PostgreSQL's ``standard_conforming_strings`` (off: a backslash escapes inside
+``'...'``) and MySQL's ``NO_BACKSLASH_ESCAPES`` (on: a backslash is a plain character).
+The client follows the server, so the same text could end its statement elsewhere. The
+check reads the text both ways and refuses it (:data:`AMBIGUOUS`) unless both readings
+find the same quotes, and the deploy script pins the reading the check assumes.
+
 Anything else is a refusal code, never the text. Pure; linear in the text.
 """
 
@@ -31,12 +38,15 @@ from __future__ import annotations
 import re
 from collections.abc import Iterator
 
-__all__ = ["CLIENT_COMMAND", "NOT_ONE_STATEMENT", "statement_problem"]
+__all__ = ["AMBIGUOUS", "CLIENT_COMMAND", "NOT_ONE_STATEMENT", "statement_problem"]
 
 #: The refusal of a text that is not exactly one view statement.
 NOT_ONE_STATEMENT = "not_one_view_statement"
 #: The refusal of a text that holds a psql or mysql client command.
 CLIENT_COMMAND = "client_command_in_text"
+#: The refusal of a text whose statement boundary depends on how the target reads
+#: backslashes (PostgreSQL standard_conforming_strings, MySQL NO_BACKSLASH_ESCAPES).
+AMBIGUOUS = "statement_depends_on_backslashes"
 
 #: The mysql client's long-form commands (``help`` lists them): one at a line's start runs.
 _MYSQL_COMMANDS = frozenset({
@@ -45,18 +55,18 @@ _MYSQL_COMMANDS = frozenset({
     "rehash", "resetconnection", "source", "ssl_session_data_print", "status", "system", "tee",
     "use", "warnings",
 })  # fmt: skip
-_FIRST_WORD = re.compile(r"^[ \t]*([A-Za-z_?]+)")
+_FIRST_WORD = re.compile(r"[ \t]*([A-Za-z_?]+)")  # matched at a line start
 _DOLLAR_TAG = re.compile(r"\$([A-Za-z_][A-Za-z0-9_]*)?\$")
 
 
-def _pg_outside(text: str) -> Iterator[tuple[int, str]]:
+def _pg_outside(text: str, standard: bool = True) -> Iterator[tuple[int, str]]:
     """Each character of ``text`` outside PostgreSQL literals, quoted identifiers and dollar
     quotes (comments count as outside), with its offset."""
     i, n = 0, len(text)
     while i < n:
         c = text[i]
         if c in "'\"":
-            escapes = c == "'" and i > 0 and text[i - 1] in "eE"
+            escapes = c == "'" and (not standard or (i > 0 and text[i - 1] in "eE"))
             i += 1
             while i < n:
                 if escapes and text[i] == "\\":
@@ -86,16 +96,16 @@ def _mysql_outside(text: str) -> Iterator[str]:
         yield c
 
 
-def _mysql_positions(text: str) -> Iterator[tuple[int, str]]:
+def _mysql_positions(text: str, backslashes: bool = True) -> Iterator[tuple[int, str]]:
     """Each character of ``text`` outside MySQL quotes, with its offset; an unterminated
-    quote runs to the end."""
+    quote runs to the end. ``backslashes`` False reads it as ``NO_BACKSLASH_ESCAPES`` does."""
     i, n = 0, len(text)
     while i < n:
         c = text[i]
         if c in "'\"`":
             i += 1
             while i < n:
-                if text[i] == "\\" and c != "`":
+                if backslashes and text[i] == "\\" and c != "`":
                     i += 2
                     continue
                 if text[i] == c:
@@ -121,6 +131,10 @@ def _pg_problem(text: str, schema: str, name: str) -> str | None:
     import pgparse
 
     outside = list(_pg_outside(text))
+    if outside != list(_pg_outside(text, standard=False)):
+        # Where the statement ends would depend on standard_conforming_strings: refused
+        # whatever the target's setting (the script pins it on as well).
+        return AMBIGUOUS
     if _has_comment([c for _, c in outside]):
         return NOT_ONE_STATEMENT
     if any(c == "\\" for _, c in outside):
@@ -151,13 +165,22 @@ def _pg_problem(text: str, schema: str, name: str) -> str | None:
 def _mysql_problem(text: str, schema: str, name: str) -> str | None:
     from src.tools.sql.facade import one_query
 
-    outside = list(_mysql_outside(text))
+    positions = list(_mysql_positions(text))
+    if positions != list(_mysql_positions(text, backslashes=False)):
+        # Where the statement ends would depend on NO_BACKSLASH_ESCAPES: refused whatever the
+        # target's sql_mode (the script pins a mode without it as well).
+        return AMBIGUOUS
+    outside = [c for _, c in positions]
     if any(c == "\\" for c in outside):
         return CLIENT_COMMAND  # a mysql client command (\! \. \G ...)
     if _has_comment(outside) or "#" in outside:
         return NOT_ONE_STATEMENT
-    for line in text.splitlines():
-        word = _FIRST_WORD.match(line)
+    # A line the client reads as a command starts outside quotes; a line inside a string
+    # literal (a multi-line value) is data.
+    # (only a line break outside quotes starts one).
+    starts = [0] + [i + 1 for i, c in positions if c == "\n"]
+    for start in starts:
+        word = _FIRST_WORD.match(text, start)
         if word and word.group(1).lower() in _MYSQL_COMMANDS:
             return CLIENT_COMMAND
     # The client ends a statement at a ';' outside quotes (comments are refused above): the

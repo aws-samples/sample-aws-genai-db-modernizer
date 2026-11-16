@@ -598,6 +598,11 @@ for _fn in ("_credentials_masked", "_scrubbed_once", "redact_comment"):
 # Public functions of the fact modules that are not a detector of their own, with why.
 NOT_SQL_DETECTORS: dict[str, str] = {
     f"{_FACADE}:sqlglot_dialect": "maps an engine name to a dialect; reads no SQL",
+    f"{_FACADE}:one_query": (
+        "whether a view's body is exactly one query, for step 1's view statement check "
+        "(#2082, ADR-034 Decision 5): a guard on a script the customer runs, no fact routing "
+        "or a report reads; tests/unit/tools/sql/test_view_statement.py holds its cases"
+    ),
     f"{_FACADE}:routine_tokens": (
         "the dialect's tokenizer over a routine's text (#1936): it returns every token, "
         "literals included, and detects no fact; the facts read from routine text are "

@@ -166,3 +166,44 @@ def test_a_hostile_definition_never_runs_when_the_customer_runs_the_script(
     assert server.psql("\\t on\nSELECT to_regclass('public.evil') IS NULL;").strip() == "t"
     assert not marker.exists()
     server.psql("DROP VIEW IF EXISTS public.fine;")
+
+
+def test_a_target_reading_backslashes_the_old_way_runs_no_payload_and_keeps_backslashes(
+    server, tmp_path
+):
+    """standard_conforming_strings = off at the database (#2333 review, round 2): the payload
+    is refused, the script pins the setting on, so a legitimate backslash stays a backslash."""
+    from tests.unit.tools.data_movement.view_fixtures import pg_view_source
+
+    marker = Path("/tmp/v2082-pwned")
+    marker.unlink(missing_ok=True)
+    server.psql("CREATE TABLE IF NOT EXISTS public.audit_log (msg text);"
+                "ALTER DATABASE postgres SET standard_conforming_strings = off;")  # fmt: skip
+    try:
+        hostile = ('CREATE OR REPLACE VIEW "public"."evil" ("a", "id") AS\n'
+                   f"SELECT 'x\\' AS a, '\\! touch {marker} #' AS id;")  # fmt: skip
+        legit = (
+            'CREATE OR REPLACE VIEW "public"."paths" ("id") AS\n SELECT \'C:\\temp\'::text AS id;'
+        )
+        contract = contract_with_views([view("evil", columns=[("a", "text"), ("id", "text")]),
+                                        view("paths", columns=[("id", "text")])])  # fmt: skip
+        store = job(tmp_path, [pg_view_source("evil", hostile), pg_view_source("paths", legit)])
+        scripts = write(tmp_path, store, contract)
+        assert scripts.refused == [("evil", "statement_depends_on_backslashes")]
+        deploy = tmp_path / "step" / DEPLOY_FILE
+        assert "SET standard_conforming_strings = on;" in deploy.read_text()
+        ran = _psql(server, "-f", str(deploy))
+        assert ran.returncode == 0, ran.stderr
+        assert not marker.exists()
+        assert (
+            server.psql("\\t on\nSELECT to_regclass('public.audit_log') IS NOT NULL;").strip()
+            == "t"
+        )
+        value = server.psql(
+            "\\set QUIET on\n\\t on\nSET standard_conforming_strings = on;\nSELECT id FROM public.paths;"
+        )
+        assert value.strip() == "C:\\temp"
+    finally:
+        server.psql("ALTER DATABASE postgres RESET standard_conforming_strings;"
+                    "DROP VIEW IF EXISTS public.paths;")  # fmt: skip
+        marker.unlink(missing_ok=True)

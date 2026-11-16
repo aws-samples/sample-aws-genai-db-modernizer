@@ -5029,7 +5029,7 @@ class StepGateFinding(BaseModel):
     """One reason a check of the step's gate did not pass, as the gate states it."""
 
     # Held equal to src.contracts.dms_gate.GateCheck.id by a test (#1801 review).
-    check: Literal["load", "lag", "parity", "routines"] = Field(
+    check: Literal["load", "lag", "parity", "views", "routines"] = Field(
         ..., description="The check (src.contracts.dms_gate)"
     )
     check_text: str = Field(..., min_length=1, description="The check in words")
