@@ -106,7 +106,11 @@
 -- Procedure, function, trigger and event code (#1652), as a session variable:
 --   mysql --init-command="SET @include_routine_bodies=0" ...
 --   @include_routine_bodies  0: list routines, triggers and events by name and size
---                            only, without their code (default: 1, code kept)
+--                            only, without their code (default: 1, code kept). View
+--                            definitions (section 7) are still written, as the server
+--                            prints them, literals included, under either setting: a
+--                            view's lineage reads them; the collection redacts the
+--                            literals when it is read in (#1625, #2082).
 -- Privileges for routine code. Without them nothing fails: a routine whose body the
 -- user may not read is listed with body_status 'not_readable', and
 -- metadata.routine_capture.privileges_not_seen names what is not granted directly.
@@ -261,6 +265,7 @@ SELECT JSON_ARRAYAGG(pk_obj) INTO @primary_keys FROM (
 -- option, SQL SECURITY, the client character set and collation it was created with, and
 -- its columns with their types (VIEW_DEFINITION loses a view's own column names).
 -- information_schema gives no ALGORITHM: step 1 leaves it to the server's default.
+-- The definition is written under either @include_routine_bodies setting (see the header).
 SELECT JSON_ARRAYAGG(v_obj) INTO @views FROM (
   SELECT JSON_OBJECT(
     'view_name', vw.table_name,

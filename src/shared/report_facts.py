@@ -4830,7 +4830,7 @@ STEP_GATE_EXCEPTIONS_LISTED_BRIEF = "named in the engineering report"
 #: rather than dropping the whole block (the maps are held to the contract by a test).
 STEP_GATE_GENERIC_EXCEPTION_TEXT = "Named exception"
 STEP_GATE_CHECK_TEXT = {"load": "Full load", "lag": "Lag", "parity": "Validation",
-                        "routines": "Routines"}  # fmt: skip
+                        "views": "Views", "routines": "Routines"}  # fmt: skip
 STEP_GATE_TABLE_TEXT = {
     "pass": "Validated",  # nosec B105 -- "pass" is a gate status, not a password
     "pending": "Validating",

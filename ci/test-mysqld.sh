@@ -40,6 +40,7 @@ MYSQL_URL="https://cdn.mysql.com/archives/mysql-8.0/${MYSQL_NAME}.tar.xz"
 MYSQLD_TEST_FILES=(
   tests/integration/test_routine_scripts_mysql.py
   tests/integration/test_triggers_scripts_mysql.py
+  tests/integration/test_view_scripts_mysql.py
 )
 
 sha256_of() {

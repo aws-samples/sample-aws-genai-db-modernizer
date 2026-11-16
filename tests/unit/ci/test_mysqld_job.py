@@ -187,6 +187,7 @@ def test_the_script_lists_the_step_1_routine_script_tests() -> None:
     assert _files() == [
         "tests/integration/test_routine_scripts_mysql.py",
         "tests/integration/test_triggers_scripts_mysql.py",
+        "tests/integration/test_view_scripts_mysql.py",
     ]
 
 

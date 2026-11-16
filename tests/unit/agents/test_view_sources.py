@@ -141,3 +141,32 @@ def test_a_collection_with_the_body_opt_out_keeps_no_view_create():
     assert list(iter_collection_sources(raw)) == []
     raw["metadata"]["routine_capture"]["include_bodies"] = True
     assert [s.kind for s in iter_collection_sources(raw)] == ["view"]
+
+
+def test_a_view_without_a_schema_keeps_its_name_only_id():
+    """A collection that predates #2082 names no schema: its ids, and so its lineage and
+    routing, stay as they were; its views are named exceptions, never carried."""
+    from src.agents.collector.mysql_collector import _build_views
+    from src.agents.collector.view_sources import view_id
+    from src.tools.data_movement.step1_views import build_step_views
+    from tests.unit.tools.data_movement.dms_step_fixtures import make_contract
+
+    old = {
+        "view_name": "badge_posts",
+        "definition": "SELECT p.id FROM posts p",
+        "is_updatable": "NO",
+    }
+    assert view_id(old) == "badge_posts"
+    assert view_id({**old, "schema_name": "public"}) == "public.badge_posts"
+    (built,) = _build_views([old], "postgresql")
+    assert (built.view_id, built.schema_name, built.columns, built.body_status) == (
+        "badge_posts", None, None, None)  # fmt: skip
+    (other,) = _build_views([{**old, "schema_name": "dbo"}], "sqlserver")
+    assert other.view_id == "badge_posts"  # other engines keep name-only ids
+    row = {**built.model_dump(mode="json"), "lineage_status": "resolved",
+           "referenced_tables": ["public.orders"]}  # fmt: skip
+    section = build_step_views({"views": [row]}, make_contract("aurora_postgresql"),
+                               source_engine="postgresql")  # fmt: skip
+    assert [(v.view_id, v.reasons) for v in section.views] == [
+        ("badge_posts", ["body_not_collected"])
+    ]

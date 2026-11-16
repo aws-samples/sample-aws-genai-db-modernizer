@@ -88,3 +88,25 @@ def test_mysql_grant_notes_warn_that_underscore_and_percent_are_wildcards(tmp_pa
     note = "write each as \\_ and \\% (my\\_db, not my_db)"
     assert note in (tmp_path / "step" / "routines-deploy.sql").read_text()
     assert note in (tmp_path / "step" / INSTRUCTIONS_FILE).read_text()
+
+
+def test_every_postgresql_script_pins_standard_conforming_strings_before_its_transaction(tmp_path):
+    """The checks read a backslash in '...' as a plain character; a target whose parameter
+    group turns standard_conforming_strings off reads it as an escape (#2333 review)."""
+    from tests.unit.tools.data_movement.test_triggers_scripts import _pg_case as triggers_case
+    from tests.unit.tools.data_movement.test_triggers_scripts import _read, _write_scripts
+
+    pin = "SET standard_conforming_strings = on;"
+    artifact = migration(_ROWS)
+    contract = _contract(artifact, [_summary()])
+    text = 'CREATE OR REPLACE VIEW "public"."order_summary" ("id") AS\n SELECT 1::bigint AS id;'
+    store = _job(tmp_path, artifact, [*_SOURCES, pg_view_source("order_summary", text)])
+    _write(tmp_path, store, contract)
+    from src.tools.data_movement.view_scripts import write_view_scripts
+
+    write_view_scripts(store, "shop", "job1", contract, "a" * 64, tmp_path / "step")
+    for name in ("routines-deploy.sql", "views-deploy.sql"):
+        assert pin in (tmp_path / "step" / name).read_text().split("BEGIN;", 1)[0], name
+    store, contract = triggers_case(tmp_path / "t")
+    _write_scripts(tmp_path / "t", store, contract)
+    assert pin in _read(tmp_path / "t", "triggers-enable.sql").split("BEGIN;", 1)[0]
