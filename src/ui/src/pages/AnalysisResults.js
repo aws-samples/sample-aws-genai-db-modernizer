@@ -51,6 +51,7 @@ import CloseCallCallout from "../components/CloseCallCallout";
 import UnservableQueriesCallout from "../components/UnservableQueriesCallout";
 import DynamoDBMergeConflictsCallout from "../components/DynamoDBMergeConflictsCallout";
 import DynamoDBMergeReviewsCallout from "../components/DynamoDBMergeReviewsCallout";
+import RelatedSectionPointer, { unservedPointers } from "../components/RelatedSectionPointer";
 import NoOpenRisksNote from "../components/NoOpenRisksNote";
 import PinRuleNote from "../components/PinRuleNote";
 import NoOpenRisksSection from "../components/NoOpenRisksSection";
@@ -253,6 +254,9 @@ const AnalysisResultsPage = memo(() => {
   const [tabsRoot, setTabsRoot] = useState(null);
   const sectionsOnPage = useSectionsOnPage(activeTab, tabsRoot);
   const onThisPage = onThisPageAnchors(activeTab, sectionsOnPage, t);
+  // #2313 review: the unserved queries (Plan) and the merge's unserved access patterns
+  // and decisions (Risks and decisions) point at each other.
+  const relatedPointers = unservedPointers(resultsData?.synthesis);
   // A tab with one section or none needs no navigation.
   const toolsHidden = onThisPage.length < 2;
   // "On this page" opens with the page on a wide screen; on a narrow one it would cover it.
@@ -2185,6 +2189,7 @@ const AnalysisResultsPage = memo(() => {
           onOpen={fetchQueryJourney}
           t={t}
         />
+        <RelatedSectionPointer target={relatedPointers.toRisks} t={t} />
 
         {/* Close calls (#730): queries a kept engine could serve almost
             as well, with the way into each one's decision trace and the
@@ -2958,6 +2963,7 @@ const AnalysisResultsPage = memo(() => {
         {/* DynamoDB merge conflicts (#802): the access patterns the merged
             design does not serve, as both reports state them. */}
         <DynamoDBMergeConflictsCallout synthesis={resultsData?.synthesis} t={t} />
+        <RelatedSectionPointer target={relatedPointers.toRisks === 'dynamodb-merge-conflicts' ? relatedPointers.toPlan : null} t={t} />
 
         {/* Engine-specific Trade-offs */}
         {Object.entries(engineTradeOffs).some(([, tradeOffList]) => tradeOffList.length > 0) && (
@@ -3145,6 +3151,7 @@ const AnalysisResultsPage = memo(() => {
             merge chose for each overlap and its derived copies, as both reports
             state them. */}
         <DynamoDBMergeReviewsCallout synthesis={resultsData?.synthesis} t={t} />
+        <RelatedSectionPointer target={relatedPointers.toRisks === 'dynamodb-merge-reviews' ? relatedPointers.toPlan : null} t={t} />
       </SpaceBetween>
     ),
   };

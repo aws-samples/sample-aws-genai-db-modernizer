@@ -30,7 +30,9 @@ function scrollToSection(id) {
  * old tab), so back returns to the tab before. A URL whose hash names a section on
  * another tab than `?tab=` (an old anchor, a #2300 `?engine=` link) is rewritten in
  * place to name that tab, then the page scrolls to the section and focuses it once
- * `ready` (the results are on the page). `goToSection(id)` does the same from the page.
+ * `ready` (the results are on the page). `goToSection(id)` does the same from the page:
+ * it pushes a history entry when the section is on another tab, and replaces the entry
+ * within the open tab.
  */
 export default function useResultsTabs({ ready }) {
   const { search, hash } = useLocation();
@@ -71,7 +73,9 @@ export default function useResultsTabs({ ready }) {
     const tab = tabOfAnchor(id) || activeTab;
     // A new hash scrolls through the hash effect above; the same one would not fire it.
     if (hashId(hash) === id) setScrollTarget({ id });
-    navigate({ search: searchWithTab(search, tab), hash: `#${id}` }, { replace: true });
+    // A jump to another tab is a step the reader can go back from, as choosing the tab
+    // is; within the open tab (On this page) it only moves the hash, in place.
+    navigate({ search: searchWithTab(search, tab), hash: `#${id}` }, { replace: tab === activeTab });
   }, [navigate, search, hash, activeTab]);
 
   return { activeTab, selectTab, goToSection };

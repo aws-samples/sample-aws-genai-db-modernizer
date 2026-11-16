@@ -159,6 +159,16 @@ test('legacy /analysis/report/:jobId redirects to /analysis/results, keeping the
   });
 });
 
+// #2313 review: an old link to a section of the results page keeps it, so it lands on
+// the section's tab.
+test.each(['results-v2', 'report'])('/analysis/%s/:jobId keeps the query and the section the link names', async (route) => {
+  expect(await renderAt(`/analysis/${route}/job-42?tab=plan#close-calls-section`)).toEqual({
+    page: 'AnalysisResults', jobId: 'job-42', pathname: '/analysis/results/job-42',
+  });
+  expect(location.search).toBe('?tab=plan');
+  expect(location.hash).toBe('#close-calls-section');
+});
+
 test('the version-suffixed results page module is gone', () => {
   expect(() => jest.requireActual('../pages/AnalysisResults')).toThrow();
 });

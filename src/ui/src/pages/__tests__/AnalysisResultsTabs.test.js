@@ -105,3 +105,20 @@ test('the risk assessment and the trade-offs carry the ids their anchors use', (
   expect(src(risk)).toMatch(/<NoOpenRisksSection/);
   expect(src(risk)).toMatch(/t\('analysis-results\.risk-assessment\.title'\)/);
 });
+
+test('the unserved queries (Plan) and the merge conflicts and reviews (Risks) point at each other', () => {
+  expect(SOURCE).toMatch(/const relatedPointers = unservedPointers\(resultsData\?\.synthesis\);/);
+  const pointers = ELEMENTS.filter(el => nameOf(el) === 'RelatedSectionPointer');
+  expect(pointers.map(el => src(attr(el, 'target').value))).toEqual([
+    '{relatedPointers.toRisks}',
+    // One pointer back, after the section the banner's points at.
+    "{relatedPointers.toRisks === 'dynamodb-merge-conflicts' ? relatedPointers.toPlan : null}",
+    "{relatedPointers.toRisks === 'dynamodb-merge-reviews' ? relatedPointers.toPlan : null}",
+  ]);
+  // Each right after the section it belongs to.
+  const after = name => ELEMENTS.find(el => nameOf(el) === name).end;
+  expect(pointers[0].start).toBeGreaterThan(after('UnservableQueriesCallout'));
+  expect(pointers[0].start).toBeLessThan(ELEMENTS.find(el => nameOf(el) === 'CloseCallCallout').start);
+  expect(pointers[1].start).toBeGreaterThan(after('DynamoDBMergeConflictsCallout'));
+  expect(pointers[2].start).toBeGreaterThan(after('DynamoDBMergeReviewsCallout'));
+});

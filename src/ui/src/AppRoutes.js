@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: MIT-0
 
 import { lazy, Suspense } from "react";
-import { Routes, Route, Navigate, useParams, useSearchParams } from "react-router-dom";
+import { Routes, Route, Navigate, useLocation, useParams, useSearchParams } from "react-router-dom";
 
 // Pages
 import Dashboard from "./pages/Dashboard";
@@ -23,7 +23,9 @@ const GraphExplorer = lazy(() => import("./pages/GraphExplorer"));
 // earlier report page, retired in #356.
 function LegacyResultsRedirect() {
   const { jobId } = useParams();
-  return <Navigate to={`/analysis/results/${jobId}`} replace />;
+  // The query and the section a link names stay (#2313: the hash opens its tab).
+  const { search, hash } = useLocation();
+  return <Navigate to={{ pathname: `/analysis/results/${jobId}`, search, hash }} replace />;
 }
 
 // The pattern-analysis page was removed (#2300): its content lives in the results
