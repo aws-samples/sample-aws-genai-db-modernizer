@@ -64,7 +64,7 @@ def test_every_invariant_holds_on_the_job(run: PipelineResult) -> None:
 
 
 # replay_stale: the saved discourse run's DynamoDB design predates #2153's coverage check
-# and leaves two statements unnamed (#2357 re-records it); a fresh run is checked here.
+# and leaves two statements unnamed (#2378 re-records it); a fresh run is checked here.
 @pytest.mark.replay_stale
 def test_each_design_names_every_statement_it_is_given(run: PipelineResult) -> None:
     result = _check(run.job_dir())
