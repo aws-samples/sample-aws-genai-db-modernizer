@@ -193,13 +193,26 @@ describe('going to a section from the page', () => {
     expect(scrolled).toEqual(['table-design-section', 'table-design-section']);
   });
 
-  test('replaces the history entry, so back leaves the page as the link left it', () => {
+  test('to another tab adds a history entry, so back returns to the tab the reader came from', () => {
     mount('/analysis/results/j1');
     click('[data-tab=plan]');
     goTo('target-engines');
     expect(tab()).toBe('summary');
+    expect(url()).toBe('?tab=summary#target-engines');
     click('[data-back]');
-    expect(tab()).toBe('summary');
+    expect(tab()).toBe('plan');
+    expect(url()).toBe('?tab=plan');
+    click('[data-back]');
+    expect(url()).toBe('');
+  });
+
+  test('within the open tab (On this page) replaces the entry: back leaves the tab', () => {
+    mount('/analysis/results/j1');
+    click('[data-tab=summary]');
+    goTo('target-engines');
+    expect(url()).toBe('?tab=summary#target-engines');
+    goTo('target-engines');
+    click('[data-back]');
     expect(url()).toBe('');
   });
 });

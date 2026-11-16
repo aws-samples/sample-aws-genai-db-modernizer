@@ -1058,6 +1058,8 @@
   "analysis-results.on-this-page.merge-conflicts": "Access patterns the merged DynamoDB design does not serve",
   "analysis-results.on-this-page.tradeoffs": "Trade-offs and design decisions",
   "analysis-results.on-this-page.merge-reviews": "DynamoDB merge-review decisions",
+  "analysis-results.related.to-risks": "The DynamoDB access patterns the merged design does not serve, and its merge-review decisions, are on the Risks and decisions tab.",
+  "analysis-results.related.to-plan": "The queries that cannot be served as designed are on the Plan tab.",
   "analysis-results.explorer.selection-group": "Select a row to see its target design",
   "analysis-results.explorer.select-item": "Select {{name}}",
   "analysis-results.explorer.pagination": "Access pattern pages",

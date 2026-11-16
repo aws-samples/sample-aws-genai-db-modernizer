@@ -1115,6 +1115,39 @@ def test_results_page_shows_the_adoption_paths_stages_and_one_step_option(
     assert checked or any(r.external for r in all_runs), "no sample offers an adoption path"
 
 
+def test_back_after_the_one_step_link_returns_to_the_plan_tab(
+    page: Page, ui: str, all_runs: list[PipelineResult]
+) -> None:
+    """#2313 review: a jump from one tab to a section on another is a step the reader can
+    go back from, as choosing a tab is. Summary, then Plan, then the one-step option's
+    link (its target is on another tab), then Back: the Plan tab, at the URL it had; Back
+    again: the Summary."""
+    checked = 0
+    for r in all_runs:
+        report = json.loads((r.artifact_root / r.report["report"]).read_text())
+        if not ((report.get("facts") or {}).get("adoption") or {}).get("paths"):
+            continue
+        ev = _watch(page)
+        page.goto(f"{ui}/analysis/results/{r.job_id}")
+        _loaded(page, r)
+        _show_tab(page, "plan")
+        expect(page).to_have_url(re.compile(rf"/analysis/results/{r.job_id}\?tab=plan$"))
+        option = page.locator("#migration-roadmap-section [data-figure=one-step-option]")
+        option.get_by_text("Show the one-step option").click()
+        option.locator("[data-figure=one-step-adopt] a").click()
+        expect(_results_tab(page, "plan")).to_have_attribute("aria-selected", "false")
+        page.go_back()
+        expect(_results_tab(page, "plan")).to_have_attribute("aria-selected", "true")
+        expect(page).to_have_url(re.compile(rf"/analysis/results/{r.job_id}\?tab=plan$"))
+        page.locator(TAB_READY["plan"]).wait_for(timeout=READY_MS)
+        page.go_back()
+        expect(_results_tab(page, "summary")).to_have_attribute("aria-selected", "true")
+        expect(page).to_have_url(re.compile(rf"/analysis/results/{r.job_id}$"))
+        assert ev == {"console": [], "pageerror": [], "failed": []}, (r.db, ev)
+        checked += 1
+    assert checked or any(r.external for r in all_runs), "no sample offers an adoption path"
+
+
 def test_results_page_states_each_tables_source_of_truth_and_replicas(
     page: Page, ui: str, all_runs: list[PipelineResult]
 ) -> None:
