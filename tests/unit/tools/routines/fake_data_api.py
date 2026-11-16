@@ -311,12 +311,19 @@ class FakeSecrets:
         self.secrets: dict[str, dict[str, Any]] = {}
         self.deleted: list[tuple[str, bool]] = []
         self.delete_fails = delete_fails
+        #: Secrets scheduled for deletion: ``list_secrets`` shows them only with
+        #: ``IncludePlannedDeletion``, as Secrets Manager does.
+        self.planned: set[str] = set()
+        self.listed: list[dict[str, Any]] = []
 
     def list_secrets(self, **kw: Any) -> dict[str, Any]:
         """One page per call, filtered by name prefix as Secrets Manager's ``name`` filter is."""
         prefixes = [v for f in kw.get("Filters", []) if f["Key"] == "name" for v in f["Values"]]
-        found = [{"ARN": arn, "Name": v["Name"]} for arn, v in self.secrets.items()
-                 if any(v["Name"].startswith(p) for p in prefixes)]  # fmt: skip
+        found = [{"ARN": arn, "Name": v["Name"], "Tags": list(v.get("Tags") or [])}
+                 for arn, v in self.secrets.items()
+                 if any(v["Name"].startswith(p) for p in prefixes)
+                 and (kw.get("IncludePlannedDeletion") or arn not in self.planned)]  # fmt: skip
+        self.listed.append(kw)
         return {"SecretList": found}
 
     def create_secret(self, **kw: Any) -> dict[str, Any]:

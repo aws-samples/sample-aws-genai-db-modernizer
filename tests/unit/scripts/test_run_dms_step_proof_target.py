@@ -50,6 +50,17 @@ def _restore_aws_profile(monkeypatch):
     monkeypatch.delenv("AWS_PROFILE")
 
 
+@pytest.fixture(autouse=True)
+def _secrets(monkeypatch) -> Any:
+    """The teardown's Secrets Manager client is a fake (nothing is sent); a test that reads
+    it requests this fixture by name."""
+    from tests.unit.tools.routines.fake_data_api import FakeSecrets
+
+    fake = FakeSecrets()
+    monkeypatch.setattr(script, "_secrets", lambda _cred: fake, raising=False)
+    return fake
+
+
 @pytest.fixture
 def cred(monkeypatch) -> StubbedCredMgr:
     """The one credential manager main() builds: every client it asks for is stubbed."""
@@ -400,6 +411,79 @@ def test_teardown_of_a_stack_that_is_gone_is_a_no_op(tmp_path, capsys, cred):
     code, out = _run(tmp_path, "proof-target-teardown", "--approve", capsys=capsys)
     assert code == 0 and out["status"] == "deleted" and out["already_deleted"] is True
     _no_pending(cred)
+
+
+def _runner_secret(
+    secrets: Any, job: str = "job1", tags: Any = None, suffix: str = "0f0f0f0f"
+) -> str:
+    from src.tools.routines import data_api_target as dat
+
+    user = dat.runner_prefix(job) + suffix
+    tags = [{"Key": "modernizer:job-id", "Value": job},
+            {"Key": "modernizer:purpose", "Value": "routine-proof"}] if tags is None else tags  # fmt: skip
+    created = secrets.create_secret(Name=dat.runner_secret_name(job, user), SecretString="{}",
+                                    Tags=tags)  # fmt: skip
+    return str(created["ARN"])
+
+
+def test_teardown_force_deletes_this_jobs_runner_secrets_confirmed_by_their_tags(
+    tmp_path, capsys, cred, _secrets
+):
+    """Review of #2351: a run killed before its cleanup leaves its runner secret (it holds the
+    runner's password); the teardown deletes the job's runner secrets with no recovery window,
+    each one only when its tags name this job and the proof, so none outlives the stack. A
+    secret already scheduled for deletion goes too; another job's is never touched, nor one
+    under this job's name whose tags are not the proof's."""
+    mine, planned = _runner_secret(_secrets), _runner_secret(_secrets, suffix="0a0a0a0a")
+    _secrets.planned.add(planned)
+    other_job = _runner_secret(_secrets, "job2")
+    untagged = _runner_secret(_secrets, tags=[], suffix="0b0b0b0b")
+    _job(tmp_path)
+    _stack(cred)
+    _resources(cred)
+    _cluster(cred)
+    cred.stub("cloudformation").add_response("delete_stack", {}, {"StackName": STACK_ID})
+    _poll(cred, "DELETE_COMPLETE")
+    code, out = _run(tmp_path, "proof-target-teardown", "--approve", capsys=capsys)
+    assert code == 0 and out["status"] == "deleted", out
+    assert sorted(_secrets.deleted) == sorted([(mine, True), (planned, True)])
+    assert set(_secrets.secrets) == {other_job, untagged}
+    assert out["runner_secrets_deleted"] == 2 and out["runner_secrets_left"] == [
+        _secrets.secrets[untagged]["Name"] + " (its tags are not this job's routine proof)"]  # fmt: skip
+    assert all(kw.get("IncludePlannedDeletion") for kw in _secrets.listed)
+
+
+def test_teardown_of_a_gone_stack_still_deletes_a_killed_runs_runner_secret(
+    tmp_path, capsys, cred, _secrets
+):
+    """The stack may be gone already (an earlier teardown, or deleted by hand) while a killed
+    run's secret is still there: the teardown removes it anyway."""
+    mine = _runner_secret(_secrets)
+    _job(tmp_path)
+    _no_stack(cred)
+    code, out = _run(tmp_path, "proof-target-teardown", "--approve", capsys=capsys)
+    assert code == 0 and out["already_deleted"] is True
+    assert _secrets.deleted == [(mine, True)] and not _secrets.secrets
+    assert out["runner_secrets_deleted"] == 1 and out["runner_secrets_left"] == []
+
+
+@pytest.mark.passes_on_main  # a refused teardown never deleted anything
+def test_a_refused_teardown_deletes_no_runner_secret(tmp_path, capsys, cred, _secrets):
+    _runner_secret(_secrets)
+    _job(tmp_path)
+    _stack(cred, tags=[])  # not this job's stack: refused
+    code, out = _run(tmp_path, "proof-target-teardown", "--approve", capsys=capsys)
+    assert code == 1 and _secrets.secrets and not _secrets.deleted and not _secrets.listed
+
+
+def test_a_runner_secret_the_teardown_cannot_delete_is_named(tmp_path, capsys, cred, _secrets):
+    _secrets.delete_fails = True
+    _runner_secret(_secrets)
+    _job(tmp_path)
+    _no_stack(cred)
+    code, out = _run(tmp_path, "proof-target-teardown", "--approve", capsys=capsys)
+    assert code == 0 and out["runner_secrets_deleted"] == 0
+    assert out["runner_secrets_left"] and "could not be deleted" in out["runner_secrets_left"][0]
 
 
 @pytest.mark.parametrize("tags", [

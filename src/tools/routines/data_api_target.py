@@ -1399,6 +1399,47 @@ def sweep_runners(client: DataApiClient, secrets_client: Any, *, cluster_arn: st
     return removed, left
 
 
+def delete_runner_secrets(secrets_client: Any, *, job_id: str) -> tuple[int, list[str]]:
+    """Force-delete every runner secret of ``job_id`` (scheduled deletions included), each
+    only once its name is this job's runner pattern and its tags name this job and the
+    routine proof: what a run killed before its cleanup left. The teardown calls it, so no
+    runner secret outlives the stack (#2351). Returns ``(deleted, left)``; never raises."""
+    from src.tools.data_movement.proof_target import JOB_TAG, PURPOSE, PURPOSE_TAG
+
+    name_prefix, user_prefix = f"{RUNNER_SECRET_PREFIX}{job_id}/", runner_prefix(job_id)
+    try:
+        found, token = [], None
+        while True:
+            page = secrets_client.list_secrets(
+                Filters=[{"Key": "name", "Values": [name_prefix]}], IncludePlannedDeletion=True,
+                **({"NextToken": token} if token else {}),
+            )  # fmt: skip
+            found += list(page.get("SecretList") or [])
+            token = page.get("NextToken")
+            if not token:
+                break
+    except Exception:  # noqa: BLE001 - reported, never raised
+        return 0, [f"the runner secrets under {name_prefix} (could not be listed)"]
+    deleted, left = 0, []
+    for secret in found:
+        name = str(secret.get("Name") or "")
+        user = name[len(name_prefix) :]
+        if not (name.startswith(name_prefix) and user.startswith(user_prefix)
+                and _RUNNER_NAME.fullmatch(user)):  # fmt: skip
+            continue
+        tags = {str(t.get("Key")): t.get("Value") for t in secret.get("Tags") or []}
+        if tags.get(JOB_TAG) != job_id or tags.get(PURPOSE_TAG) != PURPOSE:
+            left.append(f"{name} (its tags are not this job's routine proof)")
+            continue
+        try:
+            secrets_client.delete_secret(SecretId=str(secret["ARN"]),
+                                         ForceDeleteWithoutRecovery=True)  # fmt: skip
+            deleted += 1
+        except Exception:  # noqa: BLE001 - the next one is still deleted
+            left.append(f"{name} (could not be deleted)")
+    return deleted, left
+
+
 def drop_runner(client: DataApiClient, secrets_client: Any, *, cluster_arn: str, secret_arn: str,
                 admin_database: str | None, account: RunnerAccount) -> list[str]:  # fmt: skip
     """Drop the runner user and delete its secret with no recovery window, each tried on
