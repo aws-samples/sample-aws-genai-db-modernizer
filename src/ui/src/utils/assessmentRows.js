@@ -15,3 +15,9 @@ export function assessmentHref(jobId, status) {
 export function databaseLabel(databaseName, jobId) {
   return databaseName || jobId;
 }
+
+// The accessible name of a row's copy button (#2340 review): the database and the
+// id, so a screen reader can tell rows apart, even two jobs on one database.
+export function copyJobIdLabel(t, databaseName, jobId) {
+  return t('common.actions.copy-job-id-for', { name: databaseLabel(databaseName, jobId), id: jobId });
+}
