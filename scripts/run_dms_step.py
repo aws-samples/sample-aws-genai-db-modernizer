@@ -2617,13 +2617,10 @@ def _proof_target(args: argparse.Namespace, sleep: Callable[[float], None]) -> d
         store = LocalArtifactStore(base_dir=args.artifact_root)
         target = (pt.planned_target(store, db, job_id) if command in (PROOF_PLAN, PROOF_DEPLOY)
                   else None)  # fmt: skip
-        planned = target
         if command == PROOF_RUN:
-            # Read before the status describe calls, so a MySQL run is refused before any
-            # AWS call; a run whose planned target cannot be read is refused here too.
-            planned = pt.planned_target(store, db, job_id)
-        if planned is not None and (refused := pt.mysql_refusal(planned.engine)) is not None:
-            return refused  # before any AWS call: the MySQL proof cannot run yet (#2298)
+            # Read before the status describe calls: a run whose planned target cannot be
+            # read is refused before any AWS call.
+            pt.planned_target(store, db, job_id)
         if target is not None:
             pt.check_region(target.engine, inputs.region)
         _use_profile(inputs.write_profile if writes else inputs.read_profile)

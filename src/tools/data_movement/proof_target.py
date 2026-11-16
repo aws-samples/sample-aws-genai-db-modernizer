@@ -99,28 +99,6 @@ DATA_API_REGIONS: dict[str, frozenset[str]] = {
 #: A plain release (16.4, 8.0.mysql_aurora.3.08.0): no "-limitless" or other variant.
 _RELEASE = re.compile(r"^\d+\.\d+(\.mysql_aurora\.\d+\.\d+\.\d+)?$")
 DEFAULT_MAX_CAPACITY = 2
-#: The routine proof on Aurora MySQL runs only as a restricted runner user, and the RDS Data
-#: API takes no bound password in ``CREATE USER`` (Aurora MySQL 3.14.0), so the proof cannot
-#: run there yet (#2298). Until it can, the plan, the deploy and the run refuse an Aurora MySQL
-#: target before any AWS call: the customer is never asked to approve a billed cluster the
-#: proof cannot use. Status and teardown still read and delete a stack deployed earlier.
-MYSQL_PROOF_AVAILABLE = False
-MYSQL_NOT_AVAILABLE = (
-    "The routine proof on Aurora MySQL is not available yet (#2298): it runs the routines only "
-    "as a restricted user, which the RDS Data API cannot create yet, and it never falls back to "
-    "the master user. Nothing was deployed and no AWS call was made; the routine scripts are "
-    "still written. The proof runs on Aurora PostgreSQL."
-)
-
-
-def mysql_refusal(engine: str) -> dict[str, str] | None:
-    """The refusal of an Aurora MySQL proof while it cannot run (#2298), or None."""
-    if engine in ("aurora_mysql", "aurora-mysql", "mysql") and not MYSQL_PROOF_AVAILABLE:
-        return {"status": "error", "reason_code": "mysql_proof_not_available",
-                "message": MYSQL_NOT_AVAILABLE}  # fmt: skip
-    return None
-
-
 DATA_NOTE = ("The test cluster holds only synthetic rows and the carried routines, never "
              "customer data.")  # fmt: skip
 DELETED = ("the stack's resources: the cluster with every row in it (no final snapshot), "

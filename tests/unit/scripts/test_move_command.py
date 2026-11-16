@@ -765,13 +765,13 @@ def test_every_proof_target_call_passes_auto_in_an_auto_run_and_is_refused_there
     assert asked == []
 
 
-def test_the_routine_proof_is_never_offered_on_aurora_mysql_until_2298() -> None:
-    """Review round 2 of #2297: the MySQL proof cannot run yet (#2298), so /move never asks
-    the customer to approve a billed test cluster for it; the scripts refuse it too."""
+def test_the_routine_proof_is_offered_on_aurora_mysql_too() -> None:
+    """#2298: the MySQL runner user is created from a hash, so /move offers the proof on
+    both targets and no longer says it is unavailable on Aurora MySQL."""
     flat = _flat(_proof_section())
-    assert "Offer it only when the step's `target_engine` is Aurora PostgreSQL" in flat
-    assert "the routine proof on Aurora MySQL is not available yet (#2298)" in flat
-    assert "`mysql_proof_not_available`" in flat
+    assert "Offer it on both targets, Aurora PostgreSQL and Aurora MySQL" in flat
+    assert "not available yet" not in flat and "mysql_proof_not_available" not in flat
+    assert "Offer it only when the step's `target_engine` is Aurora PostgreSQL" not in flat
 
 
 def test_prove_writes_the_view_scripts_before_the_routine_scripts() -> None:

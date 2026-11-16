@@ -90,8 +90,7 @@ __all__ = [
 #: outcome follows (:data:`RUNNER_CLEANED` or :data:`RUNNER_LEFT`).
 RUNNER_REFUSED = (
     "the MySQL proof runs its routines only as a restricted user granted the scratch database, "
-    "and that user could not be created through the RDS Data API (it takes no bound password in "
-    "CREATE USER, and the password is never written into SQL text): nothing ran"
+    "and the RDS Data API could not create that user or sign in as it: nothing ran"
 )
 RUNNER_CLEANED = ", and its secret was deleted"
 RUNNER_LEFT = ", and what could not be deleted is in left_on_cluster: {left}"
@@ -549,10 +548,6 @@ def run_proof(
             "status": "error",
             "message": "the test cluster has no Data API or no master secret ARN",
         }
-    from src.tools.data_movement.proof_target import mysql_refusal
-
-    if (refused := mysql_refusal(engine)) is not None:
-        return refused  # before any Data API call (#2298)
     if engine == "mysql" and secrets_client is None:
         return {"status": "error", "message": "the MySQL proof needs Secrets Manager for its "
                 "restricted runner user's secret"}  # fmt: skip
