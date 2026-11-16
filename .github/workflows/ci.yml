@@ -139,19 +139,21 @@ jobs:
           retention-days: 3
 
   test:
-    # The required `test` check: green only when every shard passed. `always()`
+    # The required `test` check: green only when every shard and `mysqld-tests` passed. `always()`
     # makes it report (and fail) when a shard failed or was cancelled, rather
     # than being skipped, which a required check would read as missing.
     if: always()
-    needs: test-shard
+    needs: [test-shard, mysqld-tests]
     runs-on: ubuntu-latest
     steps:
-      - name: Every shard passed
+      - name: Every shard and the mysqld tests passed
         env:
           RESULT: ${{ needs.test-shard.result }}
+          MYSQLD_RESULT: ${{ needs.mysqld-tests.result }}
         run: |
           echo "test-shard result: $RESULT"
-          [ "$RESULT" = "success" ]
+          echo "mysqld-tests result: $MYSQLD_RESULT"
+          [ "$RESULT" = "success" ] && [ "$MYSQLD_RESULT" = "success" ]
       - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
         if: github.event_name == 'push' || github.event_name == 'schedule'
       - uses: actions/setup-python@0b93645e9fea7318ecaed2b359559ac225c90a2b # v5.3.0
@@ -202,8 +204,9 @@ jobs:
       - name: Install dependencies
         run: uv sync --locked --extra dev
       - name: Cache the MySQL server
-        # The download is about 900 MB; the unpacked server and client are far smaller.
-        # Keyed on the script, which holds the version and checksum.
+        # The download is about 890 MB; the server, client, share and private/plugin
+        # libraries cached here are the part the tests use. Keyed on the script, which
+        # holds the version and checksums; the script re-checks the binaries on a hit.
         uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
         with:
           path: ~/.cache/db-modernizer-mysql
