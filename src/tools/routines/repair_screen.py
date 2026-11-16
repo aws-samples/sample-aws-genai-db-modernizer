@@ -16,6 +16,7 @@ nothing: the proof (#1944, #1945) decides.
 
 from __future__ import annotations
 
+from collections import Counter
 from dataclasses import dataclass
 from typing import Any
 
@@ -23,7 +24,16 @@ from src.contracts.routine_repair import RefusalCode
 from src.tools.routines.migration import routine_signature
 from src.tools.routines.mysql_checks import MySqlRoutine, check_mysql_routine
 from src.tools.routines.postgresql_checks import parse_routine
-from src.tools.routines.proof_screen import create_count, created_identity, named_schemas
+from src.tools.routines.proof_screen import (
+    create_refusal,
+    created_identity,
+    created_objects,
+    literal_sequence,
+    named_schemas,
+    privilege_clauses,
+    trigger_shape,
+    written_statements,
+)
 
 __all__ = ["RepairedRoutine", "refusal_of"]
 
@@ -72,13 +82,23 @@ def _one_statement(text: str, c: RepairedRoutine, engine: str) -> bool:
     return verdict.parse_failure is None
 
 
+def _same(text: str) -> str:
+    return " ".join(text.split())
+
+
+def _over(candidate: Counter[Any], original: Counter[Any]) -> bool:
+    return bool(candidate - original)
+
+
 def refusal_of(c: RepairedRoutine, text: str, engine: str) -> tuple[RefusalCode, str] | None:
     """Why the candidate ``text`` for ``c`` is refused, as ``(code, words)``; None when it
-    may wait for the proof. Each rule compares it with the routine's own redacted text, so
-    what the routine already does (another schema it reads, a temporary table it creates)
-    is never held against it."""
-    if text.strip() == c.create_text.strip():
-        return "unchanged", "the candidate is the routine's own text"
+    may wait for the proof (module docstring). The proof's own screen runs on it first
+    (``create_refusal``, with the schemas the routine's tables already sit in); each repair
+    rule then compares it with the routine's own redacted text, so what the routine
+    already does (another schema's table it reads, a temporary table it creates) is never
+    held against it."""
+    if _same(text) == _same(c.create_text):
+        return "unchanged", "the candidate is the routine's own text, give or take whitespace"
     if not _one_statement(text, c, engine):
         return "not_one_statement", f"the candidate is not exactly one {c.kind} statement"
     mine, theirs = _identity(c.create_text, c, engine), _identity(text, c, engine)
@@ -86,17 +106,44 @@ def refusal_of(c: RepairedRoutine, text: str, engine: str) -> tuple[RefusalCode,
         return "not_one_statement", "the candidate's header does not read"
     if mine != theirs:
         return "renamed", "the candidate creates another name, kind or trigger table"
+    own = named_schemas(c.create_text, engine, c.kind)
+    if own is None:
+        return "not_one_statement", "the routine's own text does not read"
+    namespace = (c.schema_name or "").casefold() if engine == "postgresql" else c.schema_name or ""
+    why = create_refusal(text, engine, c.kind, namespace, sorted(own - {namespace}))
+    if why is not None:
+        return "screen_refused", f"the proof's screen refuses it: {why}"
     if routine_signature(text, engine, c.kind, c.sql_mode) != routine_signature(
         c.create_text, engine, c.kind, c.sql_mode
+    ) or (
+        c.kind == "trigger" and trigger_shape(text, engine) != trigger_shape(c.create_text, engine)
     ):
-        return "signature_changed", "the candidate changes the arguments or the return type"
-    before, after = create_count(c.create_text, engine), create_count(text, engine)
-    if before is None or after is None:
+        return "signature_changed", (
+            "the candidate changes the arguments, the return type, or a trigger's timing, "
+            "events, level, order or function"
+        )
+    if privilege_clauses(text, engine) != privilege_clauses(c.create_text, engine):
+        return "changes_privileges", "the candidate changes who the routine runs as"
+    literals = literal_sequence(text, engine)
+    if literals is None or literals != literal_sequence(c.create_text, engine):
+        return "literals_changed", (
+            "the candidate's literals differ from the routine's redacted ones in number, "
+            "order or quote form"
+        )
+    created, created_before = created_objects(text, engine), created_objects(c.create_text, engine)
+    if created is None or created_before is None:
         return "not_one_statement", "the candidate's text does not read"
-    if after > before:
+    if _over(created, created_before):
         return "adds_objects", "the candidate creates an object the routine does not"
-    named, own = named_schemas(text, engine, c.kind), named_schemas(c.create_text, engine, c.kind)
-    if named is None or own is None:
+    writes, writes_before = written_statements(text, engine), written_statements(
+        c.create_text, engine
+    )
+    if writes is None or writes_before is None:
+        return "not_one_statement", "the candidate's text does not read"
+    if _over(writes, writes_before):
+        return "adds_statements", "the candidate writes or changes an object the routine does not"
+    named = named_schemas(text, engine, c.kind)
+    if named is None:
         return "not_one_statement", "the candidate's text does not read"
     allowed = (
         own | _SYSTEM_SCHEMAS[engine] | ({c.schema_name.casefold()} if c.schema_name else set())

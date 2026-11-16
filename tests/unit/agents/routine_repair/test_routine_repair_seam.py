@@ -177,7 +177,7 @@ def test_a_good_repair_waits_for_the_proof_and_is_never_proved(tmp_path):
             fx.WAL_REPAIRED.replace(
                 "SELECT pg_current_wal_lsn()", "SELECT audit.lsn_of(pg_current_wal_lsn())"
             ),
-            "names_other_schema",
+            "screen_refused",
         ),
         (
             fx.WAL_REPAIRED + "CREATE TABLE public.extra (a integer);\n",
@@ -463,7 +463,7 @@ def test_a_mysql_routine_gets_its_create_rebuilt_from_the_redacted_collection(tm
             lambda t: t.replace("rank", "rnk").replace(
                 "INTO r;", "INTO r;\n  INSERT INTO audit.log VALUES (1);"
             ),
-            ("refused", "names_other_schema"),
+            ("refused", "screen_refused"),
         ),
     ],
     ids=["repaired", "renamed", "signature", "other-schema"],
@@ -484,3 +484,23 @@ def test_a_mysql_candidate_is_checked_by_the_same_rules(tmp_path, edit, outcome)
     }
     (row,) = seam.apply_routine_repair_llm_output(plan, answer).routines
     assert (row.state, row.refusal) == outcome
+
+
+def test_a_collection_that_opted_out_of_every_body_sends_nothing(tmp_path):
+    # metadata.routine_capture.include_bodies = false (#1933): nothing goes to a model,
+    # whatever the rows and the artifact say (here they still hold bodies, collected).
+    from src.storage.collector_for_models import read_collector_for_models
+
+    seam = _seam()
+    col = fx.collector()
+    col["metadata"]["routine_capture"] = {"include_bodies": False}
+    store = fx.job(tmp_path, col=col, hide=False)
+    collector = read_collector_for_models(store, fx.DB, fx.JOB)
+    plan = seam.run_routine_repair_deterministic(collector, fx.migration())
+    assert plan.candidates == ()
+    request = json.dumps(seam.prepare_routine_repair_llm_input(plan))
+    assert fx.OPTED_OUT_MARK not in request and "wal_pos" not in request
+    status = seam.run_routine_repair(store, fx.DB, fx.JOB, llm_mode="external")
+    assert status["status"] == "complete" and status["counts"] == dict.fromkeys(
+        ("repaired_pending_proof", "refused", "no_answer", "not_repaired"), 0
+    )

@@ -36,6 +36,8 @@ _IMPORTERS = {
     "src/tools/data_movement/triggers_check.py",  # reads an event's status only (#1948)
     "src/tools/data_movement/view_scripts.py",  # writes step 1's views deploy script (#2082)
     "src/tools/routines/proof_run.py",  # loads them on the throwaway test cluster only (#1945)
+    # The routine repair seam (#1940): the collection-wide opt-out flag only, never a chunk.
+    "src/agents/routine_repair/handler.py",
 }
 _READERS = {"read_routine_sources", "RoutineSourcesChunk"}
 _PATHS = ("collector/routine_sources", "routine_sources.json", "routine_sources/part-")

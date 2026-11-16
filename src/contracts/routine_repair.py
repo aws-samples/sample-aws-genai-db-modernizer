@@ -55,8 +55,12 @@ RepairState = Literal["repaired_pending_proof", "refused", "no_answer", "not_rep
 RefusalCode = Literal[
     "not_one_statement",
     "renamed",
+    "screen_refused",
     "signature_changed",
+    "changes_privileges",
+    "literals_changed",
     "adds_objects",
+    "adds_statements",
     "names_other_schema",
     "unchanged",
     "duplicate_answer",

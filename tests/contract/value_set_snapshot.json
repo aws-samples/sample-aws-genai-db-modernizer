@@ -959,10 +959,14 @@
     "module": "routine_repair",
     "values": [
       "adds_objects",
+      "adds_statements",
+      "changes_privileges",
       "duplicate_answer",
+      "literals_changed",
       "names_other_schema",
       "not_one_statement",
       "renamed",
+      "screen_refused",
       "signature_changed",
       "unchanged"
     ],
