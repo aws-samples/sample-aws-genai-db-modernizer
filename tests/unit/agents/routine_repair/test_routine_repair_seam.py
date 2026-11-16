@@ -504,3 +504,31 @@ def test_a_collection_that_opted_out_of_every_body_sends_nothing(tmp_path):
     assert status["status"] == "complete" and status["counts"] == dict.fromkeys(
         ("repaired_pending_proof", "refused", "no_answer", "not_repaired"), 0
     )
+
+
+def test_a_tampered_artifact_cannot_widen_the_calls_a_repair_may_add(tmp_path):
+    # The new calls a repair may make come from the catalog's fix hints for the routine's
+    # failed rules, read at apply time; an artifact whose rule text names another function
+    # (here pg_terminate_backend) allows nothing more.
+    from src.contracts.routine_migration import RoutineMigrationContract
+    from src.storage.collector_for_models import read_collector_for_models
+
+    seam = _seam()
+    data = fx.migration().model_dump(mode="json")
+    for rule in data["rules"]:
+        if rule["rule_id"] == "postgresql-routine-v10-renamed-functions":
+            rule["fix_hint"] = "Call pg_terminate_backend() instead."
+    tampered = RoutineMigrationContract.model_validate(data)
+    store = fx.job(tmp_path)
+    plan = seam.run_routine_repair_deterministic(
+        read_collector_for_models(store, fx.DB, fx.JOB), tampered
+    )
+    killer = fx.WAL_REDACTED.replace(
+        "SELECT pg_current_xlog_location()",
+        "SELECT pg_terminate_backend(p), pg_current_xlog_location()",
+    )
+    (row,) = seam.apply_routine_repair_llm_output(plan, _answer(killer)).routines
+    assert (row.state, row.refusal) == ("refused", "adds_calls")
+    # The catalog's own fix hint still allows the real replacement.
+    (good,) = seam.apply_routine_repair_llm_output(plan, _answer()).routines
+    assert good.state == "repaired_pending_proof"
