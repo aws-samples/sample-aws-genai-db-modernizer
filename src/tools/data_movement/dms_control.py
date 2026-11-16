@@ -13,7 +13,7 @@ failure table under the target database and could not create it (``Cannot create
 ValidationFailure table``), so the failures it counted were recorded nowhere.
 
 ``awsdms_control`` is MySQL's default name, so a MySQL target keeps the database the DMS guide's
-target prerequisites already grant (``GRANT ALL PRIVILEGES ON awsdms_control.*``), and a
+target prerequisites already grant all privileges on (written with ``grant_database``), and a
 PostgreSQL target gets a schema of that name in the target database. The guide does not say
 whether DMS creates that schema or database itself, so step 1's DDL creates it (``IF NOT
 EXISTS``) and the DMS user's grants cover it, which works either way.
@@ -34,6 +34,10 @@ from collections.abc import Mapping
 from typing import Any
 
 CONTROL_SCHEMA = "awsdms_control"
+# The control tables DMS makes there (the guide's Control table task settings and AWS DMS data
+# validation), as a regular expression for a server's error text.
+CONTROL_TABLE_PATTERN = (r"awsdms_(?:apply_exceptions|status|suspended_tables|history"
+                         r"|validation_failures_v\d+)")  # fmt: skip
 
 
 def control_tables_settings() -> dict[str, str]:
@@ -66,25 +70,31 @@ def rerun_note(found: str, task_arn: str, region: str) -> list[str]:
     made its failure table. Only theirs, with their credentials: DMS modifies a task only once
     it is stopped (AWS DMS API Reference, ModifyReplicationTask), and ``/move step-1`` on a
     running or stopped task goes back to Prove, never to a deploy. The modify sends the task's
-    whole settings with the control schema added, never a partial document. On Aurora
+    whole settings document, its existing ``ControlTablesSettings`` object with
+    ``ControlSchema`` set, never a partial document or a second object. A stop costs a MySQL
+    source: the task resumes only while the source still keeps its binary logs, which it
+    purges once their retention period passes (``source_retention``). On Aurora
     PostgreSQL an older task writes its failures to ``public``, the documented default, so it
     gets no note."""
     named = f"names {found}" if found else "sets no DMS control schema"
     arn, where = shlex.quote(task_arn), shlex.quote(region)
-    setting = json.dumps({"ControlTablesSettings": {"ControlSchema": CONTROL_SCHEMA}})
     return [
         f"This task {named} (step 1 now sets {CONTROL_SCHEMA}): on Aurora MySQL, DMS 3.6.1 may "
         "not have made its failure table, so the failures it counted may be recorded nowhere. "
         "Run the first query below: when it names an awsdms_validation_failures table, read "
         "the failures there. When it names none, the failures already counted will not appear "
         "later by themselves.",
-        "To have DMS record them from then on, with your own credentials (while the task is "
-        "stopped the source keeps its change log for it): stop the task: aws dms "
+        "To have DMS record them from then on, with your own credentials: a resume applies the "
+        "changes the source made while the task was stopped as long as the source still keeps "
+        "its change log, and the source purges its binary logs once their retention period "
+        "passes, so keep the stop short. Stop the task: aws dms "
         f"stop-replication-task --replication-task-arn {arn} --region {where}",
         "Save its settings: aws dms describe-replication-tasks --filters "
         f"Name=replication-task-arn,Values={arn} --query "
         f"'ReplicationTasks[0].ReplicationTaskSettings' --output text --region {where} > "
-        f"task-settings.json, then add {setting[1:-1]} to that JSON object and run: aws dms "
+        f'task-settings.json. In that file, set "ControlSchema" to "{CONTROL_SCHEMA}" inside '
+        'its existing "ControlTablesSettings" object (the file is the full settings document), '
+        "then run: aws dms "
         f"modify-replication-task --replication-task-arn {arn} --replication-task-settings "
         f"file://task-settings.json --region {where}",
         f"Resume it: aws dms start-replication-task --replication-task-arn {arn} "

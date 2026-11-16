@@ -40,12 +40,21 @@ KNOWN = [
     ("postgresql_control_schema",
      'RetCode: SQL_ERROR SqlState: 42501 NativeError: 1 Message: ERROR: permission denied for '
      'schema "awsdms_control"', "USAGE, CREATE"),
+    # MySQL 8.0.46 and 8.4.13's own text (tests/integration/test_dms_control_grants_mysql.py):
+    # a CREATE TABLE names the table unqualified (1142), a USE names the database (1044).
     ("mysql_control_database",
-     "Access denied for user 'dms_user'@'%' to database 'awsdms_control'",
-     "GRANT ALL PRIVILEGES ON `awsdms_control`.*"),
+     "ERROR 1142 (42000) at line 1: CREATE command denied to user 'dms_user'@'localhost' for "
+     "table 'awsdms_apply_exceptions'", "GRANT ALL PRIVILEGES ON `awsdms\\_control`.*"),
+    ("mysql_control_database",
+     "RetCode: SQL_ERROR SqlState: 42000 NativeError: 1142 Message: [MySQL][ODBC 8.0(w) "
+     "Driver][mysqld-8.0.39]CREATE command denied to user 'dms_user'@'10.0.0.1' for table "
+     "'awsdms_validation_failures_v1'", "GRANT ALL PRIVILEGES ON `awsdms\\_control`.*"),
+    ("mysql_control_database",
+     "ERROR 1044 (42000) at line 1: Access denied for user 'dms_user'@'localhost' to database "
+     "'awsdms_control'", "GRANT ALL PRIVILEGES ON `awsdms\\_control`.*"),
     ("mysql_control_database",
      "CREATE command denied to user 'dms_user'@'10.0.0.1' for table "
-     "'awsdms_control.awsdms_apply_exceptions'", "GRANT ALL PRIVILEGES ON `awsdms_control`.*"),
+     "'awsdms_control.awsdms_apply_exceptions'", "GRANT ALL PRIVILEGES ON `awsdms\\_control`.*"),
 ]  # fmt: skip
 
 UNKNOWN = [
@@ -78,6 +87,9 @@ UNKNOWN = [
     "permission denied for schema public",
     "Access denied for user 'dms_user'@'%' to database 'wordpress'",
     "Cannot create ValidationFailure table for owner awsdms_control",
+    "CREATE command denied to user 'dms_user'@'localhost' for table 'wp_posts'",
+    "CREATE command denied to user 'dms_source'@'localhost' for table 'awsdms_heartbeat'",
+    "INSERT command denied to user 'dms_user'@'localhost' for table 'awsdms_apply_exceptions_old'",
 ]
 
 
