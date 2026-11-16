@@ -188,6 +188,8 @@ def test_dashboard_lists_both_jobs(page: Page, ui: str, all_runs: list[PipelineR
     text = page.inner_text("body")
     for r in all_runs:
         assert r.job_id in text or r.db in text, f"{r.db}/{r.job_id} not on dashboard"
+    # #2304: an unknown duration reads as a dash, never as a negative time.
+    assert "-1h" not in text and "-1m" not in text, text
     assert ev == {"console": [], "pageerror": [], "failed": []}
 
 
