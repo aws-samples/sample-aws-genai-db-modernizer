@@ -51,7 +51,7 @@ import zipfile
 from collections.abc import Iterator
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from contextlib import contextmanager
-from datetime import datetime
+from datetime import UTC, datetime
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
@@ -611,6 +611,20 @@ def phase_collect(
             sql_shadow = sql_shadow.restricted_to(capped.kept_query_ids)
         write_shadow_artifact(store, db_name, job_id, sql_shadow)
         table_refs = sql_shadow.status_summary()
+
+    # Record when the job started, where the API reads it (#2304). Without it the API
+    # falls back to the job folder's mtime, which moves forward as later phases add
+    # folders, so a finished job could start after it ended.
+    meta_path = f"{db_name}/{job_id}/_meta.json"
+    if not store.exists(meta_path):
+        store.write_json(
+            meta_path,
+            {
+                "job_id": job_id,
+                "database_name": db_name,
+                "started_at": datetime.now(UTC).isoformat(),
+            },
+        )
 
     # Write collector output
     collector_path = f"{db_name}/{job_id}/collector/output.json"

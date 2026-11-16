@@ -82,3 +82,49 @@ def test_assessment_list_duration_is_null_when_end_precedes_start(monkeypatch):
     by_id = {a["job_id"]: a for a in items}
     assert by_id["j1"]["duration_seconds"] is None
     assert by_id["j2"]["duration_seconds"] == 900
+
+
+# A stage whose end precedes its start has no known duration either (#2338 review).
+BACKWARDS_HISTORY = [
+    {
+        "name": "RunCollector",
+        "status": "completed",
+        "started_at": "2026-02-23T14:15:00+00:00",
+        "completed_at": "2026-02-23T14:00:00+00:00",
+    },
+    {
+        "name": "RunRefereeTriage",
+        "status": "completed",
+        "started_at": "2026-02-23T14:15:00+00:00",
+        "completed_at": "2026-02-23T14:30:00+00:00",
+    },
+]
+RUNNING_EXECUTION = {
+    "status": "RUNNING",
+    "started_at": "2026-02-23T14:00:00Z",
+    "stopped_at": None,
+    "input": {"database_name": "test_db", "source_database_type": "mysql"},
+}
+
+
+@pytest.fixture
+def stage_services():
+    sfn, s3 = MagicMock(), MagicMock()
+    sfn.describe_execution.return_value = RUNNING_EXECUTION
+    sfn.get_execution_history.return_value = BACKWARDS_HISTORY
+    sfn._execution_arn.return_value = "arn:test"
+    assessments.sfn_service, assessments.s3_service = sfn, s3
+    yield
+    assessments.sfn_service, assessments.s3_service = None, None
+
+
+def test_progress_stage_duration_is_null_when_end_precedes_start(stage_services):
+    stages = client.get("/api/v1/assessments/job-1").json()["progress"]["stages"]
+    assert stages[0]["duration_seconds"] is None
+    assert stages[1]["duration_seconds"] == 900
+
+
+def test_agent_duration_is_null_when_end_precedes_start(stage_services):
+    agents = client.get("/api/v1/assessments/job-1/agents").json()["agents"]
+    assert agents[0]["duration_seconds"] is None
+    assert agents[1]["duration_seconds"] == 900
