@@ -110,3 +110,15 @@ def test_every_postgresql_script_pins_standard_conforming_strings_before_its_tra
     store, contract = triggers_case(tmp_path / "t")
     _write_scripts(tmp_path / "t", store, contract)
     assert pin in _read(tmp_path / "t", "triggers-enable.sql").split("BEGIN;", 1)[0]
+
+
+def test_the_triggers_enable_script_pins_the_source_value_too(tmp_path):
+    from tests.unit.tools.data_movement.test_triggers_scripts import _pg_case as triggers_case
+    from tests.unit.tools.data_movement.test_triggers_scripts import _read, _write_scripts
+
+    store, contract = triggers_case(tmp_path)
+    store.write_json("shop/job1/collector/output.json", {"metadata": {"source_database": {
+        "engine": "postgresql", "settings": {"standard_conforming_strings": "off"}}}})  # fmt: skip
+    _write_scripts(tmp_path, store, contract)
+    head = _read(tmp_path, "triggers-enable.sql").split("BEGIN;", 1)[0]
+    assert "SET standard_conforming_strings = off;" in head and "as on the source" in head
