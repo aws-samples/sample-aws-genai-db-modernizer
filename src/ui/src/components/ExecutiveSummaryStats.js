@@ -5,6 +5,7 @@ import { memo } from 'react';
 import Box from "@cloudscape-design/components/box";
 import ColumnLayout from "@cloudscape-design/components/column-layout";
 import { displayEngine } from '../utils/engineNames';
+import { formatMoney, formatMonthlyMoney } from '../utils/format';
 
 /**
  * The executive summary's tiles on the results page (#1028).
@@ -148,7 +149,7 @@ const ExecutiveSummaryStats = memo(({
       {hasProjectedCost && (
         <div data-tile="projected-cost">
           <Box variant="awsui-key-label">{t('analysis-results.executive-summary.projected-cost')}</Box>
-          <Box fontSize="heading-m" fontWeight="bold">{`$${projectedCost.toFixed(2)}/mo`}</Box>
+          <Box fontSize="heading-m" fontWeight="bold">{formatMonthlyMoney(projectedCost)}</Box>
           {noEngineInScope && noEngineInScope.count > 0 && (
             <Box fontSize="body-s" color="text-body-secondary">
               <span data-figure="cost-excludes-no-engine">
@@ -181,7 +182,7 @@ const ExecutiveSummaryStats = memo(({
               <Box fontSize="heading-s" fontWeight="bold">
                 {typeof row.monthly_cost_usd === 'number'
                   ? t('analysis-results.executive-summary.retired-engine-saving', {
-                    engine: displayEngine(row.engine), cost: `$${row.monthly_cost_usd.toFixed(2)}`,
+                    engine: displayEngine(row.engine), cost: formatMoney(row.monthly_cost_usd),
                   })
                   : t(row.no_saving_reason
                     ? 'analysis-results.executive-summary.retired-engine-no-saving-why'

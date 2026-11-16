@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: MIT-0
 
 //##-- React
+import { formatRate } from "../utils/format";
 import { useState, useEffect, memo, useCallback, useMemo } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import { useTranslation } from 'react-i18next';
@@ -1301,7 +1302,7 @@ const AssignmentGatePage = memo(() => {
                             </Box>
                             <Box>
                               <Box variant="awsui-key-label">{t('assignment-gate.row-detail.calls-per-sec')}</Box>
-                              <Box>{details.calls_per_second?.toFixed(2) || '-'}</Box>
+                              <Box>{formatRate(details.calls_per_second)}</Box>
                             </Box>
                             <Box>
                               <Box variant="awsui-key-label">{t('assignment-gate.row-detail.avg-latency')}</Box>
