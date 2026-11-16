@@ -920,7 +920,7 @@ def test_stop_stops_a_running_task_and_waits_until_it_has_stopped(tmp_path, caps
     cred.stub("dms").add_response("stop_replication_task", {}, {"ReplicationTaskArn": TASK})
     _poll_task(cred, "stopping")
     _poll_task(cred, "stopped")
-    _settled(cred, reads=4)  # at 15 s, five stopped reads in a row span the 60 s settle (#2366)
+    _settled(cred, reads=12)  # at 15 s, 13 stopped reads in a row span the 180 s settle
     code = script.main(["stop", "--job-id", "job1", "--db", "shop", "--artifact-root", str(tmp_path),
                         "--approve", "--interval-seconds", "15"], clients=_clients(cred),
                        sleep=lambda _s: None)  # fmt: skip
@@ -930,12 +930,12 @@ def test_stop_stops_a_running_task_and_waits_until_it_has_stopped(tmp_path, caps
     out = json.loads(lines[0])
     assert out["status"] == "stopped" and out["task_status"] == "stopped"
     assert out["already_stopped"] is False and out["reached"] is True and out["task_arn"] == TASK
-    assert out["waited_seconds"] == 90 and out["settled"] is True and out["stopped_reads"] == 5
+    assert out["waited_seconds"] == 210 and out["settled"] is True and out["stopped_reads"] == 13
     assert "settle_note" not in out  # no flap: nothing to explain
     progress = captured.err.splitlines()
     assert progress == ["stop: the task is stopping (waited 15 s of 540 s)",
                         *(f"stop: the task is stopped (waited {w} s of 540 s)"
-                          for w in (30, 45, 60, 75, 90))]  # fmt: skip
+                          for w in range(30, 211, 15))]  # fmt: skip
     _no_pending(cred)
 
 
@@ -994,9 +994,9 @@ def test_stop_reports_a_task_that_has_not_stopped_by_the_deadline(tmp_path, caps
     _no_pending(cred)
 
 
-def _settled(cred, status="stopped", reads=2, **fields):
+def _settled(cred, status="stopped", reads=6, **fields):
     """The polls after a first not-running read that settle a stop at the 30 s interval (#2366):
-    three reads in a row over 60 s."""
+    seven reads in a row over 180 s."""
     for _ in range(reads):
         _poll_task(cred, status, **fields)
 
@@ -1015,8 +1015,8 @@ def test_stop_waits_through_a_stopped_running_stopped_flap_until_the_stop_settle
     _settled(cred)
     code, out = _run(tmp_path, "stop", "--approve", clients=_clients(cred), capsys=capsys)
     assert code == 0 and out["status"] == "stopped" and out["reached"] is True
-    assert out["settled"] is True and out["stopped_reads"] == script.STOP_SETTLE_READS
-    assert out["waited_seconds"] == 180  # 3 reads in a row over 60 s, after the flap
+    assert out["settled"] is True
+    assert out["stopped_reads"] == 7 and out["waited_seconds"] == 300  # 180 s after the flap
     assert "then running again a moment later" in out["settle_note"]
     _no_pending(cred)  # one stop only: the flap is waited through, never stopped again
 
@@ -1034,19 +1034,18 @@ def test_stop_does_not_take_the_first_stopped_read_for_a_settled_stop(tmp_path, 
                      capsys=capsys)  # fmt: skip
     assert code == 0 and out["status"] == "stopping" and out["reached"] is False
     assert out["task_status"] == "stopped" and out["settled"] is False and out["stopped_reads"] == 1
-    assert "not yet on 3 reads in a row over 60 s" in out["settle_message"]
+    assert "not yet on 3 reads in a row over 180 s" in out["settle_message"]
     assert "teardown reads the task until its stop settles" in out["settle_message"]
     assert "settle_note" not in out
     _no_pending(cred)
 
 
 def test_the_settle_spans_its_seconds_at_any_poll_interval():
-    """Three reads 10 s apart span 20 s: the settle reads on until they span 60 s."""
+    """Three reads 10 s apart span 20 s: the settle reads on until they span 180 s."""
     settle = script._StopSettle(10)
-    assert [settle(s) for s in ["stopped"] * 7] == [False] * 6 + [True]
+    assert [settle(s) for s in ["stopped"] * 19] == [False] * 18 + [True]
     settle = script._StopSettle(30)
-    assert [settle(s) for s in ("stopped", "running", "stopped", "stopped", "stopped")] == [
-        False, False, False, False, True]  # fmt: skip
+    assert [settle(s) for s in ("stopped", "running", *["stopped"] * 7)] == [False] * 8 + [True]
     assert settle.flapped is True
     assert script._StopSettle(30)("deleted") is True  # a task that is gone has nothing to settle
 
@@ -1100,11 +1099,10 @@ def test_restart_validation_stops_the_task_then_resumes_it_and_waits_until_it_ru
     code, out, progress = _restart(tmp_path, capsys, cred)
     assert code == 0 and out["status"] == "restarted" and out["reached"] is True
     assert out["resumed"] is True and out["task_status"] == "running" and out["task_arn"] == TASK
-    assert out["stack_name"] == STACK and out["waited_seconds"] == 180
+    assert out["stack_name"] == STACK and out["waited_seconds"] == 300
     assert progress == [f"restart-validation: the task is {s} (waited {w} s of 540 s)"
-                        for s, w in (("stopping", 30), ("stopped", 60), ("stopped", 90),
-                                     ("stopped", 120), ("starting", 150),
-                                     ("running", 180))]  # fmt: skip
+                        for s, w in (("stopping", 30), *(("stopped", w) for w in range(60, 241, 30)),
+                                     ("starting", 270), ("running", 300))]  # fmt: skip
     _no_pending(cred)  # stop, then resume-processing (never start-replication), in that order
 
 
@@ -1150,9 +1148,9 @@ def test_restart_validation_reports_a_task_that_is_not_running_by_the_deadline(t
     _resume(cred)
     for _ in range(2):
         _poll_task(cred, "starting")
-    code, out, _ = _restart(tmp_path, capsys, cred, "--wait-seconds", "150")
+    code, out, _ = _restart(tmp_path, capsys, cred, "--wait-seconds", "270")
     assert code == 0 and out["status"] == "starting" and out["reached"] is False
-    assert out["resumed"] is True and out["waited_seconds"] == 150  # one budget for both waits
+    assert out["resumed"] is True and out["waited_seconds"] == 270  # one budget for both waits
     assert out["task_status"] == "starting"
     _no_pending(cred)
 
@@ -1233,10 +1231,9 @@ def test_teardown_deletes_the_steps_stack_once_its_task_has_stopped_and_waits(tm
     out = json.loads(lines[0])
     assert out["status"] == "deleted" and out["already_deleted"] is False and out["reached"] is True
     assert captured.err.splitlines() == [
-        "teardown: the task is stopped (waited 30 s of 540 s)",
-        "teardown: the task is stopped (waited 60 s of 540 s)",
-        "teardown: the stack is DELETE_IN_PROGRESS (waited 90 s of 540 s)",
-        "teardown: the stack is deleted (waited 120 s of 540 s)",
+        *(f"teardown: the task is stopped (waited {w} s of 540 s)" for w in range(30, 181, 30)),
+        "teardown: the stack is DELETE_IN_PROGRESS (waited 210 s of 540 s)",
+        "teardown: the stack is deleted (waited 240 s of 540 s)",
     ]
     assert not _marker(tmp_path).exists()  # nothing local records or grants a delete
     _no_pending(cred)
@@ -1328,7 +1325,7 @@ def test_a_delete_failed_after_a_timed_out_wait_needs_a_new_run_to_delete_again(
     cfn.add_response("delete_stack", {}, {"StackName": STACK_ID})
     for _ in range(2):
         _poll(cred, "DELETE_IN_PROGRESS")
-    code, out = _run(tmp_path, "teardown", "--approve", "--wait-seconds", "120",
+    code, out = _run(tmp_path, "teardown", "--approve", "--wait-seconds", "240",
                      clients=_clients(cred), capsys=capsys)  # fmt: skip
     assert code == 0 and out["status"] == "deleting" and out["reached"] is False
     _stack(
@@ -1411,7 +1408,7 @@ def test_teardown_waits_for_the_stop_to_settle_before_it_deletes(tmp_path, capsy
     code, out, progress = _teardown_cli(tmp_path, capsys, cred)
     assert code == 0 and out["status"] == "deleted" and out["reached"] is True
     assert out["settled"] is True and "then running again" in out["settle_note"]
-    assert out["waited_seconds"] == 150 and "delete_retried" not in out
+    assert out["waited_seconds"] == 270 and "delete_retried" not in out
     assert progress[:4] == [f"teardown: the task is {s} (waited {w} s of 540 s)" for s, w in
                             (("running", 30), ("stopped", 60), ("stopped", 90),
                              ("stopped", 120))]  # fmt: skip
@@ -1427,7 +1424,9 @@ def test_teardown_sends_no_delete_while_a_task_that_read_stopped_runs_again(tmp_
     for _ in range(2):
         _poll_task(cred, "running")
     code, out, _ = _teardown_cli(tmp_path, capsys, cred, "--wait-seconds", "60")
-    assert code == 1 and out["message"].startswith("DMS reports the task running: it read stopped")
+    assert code == 1 and out["message"].startswith(
+        "DMS reports the task running: it still reads running after the settle period (180 s)"
+    )
     assert "run stop first" in out["message"] and "teardown sent no delete" in out["message"]
     _no_pending(cred)  # and no delete_stack was queued or made
 
@@ -1440,7 +1439,7 @@ def test_teardown_sends_no_delete_before_the_stop_settles(tmp_path, capsys):
     _task_by_arn(cred, "stopped")
     _poll_task(cred, "stopped")
     code, out, _ = _teardown_cli(tmp_path, capsys, cred, "--wait-seconds", "30")
-    assert code == 1 and "not yet on 3 reads in a row over 60 s" in out["message"]
+    assert code == 1 and "not yet on 3 reads in a row over 180 s" in out["message"]
     assert "run teardown again" in out["message"] and "teardown sent no delete" in out["message"]
     _no_pending(cred)
 
@@ -1474,13 +1473,13 @@ def test_a_delete_dms_refused_as_running_is_retried_once_after_the_stop_settles(
     _poll(cred, "DELETE_FAILED", reason="The following resource(s) failed to delete: "
           "[ReplicationTask]. ")  # fmt: skip
     _delete_events(cred)
-    _settled(cred, reads=3)  # fresh reads: the earlier ones do not count
+    _settled(cred, reads=7)  # fresh reads: the earlier ones do not count
     cfn.add_response("delete_stack", {}, {"StackName": STACK_ID})
     _poll(cred, "DELETE_COMPLETE")
     code, out, progress = _teardown_cli(tmp_path, capsys, cred)
     assert code == 0 and out["status"] == "deleted" and out["reached"] is True
     assert out["delete_retried"] is True and "is running" in out["first_delete_failure"]
-    assert out["settled"] is True and out["waited_seconds"] == 210
+    assert out["settled"] is True and out["waited_seconds"] == 450
     assert any("delete was refused: DMS still treated the task as running" in p for p in progress)
     _no_pending(cred)  # two deletes, the second only after three fresh stopped reads
 
@@ -1499,7 +1498,7 @@ def test_a_delete_refused_as_running_twice_is_reported_and_not_retried_again(tmp
               "[ReplicationTask]. ")  # fmt: skip
         if attempt == 0:
             _delete_events(cred)
-            _settled(cred, reads=3)
+            _settled(cred, reads=7)
     code, out, _ = _teardown_cli(tmp_path, capsys, cred)
     assert code == 0 and out["status"] == "delete_failed" and out["reached"] is False
     assert "is running" in out["first_delete_failure"] and out["delete_retried"] is True
@@ -1541,11 +1540,95 @@ def test_a_retry_that_cannot_settle_reports_the_failed_delete_and_sends_no_secon
           "[ReplicationTask]. ")  # fmt: skip
     _delete_events(cred)
     _poll_task(cred, "running")
-    code, out, _ = _teardown_cli(tmp_path, capsys, cred, "--wait-seconds", "120")
+    code, out, _ = _teardown_cli(tmp_path, capsys, cred, "--wait-seconds", "240")
     assert code == 0 and out["status"] == "delete_failed"
     assert "is running" in out["first_delete_failure"]
     assert "run stop first" in out["retry_refused"] and "no second delete" in out["retry_refused"]
     _no_pending(cred)
+
+
+def test_teardown_settles_a_running_read_dms_gives_just_after_the_stop(tmp_path, capsys):
+    """#2366 review, the WordPress rehearsal: teardown's first read saw the task running 79 s
+    after stop's first stopped read. A running read within the settle period after the task's
+    StopDate is settled through, then decided, never refused at once."""
+    _job(tmp_path)
+    cred = StubbedCredMgr()
+    _stack(cred)
+    _resources(cred)
+    stopped_at = datetime.now(UTC) - timedelta(seconds=110)  # 30 s of stop, then 79 s more
+    _task_by_arn(cred, "running", ReplicationTaskStats={"StopDate": stopped_at})
+    _poll_task(cred, "stopped")
+    _settled(cred)
+    cred.stub("cloudformation").add_response("delete_stack", {}, {"StackName": STACK_ID})
+    _poll(cred, "DELETE_COMPLETE")
+    code, out, _ = _teardown_cli(tmp_path, capsys, cred)
+    assert code == 0 and out["status"] == "deleted" and out["settled"] is True
+    assert out["waited_seconds"] == 240
+    _no_pending(cred)
+
+
+@pytest.mark.passes_on_main  # a task running long after its stop is refused, as before
+def test_teardown_refuses_at_once_a_task_that_runs_long_after_its_stop(tmp_path, capsys):
+    _job(tmp_path)
+    cred = StubbedCredMgr()
+    _stack(cred)
+    _resources(cred)
+    _task_by_arn(cred, "running", ReplicationTaskStats={"StopDate": HOUR_AGO})
+    code, out, _ = _teardown_cli(tmp_path, capsys, cred)
+    assert code == 1 and "run stop first" in out["message"]
+    _no_pending(cred)  # no poll and no delete
+
+
+@pytest.mark.parametrize("interval", [190, 280, 300])
+def test_stop_and_teardown_settle_within_the_wait_at_any_interval(tmp_path, capsys, interval):
+    """#2366 review: at 190 s and over the settle never fit in 540 s; it polls at most every
+    SETTLE_POLL_SECONDS, so a stop and a teardown finish."""
+    assert script.settle_interval(interval) == script.SETTLE_POLL_SECONDS == 90
+    _job(tmp_path)
+    cred = StubbedCredMgr()
+    _stack(cred)
+    _resources(cred)
+    _task_by_arn(cred, "running")
+    cred.stub("dms").add_response("stop_replication_task", {}, {"ReplicationTaskArn": TASK})
+    _poll_task(cred, "stopping")
+    _settled(cred, reads=3)  # 3 stopped reads 90 s apart span 180 s
+    code, out = _run(tmp_path, "stop", "--approve", "--interval-seconds", str(interval),
+                     clients=_clients(cred), capsys=capsys)  # fmt: skip
+    assert code == 0 and out["status"] == "stopped" and out["waited_seconds"] == 360
+    _no_pending(cred)
+    cred = StubbedCredMgr()
+    _stack(cred)
+    _resources(cred)
+    _task_by_arn(cred, "stopped")
+    _settled(cred, reads=2)
+    cred.stub("cloudformation").add_response("delete_stack", {}, {"StackName": STACK_ID})
+    _poll(cred, "DELETE_COMPLETE")
+    code, out = _run(tmp_path, "teardown", "--approve", "--interval-seconds", str(interval),
+                     clients=_clients(cred), capsys=capsys)  # fmt: skip
+    assert code == 0 and out["status"] == "deleted" and out["settled"] is True
+    _no_pending(cred)
+
+
+def test_the_retry_after_a_running_refusal_reads_a_never_started_task_again_first(tmp_path, capsys):
+    """#2366 review: a task that read ready at decision time has no stop to settle, but the
+    second delete after an "is running" refusal still waits on fresh reads."""
+    _job(tmp_path)
+    cred = StubbedCredMgr()
+    _stack(cred)
+    _resources(cred)
+    _task_by_arn(cred, "ready")
+    cfn = cred.stub("cloudformation")
+    cfn.add_response("delete_stack", {}, {"StackName": STACK_ID})
+    _poll(cred, "DELETE_FAILED", reason="The following resource(s) failed to delete: "
+          "[ReplicationTask]. ")  # fmt: skip
+    _delete_events(cred)
+    _settled(cred, reads=7)
+    cfn.add_response("delete_stack", {}, {"StackName": STACK_ID})
+    _poll(cred, "DELETE_COMPLETE")
+    code, out, _ = _teardown_cli(tmp_path, capsys, cred)
+    assert code == 0 and out["status"] == "deleted" and out["delete_retried"] is True
+    assert out["waited_seconds"] == 270
+    _no_pending(cred)  # the second delete only after seven fresh reads
 
 
 def test_once_the_task_is_gone_the_instance_and_endpoint_tags_prove_the_stack_is_this_jobs(
@@ -2790,7 +2873,7 @@ def test_teardown_names_the_binlog_retention_on_a_mysql_source(tmp_path, capsys)
     _settled(cred)
     cred.stub("cloudformation").add_response("delete_stack", {}, {"StackName": STACK_ID})
     _poll(cred, "DELETE_COMPLETE")
-    code, out = _run(tmp_path, "teardown", "--approve", "--wait-seconds", "90",
+    code, out = _run(tmp_path, "teardown", "--approve", "--wait-seconds", "210",
                      "--interval-seconds", "30", clients=_clients(cred), capsys=capsys)  # fmt: skip
     assert code == 0 and out["status"] == "deleted", out
     assert "binary log retention" in out["source_reminder"]
@@ -3024,7 +3107,7 @@ def test_retry_reloads_a_task_whose_full_load_never_started_and_waits_until_it_r
     _start(cred, "reload-target")
     _poll_task(cred, "starting")
     _poll_task(cred, "running")
-    code, out = _cli(tmp_path, capsys, cred, "retry")
+    code, out = _cli(tmp_path, capsys, cred, "retry", "--target-empty")
     assert code == 0 and out["status"] == "retried" and out["reached"] is True
     assert out["task_status"] == "running" and out["tables_checked"] == 2
     _no_pending(cred)  # every page of statistics read before the reload
@@ -3037,7 +3120,7 @@ def test_retry_reloads_a_task_that_failed_before_it_had_table_statistics(tmp_pat
     _loaded(cred)
     _start(cred, "reload-target")
     _poll_task(cred, "running")
-    code, out = _cli(tmp_path, capsys, cred, "retry")
+    code, out = _cli(tmp_path, capsys, cred, "retry", "--target-empty")
     assert code == 0 and out["status"] == "retried" and out["tables_checked"] == 0
     _no_pending(cred)
 
@@ -3050,7 +3133,7 @@ def test_a_retry_that_reads_failed_until_the_deadline_is_reported_failed(tmp_pat
     _start(cred, "reload-target")
     for _ in range(2):
         _poll_task(cred, "failed", **GRANTS)
-    code, out = _cli(tmp_path, capsys, cred, "retry", "--wait-seconds", "60")
+    code, out = _cli(tmp_path, capsys, cred, "retry", "--target-empty", "--wait-seconds", "60")
     assert code == 0 and out["status"] == "retry_failed" and out["reached"] is False
     assert "REPLICATION CLIENT" in out["hint"]
     _no_pending(cred)
@@ -3152,7 +3235,7 @@ def test_retry_reloads_a_task_that_failed_before_any_table_loaded(tmp_path, caps
     _table_stats(cred, [_before_load(t) for t in AT_ONCE_TABLES])
     _start(cred, "reload-target")
     _poll_task(cred, "running")
-    code, out = _cli(tmp_path, capsys, cred, "retry")
+    code, out = _cli(tmp_path, capsys, cred, "retry", "--target-empty")
     assert code == 0 and out["status"] == "retried" and out["tables_checked"] == 3
     _no_pending(cred)
 
@@ -3160,8 +3243,7 @@ def test_retry_reloads_a_task_that_failed_before_any_table_loaded(tmp_path, caps
 def test_the_prove_line_offers_retry_for_a_task_that_failed_before_any_table_loaded(
     tmp_path, capsys
 ):
-    _job(tmp_path)
-    _pg_plan(tmp_path)
+    _job(tmp_path)  # its contract names the tables the check covers
     cred = StubbedCredMgr()
     _failed_status(cred, stats=FAILED_AT_ONCE["ReplicationTaskStats"],
                    tables=[_before_load(t) for t in AT_ONCE_TABLES], **FATAL)  # fmt: skip
@@ -3169,6 +3251,8 @@ def test_the_prove_line_offers_retry_for_a_task_that_failed_before_any_table_loa
     out = _lines(capsys)[-1]
     assert out["phase"] == "task_stopped" and out["recovery"] == "retry"
     assert "recovery_refused" not in out and "customer_steps" not in out
+    # Offered with the question the customer answers first, and its read-only check.
+    assert out["retry_needs"] == "empty_target" and out["empty_target"]["check_on_target"]
     _no_pending(cred)
 
 
@@ -3212,6 +3296,38 @@ def test_retry_refuses_a_mix_of_table_states_naming_each_by_what_it_shows(tmp_pa
     assert "public.plugin_store_rows is Before load" in message
     assert "public.plugin_store_rows was" not in message
     assert "public.plugin_store_rows FullLoad" not in message
+    _no_pending(cred)
+
+
+def test_retry_without_the_customers_empty_target_answer_sends_nothing(tmp_path, capsys):
+    """#2365 review: an earlier run loaded rows, the customer reloaded the task without
+    emptying the tables, and the reload failed at once. DMS restarted the table statistics, so
+    every table reads Before load at 0, exactly as on a first start. Retry runs only once the
+    customer's read-only empty-target check on Aurora names no table."""
+    _job(tmp_path)  # its contract names the tables the check covers
+    cred = StubbedCredMgr()
+    _owned_task(cred, "failed", **FATAL, **FAILED_AT_ONCE)
+    _table_stats(cred, [_before_load(t) for t in AT_ONCE_TABLES])
+    code, out = _cli(tmp_path, capsys, cred, "retry")
+    assert code == 1 and out["kind"] == "needs_empty_target"
+    assert out["retry_needs"] == "empty_target" and "--target-empty" in out["message"]
+    assert "cannot show rows an earlier attempt left on Aurora" in out["message"]
+    assert out["empty_target"]["question"].startswith("Is every table of the step empty")
+    assert (
+        "WHERE EXISTS (SELECT 1 FROM `shop`.`orders`)" in out["empty_target"]["check_on_target"][-1]
+    )
+    _no_pending(cred)  # no start of any kind
+
+
+def test_the_empty_target_answer_never_overrides_a_table_that_loaded_rows(tmp_path, capsys):
+    _job(tmp_path)
+    _pg_plan(tmp_path)
+    cred = StubbedCredMgr()
+    _owned_task(cred, "failed", **FATAL, **FAILED_AT_ONCE)
+    _table_stats(cred, [_before_load("plugin_store_rows"), _before_load("posts", rows=9)])
+    code, out = _cli(tmp_path, capsys, cred, "retry", "--target-empty")
+    assert code == 1 and out["kind"] == "target_may_hold_rows"
+    assert "public.posts FullLoadRows is 9" in out["message"]
     _no_pending(cred)
 
 
@@ -3285,7 +3401,8 @@ def test_recovery_always_names_a_command_that_would_run(tmp_path, capsys, status
         if command == named:
             _start(cred, start_type)
             _poll_task(cred, "running")
-        code, out = _cli(tmp_path, capsys, cred, command)
+        confirmed = ["--target-empty"] if command == "retry" else []  # the customer's answer
+        code, out = _cli(tmp_path, capsys, cred, command, *confirmed)
         if command == named:
             assert code == 0 and out["status"] in ("resumed", "retried"), out
         else:
@@ -3399,15 +3516,16 @@ def _log_failed_status(cred, log_lines, *, status="failed", instance="dm-job1-ri
     _stack(cred)
     _connections(cred)
     stop = datetime(2026, 11, 16, 15, 15, 40, tzinfo=UTC)
+    started = stop - timedelta(seconds=2)  # the Discourse run failed 2 s after its start
     cred.stub("dms").add_response("describe_replication_tasks", {"ReplicationTasks": [{
         "ReplicationTaskArn": TASK, "Status": status, **(fields or GENERIC),
         "ReplicationTaskStats": {"FullLoadProgressPercent": 0, "TablesQueued": 1,
-                                 "StopDate": stop}}]})  # fmt: skip
+                                 "StartDate": started, "StopDate": stop}}]})  # fmt: skip
     if log_lines is not None:
         cred.stub("dms").add_response("describe_replication_instances", {"ReplicationInstances": [
             {"ReplicationInstanceArn": INSTANCE, "ReplicationInstanceIdentifier": instance}]},
             {"Filters": [{"Name": "replication-instance-arn", "Values": [INSTANCE]}]})  # fmt: skip
-        start = int((stop - timedelta(minutes=15)).timestamp() * 1000)
+        start = int(started.timestamp() * 1000)  # this run only: from its StartDate
         end = int((stop + timedelta(seconds=60)).timestamp() * 1000)
         cred.stub("logs").add_response(
             "filter_log_events",
@@ -3441,7 +3559,8 @@ def test_prove_matches_the_hint_against_the_task_log_and_prints_no_log_text(tmp_
     for text in ("permission denied", "42501", "SQL_ERROR", "ar_odbc_stmt", "1022502",
                  "TARGET_APPLY", "VALIDATOR_TARGE", "2026-11-16T15:15"):  # fmt: skip
         assert text not in printed, text  # no log text, anywhere on the output
-    assert out["recovery"] == "retry"  # and nothing loaded, so retry is offered (#2365)
+    # Nothing loaded, so retry is offered, once the customer's empty-target check says so.
+    assert out["recovery"] == "retry" and out["retry_needs"] == "empty_target"
     _no_pending(cred)
 
 
@@ -3492,8 +3611,11 @@ def test_a_profile_that_may_not_read_the_task_log_leaves_the_hint_null(tmp_path,
     cred.stub("dms").add_response("describe_table_statistics", {
         "ReplicationTaskArn": TASK, "TableStatistics": []})  # fmt: skip
     code = _status_with_logs(tmp_path, cred)
-    out = _lines(capsys)[-1]
+    printed = capsys.readouterr().out
+    out = json.loads(printed.splitlines()[-1])
     assert code == 0 and out["phase"] == "task_stopped" and out["hint"] is None
+    for text in ("AccessDenied", "not allowed"):
+        assert text not in printed, text  # the refused read leaves no error text on the line
     _no_pending(cred)
 
 
@@ -3502,16 +3624,31 @@ def test_a_profile_that_may_not_read_the_task_log_leaves_the_hint_null(tmp_path,
     {"StopReason": "Stop Reason NORMAL", "LastFailureMessage": GENERIC_FATAL},  # stopped by hand
 ])  # fmt: skip
 def test_the_task_log_is_read_only_for_a_failure_dms_message_names_no_hint_for(
-    tmp_path, capsys, fields
+    tmp_path, capsys, fields, monkeypatch
 ):
     _job(tmp_path)
     cred = StubbedCredMgr()
     _log_failed_status(cred, None, status="failed" if fields is GRANTS else "stopped", **fields)
+    # Each log read records itself and raises what the log read never catches: an unstubbed
+    # call raises a BotoCoreError, which it swallows, so the calls themselves are checked.
+    tried: list[str] = []
+
+    def never(name):
+        def call(**_kwargs):
+            tried.append(name)
+            raise AssertionError(f"{name} called")
+
+        return call
+
+    monkeypatch.setattr(cred.client("dms"), "describe_replication_instances",
+                        never("DescribeReplicationInstances"))  # fmt: skip
+    monkeypatch.setattr(cred.client("logs"), "filter_log_events", never("FilterLogEvents"))
     _status_with_logs(tmp_path, cred)
     out = _lines(capsys)[-1]
     assert "hint_source" not in out
     assert (out["hint"] is not None) == (fields is GRANTS)
-    _no_pending(cred)  # no DescribeReplicationInstances and no FilterLogEvents was stubbed
+    assert tried == [] and out["status"] == "complete", out
+    _no_pending(cred)
 
 
 def test_only_status_asks_for_a_cloudwatch_logs_client(tmp_path, capsys, monkeypatch):
@@ -3531,6 +3668,45 @@ def test_only_status_asks_for_a_cloudwatch_logs_client(tmp_path, capsys, monkeyp
                      str(tmp_path)], sleep=lambda _s: None)  # fmt: skip
     capsys.readouterr()
     assert [("logs" in c.asked_for) for c in made] == [True, False, False]
+
+
+def test_status_makes_only_the_read_calls_the_readme_lists(tmp_path, capsys):
+    """README's status permission list covers every call status makes: a failed task read with
+    its log, a running task with its capture lag, and the task_stopped wait."""
+    readme = (REPO_ROOT / "infrastructure" / "cloudformation" / "data-movement" /
+              "README.md").read_text()  # fmt: skip
+    sentence = readme.split("`status` (Prove) makes only read calls", 1)[1].split(". ", 1)[0]
+    listed = set(re.findall(r"`([a-z]+:[A-Za-z]+)`", sentence))
+    prefix = {"cloudformation": "cloudformation", "dms": "dms", "cloudwatch": "cloudwatch",
+              "logs": "logs"}  # fmt: skip
+    made: set[str] = set()
+
+    def record(cred):
+        for service in prefix:
+            cred.client(service).meta.events.register_first(
+                "provide-client-params",
+                lambda model, service=service, **_kw: made.add(f"{prefix[service]}:{model.name}"),
+            )
+
+    _job(tmp_path)
+    cred = StubbedCredMgr()
+    record(cred)
+    _log_failed_status(cred, PG_DENIAL_LOG)
+    _status_with_logs(tmp_path, cred)
+    cred = StubbedCredMgr()
+    record(cred)
+    _prove_poll(cred, _rows(validated=2))
+    _lag(cred)
+    script.status(_clients(cred), STACK, _reader(cred))
+    cred = StubbedCredMgr()
+    record(cred)
+    _stack(cred)
+    _task_rows(cred)
+    _poll_task(cred, "stopped")
+    script.wait_status(_clients(cred), STACK, "task_stopped", 0, 30, sleep=lambda _s: None)
+    capsys.readouterr()
+    assert made and made <= listed, made - listed
+    assert {"logs:FilterLogEvents", "dms:DescribeReplicationInstances"} <= made
 
 
 def test_the_task_stopped_wait_and_stop_lines_carry_the_hint():

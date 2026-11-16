@@ -566,8 +566,12 @@ def _recovery() -> str:
 
 def test_a_stopped_task_is_offered_one_resume_and_a_failed_one_one_retry() -> None:
     prove = _bash_commands(_section("Stage 4: Prove"))
-    for command in ("resume", "retry"):
-        line = f"uv run python scripts/run_dms_step.py {command} --job-id {{job_id}} --db {{db}} --approve"
+    # retry carries the customer's empty-target answer (#2365); resume needs none.
+    for command, extra in (("resume", ""), ("retry", " --target-empty")):
+        line = (
+            f"uv run python scripts/run_dms_step.py {command} --job-id {{job_id}} --db {{db}} "
+            f"--approve{extra}"
+        )
         assert line in prove, command
     recovery = _recovery()
     resume_q = "Resume the replication task of stack {stack_name} now?"
@@ -583,6 +587,8 @@ def test_a_stopped_task_is_offered_one_resume_and_a_failed_one_one_retry() -> No
         assert words in resume, words
     retry = recovery[recovery.index("`recovery` `retry`") : recovery.index(retry_q)]
     for words in ("every table still `Before load`", "`FullLoadRows`", "refuses and changes nothing",
+                  "`retry_needs` is `empty_target`", "`check_on_target` verbatim",
+                  "Only once the customer confirms it named no table",
                   "may already hold rows"):  # fmt: skip
         assert words in retry, words
     assert "the Aurora tables are still empty" not in recovery  # more than the check proves

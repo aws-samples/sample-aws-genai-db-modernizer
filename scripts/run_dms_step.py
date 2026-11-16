@@ -248,8 +248,12 @@ TASK_RUNNING = {"running", "starting"}  # stop-replication-task stops these
 # DMS can read a task stopped and, moments later, running again (#2366): a stop counts as
 # settled only once the task reads not running on this many polls in a row, spanning at least
 # this long. A read that it runs again starts the count over.
+# In the #2135 WordPress rehearsal, teardown read the task running 79 s after stop's first
+# stopped read: the settle is more than twice that gap.
 STOP_SETTLE_READS = 3
-STOP_SETTLE_SECONDS = 60
+STOP_SETTLE_SECONDS = 180
+# The settle polls at most this far apart, so any --interval-seconds settles within 540 s.
+SETTLE_POLL_SECONDS = STOP_SETTLE_SECONDS // (STOP_SETTLE_READS - 1)
 # The delete DMS refuses while it still treats the task as running (#2366): teardown waits for
 # the stop to settle again and deletes once more, at most once per run.
 DELETE_REFUSED_RUNNING = re.compile(r"\bis running\b", re.IGNORECASE)
@@ -346,6 +350,8 @@ class StepsContext:
     region: str
     family: str | None
     dms_version: str | None = None  # the plan's DMS engine version: where validation fails go
+    # plan's empty_target (question and read-only check): what retry asks first (#2365)
+    empty_target: dict[str, Any] | None = None
 
 
 # The logical ids and types dms-step-1.yaml creates: stop and teardown act only on a stack that
@@ -488,9 +494,16 @@ def _parser() -> argparse.ArgumentParser:
     )  # fmt: skip
     p.add_argument("--wait-seconds", type=int, default=None,
                    help=f"status: default 0; {', '.join(WAITS)}: default {MAX_WAIT_SECONDS}")  # fmt: skip
-    p.add_argument("--interval-seconds", type=int, default=30)
+    p.add_argument(
+        "--interval-seconds",
+        type=int,
+        default=30,
+        help="the poll interval (a " "stop's wait and its settle poll at most every 90 s, #2366)",
+    )
     p.add_argument("--target-user", help="routines: the Aurora MySQL user the DEFINER clauses "
                    "name (default: the routine-migration artifact's)")  # fmt: skip
+    p.add_argument("--target-empty", action="store_true", help="retry: the customer ran plan's "
+                   "empty_target check on Aurora and it named no table (#2365)")  # fmt: skip
     p.add_argument("--resume", action="store_true", help="triggers-scripts (Aurora MySQL): write "
                    "triggers-enable-resume.sql with only what triggers-enable-check.tsv shows missing")  # fmt: skip
     return p
@@ -681,7 +694,8 @@ def _status_context(root: str, db: str, job_id: str, region: str) -> StepsContex
     from src.tools.data_movement.table_errors import dms_version, step_plan
 
     return StepsContext(region, source_family(root, db, job_id),
-                        dms_version(step_plan(root, db, job_id)))  # fmt: skip
+                        dms_version(step_plan(root, db, job_id)),
+                        empty_target(root, db, job_id))  # fmt: skip
 
 
 def _lob_sizes_settled(root: str, db: str, job_id: str, inputs: MoveInputs) -> None:
@@ -972,11 +986,30 @@ def _recovery_fields(
     """``recovery`` for a stopped or failed task and, when neither command would run, the
     customer's own steps (``tables_to_empty``, ``customer_steps``) with why (#2061)."""
     plan, why = recovery_plan(task, tables)
+    if plan == RETRY:  # it runs once the customer confirms every table is empty (#2365)
+        return {"recovery": plan, **_empty_target_fields(steps)}
     if plan != "steps":
         return {"recovery": plan}
     found: dict[str, Any] = {"recovery": None, "recovery_refused": "; ".join(why)}
     if steps is not None:
         found.update(customer_steps(task, tables, steps))
+    return found
+
+
+# Why retry needs the customer's empty-target answer (#2365): DMS restarts every table's
+# statistics with each reload, so a reload over rows an earlier attempt left, that failed at
+# once, reads like a first start that failed at once (every table Before load at 0).
+RETRY_NEEDS = ("DMS's statistics show no table of this attempt loaded a row, but DMS restarts "
+               "them with each reload, so they cannot show rows an earlier attempt left on "
+               "Aurora")  # fmt: skip
+
+
+def _empty_target_fields(steps: StepsContext | None) -> dict[str, Any]:
+    """``retry_needs`` ``empty_target`` and the check itself: retry runs only once the customer
+    has run plan's read-only empty-target check on Aurora and confirmed every table is empty."""
+    found: dict[str, Any] = {"retry_needs": "empty_target"}
+    if steps is not None and steps.empty_target is not None:
+        found["empty_target"] = steps.empty_target
     return found
 
 
@@ -1627,6 +1660,20 @@ class _StopSettle:
         return out
 
 
+def settle_interval(interval: int) -> int:
+    """The poll interval of a stop's wait and its settle: the configured one, at most
+    ``SETTLE_POLL_SECONDS``, so a settle of ``STOP_SETTLE_READS`` reads over
+    ``STOP_SETTLE_SECONDS`` fits in ``MAX_WAIT_SECONDS`` at any ``--interval-seconds``."""
+    return min(interval, SETTLE_POLL_SECONDS)
+
+
+def recently_stopped(task: dict[str, Any]) -> bool:
+    """DMS's ``StopDate`` for the task is at most ``STOP_SETTLE_SECONDS`` ago: a running read now
+    may be DMS still settling that stop (#2366), not a task that runs again."""
+    since = _seconds_since((task.get("ReplicationTaskStats") or {}).get("StopDate"))
+    return since is not None and since <= STOP_SETTLE_SECONDS
+
+
 def _not_settled(task: dict[str, Any] | None, then: str) -> str:
     """Why a stop is not settled at the deadline, for a task that reads not running, and
     ``then``: what settles it."""
@@ -1649,6 +1696,7 @@ def _settle(
     """Wait until a task that reads not running settles (``_StopSettle``): (the task's last
     read, None once gone; the settle; waited). ``task`` is a read made just now and counts as
     the first read; ``fresh``: it is older, so only the reads from here on count."""
+    interval = settle_interval(interval)
     settle = _StopSettle(interval)
     current, _, waited = _wait_task(clients, task["ReplicationTaskArn"], task,
                                     None if fresh else task.get("Status"), settle, command,
@@ -1679,6 +1727,7 @@ def _stop_task(
     elif state != "stopping":
         raise MoveError(f"{dms_reports(task)}: wait until it is running or stopped, then run "
                         f"{command} again (status shows where it stands)")  # fmt: skip
+    interval = settle_interval(interval)
     settle = _StopSettle(interval)
     current, state, waited = _wait_task(clients, arn, task, state, settle, command, 0,
                                         wait_seconds, interval, sleep)  # fmt: skip
@@ -1858,8 +1907,11 @@ def _recover(
     interval: int,
     steps: StepsContext,
     sleep: Callable[[float], None],
+    target_empty: bool = False,
 ) -> dict[str, Any]:
-    """``resume`` or ``retry``: run it only when ``recovery_plan`` names it (#2061)."""
+    """``resume`` or ``retry``: run it only when ``recovery_plan`` names it (#2061); ``retry``
+    also only with ``target_empty``, the customer's confirmation that the empty-target check
+    names no table on Aurora (#2365)."""
     task = _owned_task(clients, name, job_id, command)
     if task.get("Status") not in ("stopped", "failed"):
         raise _state_pointer(command, task)
@@ -1869,6 +1921,12 @@ def _recover(
     out = {"stack_name": name, "task_arn": arn}
     if plan != command:
         return {**out, **_not_this_command(command, task, plan, why, rows, steps)}
+    if command == RETRY and not target_empty:
+        return {"status": "error", "kind": "needs_empty_target", **out, **_task_report(task),
+                "message": f"{RETRY_NEEDS}: run the empty_target check on Aurora (read-only); "
+                           "once it names no table, run retry again with --target-empty. "
+                           "retry sent nothing",
+                **_empty_target_fields(steps)}  # fmt: skip
     start_type, names = {RESUME: ("resume-processing", ("resumed", "starting", "resume_failed")),
                          RETRY: ("reload-target", ("retried", "starting", "retry_failed"))}[command]  # fmt: skip
     current, outcome, waited = _start_and_wait(clients, task, start_type, command, 0,
@@ -1978,17 +2036,22 @@ def retry(
     *,
     steps: StepsContext,
     sleep: Callable[[float], None] = time.sleep,
+    target_empty: bool = False,
 ) -> dict[str, Any]:
     """Reload this job's failed task, or a stopped one that cannot resume, from the start
     (``reload-target``) and wait until it runs, only when ``recovery_plan`` says ``retry``: DMS's
-    statistics show the task never wrote to Aurora (#2061, ``_never_wrote``).
+    statistics show the task never wrote to Aurora (#2061, ``_never_wrote``), and only with
+    ``target_empty`` (#2365): those statistics restart with each reload, so the customer's own
+    empty-target check on Aurora is what shows no earlier attempt left rows.
 
     With ``TargetTablePrepMode: DO_NOTHING`` a reload over rows already on Aurora appends
     duplicates or hits key errors, and DMS's table statistics restart with each reload, so
     counters of 0 alone do not prove the tables are empty: any table past ``Before load``, any
     reload and any task-level sign of a full load refuses with the customer's own steps (empty the tables on Aurora, then reload the task themselves), or
     with a pointer to ``resume`` when resume would run. Nothing here connects to a database."""
-    return _recover(RETRY, clients, name, job_id, wait_seconds, interval, steps, sleep)
+    return _recover(
+        RETRY, clients, name, job_id, wait_seconds, interval, steps, sleep, target_empty
+    )
 
 
 def _running_task(clients: MoveClients, name: str, job_id: str, command: str) -> dict[str, Any]:
@@ -2132,7 +2195,7 @@ def _delete_step_stack(
     if task is None and not (_resources_are_this_jobs(clients, name, resources, job_id) or tagged):
         raise _not_the_step(name, "its task is gone and no replication instance, endpoint or "
                                   f"stack tag shows {job_id!r} owns it")  # fmt: skip
-    if task is not None and task.get("Status") not in TASK_IDLE:
+    if task is not None and task.get("Status") not in TASK_IDLE and not recently_stopped(task):
         raise MoveError(f"{dms_reports(task)}: run stop first; CloudFormation "
                         "cannot delete a running replication task")  # fmt: skip
     # The stack checked above, by its id: a stack re-created under the same name is not it.
@@ -2208,18 +2271,20 @@ def _settled_before_delete(
     fresh: bool = False,
 ) -> tuple[dict[str, Any] | None, int, dict[str, Any]]:
     """Teardown's wait before a delete (#2366): a task that never started has no stop to settle;
-    a stopped or failed one (``TASK_STOPPED``) is read until its stop settles. Refuses, sending no
-    delete, a task that runs again or that has not settled by the deadline."""
-    if task.get("Status") not in TASK_STOPPED:
+    any other is read until its stop settles, a running read DMS gives within the settle period
+    after its stop (``recently_stopped``) included: the decision comes after the settle.
+    ``fresh`` (the retry after an "is running" refusal): every task is read again first.
+    Refuses, sending no delete, a task that still runs or has not settled by the deadline."""
+    if not fresh and task.get("Status") in TASK_IDLE - TASK_STOPPED:  # never started
         return task, waited, {}
     current, settle, waited = _settle(clients, task, "teardown", waited, wait_seconds, interval,
                                       sleep, fresh=fresh)  # fmt: skip
     if settle.done:
         return current, waited, settle.fields()
     if current is not None and current.get("Status") not in TASK_IDLE:
-        raise MoveError(f"{dms_reports(current)}: it read stopped, then running again; run stop "
-                        "first, then teardown (CloudFormation cannot delete a running "
-                        "replication task)")  # fmt: skip
+        raise MoveError(f"{dms_reports(current)}: it still reads running after the settle "
+                        f"period ({STOP_SETTLE_SECONDS} s); run stop first, then teardown "
+                        "(CloudFormation cannot delete a running replication task)")  # fmt: skip
     raise MoveError(_not_settled(current, "run teardown again to finish the wait"))
 
 
@@ -3033,9 +3098,14 @@ def main(argv: list[str] | None = None, *, clients: MoveClients | None = None,
                 seen.clear()
         if args.command in RECOVER:
             command = resume if args.command == RESUME else retry
-            context = StepsContext(inputs.region, source_family(args.artifact_root, db, job_id))
+            context = StepsContext(
+                inputs.region,
+                source_family(args.artifact_root, db, job_id),
+                empty_target=empty_target(args.artifact_root, db, job_id),
+            )
+            extra = {"target_empty": args.target_empty} if args.command == RETRY else {}
             return emit(command(clients, name, job_id, args.wait_seconds, args.interval_seconds,
-                                steps=context, sleep=sleep))  # fmt: skip
+                                steps=context, sleep=sleep, **extra))  # fmt: skip
         if args.command == RELOAD_TABLES:
             context = StepsContext(inputs.region, source_family(args.artifact_root, db, job_id))
             result = reload_tables(clients, name, job_id, steps=context)

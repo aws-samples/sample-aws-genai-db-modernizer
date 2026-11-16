@@ -180,19 +180,38 @@ GENERIC_FATAL = (
 )
 
 
-class FakeLogs:
-    """A CloudWatch Logs client that answers FilterLogEvents from ``pages`` and records calls."""
+STOP = datetime(2026, 11, 16, 15, 15, 40, tzinfo=UTC)
+STOP_MS = int(STOP.timestamp() * 1000)
 
-    def __init__(self, *pages: list[str], next_forever: bool = False) -> None:
-        self.pages, self.next_forever = list(pages), next_forever
+
+class FakeLogs:
+    """A CloudWatch Logs client: FilterLogEvents over ``events`` ((epoch ms, message), oldest
+    first, as CloudWatch returns them) within startTime/endTime, ``limit`` a page, with a next
+    token while more remain. ``next_forever``: an empty page with a next token, every call."""
+
+    def __init__(self, events=(), *, next_forever: bool = False) -> None:
+        self.events = sorted(events)
+        self.next_forever = next_forever
         self.calls: list[dict] = []
 
     def filter_log_events(self, **kwargs):
         self.calls.append(kwargs)
-        i = len(self.calls) - 1
-        events = [{"message": m} for m in (self.pages[i] if i < len(self.pages) else [])]
-        more = self.next_forever or i + 1 < len(self.pages)
-        return {"events": events, **({"nextToken": f"t{i + 1}"} if more else {})}
+        if self.next_forever:
+            return {"events": [], "nextToken": "more"}
+        found = [e for e in self.events if kwargs["startTime"] <= e[0] <= kwargs["endTime"]]
+        offset = int(kwargs.get("nextToken") or 0)
+        page = found[offset : offset + kwargs["limit"]]
+        more = offset + kwargs["limit"] < len(found)
+        return {"events": [{"timestamp": t, "message": m} for t, m in page],
+                **({"nextToken": str(offset + kwargs["limit"])} if more else {})}  # fmt: skip
+
+
+def _at(seconds_before_stop: float, message: str) -> tuple[int, str]:
+    return STOP_MS - int(seconds_before_stop * 1000), message
+
+
+def _window() -> tuple[int, int]:
+    return df.log_window({"StopDate": STOP}, STOP + timedelta(days=1))
 
 
 @pytest.mark.passes_on_main  # the message DMS gave live never named the failure (#2364)
@@ -202,50 +221,75 @@ def test_the_generic_fatal_message_alone_carries_no_hint():
 
 
 def test_the_task_logs_control_schema_denial_carries_the_schema_grant():
-    logs = FakeLogs(PG_DENIAL_LOG)
-    found = df.log_hint(logs, "dms-tasks-ri", 1, 2)
+    logs = FakeLogs([_at(1, PG_DENIAL_LOG[0]), _at(0, PG_DENIAL_LOG[1])])
+    start, end = _window()
+    found = df.log_hint(logs, "dms-tasks-ri", start, end)
     assert found is not None and found.id == "postgresql_control_schema"
     assert 'GRANT USAGE, CREATE ON SCHEMA "awsdms_control"' in found.hint
-    # One bounded read of the error lines only, in the window, of this task's log group.
-    assert logs.calls == [{"logGroupName": "dms-tasks-ri", "startTime": 1, "endTime": 2,
-                           "filterPattern": df.LOG_ERRORS, "limit": df.LOG_PAGE}]  # fmt: skip
+    # One read of the error lines only, the newest slice of the window, of this task's group.
+    assert logs.calls == [{"logGroupName": "dms-tasks-ri", "startTime": end - 300_000,
+                           "endTime": end, "filterPattern": df.LOG_ERRORS,
+                           "limit": df.LOG_PAGE}]  # fmt: skip
 
 
 def test_the_task_logs_mysql_control_denial_carries_the_grant_database_grant():
     line = ("2026-11-16T15:15:39 [TARGET_APPLY    ]E:  RetCode: SQL_ERROR  SqlState: 42000 "
             "NativeError: 1142 Message: [MySQL][ODBC 8.0(w) Driver][mysqld-8.0.39]CREATE command "
             "denied to user 'dms_user'@'10.0.0.1' for table 'awsdms_apply_exceptions' [1022502]")  # fmt: skip
-    found = df.log_hint(FakeLogs([line]), "dms-tasks-ri", 1, 2)
+    found = df.log_hint(FakeLogs([_at(1, line)]), "dms-tasks-ri", *_window())
     assert found is not None and found.id == "mysql_control_database"
     assert "GRANT ALL PRIVILEGES ON `awsdms\\_control`.*" in found.hint
 
 
 @pytest.mark.parametrize(("hint_id", "message", "words"), KNOWN,
                          ids=[f"{h}-{i}" for i, (h, *_) in enumerate(KNOWN)])  # fmt: skip
-def test_every_known_failure_also_carries_its_hint_from_the_task_log(hint_id, message, words):
-    """A source grant, the heartbeat, binary logging or memory: any of them can be in the log
-    only, so every catalog entry is matched there too."""
+def test_every_catalog_pattern_is_matched_against_log_lines_too(hint_id, message, words):
+    """The log is matched with the same catalog as DMS's own message (synthetic lines: only the
+    control-schema denial is backed by a rehearsal's real log line)."""
     line = f"2026-11-16T15:15:39 [SOURCE_CAPTURE  ]E:  {message} [1020101]"
-    found = df.log_hint(FakeLogs(["an unrelated error", line]), "dms-tasks-ri", 1, 2)
+    found = df.log_hint(FakeLogs([_at(5, "an unrelated error"), _at(1, line)]), "dms-tasks-ri",
+                        *_window())  # fmt: skip
     assert found is not None and found.id == hint_id and words in found.hint
 
 
 @pytest.mark.parametrize("message", UNKNOWN)
 def test_a_log_with_no_known_failure_carries_no_hint(message):
-    assert df.log_hint(FakeLogs([message, "Stream component failed at subtask 0"]),
-                       "dms-tasks-ri", 1, 2) is None  # fmt: skip
+    events = [_at(2, message), _at(1, "Stream component failed at subtask 0")]
+    assert df.log_hint(FakeLogs(events), "dms-tasks-ri", *_window()) is None
 
 
-def test_the_log_read_is_bounded_in_calls_and_events():
-    endless = FakeLogs(*([[]] * 20), next_forever=True)  # empty pages, a next token forever
-    assert df.log_hint(endless, "dms-tasks-ri", 1, 2) is None
-    assert len(endless.calls) == df.LOG_PAGES
+def test_the_log_read_is_bounded_in_calls():
+    endless = FakeLogs(next_forever=True)  # empty pages with a next token, forever
+    assert df.log_hint(endless, "dms-tasks-ri", *_window()) is None
+    assert len(endless.calls) == df.LOG_CALLS
     assert all(c["limit"] == df.LOG_PAGE for c in endless.calls)
-    assert [c.get("nextToken") for c in endless.calls] == [None, "t1", "t2", "t3", "t4"]
-    filler = ["a line DMS logged"] * df.LOG_PAGE
-    late = FakeLogs(*([filler] * (df.LOG_EVENTS // df.LOG_PAGE)), PG_DENIAL_LOG)
-    assert df.log_hint(late, "dms-tasks-ri", 1, 2) is None  # past LOG_EVENTS: never read
-    assert len(late.calls) == df.LOG_EVENTS // df.LOG_PAGE
+
+
+def test_over_the_event_cap_the_newest_events_nearest_the_stop_are_kept():
+    """FilterLogEvents returns the oldest first: a busy window keeps the newest LOG_EVENTS."""
+    filler = [_at(10 + i * 0.1, "a line DMS logged") for i in range(df.LOG_EVENTS + 100)]
+    newest = FakeLogs([*filler, _at(1, PG_DENIAL_LOG[0])])
+    found = df.log_hint(newest, "dms-tasks-ri", *_window())
+    assert found is not None and found.id == "postgresql_control_schema"
+    oldest = FakeLogs([_at(290, PG_DENIAL_LOG[0]),
+                       *(_at(1 + i * 0.1, "a line DMS logged") for i in range(df.LOG_EVENTS))])  # fmt: skip
+    assert df.log_hint(oldest, "dms-tasks-ri", *_window()) is None  # past the cap: never matched
+    assert len(oldest.calls) <= df.LOG_CALLS
+
+
+def test_a_retry_never_sees_the_earlier_runs_errors():
+    """#2364 review: the control-schema denial failed the task at 15:15; the customer granted it
+    and retried at 15:21, and the retry failed on an error no hint knows. The window starts at
+    the retry's StartDate, so the earlier denial is never shown again."""
+    first_stop = datetime(2026, 11, 16, 15, 15, 40, tzinfo=UTC)
+    retried = datetime(2026, 11, 16, 15, 21, 33, tzinfo=UTC)
+    second_stop = datetime(2026, 11, 16, 15, 22, 10, tzinfo=UTC)
+    ms = lambda d: int(d.timestamp() * 1000)  # noqa: E731
+    logs = FakeLogs([(ms(first_stop) - 1000, PG_DENIAL_LOG[0]),
+                     (ms(second_stop) - 1000, "an error no hint knows")])  # fmt: skip
+    start, end = df.log_window({"StartDate": retried, "StopDate": second_stop}, second_stop)
+    assert start == ms(retried) and end == ms(second_stop) + df.LOG_AFTER_SECONDS * 1000
+    assert df.log_hint(logs, "dms-tasks-ri", start, end) is None
 
 
 def test_the_log_window_ends_just_past_the_tasks_stop():
@@ -253,6 +297,9 @@ def test_the_log_window_ends_just_past_the_tasks_stop():
     start, end = df.log_window({"StopDate": stop}, datetime(2026, 11, 17, tzinfo=UTC))
     assert end - start == (df.LOG_WINDOW_MINUTES * 60 + df.LOG_AFTER_SECONDS) * 1000
     assert end == int((stop + timedelta(seconds=df.LOG_AFTER_SECONDS)).timestamp() * 1000)
+    started = stop - timedelta(seconds=2)  # the Discourse run: it failed 2 s after its start
+    start, _ = df.log_window({"StartDate": started, "StopDate": stop}, stop)
+    assert start == int(started.timestamp() * 1000)
     now = datetime(2026, 11, 17, tzinfo=UTC)
     start, end = df.log_window({}, now)  # no stop date: the minutes before now
     assert end == int(now.timestamp() * 1000) and end - start == df.LOG_WINDOW_MINUTES * 60_000
