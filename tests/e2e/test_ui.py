@@ -399,7 +399,10 @@ def test_a_link_to_a_routed_engine_without_a_design_says_its_design_has_not_been
             assert "is not in this plan" not in page.inner_text("body"), (r.job_id, engine)
             assert ev == {"console": [], "pageerror": [], "failed": []}, (r.job_id, ev)
             checked += 1
-    assert checked, "no job routes queries to an engine that has no design"
+    # An external (model-run) job designs every routed engine, so it may have none to check.
+    assert checked or any(
+        r.external for r in all_runs
+    ), "no job routes queries to an engine that has no design"
 
 
 def test_a_link_opens_the_linked_table_design_tab_when_it_is_not_the_first(
@@ -442,7 +445,10 @@ def test_a_link_opens_the_linked_table_design_tab_when_it_is_not_the_first(
         finally:
             page.unroute("**/schema-designs")
         checked += 1
-    assert checked, "no job with a single Aurora MySQL design to add a second design to"
+    # An external job's designed engines are its own, so it may have no single-MySQL design.
+    assert checked or any(
+        r.external for r in all_runs
+    ), "no job with a single Aurora MySQL design to add a second design to"
 
 
 def _moved_query_trace(r: PipelineResult) -> dict | None:
