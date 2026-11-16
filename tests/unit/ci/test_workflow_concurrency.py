@@ -50,9 +50,11 @@ def test_workflow_cancels_only_pull_request_runs(name):
 
 def test_ci_required_aggregate_checks_still_report():
     jobs = _load("ci.yml")["jobs"]
-    for job, shard in (("test", "test-shard"), ("e2e", "e2e-shard")):
+    # `test` also waits for mysqld-tests (#2274), so a red mysqld-tests blocks the merge.
+    for job, needs in (("test", ["test-shard", "mysqld-tests"]), ("e2e", ["e2e-shard"])):
         assert jobs[job]["if"] == "always()"
-        assert jobs[job]["needs"] == shard
+        waits = jobs[job]["needs"]
+        assert (waits if isinstance(waits, list) else [waits]) == needs
 
 
 def test_docs_pages_deploy_group_is_not_cancelled():

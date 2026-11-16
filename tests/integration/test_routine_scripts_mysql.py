@@ -67,9 +67,14 @@ def mysql_socket():
             pytest.skip("mysqld did not start")
         yield client, sock
     finally:
-        proc.terminate()
-        proc.wait(timeout=60)
-        shutil.rmtree(work, ignore_errors=True)
+        try:
+            proc.terminate()
+            proc.wait(timeout=60)
+        except subprocess.TimeoutExpired:
+            proc.kill()
+            proc.wait(timeout=60)
+        finally:
+            shutil.rmtree(work, ignore_errors=True)
 
 
 def _mysql(client, sock, sql: str | None = None, *args: str, stdin: Path | None = None):
