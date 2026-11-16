@@ -49,6 +49,8 @@ EXTRA_POLICY: dict[str, tuple[str, str]] = {
     # Model answers.
     "executive_summary_response.ExecutiveSummaryResponse": ("forbid", _ANSWER),
     "reality_check_model_response.RealityCheckModelResponse": ("forbid", _ANSWER),
+    "routine_repair.RoutineRepairResponse": ("forbid", _ANSWER),
+    "routine_repair.RoutineRepairAnswer": ("forbid", _ANSWER),
     "model_flag.ModelFlag": (
         "forbid",
         "a model's flag: an entry naming a destination (target_engine, ...) is dropped "

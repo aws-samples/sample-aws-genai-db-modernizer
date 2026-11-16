@@ -85,6 +85,18 @@ NOT_RUN: dict[str, str] = {
         "needs a finished design delta; takes the delta and the input summary's counts"
     ),
     "src/tools/schema/base_schema_agent.py::numbers_correction_prompt": "takes error strings only",
+    # #1940: no pipeline step runs the routine repair yet (the repair loop, #1941, wires it).
+    # Its request takes the routine-migration artifact and the collection read here, and
+    # tests/unit/agents/routine_repair/test_routine_repair_seam.py checks it frames each
+    # routine and never carries a literal or an opted-out body.
+    "src/agents/routine_repair/handler.py::prepare_routine_repair_llm_input": (
+        "no pipeline step calls it yet (#1941); framed and redacted per routine "
+        "(test_routine_repair_seam.py)"
+    ),
+    "src/agents/routine_repair/handler.py::routine_repair_prompt": (
+        "no pipeline step calls it yet (#1941); the framed blocks of its request "
+        "(test_routine_repair_seam.py)"
+    ),
 }
 
 

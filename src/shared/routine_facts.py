@@ -62,6 +62,13 @@ artifact's ``findings``): the exact text stays in the routine sources (the two-f
 decision, ADR-034 Decision 4). Verdicts rest on the static checks, labelled
 :data:`PROOF_LABEL` until the load-and-run proof (#1945).
 
+**Interventions** (#1940). ``interventions`` lists each routine the routine repair seam
+holds a model's candidate for (``routines/v<N>/routine_repair.json``, the same version
+as the migration artifact): it needed an intervention, and its ``change_note`` says what
+changed, in the model's own words (untrusted text a renderer escapes). Such a routine is
+``repaired_pending_proof``: it stays in its headline category, not carried, until the
+proof accepts it (#1941); no figure counts it as carried.
+
 **The words** (#1939). The deliverables print each row's ``status_text`` and ``why``
 (:func:`routine_status_text`, :func:`routine_why`: the catalog's reason and fix hint for
 a failed check, plain words for each reason, rewrite and check that could not run, never
@@ -79,6 +86,7 @@ from collections.abc import Iterable, Mapping
 from typing import Any
 
 from src.contracts.routine_migration import REASON_CODES, RoutineMigrationContract
+from src.contracts.routine_repair import RoutineRepairContract
 from src.shared.cutover_message import CUTOVER_MESSAGE
 
 #: What every routine verdict rests on until the load-and-run proof (#1945); the step 1
@@ -278,13 +286,44 @@ def target_wave(target_engine: str, migration_waves: Iterable[Any] | None) -> in
     return min(numbered) if numbered else None
 
 
+def routine_interventions(
+    repair: RoutineRepairContract | Mapping[str, Any] | None, version: int
+) -> list[dict[str, Any]]:
+    """``facts.routines.interventions`` (#1940): each routine of the repair seam's result
+    for routine-migration ``version`` that has a model's candidate waiting for the proof,
+    with its reasons and the model's change note. Empty without a result, or with one for
+    another version."""
+    if repair is None:
+        return []
+    data = (
+        repair.model_dump(mode="json")
+        if isinstance(repair, RoutineRepairContract)
+        else dict(repair)
+    )
+    if data.get("assignment_version") != version:
+        return []
+    return [
+        {
+            "kind": row["kind"],
+            "routine_id": row["routine_id"],
+            "state": row["state"],
+            "reasons": list(row.get("reasons") or []),
+            "change_note": row["change_note"],
+        }
+        for row in data.get("routines") or []
+        if row.get("state") == "repaired_pending_proof"
+    ]
+
+
 def routine_facts(
     artifact: RoutineMigrationContract | Mapping[str, Any] | None,
     version: int,
     migration_waves: Iterable[Any] | None = None,
+    repair: RoutineRepairContract | Mapping[str, Any] | None = None,
 ) -> dict[str, Any] | None:
     """``facts.routines`` for the routine-migration ``artifact`` read at ``version`` (the
-    assignment version it was written for), in the roadmap ``migration_waves``; None
+    assignment version it was written for), in the roadmap ``migration_waves``, with the
+    routine repair seam's ``repair`` result for that version when one ran (#1940); None
     without an artifact."""
     if artifact is None:
         return None
@@ -398,6 +437,7 @@ def routine_facts(
             for rid in sorted(named)
             if rid in catalog
         ],
+        "interventions": routine_interventions(repair, version),
     }
     rewrite_kinds = {
         str(w["rule_id"]): str(w.get("rewrite"))
@@ -645,4 +685,7 @@ def read_routine_facts(
     if found is None:
         return None
     version, artifact = found
-    return routine_facts(artifact, version, migration_waves)
+    from src.storage.routine_repair_store import read_routine_repair
+
+    repair = read_routine_repair(store, database_name, job_id, version)
+    return routine_facts(artifact, version, migration_waves, repair)

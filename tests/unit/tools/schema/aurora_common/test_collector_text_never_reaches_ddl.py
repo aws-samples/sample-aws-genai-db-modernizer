@@ -342,6 +342,12 @@ DDL_WRITERS = {
     # CREATE TYPE ... AS ENUM for step 1 (#1834): type names pass the identifier allowlist,
     # labels are string literals with quotes doubled; test_step1_enum_types_... below.
     "src/tools/transformation_contract/pg_enums.py",
+    # The routine repair request's redacted MySQL CREATE EVENT (#1940): written from the
+    # collection's redacted fields only to show a model the routine, framed as untrusted
+    # data; it never runs anywhere, and a candidate built from it is refused unless it keeps
+    # the routine's name and schemas (tests/unit/agents/routine_repair/
+    # test_routine_repair_seam.py::test_a_candidate_that_breaks_a_rule_is_refused).
+    "src/agents/routine_repair/source_text.py",
     # The local graph store's own Cypher schema (table names from a fixed list), not SQL.
     "src/graph/store.py",
     # Disposable source engines (#1943): the DDL and routine text it runs is the customer's

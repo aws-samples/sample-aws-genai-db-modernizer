@@ -24,6 +24,7 @@ Versioned (`contract_version`, MAJOR.MINOR), written through their model and che
 | `assignment/v\d+/assignment\.json` | `Assignment` (`src.contracts.assignment_models`) |
 | `assignment/v\d+/validation\.json` | `ValidationResult` (`src.contracts.assignment_models`) |
 | `routines/v\d+/routine_migration\.json` | `RoutineMigrationContract` (`src.contracts.routine_migration`): how each collected routine migrates, keyed on the assignment version: id, kind, dependencies, deploy order, status, applied rewrite rules and check results, never the routine's text (#1934) |
+| `routines/v\d+/routine_repair\.json` | `RoutineRepairContract` (`src.contracts.routine_repair`): what the routine repair seam made of a model's answer for that version's routines the deterministic path could not carry (#1940): per routine its state (`repaired_pending_proof`, `refused`, `no_answer`, `not_repaired`, never proved), the reasons it needed an intervention, and for a candidate the redacted `CREATE` and the model's change note; never the exact text |
 | `reality-check/awaiting_llm\.json` | `RealityCheckMarker` (`src.contracts.reality_check_marker`) |
 | `decisions/(?!engine_scope\.json$)[^/]+\.json` | `DecisionRecord` (`src.contracts.decision_record`) |
 | `reality-check/(?:v\d+/)?output\.json` | `RealityCheckOutputContract` (`src.contracts.reality_check_output`) |

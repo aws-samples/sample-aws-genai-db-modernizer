@@ -684,6 +684,13 @@ obvious entries lives here instead:
   `decisions/wave-edit/`, moves that wave's design files to `wave-redesign/` the
   same way, and prints one JSON line. It has no `--rollback`: a failed round
   is rolled back with `run_wave_redesign.py --rollback`.
+- `Bash(uv run python scripts/run_routine_repair.py *)` (#1940): `/repair-routines`.
+  It reads the job's routine-migration artifact and collection, writes the repair
+  request (`routines/v<N>/repair/llm_input.json`, the routines' redacted text only,
+  never the routine sources) and, with `--finalize`, validates the session's answer
+  and writes `routines/v<N>/routine_repair.json`. It reads and writes only the job's
+  own artifacts, never connects to a database or a model outside Bedrock mode, carries
+  nothing and prints one JSON line.
 - `Bash(uv run python scripts/run_schema_design.py *)` also covers
   `--mark-dispatched <id> ...` and `--mark-reported <id> ...` (#2215): the
   headless orchestrator's dispatch ledger. They write one file,

@@ -124,6 +124,10 @@ E2E_LLM_PROMPT: tuple[str, ...] = (
     # Which statements on temporary objects follow their routine and so stay out of
     # every designer's input (#1891).
     "src/agents/referee/routine_units.py",
+    # The routine repair request and the shape its answer takes (#1940); the redacted
+    # CREATE the request carries is written from the collected fields.
+    "src/agents/routine_repair/*",
+    "src/contracts/routine_repair.py",
     # The shapes the model is asked to return.
     "src/contracts/*_model_output.py",
     "src/contracts/aurora_design_delta.py",
@@ -156,6 +160,7 @@ E2E_LLM_NIGHTLY: tuple[str, ...] = (
     "scripts/run_assessment.py",
     "scripts/run_reality_check.py",
     "scripts/run_synthesis.py",
+    "scripts/run_routine_repair.py",
     # The /explore step (#307) runs a catalog entry on the job and gives its rows to a
     # model; the check compares the model's answer with the same entry's result.
     "src/graph/catalog.py",
@@ -203,6 +208,9 @@ BEDROCK_SMOKE_PROMPT: tuple[str, ...] = (
     "src/contracts/dynamodb_pe_review.py",
     "src/contracts/reality_check_model_response.py",
     "src/contracts/executive_summary_response.py",
+    # The routine repair prompt and its answer model (#1940).
+    "src/agents/routine_repair/*",
+    "src/contracts/routine_repair.py",
 )
 BEDROCK_SMOKE_NIGHTLY: tuple[str, ...] = (
     # Model construction and the runners: how a call is made, not what it says. The run
@@ -213,6 +221,7 @@ BEDROCK_SMOKE_NIGHTLY: tuple[str, ...] = (
     "scripts/run_reality_check.py",
     "scripts/run_schema_design.py",
     "scripts/run_synthesis.py",
+    "scripts/run_routine_repair.py",
     "src/shared/role_bedrock_model.py",
     "src/atx_orchestrator/*.py",  # runtime/* uses agent_builder_sdk for plumbing, still listed
 )

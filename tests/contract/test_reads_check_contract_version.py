@@ -92,6 +92,11 @@ NOT_ARTIFACT_READS: dict[tuple[str, str, str], str] = {
         "RealityCheckModelResponse",
     ): _ANSWER,
     (
+        "src/contracts/routine_repair.py",
+        "parse_routine_repair_response",
+        "RoutineRepairResponse",
+    ): _ANSWER,
+    (
         "src/tools/schema/opensearch_schema_agent.py",
         "_invoke_designer",
         "OpenSearchModelOutputContract",

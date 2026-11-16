@@ -109,6 +109,7 @@ from src.tools.routines.verdict import RoutineCheckResult, RoutineDependency, Ro
 __all__ = [
     "DEFAULT_TARGET_USERS",
     "RoutineMigrationError",
+    "collection_routines",
     "error_message",
     "latest_routine_migration",
     "listed_by_name_only",
@@ -117,6 +118,7 @@ __all__ = [
     "ensure_routine_migration",
     "read_routine_migration",
     "routine_migration_path",
+    "routine_signature",
     "run_routine_migration_deterministic",
     "write_routine_migration",
 ]
@@ -902,6 +904,40 @@ def _rules(rows: Sequence[RoutineMigration]) -> list[RoutineRuleEntry]:
         if rewrite.id in named:
             out.append(RoutineRuleEntry(rule_id=rewrite.id, rule="rewrite", reason=rewrite.reason))
     return sorted(out, key=lambda e: e.rule_id)
+
+
+# --------------------------------------------------------------------------- repair seam
+
+
+def collection_routines(collector: Mapping[str, Any]) -> dict[tuple[str, str], Mapping[str, Any]]:
+    """Each routine row of ``collector`` the phase reads, keyed ``(kind, routine_id)`` as
+    the artifact names it (the routine repair seam, #1940, finds a row's collected,
+    redacted text this way). Empty for an engine routines are not carried from."""
+    engine = _family(collector)
+    if engine not in _TARGETS:
+        return {}
+    routines = _collect(collector.get("database_schema") or {}, engine)
+    _assign_ids(routines, engine)
+    return {(r.kind, r.routine_id): r.row for r in routines}
+
+
+def routine_signature(
+    text: str, engine: str, kind: str, sql_mode: str | None = None
+) -> tuple[str | None, str | None]:
+    """A function's or procedure's argument types and return type, read from ``text`` as
+    the artifact's ``signature`` and ``returns`` are; ``(None, None)`` for a trigger or
+    event, or a text that does not read."""
+    if kind not in ("function", "procedure"):
+        return None, None
+    if engine == "postgresql":
+        return _pg_signature(text, kind)
+    routine = MySqlRoutine(
+        routine_id="repair.routine",
+        kind=kind,  # type: ignore[arg-type]
+        create_sql=text,
+        sql_mode=sql_mode or "",
+    )
+    return _mysql_signature(routine)
 
 
 # --------------------------------------------------------------------------- the store

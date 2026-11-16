@@ -598,6 +598,11 @@ _ARTIFACT_CONTRACTS: tuple[tuple[str, str], ...] = (
         r"routines/v\d+/routine_migration\.json",
         "src.contracts.routine_migration:RoutineMigrationContract",
     ),
+    # #1940: what the routine repair seam made of a model's answer, per routine.
+    (
+        r"routines/v\d+/routine_repair\.json",
+        "src.contracts.routine_repair:RoutineRepairContract",
+    ),
     (r"reality-check/awaiting_llm\.json", "src.contracts.reality_check_marker:RealityCheckMarker"),
     # The recorded approvals, any name but the engine scope (#1328), which is a customer
     # input with its own contract below: each decisions/ file maps to one contract.

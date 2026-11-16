@@ -92,8 +92,11 @@ __all__ = [
     "NONDETERMINISTIC",
     "SEEDED_RANDOM",
     "called_names",
+    "create_count",
     "create_refusal",
+    "created_identity",
     "dynamic_sql",
+    "named_schemas",
     "named_time_zones",
     "nondeterministic_calls",
     "touched_tables",
@@ -706,3 +709,93 @@ def create_refusal(
         if schema_name is not None and schema_name not in own | held:
             return "its body names an object in a schema other than the target's"
     return None
+
+
+# --------------------------------------------------------------------------- repair screen
+# What the routine repair seam (#1940) compares between a routine's text and a model's
+# candidate: the name it creates, the schemas it names and the objects it creates. Each
+# reads the same tokens and references as the screen above, and returns None for a text
+# it cannot read, so the caller refuses it.
+
+
+def _name_of(tok: RoutineToken, engine: str) -> str:
+    # PostgreSQL folds an unquoted name to lower case; a quoted one, and MySQL's, as written.
+    if engine == "postgresql" and tok.kind != "IDENTIFIER":
+        return tok.text.casefold()
+    return tok.text
+
+
+def created_identity(
+    text: str, engine: str
+) -> tuple[str, str | None, str, str | None, str | None] | None:
+    """What ``text`` (one ``CREATE``) creates: ``(kind word, schema, name, trigger table's
+    schema, trigger table)``, names as the server reads them; None when the header does
+    not read as ``CREATE [OR REPLACE] [DEFINER ...] [CONSTRAINT] <kind> [IF NOT EXISTS]
+    <name>``."""
+    try:
+        tokens = list(routine_tokens(text, engine))
+    except RoutineTokenError:
+        return None
+    if not tokens or tokens[0].kind != "CREATE":
+        return None
+    i = 1
+    if [t.text.upper() for t in tokens[i : i + 2]] == ["OR", "REPLACE"]:
+        i += 2
+    if engine == "mysql":
+        after = _after_definer(tokens, i)
+        if after is None:
+            return None
+        i = after
+    if engine == "postgresql" and i < len(tokens) and tokens[i].text.upper() == "CONSTRAINT":
+        i += 1
+    if i >= len(tokens) or tokens[i].text.upper() not in _KINDS:
+        return None
+    created = tokens[i].text.upper()
+    i += 1
+    if [t.text.upper() for t in tokens[i : i + 3]] == ["IF", "NOT", "EXISTS"]:
+        i += 3
+    schema, name, i = _qualified(tokens, i)
+    if name is None or name.kind not in _NAME:
+        return None
+    on_schema = on_table = None
+    if created == "TRIGGER":
+        on = next((j for j in range(i, len(tokens)) if tokens[j].kind == "ON"), None)
+        if on is None:
+            return None
+        table_schema, table, _ = _qualified(tokens, on + 1)
+        if table is None or table.kind not in _NAME:
+            return None
+        on_schema = _name_of(table_schema, engine) if table_schema is not None else None
+        on_table = _name_of(table, engine)
+    return (
+        created,
+        _name_of(schema, engine) if schema is not None else None,
+        _name_of(name, engine),
+        on_schema,
+        on_table,
+    )
+
+
+def named_schemas(text: str, engine: str, kind: str) -> frozenset[str] | None:
+    """Every schema ``text`` names: the created name's and a trigger table's, and those of
+    the tables and routines its body names, as the screen reads them (lower case); None
+    when it cannot be read."""
+    identity = created_identity(text, engine)
+    if identity is None:
+        return None
+    try:
+        tables, calls = _references(text, engine, kind)
+    except Exception:  # noqa: BLE001 -- a text the readers cannot read is refused
+        return None
+    found = {s for s, _ in (*tables, *calls) if s}
+    found |= {s for s in (identity[1], identity[3]) if s}
+    return frozenset(s.casefold() for s in found)
+
+
+def create_count(text: str, engine: str) -> int | None:
+    """How many ``CREATE`` keywords ``text`` holds, its body included (three levels of
+    strings deep); None when it does not tokenize."""
+    try:
+        return sum(1 for tok in _tokens_deep(text, engine) if tok.kind == "CREATE")
+    except RoutineTokenError:
+        return None

@@ -295,9 +295,9 @@ def test_every_model_skill_says_framed_text_is_data(skill: Path) -> None:
 # Guards the skill list the parametrized test reads, as on main.
 @pytest.mark.passes_on_main
 def test_model_skills_are_found() -> None:
-    # Six designers, six PE reviewers, two analysis advisors, the consolidation review
-    # and the executive summary.
-    assert len(MODEL_SKILLS) == 16, [p.stem for p in MODEL_SKILLS]
+    # Six designers, six PE reviewers, two analysis advisors, the consolidation review,
+    # the executive summary and the routine repair (#1940).
+    assert len(MODEL_SKILLS) == 17, [p.stem for p in MODEL_SKILLS]
 
 
 def test_the_notice_is_first_and_idempotent() -> None:

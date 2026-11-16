@@ -54,6 +54,10 @@ READERS = LOADERS | {
     # The routine proof on the test cluster (#1945): proof-target-run runs it, and the proof
     # re-applies the rewrites for the cluster's user; not a routing or synthesis module.
     "scripts.run_dms_step",
+    # The routine repair seam (#1940): it reads the collection's routine rows by their
+    # artifact ids and refuses a model's candidate by the repair screen; not a routing or
+    # synthesis module.
+    "src.agents.routine_repair.handler",
 }
 
 

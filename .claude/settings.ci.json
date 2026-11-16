@@ -17,6 +17,7 @@
       "Bash(uv run python scripts/run_wave_redesign.py *)",
       "Bash(uv run python scripts/run_wave_edit.py *)",
       "Bash(uv run python scripts/run_synthesis.py *)",
+      "Bash(uv run python scripts/run_routine_repair.py *)",
       "Bash(uv run python scripts/run_report.py *)",
       "Bash(uv run python scripts/print_summary.py *)",
       "Bash(uv run python scripts/check_decision.py *)",
