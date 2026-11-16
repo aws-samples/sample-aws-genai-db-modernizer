@@ -1809,10 +1809,6 @@ def restart_validation(
 # cancelled | Table error | Table is being reloaded"); compared case-folded.
 TABLE_COMPLETED = "table completed"
 BEFORE_LOAD = "before load"  # a table DMS has not started to load (#2365)
-# Every per-table counter of TableStatistics that says DMS wrote something to the target.
-WRITE_COUNTERS = ("FullLoadRows", "FullLoadErrorRows", "FullLoadCondtnlChkFailedRows", "Inserts",
-                  "Updates", "Deletes", "Ddls", "AppliedInserts", "AppliedUpdates",
-                  "AppliedDeletes", "AppliedDdls")  # fmt: skip
 
 
 def _not_this_command(
@@ -1921,11 +1917,11 @@ def _never_wrote(task: dict[str, Any], rows: list[dict[str, Any]]) -> list[str]:
            "its full load made progress" if stats.get("FullLoadProgressPercent") else "",
            *(f"{k} is {stats[k]}" for k in ("TablesLoaded", "TablesLoading", "TablesErrored")
              if stats.get(k))]  # fmt: skip
+    from src.tools.data_movement.table_errors import never_wrote, table_name
+
     for r in rows:
-        table = f"{r.get('SchemaName')}.{r.get('TableName')}"
-        why += [f"{table} {k} is {r[k]}" for k in WRITE_COUNTERS if r.get(k)]
-        if r.get("FullLoadReloaded"):
-            why.append(f"{table} was reloaded")
+        table = table_name(r)
+        why += never_wrote(r)  # the per-table rule reload-tables uses too
         state = str(r.get("TableState") or "")
         if state.casefold() != BEFORE_LOAD:
             why.append(f"{table} is {state or 'in no state DMS names'}")

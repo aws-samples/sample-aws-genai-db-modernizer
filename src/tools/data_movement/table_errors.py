@@ -45,7 +45,7 @@ TABLE_FAILED = frozenset({"table error", "table does not exist"})
 CANCELLED = "table cancelled"  # a failure only when two polls in a row see it
 # ValidationState values that mean records did not validate (case-folded).
 VALIDATION_FAILED = frozenset({"mismatched records", "suspended records", "table error", "error"})
-# Every per-table counter that says DMS wrote something to the target (run_dms_step's list).
+# Every per-table counter of TableStatistics that says DMS wrote something to the target.
 WRITE_COUNTERS = ("FullLoadRows", "FullLoadErrorRows", "FullLoadCondtnlChkFailedRows", "Inserts",
                   "Updates", "Deletes", "Ddls", "AppliedInserts", "AppliedUpdates",
                   "AppliedDeletes", "AppliedDdls")  # fmt: skip
@@ -126,11 +126,14 @@ class CancelWatch:
 
 def never_wrote(row: Mapping[str, Any]) -> list[str]:
     """Why DMS may have written to this table on Aurora; empty only when its statistics show it
-    never did: every write counter 0, no full load start time and no reload."""
+    never did: every write counter 0 and no reload. The one per-table rule ``reload-tables`` and
+    ``retry`` share (#2365). ``FullLoadStartTime`` is not read: DMS reports the epoch there for a
+    table it never loaded, so it says nothing. A table is never named as loaded when it holds no
+    row: each reason names the counter or the reload that showed the write."""
     name = table_name(row)
     why = [f"{name} {k} is {row[k]}" for k in WRITE_COUNTERS if row.get(k)]
-    if row.get("FullLoadStartTime") is not None or row.get("FullLoadReloaded"):
-        why.append(f"{name} was loaded")
+    if row.get("FullLoadReloaded"):
+        why.append(f"{name} was reloaded")
     return why
 
 

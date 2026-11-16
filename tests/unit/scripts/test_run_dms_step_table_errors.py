@@ -9,7 +9,7 @@ when it is provably safe."""
 from __future__ import annotations
 
 import json
-from datetime import datetime
+from datetime import UTC, datetime
 
 import pytest
 from botocore.stub import ANY
@@ -120,25 +120,71 @@ def test_rows_dms_counts_only_for_dynamodb_targets_are_never_an_error_signal(tmp
     assert out["phase"] == "loading" and out["table_problems"]["errored_tables"] == []
 
 
-@pytest.mark.parametrize("written", [{"FullLoadStartTime": "2026-11-09T00:00:00Z"},
-                                     {"FullLoadReloaded": True}])  # fmt: skip
-def test_an_errored_table_with_zero_counters_but_a_load_start_or_reload_is_never_reloaded(
-    tmp_path, capsys, written
-):
-    # DMS restarts its counters with each reload: a start time or a reload alone shows a write.
+def test_an_errored_table_with_zero_counters_but_a_reload_is_never_reloaded(tmp_path, capsys):
+    # DMS restarts its counters with each reload: a reload alone shows a write.
     _job(tmp_path)
     cred = StubbedCredMgr()
-    row = _row("shop.orders", state="Table error", FullLoadRows=0, **written)
+    row = _row("shop.orders", state="Table error", FullLoadRows=0, FullLoadReloaded=True)
     _running(cred, [row])
     _, _, out = _status(tmp_path, capsys, cred)
     assert out["phase"] == "table_errors" and out["table_recovery"] is None
-    assert "shop.orders was loaded" in out["table_recovery_refused"] and out["table_steps"]
+    assert "shop.orders was reloaded" in out["table_recovery_refused"] and out["table_steps"]
     cred = StubbedCredMgr()
     _owned(cred, rows=[row])  # no reload_tables queued: a call would fail the stubber
     code, line = _run(tmp_path, "reload-tables", "--approve", clients=_clients(cred),
                       capsys=capsys)  # fmt: skip
     _no_pending(cred)
     assert code == 1 and line["kind"] == "target_may_hold_rows"
+
+
+# DMS reports the epoch as FullLoadStartTime for a table it never loaded (the #2135 Discourse
+# rehearsal's table statistics): it shows no write, and names no table as loaded (#2365).
+EPOCH = datetime(1970, 1, 1, tzinfo=UTC)
+
+
+def test_an_errored_table_with_no_row_and_the_epoch_start_is_offered_reload_tables(
+    tmp_path, capsys
+):
+    _job(tmp_path)
+    cred = StubbedCredMgr()
+    row = _row("shop.orders", state="Table error", FullLoadRows=0, FullLoadStartTime=EPOCH)
+    _running(cred, [row])
+    _, _, out = _status(tmp_path, capsys, cred)
+    assert out["phase"] == "table_errors" and out["table_recovery"] == "reload-tables"
+    assert "table_recovery_refused" not in out and "was loaded" not in json.dumps(out)
+    cred = StubbedCredMgr()
+    _owned(cred, rows=[row])
+    cred.stub("dms").add_response("reload_tables", {"ReplicationTaskArn": TASK},
+                                  {"ReplicationTaskArn": TASK, "ReloadOption": "data-reload",
+                                   "TablesToReload": [{"SchemaName": "shop", "TableName": "orders"}]})  # fmt: skip
+    code, line = _run(tmp_path, "reload-tables", "--approve", clients=_clients(cred),
+                      capsys=capsys)  # fmt: skip
+    _no_pending(cred)
+    assert code == 0 and line["tables_reloaded"] == ["shop.orders"]
+
+
+def test_an_errored_table_with_rows_and_the_epoch_start_is_named_by_its_rows(tmp_path, capsys):
+    _job(tmp_path)
+    cred = StubbedCredMgr()
+    rows = [_row("shop.orders", state="Table error", FullLoadRows=12, FullLoadStartTime=EPOCH),
+            _row("shop.items", state="Table error", FullLoadRows=0, FullLoadStartTime=EPOCH)]  # fmt: skip
+    _running(cred, rows)
+    _, _, out = _status(tmp_path, capsys, cred)
+    assert out["table_recovery"] is None
+    assert out["table_recovery_refused"] == "shop.orders FullLoadRows is 12"  # items: no reason
+    assert "was loaded" not in json.dumps(out)
+
+
+def test_retry_and_reload_tables_share_one_per_table_rule():
+    from src.tools.data_movement import table_errors as te
+
+    row = {"SchemaName": "public", "TableName": "posts", "TableState": "Before load",
+           "FullLoadRows": 0, "FullLoadStartTime": EPOCH, "FullLoadReloaded": False}  # fmt: skip
+    assert te.never_wrote(row) == [] and script._never_wrote({}, [row]) == []
+    loaded = {**row, "FullLoadRows": 5}
+    assert te.never_wrote(loaded) == ["public.posts FullLoadRows is 5"]
+    assert script._never_wrote({}, [loaded]) == te.never_wrote(loaded)
+    assert not hasattr(script, "WRITE_COUNTERS")  # one list of write counters, in table_errors
 
 
 def test_a_table_cancelled_once_does_not_end_the_wait(tmp_path, capsys):
