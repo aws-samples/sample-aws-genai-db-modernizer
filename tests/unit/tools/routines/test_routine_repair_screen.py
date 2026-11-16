@@ -45,8 +45,14 @@ PG_TRIGGER = (
 )
 
 
+#: The new calls the failed rule's fix hint names (the routine-migration catalog's).
+FIX_CALLS = frozenset({"pg_current_wal_lsn"})
+
+
 def _pg(text: str, name: str = "wal_pos", kind: str = "function"):
-    return _screen().RepairedRoutine(kind=kind, schema_name="public", name=name, create_text=text)
+    return _screen().RepairedRoutine(
+        kind=kind, schema_name="public", name=name, create_text=text, allowed_calls=FIX_CALLS
+    )
 
 
 def _sub(old: str, new: str) -> Callable[[str], str]:
@@ -230,10 +236,141 @@ def test_a_trigger_keeps_its_timing_events_table_and_function(edit, code):
     assert refusal is not None and refusal[0] == code, refusal
 
 
-def test_a_trigger_that_changes_only_its_condition_passes():
-    trigger = _pg(PG_TRIGGER, "audit_orders", "trigger")
-    candidate = PG_TRIGGER.replace("FOR EACH ROW", "FOR EACH ROW WHEN (NEW.id > 0)")
-    assert _screen().refusal_of(trigger, candidate, "postgresql") is None
+PG_TRIGGER_WHEN = PG_TRIGGER.replace("FOR EACH ROW", "FOR EACH ROW WHEN (NEW.id > 0)")
+
+
+@pytest.mark.parametrize(
+    ("original", "candidate"),
+    [
+        (PG_TRIGGER, PG_TRIGGER_WHEN),
+        (PG_TRIGGER_WHEN, PG_TRIGGER_WHEN.replace("NEW.id > 0", "false")),
+        (PG_TRIGGER_WHEN, PG_TRIGGER_WHEN.replace("NEW.id > 0", "NEW.id >= 0")),
+        (PG_TRIGGER_WHEN, PG_TRIGGER),
+    ],
+    ids=["when-added", "when-false", "when-changed", "when-dropped"],
+)
+def test_a_trigger_keeps_its_when_clause(original, candidate):
+    # A repair never changes when a trigger fires.
+    trigger = _pg(original, "audit_orders", "trigger")
+    refusal = _screen().refusal_of(trigger, candidate, "postgresql")
+    assert refusal is not None and refusal[0] == "signature_changed", refusal
+
+
+# --------------------------------------------------------------------------- round 2
+
+PG_INTO_SQL = (
+    "CREATE OR REPLACE FUNCTION public.wal_pos(p integer)\n RETURNS text\n LANGUAGE sql\n"
+    "AS $function$SELECT pg_current_xlog_location()::text || '?'$function$\n"
+)
+
+
+@pytest.mark.parametrize(
+    "into",
+    [
+        "SELECT * INTO public.orders_copy FROM public.orders; ",
+        "SELECT * INTO TEMP t2 FROM public.orders; ",
+        "SELECT * INTO UNLOGGED t3 FROM public.orders; ",
+        "SELECT * INTO TABLE t4 FROM public.orders; ",
+    ],
+    ids=["into-table", "into-temp", "into-unlogged", "into-table-keyword"],
+)
+def test_select_into_in_a_sql_body_creates_an_object(into):
+    candidate = PG_SQL_FIXED.replace("AS $function$", "AS $function$" + into)
+    refusal = _screen().refusal_of(_pg(PG_SQL), candidate, "postgresql")
+    assert refusal is not None and refusal[0] == "adds_objects", refusal
+
+
+def test_select_into_in_plpgsql_creates_an_object_only_as_a_table():
+    # In PL/pgSQL, SELECT ... INTO <variable> assigns: no object, and a repair may add one.
+    declare = PLPGSQL_FIXED.replace(
+        "BEGIN\n", "DECLARE n integer;\nBEGIN\n  SELECT count(*) INTO n FROM public.orders;\n"
+    )
+    assert _screen().refusal_of(_pg(PLPGSQL, "report"), declare, "postgresql") is None
+    # INTO TEMP / UNLOGGED / TABLE names a table, in the body and in an EXECUTEd string.
+    from src.tools.routines.proof_screen import created_objects
+
+    for into in ("TEMP t2", "UNLOGGED t3", "TABLE t4"):
+        body = PLPGSQL.replace("BEGIN\n", f"BEGIN\n  SELECT * INTO {into} FROM public.orders;\n")
+        added = created_objects(body, "postgresql") - created_objects(PLPGSQL, "postgresql")
+        assert [k[1:] for k in added] == [("TABLE", "", into.split()[1])], (into, added)
+        refusal = _screen().refusal_of(_pg(PLPGSQL, "report"), body, "postgresql")
+        assert refusal is not None, into
+    run = PLPGSQL.replace(
+        "BEGIN\n", "BEGIN\n  EXECUTE 'SELECT * INTO public.orders_copy FROM public.orders';\n"
+    )
+    added = created_objects(run, "postgresql") - created_objects(PLPGSQL, "postgresql")
+    assert ("", "TABLE", "public", "orders_copy") in added
+
+
+@pytest.mark.parametrize(
+    "statement",
+    [
+        "  NOTIFY chan;\n",
+        "  COMMENT ON TABLE public.orders IS NULL;\n",
+        "  LOCK TABLE public.orders;\n",
+        "  CALL public.purge();\n",
+        "  REFRESH MATERIALIZED VIEW public.totals;\n",
+    ],
+    ids=["notify", "comment-on", "lock", "call", "refresh"],
+)
+def test_a_new_postgresql_write_statement_is_refused_for_its_own_reason(statement):
+    candidate = PLPGSQL_FIXED.replace("BEGIN\n", "BEGIN\n" + statement)
+    refusal = _screen().refusal_of(_pg(PLPGSQL, "report"), candidate, "postgresql")
+    assert refusal is not None and refusal[0] == "adds_statements", refusal
+
+
+@pytest.mark.parametrize(
+    "call",
+    [
+        "public.purge_everything()",
+        "pg_catalog.pg_terminate_backend(p)",
+        "pg_terminate_backend(p)",
+        "pg_catalog.lo_unlink(p)",
+        "dblink_exec(p::text)",
+        "nextval(p::regclass)",
+    ],
+    ids=[
+        "user-function",
+        "terminate-qualified",
+        "terminate",
+        "lo-unlink",
+        "dblink-exec",
+        "nextval",
+    ],
+)
+def test_a_call_the_original_does_not_make_is_refused(call):
+    candidate = PG_SQL_FIXED.replace(
+        "SELECT pg_current_wal_lsn()", f"SELECT {call}, pg_current_wal_lsn()"
+    )
+    refusal = _screen().refusal_of(_pg(PG_SQL), candidate, "postgresql")
+    assert refusal is not None and refusal[0] == "adds_calls", refusal
+
+
+def test_a_repair_calling_only_the_originals_functions_or_the_fix_passes():
+    # count() and pg_current_xlog_location() are the original's; pg_current_wal_lsn() is
+    # the one the failed rule's fix hint names. Nothing else is called.
+    candidate = PLPGSQL_FIXED.replace("(SELECT count(*)", "(SELECT count(*) + 0")
+    assert _screen().refusal_of(_pg(PLPGSQL, "report"), candidate, "postgresql") is None
+    without_hint = _screen().RepairedRoutine(
+        kind="function", schema_name="public", name="wal_pos", create_text=PG_SQL
+    )
+    refusal = _screen().refusal_of(without_hint, PG_SQL_FIXED, "postgresql")
+    assert refusal is not None and refusal[0] == "adds_calls", refusal
+
+
+@pytest.mark.parametrize(
+    ("statement", "code"),
+    [
+        ("  RENAME TABLE users TO users_old;", "adds_statements"),
+        ("  CALL shop.purge();", "adds_statements"),
+        ("  SELECT purge_all() INTO @x;", "adds_calls"),
+    ],
+    ids=["rename-table", "call", "function"],
+)
+def test_a_new_mysql_write_is_refused_for_its_own_reason(statement, code):
+    candidate = MYSQL_FIXED.replace("INTO r;", "INTO r;\n" + statement)
+    refusal = _screen().refusal_of(_my(MYSQL), candidate, "mysql")
+    assert refusal is not None and refusal[0] == code, refusal
 
 
 # --------------------------------------------------------------------------- MySQL

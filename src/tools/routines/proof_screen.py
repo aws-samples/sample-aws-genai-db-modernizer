@@ -92,6 +92,7 @@ from src.tools.sql.facade import (
 __all__ = [
     "NONDETERMINISTIC",
     "SEEDED_RANDOM",
+    "called_functions",
     "called_names",
     "create_count",
     "create_refusal",
@@ -813,7 +814,10 @@ _CREATE_MODIFIERS = {
     "CONSTRAINT", "RECURSIVE", "MATERIALIZED", "DEFAULT", "TRUSTED", "PROCEDURAL",
 }  # fmt: skip
 #: The statements that write or change an object, named with the two words after them.
-_WRITES = {"INSERT", "UPDATE", "DELETE", "MERGE", "TRUNCATE", "ALTER", "DROP", "COPY", "REPLACE"}
+_WRITES = {
+    "INSERT", "UPDATE", "DELETE", "MERGE", "TRUNCATE", "ALTER", "DROP", "COPY", "REPLACE",
+    "NOTIFY", "COMMENT", "LOCK", "CALL", "REFRESH", "RENAME",
+}  # fmt: skip
 
 
 def _key(tok: RoutineToken, engine: str) -> str:
@@ -827,15 +831,83 @@ def _deep_levels(text: str, engine: str) -> list[list[RoutineToken]] | None:
         return None
 
 
+def _levels_in_language(text: str, engine: str) -> list[tuple[list[RoutineToken], bool]] | None:
+    """:func:`_levels`, each level with whether it is a PL/pgSQL routine's own body (where
+    ``SELECT ... INTO`` assigns variables); None when the text does not tokenize."""
+    out: list[tuple[list[RoutineToken], bool]] = []
+
+    def walk(source: str, depth: int, plpgsql: bool, top: bool) -> None:
+        tokens = list(routine_tokens(source, engine))
+        out.append((tokens, plpgsql))
+        if depth >= _DEPTH:
+            return
+        words = [t.text.casefold() for t in tokens]
+        language = next((words[i + 1] for i, w in enumerate(words[:-1]) if w == "language"), None)
+        for i, tok in enumerate(tokens):
+            if not (tok.command_rest or tok.kind.endswith("STRING")):
+                continue
+            body = top and i > 0 and tokens[i - 1].text.upper() == "AS"
+            try:
+                walk(tok.text, depth + 1, body and language == "plpgsql", False)
+            except RoutineTokenError:
+                continue
+
+    try:
+        walk(text, 0, False, True)
+    except RoutineTokenError:
+        return None
+    return out
+
+
+#: The statements after which an ``INTO`` names a target the statement fills or creates.
+_INTO_OWNERS = {"SELECT", "INSERT", "MERGE", "FETCH", "MOVE", "COPY", "IMPORT", "RETURNING"}
+_INTO_TABLE = {"TEMP", "TEMPORARY", "UNLOGGED", "TABLE"}
+
+
+def _selected_into(
+    tokens: Sequence[RoutineToken], engine: str, plpgsql: bool
+) -> Iterator[tuple[str, ...]]:
+    """The tables a PostgreSQL ``SELECT ... INTO [TEMP | UNLOGGED] [TABLE] <name>``
+    creates. In a PL/pgSQL body a bare ``INTO <name>`` assigns a variable, so only the
+    forms with ``TEMP``, ``UNLOGGED`` or ``TABLE`` count there."""
+    if engine != "postgresql":
+        return
+    owner: str | None = None
+    for i, tok in enumerate(tokens):
+        word = tok.text.upper()
+        if tok.kind == "SEMICOLON":
+            owner = None
+        elif word in _INTO_OWNERS:
+            owner = word
+        elif word == "INTO" and owner == "SELECT":
+            j, temp, table = i + 1, "", False
+            while j < len(tokens) and tokens[j].text.upper() in _INTO_TABLE:
+                temp = "TEMP" if tokens[j].text.upper() in ("TEMP", "TEMPORARY") else temp
+                table = True
+                j += 1
+            if plpgsql and not table:
+                continue
+            schema, name, _ = _qualified(tokens, j)
+            if name is not None:
+                yield (
+                    temp,
+                    "TABLE",
+                    _name_of(schema, engine) if schema is not None else "",
+                    _key(name, engine),
+                )
+
+
 def created_objects(text: str, engine: str) -> Counter[tuple[str, ...]] | None:
     """Each object ``text`` creates, its body and every string in it included (a
-    statement run with ``EXECUTE``): ``(TEMP or "", kind word, schema, name)``, counted;
-    None when it does not tokenize."""
-    levels = _deep_levels(text, engine)
+    statement run with ``EXECUTE``): ``(TEMP or "", kind word, schema, name)``, counted,
+    a PostgreSQL ``SELECT ... INTO`` table included (:func:`_selected_into`); None when it
+    does not tokenize."""
+    levels = _levels_in_language(text, engine)
     if levels is None:
         return None
     found: Counter[tuple[str, ...]] = Counter()
-    for tokens in levels:
+    for tokens, plpgsql in levels:
+        found.update(_selected_into(tokens, engine, plpgsql))
         for i, tok in enumerate(tokens):
             if tok.kind != "CREATE":
                 continue
@@ -898,7 +970,9 @@ def literal_sequence(text: str, engine: str) -> tuple[tuple[str, str], ...] | No
                 and previous is not None
                 and previous.text.upper() == "AS"
             )
-            if tok.kind == "INTRODUCER" or (tok.kind.endswith("STRING") and not body):
+            # A statement's unread tail (``command_rest``) is code, not a literal: read through.
+            literal = tok.kind.endswith("STRING") and not body and not tok.command_rest
+            if tok.kind == "INTRODUCER" or literal:
                 out.append((tok.kind, tok.text))
             if depth < _DEPTH and (tok.command_rest or tok.kind.endswith("STRING")):
                 try:
@@ -941,9 +1015,9 @@ def privilege_clauses(text: str, engine: str) -> tuple[tuple[str, ...], ...] | N
 
 def trigger_shape(text: str, engine: str) -> tuple[str, ...] | None:
     """What a trigger fires on and runs, from its header: the words between its name and
-    ``ON`` (timing and events), its ``FOR EACH`` level, the function it executes
-    (PostgreSQL) and the trigger it ``FOLLOWS`` or ``PRECEDES`` (MySQL); None when the
-    header does not read."""
+    ``ON`` (timing and events), its ``FOR EACH`` level, its ``WHEN`` condition and the
+    function it executes (PostgreSQL), and the trigger it ``FOLLOWS`` or ``PRECEDES``
+    (MySQL); None when the header does not read."""
     identity = created_identity(text, engine)
     if identity is None or identity[0] != "TRIGGER":
         return None
@@ -962,6 +1036,12 @@ def trigger_shape(text: str, engine: str) -> tuple[str, ...] | None:
             shape += ["EACH", tokens[j + 1].text.upper()]
         elif word in ("FOLLOWS", "PRECEDES") and j + 1 < len(tokens):
             shape += [word, _key(tokens[j + 1], engine)]
+        elif engine == "postgresql" and word == "WHEN":
+            end = next(
+                (k for k in range(j + 1, len(tokens)) if tokens[k].text.upper() == "EXECUTE"),
+                len(tokens),
+            )
+            shape += ["WHEN", *(_key(t, engine) for t in tokens[j + 1 : end])]
         elif engine == "postgresql" and word == "EXECUTE":
             schema, name, _ = _qualified(tokens, j + 2)
             shape += [
@@ -979,3 +1059,30 @@ def trigger_shape(text: str, engine: str) -> tuple[str, ...] | None:
                 )
             break
     return tuple(shape)
+
+
+def called_functions(text: str, engine: str) -> frozenset[str] | None:
+    """Every function or procedure ``text`` calls (a name before ``(``, or after
+    ``CALL``), its body and strings included, as written: ``schema.name`` when qualified,
+    else ``name``, lower case. The routine's own header name and its parameter types are
+    included too (the caller compares two texts with the same header). None when it does
+    not tokenize."""
+    levels = _deep_levels(text, engine)
+    if levels is None:
+        return None
+    found: set[str] = set()
+    for tokens in levels:
+        for i, tok in enumerate(tokens[:-1]):
+            nxt = tokens[i + 1]
+            called = tok.kind in _NAME and nxt.kind == "L_PAREN"
+            if tok.text.upper() == "CALL" and nxt.kind in _NAME and not nxt.command_rest:
+                called, tok, i = True, nxt, i + 1
+                while i + 2 < len(tokens) and tokens[i + 1].kind == "DOT":
+                    tok, i = tokens[i + 2], i + 2
+            if not called:
+                continue
+            name = tok.text.casefold()
+            if i >= 2 and tokens[i - 1].kind == "DOT" and tokens[i - 2].kind in _NAME:
+                name = f"{tokens[i - 2].text.casefold()}.{name}"
+            found.add(name)
+    return frozenset(found)

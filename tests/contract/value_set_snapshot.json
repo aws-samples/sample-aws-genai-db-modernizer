@@ -958,6 +958,7 @@
   "routine_repair.RefusalCode": {
     "module": "routine_repair",
     "values": [
+      "adds_calls",
       "adds_objects",
       "adds_statements",
       "changes_privileges",

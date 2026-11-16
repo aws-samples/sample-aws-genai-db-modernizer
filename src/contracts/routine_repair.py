@@ -61,6 +61,7 @@ RefusalCode = Literal[
     "literals_changed",
     "adds_objects",
     "adds_statements",
+    "adds_calls",
     "names_other_schema",
     "unchanged",
     "duplicate_answer",
