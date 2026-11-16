@@ -4,11 +4,8 @@
 import { useEffect, useState } from 'react';
 import { useParams } from 'react-router-dom';
 import ApiManager from '../classes/ApiManager';
+import { isWellFormedJobId } from '../utils/jobId';
 import AssessmentNotFound, { AssessmentLookupPending } from './AssessmentNotFound';
-
-// What the API accepts (src/shared/job_id.py): 1 to 128 ASCII letters, digits,
-// underscores and hyphens. Any other id cannot name an assessment.
-const JOB_ID_SHAPE = /^[A-Za-z0-9_-]{1,128}$/;
 
 // Wraps a job route (#2307). It looks the assessment up once and mounts the
 // page only when it exists, so an unknown id shows one not-found state instead
@@ -19,7 +16,7 @@ export default function JobRouteGuard({ children }) {
   const { jobId } = useParams();
   const [lookup, setLookup] = useState({ jobId: null, missing: false });
 
-  const wellFormed = JOB_ID_SHAPE.test(jobId || '');
+  const wellFormed = isWellFormedJobId(jobId);
 
   useEffect(() => {
     if (!wellFormed) return undefined;
