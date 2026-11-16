@@ -31,8 +31,10 @@ as a plain role on the disposable engine; the screen refuses a text that changes
 The role is dropped with the database.
 
 User (MySQL). The run makes one restricted user (:func:`create_runner`): a generated
-password bound into ``CREATE USER`` and kept only in a Secrets Manager secret of its own,
-tagged with the job id. Each scratch database grants it that database and nothing else, and
+password kept only in a Secrets Manager secret of its own, tagged with the job id; the user is
+created from the password's ``caching_sha2_password`` hash, computed here, since the Data API
+takes no bound password in ``CREATE USER`` (#2298), and the Data API signs in as it once
+before it is used. Each scratch database grants it that database and nothing else, and
 the setup, the routines (which name it as their ``DEFINER``) and the calls run as it,
 through the Data API with its secret's ARN; the master user only creates, grants and drops
 the scratch database. :func:`drop_runner` drops the user and deletes its secret with no
@@ -482,7 +484,9 @@ class _DataApiBackend(de._Backend):
     def _call(self, sql: str, params: Sequence[Any] = (), *, aside: bool = False,
               meta: bool = False) -> dict[str, Any]:  # fmt: skip
         text, bound = _bind(sql, params)
-        kwargs: dict[str, Any] = {**self._arn, "sql": text, "database": self.database}
+        kwargs: dict[str, Any] = {**self._arn, "sql": text}
+        if self.database:  # none for the runner's sign-in check: it has no grant yet
+            kwargs["database"] = self.database
         if bound:
             kwargs["parameters"] = bound
         if meta:
@@ -1283,12 +1287,20 @@ def create_runner(client: DataApiClient, secrets_client: Any, *, cluster_arn: st
                   secret_arn: str, job_id: str, admin_database: str | None,
                   tags: Sequence[Mapping[str, str]]) -> RunnerAccount:  # fmt: skip
     """Create the run's restricted MySQL user (no privilege yet: each scratch database
-    grants its own) and its secret, tagged with the job id. The password is generated here,
-    bound into ``CREATE USER`` and kept only in the secret."""
+    grants its own) and its secret, tagged with the job id, then sign in as it through the
+    Data API. The password is generated here and kept only in the secret: the Data API takes
+    no bound parameter in ``CREATE USER ... IDENTIFIED BY ?``, so the user is created from its
+    ``caching_sha2_password`` hash, computed here (:mod:`~src.tools.routines.mysql_auth`), and
+    the plain password is never in a statement (#2298)."""
+    from src.tools.routines.mysql_auth import AUTH_STRING, caching_sha2_auth_string
+
     username = runner_prefix(job_id) + secrets.token_hex(4)
     if not _RUNNER_NAME.fullmatch(username):  # pragma: no cover - built above
         raise ValueError("not a runner user name")
     password = secrets.token_urlsafe(24)
+    auth = caching_sha2_auth_string(password)
+    if not AUTH_STRING.fullmatch(auth):  # pragma: no cover - checked where it is built
+        raise ValueError("not a caching_sha2_password authentication string")
     created = secrets_client.create_secret(
         Name=runner_secret_name(job_id, username),
         Description="The routine proof's restricted MySQL user on the throwaway test cluster",
@@ -1298,8 +1310,20 @@ def create_runner(client: DataApiClient, secrets_client: Any, *, cluster_arn: st
     account = RunnerAccount(username, str(created["ARN"]))
     admin = _DataApiBackend(client, cluster_arn, secret_arn, "mysql", admin_database or "", None,
                             CALL_TIMEOUT_S)  # fmt: skip
+    # Signed in through the runner's own secret, with no database: it has no grant yet.
+    own = _DataApiBackend(client, cluster_arn, account.secret_arn, "mysql", "", None,
+                          CALL_TIMEOUT_S)  # fmt: skip
     try:
-        admin._guarded(f"CREATE USER {account.account_sql} IDENTIFIED BY %s", [password])
+        # The hash, not the password, is in the text: crypt's alphabet only, checked above.
+        admin._guarded(f"CREATE USER {account.account_sql} "
+                       f"IDENTIFIED WITH caching_sha2_password AS '{auth}'")  # fmt: skip
+        try:
+            who = own._rows(own._guarded("SELECT CURRENT_USER()", meta=True), as_text=True)[0]
+        except de.EngineError as exc:
+            raise de.EngineError("the Data API could not sign in as the runner user",
+                                 exc.sqlstate) from None  # fmt: skip
+        if not who or str(who[0][0]) != f"{username}@%":
+            raise de.EngineError("the Data API signed in as another user than the runner")
     except de.EngineError as exc:
         left = drop_runner(client, secrets_client, cluster_arn=cluster_arn, secret_arn=secret_arn,
                            admin_database=admin_database, account=account)  # fmt: skip

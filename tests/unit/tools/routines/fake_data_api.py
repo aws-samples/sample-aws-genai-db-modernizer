@@ -12,6 +12,7 @@ SQL error, for one of ``internal_on``'s)."""
 
 from __future__ import annotations
 
+import json
 import re
 from dataclasses import dataclass, field
 from typing import Any
@@ -42,6 +43,8 @@ class Sent:
     parameters: list[Any] = field(default_factory=list)
     transaction: str | None = None
     secret: str = ""
+    #: Whether the call named a database at all (the runner's sign-in check names none).
+    named_database: bool = True
 
 
 class FakeDataApi:
@@ -59,7 +62,8 @@ class FakeDataApi:
                  internal_on: tuple[str, ...] = (), scheduler: str = "OFF",
                  drop_fails: tuple[str, ...] = (), role_reset_on: tuple[str, ...] = (),
                  session_reset_on: tuple[str, ...] = (),
-                 bound_password_ok: bool = False) -> None:  # fmt: skip
+                 secrets: FakeSecrets | None = None,
+                 sign_in_fails: bool = False, reports_user: str | None = None) -> None:  # fmt: skip
         self.engine = engine
         self.sent: list[Sent] = []
         self.databases: set[str] = set()
@@ -78,9 +82,16 @@ class FakeDataApi:
         #: goes back to the master user) or changes session_user, in its transaction.
         self.role_reset_on = role_reset_on
         self.session_reset_on = session_reset_on
-        #: The real Data API rejects ``CREATE USER ... IDENTIFIED BY ?`` (1064 at the ``?``);
-        #: a test of the path #2298 opens says ``bound_password_ok``.
-        self.bound_password_ok = bound_password_ok
+        #: Each user's ``(plugin, authentication string)``, from its ``CREATE USER``.
+        self.auth: dict[str, tuple[str, str]] = {}
+        #: Linked, a statement sent with one of these secrets signs in as the secret's user,
+        #: as the real Data API does: the user must exist and the secret's password must match
+        #: its authentication string, or the statement is refused (1045). ``sign_in_fails``
+        #: refuses every such sign-in (a server that cannot check the plugin, say).
+        self.secrets_store = secrets
+        self.sign_in_fails = sign_in_fails
+        #: What ``SELECT CURRENT_USER()`` answers instead of the signed-in user, when set.
+        self.reports_user = reports_user
         self._tx_role: dict[str, str] = {}
         self._tx_session: dict[str, str] = {}
         self._strict_tx: set[str] = set()
@@ -88,6 +99,7 @@ class FakeDataApi:
 
     # ---- what the target calls
     def begin_transaction(self, **kw: Any) -> dict[str, Any]:
+        self._sign_in(kw.get("secretArn", ""))
         self._tx += 1
         self.sent.append(Sent("begin", database=kw.get("database", "")))
         return {"transactionId": f"tx{self._tx}"}
@@ -104,14 +116,24 @@ class FakeDataApi:
         self.sent.append(Sent("batch", kw["sql"], kw.get("database", ""),
                               kw.get("parameterSets", []), kw.get("transactionId"),
                               kw.get("secretArn", "")))  # fmt: skip
+        self._sign_in(kw.get("secretArn", ""))
         self._maybe_fail(kw["sql"])
         return {"updateResults": [{}] * len(kw.get("parameterSets", []))}
 
     def execute_statement(self, **kw: Any) -> dict[str, Any]:
         sql, db, tx = kw["sql"], kw.get("database", ""), kw.get("transactionId")
         self.sent.append(
-            Sent("execute", sql, db, kw.get("parameters", []), tx, kw.get("secretArn", ""))
+            Sent(
+                "execute",
+                sql,
+                db,
+                kw.get("parameters", []),
+                tx,
+                kw.get("secretArn", ""),
+                "database" in kw,
+            )
         )
+        self._sign_in(kw.get("secretArn", ""))
         self._track_role(sql, tx)  # a failing statement can leave the role too
         self._maybe_fail(sql)
         if "plpgsql.extra_errors" in sql and tx:
@@ -119,9 +141,29 @@ class FakeDataApi:
         for marker, state in self.extra_errors_fail.items():
             if tx in self._strict_tx and marker in sql:
                 raise db_error(state)
-        return self._answer(sql, db, tx, kw.get("parameters", []))
+        return self._answer(sql, db, tx, kw.get("parameters", []), kw.get("secretArn", ""))
 
     # ---- helpers
+    def _signed_in_as(self, secret_arn: str) -> str | None:
+        """The user a linked secret signs in as, or None for the master secret."""
+        if self.secrets_store is None or secret_arn not in self.secrets_store.secrets:
+            return None
+        return str(json.loads(self.secrets_store.secrets[secret_arn]["SecretString"])["username"])
+
+    def _sign_in(self, secret_arn: str) -> None:
+        user = self._signed_in_as(secret_arn)
+        if user is None:
+            return
+        from src.tools.routines.mysql_auth import matches
+
+        stored = self.secrets_store.secrets[secret_arn]  # type: ignore[union-attr]
+        password = str(json.loads(stored["SecretString"])["password"])
+        plugin, auth = self.auth.get(user, ("", ""))
+        if (self.sign_in_fails or user not in self.users or plugin != "caching_sha2_password"
+                or not matches(password, auth)):  # fmt: skip
+            raise db_error("28000", f"Database error code: 1045. Message: Access denied for "
+                           f"user '{user}'@'%' (using password: YES)")  # fmt: skip
+
     def _track_role(self, sql: str, tx: str | None) -> None:
         if tx is None:
             return
@@ -146,7 +188,9 @@ class FakeDataApi:
         return [s.sql for s in self.sent if s.op in ("execute", "batch")
                 and (database is None or s.database == database)]  # fmt: skip
 
-    def _answer(self, sql: str, db: str, tx: str | None, params: list[Any]) -> dict[str, Any]:
+    def _answer(self, sql: str, db: str, tx: str | None, params: list[Any],
+                kw_secret: str = "") -> dict[str, Any]:  # fmt: skip
+
         def rows(*values: Any, types: tuple[str, ...] = ()) -> dict[str, Any]:
             records = [[self._field(v) for v in row] for row in values]
             width = len(values[0]) if values else len(types)
@@ -157,7 +201,7 @@ class FakeDataApi:
         if sql.startswith("SELECT current_user::text, session_user::text"):
             current = self._tx_role.get(tx or "", MASTER)
             return rows([current, self._tx_session.get(tx or "", MASTER)], types=("text", "text"))
-        if sql.startswith("CREATE USER") and ":p" in sql and not self.bound_password_ok:
+        if sql.startswith("CREATE USER") and ":p" in sql:
             raise db_error("42000", "Database error code: 1064. Message: You have an error in "
                            "your SQL syntax; check the manual near '?' at line 1")  # fmt: skip
         if "FROM mysql.user WHERE" in sql:
@@ -165,9 +209,17 @@ class FakeDataApi:
             return rows(*[[u] for u in sorted(self.users) if u.startswith(prefix)])
         if any(name in sql for name in self.drop_fails) and sql.startswith("DROP"):
             raise db_error("55006", "ERROR: database is being accessed by other users")
+        if sql.startswith("SELECT CURRENT_USER()"):
+            who = self.reports_user or f"{self._signed_in_as(kw_secret) or MASTER}@%"
+            return rows([who], types=("VARCHAR",))
         user = re.match(r"(CREATE|DROP) USER (?:IF EXISTS )?'(\w+)'@'%'", sql)
         if user:
             (self.users.add if user.group(1) == "CREATE" else self.users.discard)(user.group(2))
+            how = re.search(r"IDENTIFIED WITH (\w+) AS '([^']*)'$", sql)
+            if user.group(1) == "CREATE" and how:
+                self.auth[user.group(2)] = (how.group(1), how.group(2))
+            elif user.group(1) == "DROP":
+                self.auth.pop(user.group(2), None)
             return {}
         if "@@GLOBAL.event_scheduler" in sql:
             return rows([self.scheduler], types=("VARCHAR",))

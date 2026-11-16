@@ -529,13 +529,17 @@ def test_a_mysql_target_needs_a_runner():
 
 
 def test_the_runner_user_and_its_secret_are_made_and_both_removed():
-    """Review of #2297: the runner user is created with a generated password bound into
-    CREATE USER and kept only in its own secret, tagged with the job id; dropping it drops
-    the user and deletes the secret with no recovery window."""
+    """#2298: the runner user is created from a caching_sha2_password hash computed here
+    (the Data API takes no bound password in CREATE USER), so its plain password is never in
+    any statement and is kept only in its own secret, tagged with the job id; the Data API
+    then signs in as the user through that secret before the user is handed out; dropping it
+    drops the user and deletes the secret with no recovery window."""
+    from src.tools.routines.mysql_auth import AUTH_STRING, matches
     from tests.unit.tools.routines.fake_data_api import FakeSecrets
 
     dat = _mod("data_api_target")
-    client, secrets = FakeDataApi("mysql", bound_password_ok=True), FakeSecrets()
+    secrets = FakeSecrets()
+    client = FakeDataApi("mysql", secrets=secrets)  # it signs in only with a matching hash
     tags = [{"Key": "modernizer:job-id", "Value": JOB}]
     runner = dat.create_runner(client, secrets, **ARNS, job_id=JOB, admin_database=None, tags=tags)
     assert runner.username in client.users and runner.username.startswith(dat.runner_prefix(JOB))
@@ -543,36 +547,104 @@ def test_the_runner_user_and_its_secret_are_made_and_both_removed():
     password = json.loads(stored["SecretString"])["password"]
     assert stored["Tags"] == tags and stored["Name"] == dat.runner_secret_name(JOB, runner.username)
     create = next(s for s in client.sent if s.sql.startswith("CREATE USER"))
-    assert password not in create.sql and create.parameters[0]["value"] == {"stringValue": password}
+    head = f"CREATE USER '{runner.username}'@'%' IDENTIFIED WITH caching_sha2_password AS '"
+    assert create.sql.startswith(head) and create.sql.endswith("'") and create.parameters == []
+    auth = create.sql[len(head) : -1]
+    assert AUTH_STRING.fullmatch(auth) and matches(password, auth)
+    assert create.secret == ARNS["secret_arn"]  # the master user creates it
+    assert all(password not in s.sql and password not in json.dumps(s.parameters)
+               for s in client.sent)  # fmt: skip
+    # The sign-in check: the runner's own secret, read back as the runner, with no database.
+    who = next(s for s in client.sent if s.sql == "SELECT CURRENT_USER()")
+    assert who.secret == runner.secret_arn and not who.named_database
+    # No privilege yet: each scratch database grants its own, escaped.
+    assert not [s for s in client.sent if s.sql.startswith("GRANT")]
     assert dat.drop_runner(client, secrets, **ARNS, admin_database=None, account=runner) == []
     assert not client.users and secrets.deleted == [(runner.secret_arn, True)]
 
 
+def test_the_runner_is_granted_its_scratch_database_only_and_runs_as_itself():
+    """#2298: through the run, every statement in the scratch database is the runner's
+    (its secret), the master user only creates, grants and drops; the grant names the
+    scratch database alone, ``_`` escaped so it is no wildcard."""
+    from tests.unit.tools.routines.fake_data_api import FakeSecrets
+
+    dat = _mod("data_api_target")
+    secrets = FakeSecrets()
+    client = FakeDataApi("mysql", secrets=secrets)
+    runner = dat.create_runner(client, secrets, **ARNS, job_id=JOB, admin_database=None, tags=[])
+    t = _factory(client, "mysql", runner=runner)()
+    grants = [s for s in client.sent if s.sql.startswith("GRANT")]
+    assert [g.sql for g in grants] == [
+        f"GRANT ALL PRIVILEGES ON `{t.database.replace('_', chr(92) + '_')}`.* TO "
+        f"'{runner.username}'@'%'"]  # fmt: skip
+    assert grants[0].secret == ARNS["secret_arn"]
+    t.load_setup(ProofSetup(dialect="mysql", ddl=("CREATE TABLE `t` (id int)",), rows=()))
+    in_scratch = [s for s in client.sent if s.database == t.database]
+    assert in_scratch and all(s.secret == runner.secret_arn for s in in_scratch)
+    t.close()
+    dat.drop_runner(client, secrets, **ARNS, admin_database=None, account=runner)
+    assert not client.users and not client.databases and not secrets.secrets
+
+
+def test_a_runner_the_data_api_cannot_sign_in_as_is_removed_with_its_secret():
+    """#2298: when the Data API cannot sign in as the new user (the plugin, the hash), the
+    user is dropped and its secret deleted, and the proof never goes on as the master user."""
+    from tests.unit.tools.routines.fake_data_api import FakeSecrets
+
+    dat = _mod("data_api_target")
+    secrets = FakeSecrets()
+    client = FakeDataApi("mysql", secrets=secrets, sign_in_fails=True)
+    with pytest.raises(dat.RunnerNotCreated) as refused:
+        dat.create_runner(client, secrets, **ARNS, job_id=JOB, admin_database=None, tags=[])
+    assert refused.value.left == [] and refused.value.sqlstate == "28000"
+    assert "could not sign in" in str(refused.value)
+    assert not client.users and not secrets.secrets and secrets.deleted[0][1] is True
+
+
+def test_a_sign_in_that_reports_another_user_is_no_runner():
+    """#2298: the sign-in check reads CURRENT_USER() back; a secret that signs in as anyone
+    but the new user (the master user, say) is refused, and the user and secret removed."""
+    from tests.unit.tools.routines.fake_data_api import MASTER, FakeSecrets
+
+    dat = _mod("data_api_target")
+    secrets = FakeSecrets()
+    client = FakeDataApi("mysql", secrets=secrets, reports_user=f"{MASTER}@%")
+    with pytest.raises(dat.RunnerNotCreated) as refused:
+        dat.create_runner(client, secrets, **ARNS, job_id=JOB, admin_database=None, tags=[])
+    assert "another user" in str(refused.value) and refused.value.left == []
+    assert not client.users and not secrets.secrets
+
+
+@pytest.mark.passes_on_main  # the cleanup after a failed CREATE USER is #2297's; kept as a guard
 def test_a_runner_user_that_cannot_be_made_leaves_no_secret():
     from tests.unit.tools.routines.fake_data_api import FakeSecrets
 
     dat = _mod("data_api_target")
-    client, secrets = FakeDataApi("mysql"), FakeSecrets()  # the real Data API's 1064
+    secrets = FakeSecrets()
+    client = FakeDataApi("mysql", secrets=secrets, fail_on={"CREATE USER": "HY000"})
     with pytest.raises(dat.RunnerNotCreated) as refused:
         dat.create_runner(client, secrets, **ARNS, job_id=JOB, admin_database=None, tags=[])
     assert not secrets.secrets and secrets.deleted and secrets.deleted[0][1] is True
-    assert refused.value.left == [] and refused.value.sqlstate == "42000"
+    assert refused.value.left == [] and refused.value.sqlstate == "HY000"
 
 
+@pytest.mark.passes_on_main  # naming a secret the cleanup could not delete is #2297's; kept as a guard
 def test_a_runner_whose_secret_cannot_be_deleted_says_so():
     from tests.unit.tools.routines.fake_data_api import FakeSecrets
 
     dat = _mod("data_api_target")
-    client, secrets = FakeDataApi("mysql"), FakeSecrets(delete_fails=True)
+    secrets = FakeSecrets(delete_fails=True)
+    client = FakeDataApi("mysql", secrets=secrets, fail_on={"CREATE USER": "HY000"})
     with pytest.raises(dat.RunnerNotCreated) as refused:
         dat.create_runner(client, secrets, **ARNS, job_id=JOB, admin_database=None, tags=[])
     assert refused.value.left and "secret" in refused.value.left[0]
 
 
-@pytest.mark.passes_on_main  # a test of the fake Data API, which matches the real one
+@pytest.mark.passes_on_main  # the fake's 1064 is #2297's; kept so no test can pass on a bound password
 def test_the_fake_rejects_a_bound_create_user_password_as_the_real_data_api_does():
     """Found on Aurora MySQL 3.14.0: ``CREATE USER ... IDENTIFIED BY ?`` is error 1064 at
-    the ``?``. The fake answers the same unless a test opts in (the path #2298 opens)."""
+    the ``?``. The fake answers the same, so no test can pass on a bound password (#2298)."""
     client = FakeDataApi("mysql")
     with pytest.raises(Exception) as raised:
         client.execute_statement(sql="CREATE USER 'u'@'%' IDENTIFIED BY :p0", database="",

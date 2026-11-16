@@ -50,21 +50,6 @@ def _restore_aws_profile(monkeypatch):
     monkeypatch.delenv("AWS_PROFILE")
 
 
-@pytest.fixture(autouse=True)
-def _mysql_proof_available(monkeypatch):
-    """The stack's own mechanics are tested on both engines: the MySQL proof's switch
-    (off until #2298) is on here; a test of the switch turns it off with :func:`_off`."""
-    monkeypatch.setattr("src.tools.data_movement.proof_target.MYSQL_PROOF_AVAILABLE", True,
-                        raising=False)  # fmt: skip
-
-
-def _off(monkeypatch) -> None:
-    from src.tools.data_movement import proof_target as pt
-
-    assert hasattr(pt, "MYSQL_PROOF_AVAILABLE")
-    monkeypatch.setattr(pt, "MYSQL_PROOF_AVAILABLE", False)
-
-
 @pytest.fixture
 def cred(monkeypatch) -> StubbedCredMgr:
     """The one credential manager main() builds: every client it asks for is stubbed."""
@@ -594,31 +579,21 @@ def test_a_mysql_stack_holds_its_parameter_group_and_still_passes_the_ownership_
     assert pt.parameter_group_family("aurora_mysql", "8.0.mysql_aurora.3.14.0") == "aurora-mysql8.0"
 
 
-# --- Aurora MySQL until #2298 ------------------------------------------------------------
+# --- Aurora MySQL (#2298) -----------------------------------------------------------------
 
 
-@pytest.mark.parametrize(
-    "command", ["proof-target-plan", "proof-target-deploy", "proof-target-run"]
-)
-def test_the_mysql_proof_is_not_available_yet_and_no_aws_call_is_made(tmp_path, capsys, cred,
-                                                                      command, monkeypatch):  # fmt: skip
-    """Review round 2 of #2297: until #2298 the MySQL proof cannot run, so the plan, the
-    billed deploy and the run say so before any AWS call: the customer is never asked to
-    approve a cluster the proof cannot use."""
-    _off(monkeypatch)
+def test_the_mysql_proof_is_planned_like_the_postgresql_one(tmp_path, capsys, cred):
+    """#2298: the MySQL runner user is created from a hash, so the plan no longer refuses an
+    Aurora MySQL target; it reads the engine versions as it does for PostgreSQL."""
     _job(tmp_path)  # an Aurora MySQL target
-    extra = () if command == "proof-target-plan" else ("--approve",)
-    code, out = _run(tmp_path, command, *extra, capsys=capsys)
-    assert code == 1 and out["reason_code"] == "mysql_proof_not_available", out
-    assert "#2298" in out["message"] and "Aurora MySQL" in out["message"]
-    assert cred.asked_for == [] and cred.regions == []
+    _versions(cred)
+    code, out = _run(tmp_path, "proof-target-plan", capsys=capsys)
+    assert code == 0 and out.get("reason_code") is None, out
+    assert out["status"] == "plan" and out["engine"] == "aurora_mysql" and cred.asked_for == ["rds"]
 
 
-@pytest.mark.passes_on_main  # status was never refused; the MySQL switch must not refuse it
-def test_a_mysql_stack_is_still_read_while_the_proof_is_not_available(
-    tmp_path, capsys, cred, monkeypatch
-):
-    _off(monkeypatch)
+@pytest.mark.passes_on_main  # status was never refused on MySQL
+def test_a_mysql_stack_is_read(tmp_path, capsys, cred):
     _job(tmp_path)
     _stack(cred)
     _resources(cred)
@@ -627,13 +602,12 @@ def test_a_mysql_stack_is_still_read_while_the_proof_is_not_available(
     assert code == 0 and out["status"] == "deployed"
 
 
-@pytest.mark.passes_on_main  # the PostgreSQL plan was never refused; the MySQL switch must not refuse it
-def test_the_postgresql_proof_is_still_planned(tmp_path, capsys, cred, monkeypatch):
-    _off(monkeypatch)
-    _job(tmp_path, "postgresql")
-    _versions(cred, "aurora-postgresql", [("16.15", 0.0)])
-    code, out = _run(tmp_path, "proof-target-plan", capsys=capsys)
-    assert code == 0 and out.get("reason_code") != "mysql_proof_not_available", out
+def test_the_mysql_proof_has_no_refusal_switch_left():
+    """#2298: the switch and its refusal are gone, so nothing can turn the MySQL proof off
+    again by accident."""
+    from src.tools.data_movement import proof_target as pt
+
+    assert not hasattr(pt, "MYSQL_PROOF_AVAILABLE") and not hasattr(pt, "mysql_refusal")
 
 
 def test_proof_target_run_refuses_when_the_planned_target_cannot_be_read(tmp_path, capsys, cred):
