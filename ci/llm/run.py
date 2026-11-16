@@ -2065,6 +2065,7 @@ def build_results_row(
     claude_exit_path: Path | None = None,
     token_usage_path: Path | None = None,
     explore_path: Path | None = None,
+    invariants_path: Path | None = None,
     budgets_path: Path = DEFAULT_BUDGETS,
 ) -> dict[str, Any]:
     checks: dict[str, bool | None] = {
@@ -2076,6 +2077,7 @@ def build_results_row(
         "judge": None,
         "judge_input": None,
         "explore": None,
+        "invariants": None,
     }
     missing_required = False
     # Why ``pass`` is false, one short line each (#2175): a failed run is never silent.
@@ -2208,6 +2210,22 @@ def build_results_row(
                 )
             }
 
+    # The ADR invariant queries (#2143): scripts/check_invariants.py over the run's own
+    # job. Required once the step ran (its path is given); a failing check fails the run.
+    invariants_section: dict[str, Any] | None = None
+    if invariants_path is not None:
+        invariants_payload = _load_json(invariants_path)
+        if invariants_payload is None or "status" not in invariants_payload:
+            missing_required = True
+            missing.append(f"missing or unreadable input: {invariants_path.name}")
+        else:
+            checks["invariants"] = invariants_payload.get("status") == "pass"
+            invariants_section = {
+                "status": invariants_payload.get("status"),
+                "failures": invariants_payload.get("failures") or {},
+                "message": invariants_payload.get("message"),
+            }
+
     required = ["transcript", "contracts", "engineering", "pdf", "judge"]
     if checks["judge_input"] is not None:
         required.append("judge_input")
@@ -2215,6 +2233,8 @@ def build_results_row(
         required.append("ui")
     if explore_path is not None:
         required.append("explore")
+    if invariants_path is not None:
+        required.append("invariants")
     overall_pass = (not missing_required) and all(checks.get(k) is True for k in required)
     fail_reasons = list(dict.fromkeys(missing)) + [
         f"check {k} is {'false' if checks.get(k) is False else 'null'}"
@@ -2280,6 +2300,7 @@ def build_results_row(
         "judge": judge_section,
         "judge_input": judge_input,
         "explore": explore_section,
+        "invariants": invariants_section,
         "pass": overall_pass,
         **({} if overall_pass else {"fail_reasons": fail_reasons}),
     }
@@ -2360,6 +2381,7 @@ def cmd_results(args: argparse.Namespace) -> None:
         claude_exit_path=Path(args.claude_exit) if args.claude_exit else None,
         token_usage_path=Path(args.token_usage) if args.token_usage else None,
         explore_path=Path(args.explore) if args.explore else None,
+        invariants_path=Path(args.invariants) if args.invariants else None,
     )
     out_path = Path(args.out)
     out_path.parent.mkdir(parents=True, exist_ok=True)
@@ -2986,6 +3008,14 @@ def build_parser() -> argparse.ArgumentParser:
         "--explore",
         default=None,
         help="Path to check-explore's explore.json; the explore check is required when given",
+    )
+    p2.add_argument(
+        "--invariants",
+        default=None,
+        help=(
+            "Path to scripts/check_invariants.py's verdict (#2143); the invariants check "
+            "is required when given"
+        ),
     )
     p2.set_defaults(func=cmd_results)
 

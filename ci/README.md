@@ -405,6 +405,7 @@ deterministic job.
 - `explore-transcript.jsonl`, `explore-expected.json`, `explore.json` -- the `/explore`
   session's stream-json transcript, `graph_query.py run`'s own result for the entry,
   and `check-explore`'s verdict (see "The `/explore` step" above).
+- `invariants.json` -- `scripts/check_invariants.py`'s verdict on the run's job (#2143); `fail` or no file fails the `invariants` check.
 - `model.json` -- `ci/llm/run.py check-model`'s `{"model", "expected", "match"}` (not in a dry run).
 - `reports-junit.xml`, `ui-junit.xml` (ui/both only), `pw-reports/`, `pw-ui/` --
   same shapes as `e2e.sh`'s outputs, produced by the same pytest invocations.
@@ -420,20 +421,17 @@ deterministic job.
 - `steps.json` -- exit code of every step (`build-ui` (ui/both, run *before*
   the claude call so `scripts/start_local_ui.py` finds `src/ui/build/` and
   never builds inside a Bash tool call), `claude`, `check-model` (not in a dry run), `check-transcript`,
-  `render`, `judge`, `explore-expected`, `explore`, `check-explore` (the three skipped
+  `render`, `invariants`, `judge`, `explore-expected`, `explore`, `check-explore` (the three skipped
   in a dry run without `E2E_LLM_EXPLORE_TRANSCRIPT` and in a scope without DynamoDB),
   `install-browsers`, `report-tests`, `ui-tests`, `token-usage`, `results`); a step failing never stops the script early. The judge runs before
   the browser tests (#1593), on the deliverables `render` re-renders the way the
   tests' external-job fixture does, so a slow test step can no longer leave it no
   time. `report-tests` and `ui-tests` run under `run_before_deadline` (`ci/lib.sh`):
   each must end `E2E_LLM_JOB_BUDGET` seconds (default 4800, 80 minutes) after the
-  script started, or it is stopped (or, when the budget is already used up,
-  skipped) and recorded as 124. The default leaves the `results` step and the
-  artifact upload inside the mirror's 90-minute job limit: a scoped discourse run
-  that hit that limit during its judge step was killed with no `results.json` and
-  no uploaded test results. The script first removes a previous run's `results.json`,
-  `steps.json`, `summary.json`, `judge.json` and junit files from `$OUT`, so a skipped
-  or stopped step can never be scored from a reused folder's old files. Preflight failures before the run
+  script started, or it is stopped (or skipped, when it is used up) and
+  recorded as 124. The default leaves the `results` step and the
+  artifact upload inside the mirror's 90-minute job limit. The script first removes a previous run's outputs from `$OUT` (the
+  `rm -f` list in `e2e-llm.sh`), so a skipped or stopped step is never scored from old files. Preflight failures before the run
   (missing credentials, the CLI install, `claude --version`, unzipping the
   fixture, a rejected `E2E_LLM_ARTIFACT_ROOT`) exit early, and the EXIT trap
   then writes a minimal `{"schema_version": 2, "pass": false, "error": "<step>
@@ -441,14 +439,14 @@ deterministic job.
 - `results.json` -- the one merged row (`schema_version`, `timestamp`,
   `git_sha`, `mode`, `fixture`, `model`, `job_id`, `db`, `cost_usd`,
   `num_turns`, `tokens_in`/`tokens_out`, `duration_s`, `checks: {transcript,
-  contracts, engineering, pdf, ui, judge, judge_input, explore}` (`ui` is `null` for `chat`,
-  `explore` when the step did not run, `judge_input` when `judge.json` has none; schema
+  contracts, engineering, pdf, ui, judge, judge_input, explore, invariants}` (`ui` is `null` for `chat`,
+  `explore` and `invariants` when the step did not run, `judge_input` when `judge.json` has none; schema
   version 2 renamed the `html` check to `engineering` when the HTML reports
   were retired, #987),
   `transcript_error` (`null` unless check-transcript failed; cost, turns and
   tokens are reported either way), `judge: {mean, scores}`, `judge_input`, `explore: {entry,
   ran_entry, missing_figures, cost_usd, num_turns, error}` (`null` when the step did
-  not run; its cost is not in the run's `cost_usd`), `total_cost_usd` (the run's
+  not run; its cost is not in the run's `cost_usd`), `invariants` (likewise), `total_cost_usd` (the run's
   `cost_usd` plus the explore session's), `token_usage` and `token_usage_error`,
   `list_price_cost_usd`, `budget` and `warnings` (see above), `pass`, and `fail_reasons`
   when it is false, one line per reason, #2175). Plan 3b uploads it to the results store, so it is flat JSON.

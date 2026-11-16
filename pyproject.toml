@@ -59,7 +59,8 @@ dependencies = [
     # releases, patch ones included, can change parse results, so a bump is its
     # own PR that regenerates tests/unit/tools/sql/baselines/table_refs_snapshot.json.
     "sqlglot==30.22.0",
-    # Embedded SQL engine that runs a transformation contract rule on synthetic rows (#1763)
+    # Embedded SQL engine (MIT): runs a transformation contract rule on synthetic rows
+    # (#1763) and the ADR invariant queries over a job's artifacts (#2143)
     "duckdb>=2.0,<3",
     # PostgreSQL's own parser (libpg_query, PostgreSQL 17 grammar) for the routine
     # checks (#1935). BSD-3-Clause; pglast (GPL-3.0-or-later) is not used. Exact pin:

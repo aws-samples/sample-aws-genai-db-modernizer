@@ -522,6 +522,10 @@ OTHER_SQL_DETECTORS: tuple[SqlDetector, ...] = (
 # The OTHER_SQL_MODULES with no detector in the corpus: what their heuristics read, none of
 # it a collected workload query.
 NOT_CORPUS_MODULES: dict[str, str] = {
+    "src/tools/invariants/checks.py": (
+        "holds the ADR invariant checks' own DuckDB queries over a job's saved artifacts "
+        "(#2143); it reads no workload query and has no SQL heuristic"
+    ),
     "src/shared/secret_scan.py": (
         "finds credentials in text; its one SQL pattern (a column note naming a SQL type) "
         "only allows a value, it reads no workload query"

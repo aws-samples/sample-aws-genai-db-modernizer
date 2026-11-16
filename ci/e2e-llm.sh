@@ -122,7 +122,8 @@ mkdir -p "$OUT"
 # writes no junit, and results.json would otherwise read the old file (#1593).
 # Only these files: a dry run's $E2E_LLM_TRANSCRIPT may live in this folder.
 rm -f "$OUT/job.tar.gz" "$OUT/job.findings.json" "$OUT/results.json" "$OUT/steps.json" "$OUT/summary.json" "$OUT/judge.json" \
-  "$OUT/reports-junit.xml" "$OUT/ui-junit.xml" "$OUT/explore.json" "$OUT/explore-expected.json"
+  "$OUT/reports-junit.xml" "$OUT/ui-junit.xml" "$OUT/explore.json" "$OUT/explore-expected.json" \
+  "$OUT/invariants.json"
 DRY_RUN="${E2E_LLM_DRY_RUN:-0}"
 
 # PHASE names the preflight step in progress, for the EXIT trap's fallback
@@ -412,6 +413,7 @@ fi
 
 TOKEN_USAGE_ARGS=()
 EXPLORE_ARGS=()
+INVARIANTS_ARGS=()
 
 # --- deliverable checks + judge, only if we have a job to point them at -----
 
@@ -427,6 +429,15 @@ if [ -n "$DB" ] && [ -n "$JOB" ]; then
     uv run python scripts/run_report.py --job-id "$JOB" --db "$DB" --artifact-root "$ARTIFACT_ROOT" >/dev/null
   }
   step render run_render
+
+  # The ADR invariants as queries over the run's own saved artifacts (#2143): every
+  # assignment version, design, design split and report. No model; a failing check
+  # fails the run through results.json's required `invariants` check.
+  run_invariants() {
+    uv run python scripts/check_invariants.py "$ARTIFACT_ROOT/$DB/$JOB" --out "$OUT/invariants.json" >/dev/null
+  }
+  step invariants run_invariants
+  INVARIANTS_ARGS=(--invariants "$OUT/invariants.json")
 
   run_judge() {
     # Median of $JUDGE_SAMPLES (default 3) samples by the pinned judge model
@@ -574,7 +585,8 @@ run_results() {
     --mode "$MODE" --fixture "$FIXTURE" \
     --claude-exit "$OUT/claude-exit.txt" \
     "${TOKEN_USAGE_ARGS[@]+"${TOKEN_USAGE_ARGS[@]}"}" \
-    "${EXPLORE_ARGS[@]+"${EXPLORE_ARGS[@]}"}"
+    "${EXPLORE_ARGS[@]+"${EXPLORE_ARGS[@]}"}" \
+    "${INVARIANTS_ARGS[@]+"${INVARIANTS_ARGS[@]}"}"
 }
 step results run_results
 

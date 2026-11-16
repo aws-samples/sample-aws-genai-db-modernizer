@@ -36,8 +36,12 @@ It also checks the invariants: no total exceeds the tables or queries
 analyzed, wave counts reconcile with their table groups, and every engine a
 deliverable names in an engine slot is in the final architecture.
 
-Deterministic-run only: the expected per-engine table counts and the known
-mismatches below are specific to the no-LLM samples.
+Not marked ``deterministic`` as a module (#2143): a check that holds on any run also
+runs on the e2e-llm job. Each test that keeps the mark says why: the designed jobs exist
+only in deterministic mode, the trace-appendix check skips a job with no trace, and
+the three report-figure checks wait on #2358 (they read
+the reality check's distribution as the final one, which a later assignment version
+changes). ``replay_stale`` marks a check the saved replay reports predate.
 """
 
 from __future__ import annotations
@@ -83,8 +87,6 @@ from tests.e2e.deliverable_figures import (
     report_invariant_violations,
 )
 from tests.e2e.pipeline import PipelineResult, real_designs
-
-pytestmark = pytest.mark.deterministic
 
 # Mismatches this test finds that are real bugs too large to fix here, each
 # tracked by its own issue. Keyed by (sample, deliverable, figure key), so only
@@ -222,6 +224,10 @@ def _settle(db: str, deliverable: str, problems: list[tuple[str, str]]) -> None:
         pytest.xfail(f"known bugs {', '.join(sorted(set(known.values())))}: {details}")
 
 
+# deterministic: #2358, the reality check's after_distribution is read as the final
+# distribution, and a run with a version after the reality check (an --auto pick, a
+# post-schema reroute) changes it.
+@pytest.mark.deterministic
 def test_report_json_is_consistent(run: PipelineResult) -> None:
     """report.json itself satisfies every invariant the deliverables are held to."""
     report = _report_json(run)
@@ -232,6 +238,9 @@ def test_report_json_is_consistent(run: PipelineResult) -> None:
     _settle(run.db, "report.json", problems)
 
 
+# replay_stale: the saved replay reports predate facts this compares (growth_scenarios,
+# adoption); a fresh run's report carries them.
+@pytest.mark.replay_stale
 def test_report_json_facts_are_the_facts_layer_output(run: PipelineResult) -> None:
     """#615: report.json carries the facts block, and it is exactly what the
     facts layer computes from the report's own fields -- the figures every
@@ -460,12 +469,20 @@ def test_every_deliverable_shows_the_reality_check_decisions(run: PipelineResult
         assert not missing, f"{deliverable} does not show {missing}"
 
 
+# deterministic: #2358, the reality check's after_distribution is read as the final
+# distribution, and a run with a version after the reality check (an --auto pick, a
+# post-schema reroute) changes it.
+@pytest.mark.deterministic
 def test_pdf_report_figures(run: PipelineResult) -> None:
     report = _report_json(run)
     text = " ".join(pdf_page_texts(str(run.deliverable("executive-report.pdf"))))
     _settle(run.db, "PDF", _problems(report, pdf_figures(text), _pdf_required))
 
 
+# deterministic: #2358, the reality check's after_distribution is read as the final
+# distribution, and a run with a version after the reality check (an --auto pick, a
+# post-schema reroute) changes it.
+@pytest.mark.deterministic
 def test_engineering_report_figures(run: PipelineResult) -> None:
     report = _report_json(run)
     figs = engineering_figures(run.deliverable("engineering-report.md").read_text())
@@ -481,6 +498,9 @@ def _path_label(path_id: str, default_path_id: str = "") -> str:
     return f"{base}, the default" if path_id == default_path_id else base
 
 
+# replay_stale: the saved replay reports predate facts this compares (growth_scenarios,
+# adoption); a fresh run's report carries them.
+@pytest.mark.replay_stale
 def test_the_adoption_paths_section_shows_the_stored_path_figures(run: PipelineResult) -> None:
     """#1131: "Adoption paths" shows the paths the capped view names (#2172), every
     figure read from ``facts.adoption``, each wave's steps and stages come from
@@ -588,6 +608,9 @@ def test_the_adoption_paths_section_shows_the_stored_path_figures(run: PipelineR
 _MOVING_TABLES_SENTINEL = 9137
 
 
+# replay_stale: the saved replay reports predate facts this compares (growth_scenarios,
+# adoption); a fresh run's report carries them.
+@pytest.mark.replay_stale
 def test_no_deliverable_line_states_a_path_s_moving_table_count(run: PipelineResult) -> None:
     """Review of #2241 (Critical 1): the whole engineering report, not only "Adoption
     paths", states neither ``paths[].tables_migrate`` nor wave 1's ``leaves_count`` (the
@@ -612,6 +635,8 @@ def test_no_deliverable_line_states_a_path_s_moving_table_count(run: PipelineRes
     assert "owned by a later step" not in md, run.db
 
 
+# deterministic: it skips a job that lists no query trace, which a model's run can be.
+@pytest.mark.deterministic
 def test_the_trace_appendix_agrees_with_the_unresolved_ties(run: PipelineResult) -> None:
     """#339 review: the appendix says "unresolved" only for ties still open, so
     its "(N still open)" is the "Unresolved engine ties (N)" count (since #1002
@@ -659,6 +684,7 @@ def designed_job(request: pytest.FixtureRequest) -> PipelineResult:
     return job
 
 
+@pytest.mark.deterministic
 def test_designed_report_json_is_consistent(designed_job: PipelineResult) -> None:
     """#949: the same invariants on a job whose engines all have a schema design."""
     report = _report_json(designed_job)
@@ -669,6 +695,7 @@ def test_designed_report_json_is_consistent(designed_job: PipelineResult) -> Non
     _settle("wordpress-designed", "report.json", problems)
 
 
+@pytest.mark.deterministic
 def test_designed_pdf_report_figures(designed_job: PipelineResult) -> None:
     """#949: with a schema design, the PDF's headline figures still agree with
     report.json: the retained core is not a migration target ("107 of 107 queries
@@ -678,6 +705,7 @@ def test_designed_pdf_report_figures(designed_job: PipelineResult) -> None:
     _settle("wordpress-designed", "PDF", _problems(report, pdf_figures(text), _pdf_required))
 
 
+@pytest.mark.deterministic
 def test_designed_engineering_report_figures(designed_job: PipelineResult) -> None:
     report = _report_json(designed_job)
     figs = engineering_figures(designed_job.deliverable("engineering-report.md").read_text())
@@ -722,6 +750,7 @@ def test_a_heterogeneous_wave_1_says_it_is_not_yet_optimized(run: PipelineResult
         assert norm(gap["feature"]) in pdf_wave1, gap["rule_id"]
 
 
+@pytest.mark.deterministic
 def test_designed_wave_1_states_what_later_waves_move(designed_job: PipelineResult) -> None:
     """#1284: wave 1's map sentence counts the migration map's rows as mapped, and
     states apart the facts layer's figure for what later waves move off Aurora, so a
