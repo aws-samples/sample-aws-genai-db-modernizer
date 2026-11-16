@@ -490,6 +490,12 @@ describe('defaultRiskSeverity (#2303)', () => {
     expect(defaultRiskSeverity(null, { LOW: [] }, order)).toBe('CRITICAL');
   });
 
+  it('opens on UNRATED when the open risks are all unrated', () => {
+    const tabs = [...order, 'UNRATED'];
+    expect(defaultRiskSeverity(null, { UNRATED: [{}] }, tabs)).toBe('UNRATED');
+    expect(defaultRiskSeverity(null, { LOW: [{}], UNRATED: [{}] }, tabs)).toBe('LOW');
+  });
+
   it('skips an empty higher severity', () => {
     expect(defaultRiskSeverity(null, { CRITICAL: [], HIGH: [], MEDIUM: [{}] }, order)).toBe('MEDIUM');
   });

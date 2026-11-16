@@ -2615,7 +2615,7 @@ const AnalysisResultsPage = memo(() => {
                     activeTabId={
                       riskTabIds.includes(riskTab)
                         ? riskTab
-                        : defaultRiskSeverity(synthesis, risksBySeverity, RISK_SEVERITIES)
+                        : defaultRiskSeverity(synthesis, risksBySeverity, riskTabIds)
                     }
                     onChange={({ detail }) => setRiskTab(detail.activeTabId)}
                     tabs={riskTabIds.map((severity) => {
