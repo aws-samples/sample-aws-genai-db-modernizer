@@ -99,8 +99,17 @@ async def root():
 
 @app.get("/health")
 async def health():
-    """Health check endpoint."""
-    return {"status": "healthy", "version": BUILD_VERSION}
+    """Health check endpoint.
+
+    ``local`` (#2327) is true when an uploaded file stays on this machine, under the
+    artifact folder (the local file service is wired); the new-assessment page then opens
+    on the upload form. One boolean: no path, host or credential.
+    """
+    return {
+        "status": "healthy",
+        "version": BUILD_VERSION,
+        "local": isinstance(assessments.s3_service, LocalS3Service),
+    }
 
 
 # ============================================================

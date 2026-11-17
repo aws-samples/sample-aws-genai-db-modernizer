@@ -390,6 +390,57 @@ def test_a_failed_results_request_shows_a_fixed_message_and_no_server_text(
     assert page.evaluate("window.__pwned") is None
 
 
+# #2327: with the local API the new-assessment page is one upload form, one primary action.
+def _open_new_assessment(page: Page, ui: str) -> None:
+    page.goto(f"{ui}/analysis/create")
+    expect(page.get_by_role("heading", name="New assessment")).to_be_visible(timeout=READY_MS)
+    expect(page.get_by_text("It stays on this machine, under the artifact folder.")).to_be_visible(
+        timeout=READY_MS
+    )
+
+
+def test_new_assessment_opens_on_the_upload_form_locally(page: Page, ui: str) -> None:
+    ev = _watch(page)
+    _open_new_assessment(page, ui)
+    text = page.inner_text("body")
+    assert "S3" not in text and "presigned" not in text.lower(), text
+    assert "Connect to a live database" not in text and "Coming soon" not in text, text
+    assert page.get_by_role("button", name="Start assessment").count() == 1
+    assert page.get_by_role("button", name="Upload file").count() == 0
+    assert page.get_by_role("button", name="Next").count() == 0  # no Wizard
+    assert page.get_by_role("checkbox", name=re.compile("^ElastiCache")).is_checked() is False
+    assert ev == {"console": [], "pageerror": [], "failed": []}, ev
+
+
+def test_new_assessment_empty_submit_shows_inline_errors_only(page: Page, ui: str) -> None:
+    requests: list[str] = []
+    page.on("request", lambda req: requests.append(req.url))
+    _open_new_assessment(page, ui)
+    page.get_by_role("button", name="Start assessment").click()
+    expect(page.get_by_text("Choose a collector output file (.json).")).to_be_visible()
+    expect(page.get_by_text("Enter a database name.")).to_be_visible()
+    assert page.evaluate("document.activeElement && document.activeElement.type") == "file"
+    assert page.locator('[class*="awsui_flashbar"]').count() == 0
+    assert not [u for u in requests if "/assessments" in u], requests
+
+
+def test_new_assessment_fills_the_name_in_from_the_file(
+    page: Page, ui: str, tmp_path: Path
+) -> None:
+    collection = tmp_path / "wordpress-collection.json"
+    # The shape the MySQL collection script prints: a header line, then the object.
+    collection.write_text(
+        "collection_output\n"
+        + json.dumps({"tables": [], "queries": [], "metadata": {"database_name": "wordpress"}})
+    )
+    _open_new_assessment(page, ui)
+    page.locator('input[type="file"]').set_input_files(str(collection))
+    expect(page.get_by_text("Read from the file: database wordpress")).to_be_visible(
+        timeout=READY_MS
+    )
+    expect(page.get_by_label("Database name")).to_have_value("wordpress")
+
+
 def test_results_page_shows_the_ranked_engines(
     loaded_results: OpenResults, all_runs: list[PipelineResult]
 ) -> None:
@@ -1946,7 +1997,7 @@ def test_ui_shows_only_the_product_name(
                 timeout=READY_MS
             )
         elif path == "/analysis/create":
-            expect(page.get_by_role("heading", name="Create analysis")).to_be_visible(
+            expect(page.get_by_role("heading", name="New assessment")).to_be_visible(
                 timeout=READY_MS
             )
         elif path.startswith("/analysis/monitor/summary/"):

@@ -16,6 +16,7 @@ import {
   selectedTargetEngines,
   targetDatabasesScope,
   targetEngineSelection,
+  defaultTargetSelection,
 } from '../targetEngines';
 
 test('the selectable engines are exactly the active catalog engines, in catalog order', () => {
@@ -43,6 +44,15 @@ test('select all turns on every selectable engine and no placeholder', () => {
   expect(Object.values(targetEngineSelection(false)).some(Boolean)).toBe(false);
 });
 
+// #2327: the forms start with every engine but the cache, which the user opts in to.
+test('the default selection is every selectable engine except ElastiCache', () => {
+  const start = defaultTargetSelection();
+  expect(Object.keys(start)).toEqual(SELECTABLE_TARGET_ENGINES);
+  expect(start.elasticache).toBe(false);
+  expect(selectedTargetEngines(start)).toEqual(SELECTABLE_TARGET_ENGINES.filter((id) => id !== 'elasticache'));
+  expect(en['create-analysis.target-databases.elasticache-description']).toMatch(/off by default/);
+});
+
 test('a stale saved key (placeholder or legacy id) never reaches the request', () => {
   const stale = { dynamodb: true, neptune: true, keyspaces: true, aurora: true, aurora_mysql: false };
   expect(selectedTargetEngines(stale)).toEqual(['dynamodb']);
@@ -54,12 +64,16 @@ test('a stale saved key (placeholder or legacy id) never reaches the request', (
 test.each([
   'create-analysis.target-databases',
 ])('every offered engine has a %s description', (prefix) => {
-  [...SELECTABLE_TARGET_ENGINES, ...COMING_SOON_TARGET_ENGINES].forEach((id) => {
+  SELECTABLE_TARGET_ENGINES.forEach((id) => {
     const text = en[`${prefix}.${id}-description`];
     expect(text).toEqual(expect.any(String));
-    // "Coming soon" is the disabled checkbox's label, never part of a description.
     expect(text).not.toMatch(/coming soon/i);
   });
+  // #2327: a future placeholder is not offered, so it has no description and no label.
+  COMING_SOON_TARGET_ENGINES.forEach((id) => {
+    expect(en[`${prefix}.${id}-description`]).toBeUndefined();
+  });
+  expect(en['create-analysis.target-databases.coming-soon']).toBeUndefined();
 });
 
 const PAGE_SOURCES = {

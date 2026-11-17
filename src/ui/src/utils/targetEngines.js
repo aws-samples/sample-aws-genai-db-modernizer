@@ -9,7 +9,7 @@
  * (the generic "aurora" older reports carry) is not offered at all. A new catalog engine
  * reaches every form with no edit here.
  */
-import { ENGINE_LABELS, ENGINE_STATUS } from './engineCatalog.generated';
+import { CACHE_ENGINE_IDS, ENGINE_LABELS, ENGINE_STATUS } from './engineCatalog.generated';
 
 const CATALOG_ORDER = Object.keys(ENGINE_LABELS);
 
@@ -20,6 +20,13 @@ export const COMING_SOON_TARGET_ENGINES = CATALOG_ORDER.filter((id) => ENGINE_ST
 // Every selectable engine set to `checked`: "Select all", "Deselect all" and the defaults.
 export const targetEngineSelection = (checked) => Object.fromEntries(
   SELECTABLE_TARGET_ENGINES.map((id) => [id, checked]),
+);
+
+// The new-assessment form's starting selection (#2327): every selectable engine except a
+// cache-role one. A cache fronts a database's frequent reads and owns no query, so it is a
+// choice to opt in to; its checkbox description says so.
+export const defaultTargetSelection = () => Object.fromEntries(
+  SELECTABLE_TARGET_ENGINES.map((id) => [id, !CACHE_ENGINE_IDS.includes(id)]),
 );
 
 // The ticked engine ids, in catalog order. Only selectable engines count, so a stale

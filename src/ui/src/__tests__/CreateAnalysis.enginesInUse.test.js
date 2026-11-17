@@ -20,6 +20,8 @@ jest.mock('react-i18next', () => {
 jest.mock('react-router-dom', () => ({ useNavigate: () => jest.fn() }));
 jest.mock('../classes/ApiManager', () => ({ __esModule: true, default: jest.fn() }));
 jest.mock('../components/AppHeader', () => ({ __esModule: true, default: () => null }));
+// #2327: an API that is not local, so the page offers the live-database Wizard too.
+jest.mock('../utils/apiRuntime', () => ({ readApiLocal: () => Promise.resolve(false) }));
 jest.mock('../config/GlobalConfigurations', () => ({
   SideNavigationConfigurations: {},
   ApiConfigurations: { baseUrl: 'http://localhost:8000/api/v1/' },
@@ -35,11 +37,12 @@ jest.mock('@cloudscape-design/components/wizard', () => ({
   __esModule: true,
   default: ({ steps, onSubmit }) => (
     <div>
-      {steps.map((step) => <section key={step.title}>{step.content}</section>)}
+      {steps.map((step) => <section key={step.title}>{step.content}<p className="step-error">{step.errorText}</p></section>)}
       <button type="button" data-testid="submit" onClick={onSubmit}>submit</button>
     </div>
   ),
 }));
+jest.mock('@cloudscape-design/components/form', () => ({ __esModule: true, default: ({ children }) => <div>{children}</div> }));
 jest.mock('@cloudscape-design/components/space-between', () => ({ __esModule: true, default: (p) => mockDiv(p) }));
 jest.mock('@cloudscape-design/components/button', () => ({
   __esModule: true,
@@ -142,13 +145,13 @@ global.IS_REACT_ACT_ENVIRONMENT = true;
 let container;
 let root;
 
-beforeEach(() => {
+beforeEach(async () => {
   ApiManager.mockImplementation(() => ({ execute: jest.fn() }));
   jest.spyOn(console, 'log').mockImplementation(() => {});
   container = document.createElement('div');
   document.body.appendChild(container);
   root = createRoot(container);
-  act(() => root.render(<CreateAnalysis />));
+  await act(async () => { root.render(<CreateAnalysis />); });
 });
 
 afterEach(() => {
@@ -161,7 +164,7 @@ const label = en['create-analysis.offline.database-info.engines-in-use-label'];
 
 test('the offline form offers every active engine and starts with none chosen', () => {
   act(() => {
-    container.querySelector('[data-tile="offline"]').click();
+    container.querySelector('[data-tile="upload"]').click();
   });
   const field = container.querySelector(`[data-field="${label}"]`);
   expect(field).not.toBeNull();

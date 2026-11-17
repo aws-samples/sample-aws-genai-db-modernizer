@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: MIT-0
 
 //##-- React Events
-import { useState, useCallback, useMemo } from 'react';
+import { useState, useCallback, useEffect, useMemo, useRef } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useTranslation } from 'react-i18next';
 //##-- AWS UI Objects
@@ -10,6 +10,7 @@ import AppLayoutToolbar from "@cloudscape-design/components/app-layout";
 import useLayoutAriaLabels from '../hooks/useLayoutAriaLabels';
 import BreadcrumbGroup from "@cloudscape-design/components/breadcrumb-group";
 import Wizard from "@cloudscape-design/components/wizard";
+import Form from "@cloudscape-design/components/form";
 import SpaceBetween from "@cloudscape-design/components/space-between";
 import Button from "@cloudscape-design/components/button";
 import FormField from "@cloudscape-design/components/form-field";
@@ -21,29 +22,37 @@ import Slider from "@cloudscape-design/components/slider";
 import ExpandableSection from "@cloudscape-design/components/expandable-section";
 import Textarea from "@cloudscape-design/components/textarea";
 import SideNavigation from "@cloudscape-design/components/side-navigation";
-import Flashbar from "@cloudscape-design/components/flashbar";
 import Tiles from "@cloudscape-design/components/tiles";
-import Box from "@cloudscape-design/components/box";
 import FileUpload from "@cloudscape-design/components/file-upload";
 import Container from "@cloudscape-design/components/container";
 import Header from "@cloudscape-design/components/header";
 import ProgressBar from "@cloudscape-design/components/progress-bar";
 import StatusIndicator from "@cloudscape-design/components/status-indicator";
-import Alert from "@cloudscape-design/components/alert";
 import ColumnLayout from "@cloudscape-design/components/column-layout";
-
-
+import Alert from "@cloudscape-design/components/alert";
 
 //##-- Custom Objects
-import { SideNavigationConfigurations } from "../config/GlobalConfigurations";
+import { SideNavigationConfigurations, ApiConfigurations } from "../config/GlobalConfigurations";
 import AppHeader from "../components/AppHeader";
 import ApiManager from "../classes/ApiManager";
 import { failureError, failureFlash } from "../utils/requestFailure";
 import { isValidDatabaseName, normalizeDatabaseName } from "../utils/databaseName";
 import { buildConnection } from "../utils/connectionPayload";
-import { enginesInUseOptions, enginesInUseParam, selectedTargetEngines, targetDatabasesScope, targetEngineSelection } from "../utils/targetEngines";
+import { defaultTargetSelection, enginesInUseOptions, enginesInUseParam, selectedTargetEngines, targetDatabasesScope, targetEngineSelection } from "../utils/targetEngines";
+import { readCollectorFile, SOURCE_ENGINE_IDS } from "../utils/collectorFile";
+import { readApiLocal } from "../utils/apiRuntime";
 import TargetEngineCheckboxes from "../components/TargetEngineCheckboxes";
-function SourceDatabaseSection({ formData, setFormData, errors }) {
+
+// The source engines the upload form offers, with their display names.
+const SOURCE_ENGINE_LABELS = {
+  mysql: "MySQL",
+  postgresql: "PostgreSQL",
+  mariadb: "MariaDB",
+  sqlserver: "SQL Server",
+  oracle: "Oracle",
+};
+
+function SourceDatabaseSection({ formData, setFormData, errors, fieldRefs }) {
   const { t } = useTranslation();
   const rdsOptions = [
     {
@@ -106,7 +115,7 @@ function SourceDatabaseSection({ formData, setFormData, errors }) {
         errorText={errors.host}
       >
         <Input
-          placeholder="database.example.com"
+          ref={fieldRefs.host}
           type="text"
           value={formData.host}
           onChange={({ detail }) =>
@@ -126,7 +135,7 @@ function SourceDatabaseSection({ formData, setFormData, errors }) {
           errorText={errors.port}
         >
           <Input
-            placeholder="3306"
+            ref={fieldRefs.port}
             type="number"
             value={formData.port}
             onChange={({ detail }) =>
@@ -145,7 +154,7 @@ function SourceDatabaseSection({ formData, setFormData, errors }) {
           errorText={errors.databaseName}
         >
           <Input
-            placeholder="mydatabase"
+            ref={fieldRefs.databaseName}
             type="text"
             value={formData.databaseName}
             onChange={({ detail }) =>
@@ -182,7 +191,7 @@ function SourceDatabaseSection({ formData, setFormData, errors }) {
           errorText={errors.secretArn}
         >
           <Input
-            placeholder="arn:aws:secretsmanager:us-east-1:123456789012:secret:prod/db/credentials"
+            ref={fieldRefs.secretArn}
             type="text"
             value={formData.secretArn}
             onChange={({ detail }) =>
@@ -202,7 +211,7 @@ function SourceDatabaseSection({ formData, setFormData, errors }) {
           errorText={errors.secretName}
         >
           <Input
-            placeholder="prod/db/credentials"
+            ref={fieldRefs.secretName}
             type="text"
             value={formData.secretName}
             onChange={({ detail }) =>
@@ -334,7 +343,7 @@ function CollectionOptionsSection({ formData, setFormData }) {
     </SpaceBetween>
   );
 }
-function TargetDatabasesSection({ formData, setFormData, errors }) {
+function TargetDatabasesSection({ formData, setFormData, errors, targetsRef }) {
   const { t } = useTranslation();
   const handleCheckboxChange = (key, checked) => {
     setFormData({
@@ -361,9 +370,9 @@ function TargetDatabasesSection({ formData, setFormData, errors }) {
         errorText={errors.targetDatabases}
       >
         <TargetEngineCheckboxes
+          ref={targetsRef}
           selection={formData.targetDatabases}
           onChange={handleCheckboxChange}
-          descriptionPrefix="create-analysis.target-databases"
         />
       </FormField>
 
@@ -389,7 +398,6 @@ function AdvancedOptionsSection({ formData, setFormData, errors }) {
         stretch
       >
         <Textarea
-          placeholder="orders%, customer%, product_%"
           rows={3}
           value={formData.includeTablePatterns}
           onChange={({ detail }) =>
@@ -408,7 +416,6 @@ function AdvancedOptionsSection({ formData, setFormData, errors }) {
         stretch
       >
         <Textarea
-          placeholder="temp_%, test_%, staging_%"
           rows={3}
           value={formData.excludeTablePatterns}
           onChange={({ detail }) =>
@@ -428,7 +435,6 @@ function AdvancedOptionsSection({ formData, setFormData, errors }) {
         <SpaceBetween size="s">
           <FormField label={t("create-analysis.advanced.performance-insights.top-sql-label")}>
             <Input
-              placeholder="100"
               type="number"
               value={formData.topSqlQueries}
               onChange={({ detail }) =>
@@ -441,7 +447,6 @@ function AdvancedOptionsSection({ formData, setFormData, errors }) {
           </FormField>
           <FormField label={t("create-analysis.advanced.performance-insights.top-wait-label")}>
             <Input
-              placeholder="50"
               type="number"
               value={formData.topWaitEvents}
               onChange={({ detail }) =>
@@ -508,7 +513,6 @@ function AdvancedOptionsSection({ formData, setFormData, errors }) {
             stretch
           >
             <Textarea
-              placeholder="SELECT % FROM users WHERE %&#10;INSERT INTO % VALUES %"
               rows={4}
               value={formData.customQueryPatterns}
               onChange={({ detail }) =>
@@ -527,7 +531,6 @@ function AdvancedOptionsSection({ formData, setFormData, errors }) {
             errorText={errors.collectionInterval}
           >
             <Input
-              placeholder="60"
               type="number"
               value={formData.collectionInterval}
               onChange={({ detail }) =>
@@ -543,21 +546,421 @@ function AdvancedOptionsSection({ formData, setFormData, errors }) {
     </SpaceBetween>
   );
 }
-function DatabaseAnalysisForm() {
+// The online form's step-1 fields, in the order focus looks for the first invalid one.
+const SOURCE_FIELDS = ["host", "port", "databaseName", "secretArn", "secretName"];
 
-  //##-- i18n
+function validateSource(formData, t) {
+  const errors = {};
+  if (!formData.host.trim()) {
+    errors.host = t("create-analysis.source.host.error-required");
+  }
+  if (!formData.port.trim()) {
+    errors.port = t("create-analysis.source.port.error-required");
+  } else if (isNaN(formData.port) || parseInt(formData.port) < 1 || parseInt(formData.port) > 65535) {
+    errors.port = t("create-analysis.source.port.error-text");
+  }
+  if (!formData.databaseName.trim()) {
+    errors.databaseName = t("create-analysis.source.database-name.error-required");
+  } else if (!isValidDatabaseName(formData.databaseName)) {
+    errors.databaseName = t("create-analysis.source.database-name.error-text");
+  }
+  if (formData.credentialsType === "secrets-arn") {
+    if (!formData.secretArn.trim()) {
+      errors.secretArn = t("create-analysis.source.secret-arn.error-required");
+    } else if (!formData.secretArn.startsWith("arn:aws:secretsmanager:")) {
+      errors.secretArn = t("create-analysis.source.secret-arn.error-text");
+    }
+  } else if (formData.credentialsType === "secrets-name" && !formData.secretName.trim()) {
+    errors.secretName = t("create-analysis.source.secret-name.error-required");
+  }
+  return errors;
+}
+
+function validateTargets(selection, t) {
+  return selectedTargetEngines(selection).length > 0
+    ? {}
+    : { targetDatabases: t("create-analysis.target-databases.error-required") };
+}
+
+function validateAdvanced(formData, t) {
+  if (!formData.collectionInterval.trim()) {
+    return {};
+  }
+  const interval = parseInt(formData.collectionInterval);
+  return isNaN(interval) || interval < 1 || interval > 1440
+    ? { collectionInterval: t("create-analysis.advanced.collection-interval.error-text") }
+    : {};
+}
+
+// A failed request as one sentence for the form (#2346): what failed, then the fixed
+// message for the kind of failure. Only a refused create may show the API's own reason,
+// and only when it is a safe sentence; the detail goes to the console.
+function failureText(t, source, headerKey, context, { refusal = false } = {}) {
+  const { header, content } = failureFlash(t, source, { header: t(headerKey), context, allowReason: refusal, variant: 'form' });
+  return `${header}. ${content}`;
+}
+
+// PUT the file to the upload URL the API prepared.
+function putFile(url, file, onProgress) {
+  return new Promise((resolve, reject) => {
+    const xhr = new XMLHttpRequest();
+    xhr.open('PUT', url, true);
+    xhr.setRequestHeader('Content-Type', 'application/json');
+    xhr.upload.onprogress = (event) => {
+      if (event.lengthComputable) {
+        onProgress(Math.round((event.loaded / event.total) * 100));
+      }
+    };
+    xhr.onload = () => (xhr.status >= 200 && xhr.status < 300 ? resolve() : reject(failureError(xhr.status, 'upload-file')));
+    xhr.onerror = () => reject(failureError('unreachable', 'upload-file'));
+    xhr.ontimeout = () => reject(failureError('timeout', 'upload-file'));
+    xhr.timeout = 300000; // 5 minutes
+    xhr.send(file);
+  });
+}
+
+/**
+ * The upload form (#2327): one Cloudscape Form, one primary action that uploads the
+ * file and starts the assessment. Errors are inline, focus goes to the first invalid
+ * field, and an API failure shows one plain sentence (no URL, no status code).
+ */
+function UploadAssessmentForm({ local, onCancel }) {
   const { t } = useTranslation();
-  const layoutAriaLabels = useLayoutAriaLabels();
-
-  //##-- Navigation hook
   const navigate = useNavigate();
 
+  const [files, setFiles] = useState([]);
+  const [databaseName, setDatabaseName] = useState("");
+  const [nameEdited, setNameEdited] = useState(false);
+  const detectOption = useMemo(
+    () => ({ label: t("create-analysis.offline.database-info.source-type-detect"), value: "auto" }),
+    [t],
+  );
+  const [sourceEngine, setSourceEngine] = useState(detectOption);
+  const [engineEdited, setEngineEdited] = useState(false);
+  const [enginesInUse, setEnginesInUse] = useState([]); // #1071
+  const [targets, setTargets] = useState(defaultTargetSelection);
+  const [fileFacts, setFileFacts] = useState(null); // { databaseName, sourceEngine } read from the file
+  const [errors, setErrors] = useState({});
+  const [submitError, setSubmitError] = useState("");
+  const [stage, setStage] = useState("idle"); // idle, uploading, starting
+  const [progress, setProgress] = useState(0);
 
-  //--|#######################| State Management Section  |#######################
+  const fileRef = useRef(null);
+  const nameRef = useRef(null);
+  const targetsRef = useRef(null);
+  const readToken = useRef(0);
+  const inFlight = useRef(false);
 
-  const [analysisMode, setAnalysisMode] = useState("online");
+  const engineOption = useCallback((id, fromFile) => ({
+    label: fromFile
+      ? t("create-analysis.upload.source-engine.from-file", { engine: SOURCE_ENGINE_LABELS[id] })
+      : SOURCE_ENGINE_LABELS[id],
+    value: id,
+  }), [t]);
+
+  const engineOptions = useMemo(() => [
+    detectOption,
+    ...SOURCE_ENGINE_IDS.map((id) => engineOption(id, fileFacts?.sourceEngine === id)),
+  ], [detectOption, engineOption, fileFacts]);
+
+  // Fill the name and engine from the chosen file, unless the user already set them.
+  const handleFiles = useCallback(async (chosen) => {
+    setFiles(chosen);
+    setErrors((prev) => ({ ...prev, file: undefined }));
+    setFileFacts(null);
+    const token = ++readToken.current;
+    if (!chosen.length) {
+      return;
+    }
+    const facts = await readCollectorFile(chosen[0]);
+    if (token !== readToken.current) {
+      return; // another file was chosen meanwhile
+    }
+    setFileFacts(facts);
+    if (facts.databaseName && !nameEdited) {
+      setDatabaseName(facts.databaseName);
+      setErrors((prev) => ({ ...prev, databaseName: undefined }));
+    }
+    if (!engineEdited) {
+      setSourceEngine(SOURCE_ENGINE_IDS.includes(facts.sourceEngine) ? engineOption(facts.sourceEngine, true) : detectOption);
+    }
+  }, [nameEdited, engineEdited, engineOption, detectOption]);
+
+  const validate = () => {
+    const found = {};
+    if (!files.length) {
+      found.file = t("create-analysis.upload.file.error-required");
+    }
+    if (!databaseName.trim()) {
+      found.databaseName = t("create-analysis.source.database-name.error-required");
+    } else if (!isValidDatabaseName(databaseName)) {
+      found.databaseName = t("create-analysis.source.database-name.error-text");
+    }
+    Object.assign(found, validateTargets(targets, t));
+    setErrors(found);
+    const first = [["file", fileRef], ["databaseName", nameRef], ["targetDatabases", targetsRef]]
+      .find(([key]) => found[key]);
+    if (first) {
+      first[1].current?.focus();
+    }
+    return !first;
+  };
+
+  const start = async () => {
+    // One start at a time: a second submit while one is in flight does nothing.
+    if (inFlight.current) {
+      return;
+    }
+    setSubmitError("");
+    if (!validate()) {
+      return;
+    }
+    inFlight.current = true;
+    try {
+      await uploadAndStart();
+    } finally {
+      inFlight.current = false;
+    }
+  };
+
+  const uploadAndStart = async () => {
+    const apiManager = new ApiManager();
+    setStage("uploading");
+    setProgress(0);
+    let prepared;
+    try {
+      const prepare = (await apiManager.execute([{
+        id: 'prepare',
+        path: 'assessments/prepare',
+        method: 'POST',
+        params: { database_name: normalizeDatabaseName(databaseName), source_database_type: sourceEngine.value },
+      }])).prepare;
+      if (!prepare?.success) {
+        throw failureError(prepare, 'prepare-upload');
+      }
+      prepared = prepare;
+      await putFile(prepared.upload_url, files[0], setProgress);
+      const confirm = (await apiManager.execute([{
+        id: 'confirm',
+        path: `assessments/${encodeURIComponent(prepared.job_id)}/uploads/confirm?database_name=${encodeURIComponent(normalizeDatabaseName(databaseName))}`,
+        method: 'POST',
+        params: {},
+      }])).confirm;
+      if (!confirm?.success) {
+        throw failureError(confirm, 'confirm-upload');
+      }
+    } catch (error) {
+      setStage("idle");
+      setSubmitError(failureText(t, error, "create-analysis.error.upload-failed", 'upload'));
+      return;
+    }
+
+    setStage("starting");
+    try {
+      const created = (await apiManager.execute([{
+        id: 'create-assessment',
+        path: 'assessments',
+        method: 'POST',
+        params: {
+          job_id: prepared.job_id,
+          source_database_type: sourceEngine.value,
+          database_name: normalizeDatabaseName(databaseName),
+          collection_mode: "offline",
+          offline_s3_key: prepared.upload_key,
+          // #1328: the engine scope the analysis applies (null when every engine is ticked).
+          target_databases: targetDatabasesScope(targets),
+          engines_in_use: enginesInUseParam(enginesInUse),
+          full_analysis: false,
+        },
+      }]))['create-assessment'];
+      if (!created?.success) {
+        setStage("idle");
+        setSubmitError(failureText(t, created, "create-analysis.error.start-failed", 'create-offline-assessment', { refusal: true }));
+        return;
+      }
+      navigate(`/analysis/monitor/summary/${created.job_id}`);
+    } catch (error) {
+      setStage("idle");
+      setSubmitError(failureText(t, error, "create-analysis.error.start-failed", 'create-offline-assessment'));
+    }
+  };
+
+  const busy = stage !== "idle";
+  const factsText = () => {
+    const engine = fileFacts?.sourceEngine && SOURCE_ENGINE_LABELS[fileFacts.sourceEngine];
+    const name = fileFacts?.databaseName;
+    if (engine && name) {
+      return t("create-analysis.upload.file.read-name-engine", { engine, name });
+    }
+    if (name) {
+      return t("create-analysis.upload.file.read-name", { name });
+    }
+    if (engine) {
+      return t("create-analysis.upload.file.read-engine", { engine });
+    }
+    return null;
+  };
+  const readText = fileFacts ? factsText() : null;
+
+  return (
+    <form onSubmit={(event) => { event.preventDefault(); start(); }} noValidate>
+      <Form
+        actions={
+          <SpaceBetween direction="horizontal" size="xs">
+            <Button formAction="none" variant="link" onClick={onCancel} disabled={busy}>
+              {t("common.actions.cancel")}
+            </Button>
+            <Button variant="primary" loading={busy}>
+              {t("create-analysis.upload.start-button")}
+            </Button>
+          </SpaceBetween>
+        }
+        errorText={submitError || undefined}
+        errorIconAriaLabel={t("create-analysis.offline.upload.error-icon-aria-label")}
+      >
+        <SpaceBetween size="l">
+          {/* Until the local API can receive the file (#2408); remove with that fix. */}
+          {local === true && (
+            <Alert type="info">{t("create-analysis.upload.local-start-unavailable")}</Alert>
+          )}
+          <Container header={<Header variant="h2">{t("create-analysis.upload.file.title")}</Header>}>
+            <SpaceBetween size="m">
+              <FormField
+                label={t("create-analysis.upload.file.label")}
+                description={t({
+                  true: "create-analysis.upload.file.description-local",
+                  false: "create-analysis.upload.file.description-deployed",
+                }[String(local)] || "create-analysis.upload.file.description-unknown")}
+                constraintText={t("create-analysis.upload.file.constraint-text")}
+                errorText={errors.file}
+              >
+                <FileUpload
+                  ref={fileRef}
+                  onChange={({ detail }) => {
+                    // The request in flight uses the file chosen when it started.
+                    if (!inFlight.current) {
+                      handleFiles(detail.value);
+                    }
+                  }}
+                  value={files}
+                  i18nStrings={{
+                    uploadButtonText: (multiple) => (multiple ? t("create-analysis.offline.upload.choose-files") : t("create-analysis.offline.upload.choose-file")),
+                    dropzoneText: (multiple) => (multiple ? t("create-analysis.offline.upload.drop-files") : t("create-analysis.offline.upload.drop-file")),
+                    removeFileAriaLabel: (index) => t("create-analysis.offline.upload.remove-file", { index: index + 1 }),
+                    limitShowFewer: t("create-analysis.offline.upload.show-fewer-files"),
+                    limitShowMore: t("create-analysis.offline.upload.show-more-files"),
+                    errorIconAriaLabel: t("create-analysis.offline.upload.error-icon-aria-label"),
+                  }}
+                  accept=".json,application/json"
+                  showFileSize
+                  showFileLastModified
+                  tokenLimit={1}
+                />
+              </FormField>
+              {readText && (
+                <StatusIndicator type="success">{readText}</StatusIndicator>
+              )}
+              {fileFacts && !readText && (
+                <StatusIndicator type="info">{t("create-analysis.upload.file.read-none")}</StatusIndicator>
+              )}
+              {busy && (
+                <ProgressBar
+                  value={stage === "uploading" ? progress : 100}
+                  label={t("create-analysis.offline.upload.progress-label")}
+                  description={t(stage === "uploading"
+                    ? "create-analysis.upload.progress.uploading"
+                    : "create-analysis.upload.progress.starting")}
+                />
+              )}
+            </SpaceBetween>
+          </Container>
+
+          <Container header={<Header variant="h2">{t("create-analysis.upload.database.title")}</Header>}>
+            <SpaceBetween size="l">
+              <ColumnLayout columns={2}>
+                <FormField
+                  label={t("create-analysis.source.database-name.label")}
+                  description={t("create-analysis.upload.database.name-description")}
+                  constraintText={t("create-analysis.upload.database.name-constraint-text")}
+                  errorText={errors.databaseName}
+                >
+                  <Input
+                    ref={nameRef}
+                    value={databaseName}
+                    disabled={busy}
+                    onChange={({ detail }) => {
+                      setDatabaseName(detail.value);
+                      setNameEdited(true);
+                      setErrors((prev) => ({ ...prev, databaseName: undefined }));
+                    }}
+                  />
+                </FormField>
+                <FormField
+                  label={t("create-analysis.upload.source-engine.label")}
+                  description={t("create-analysis.offline.database-info.source-type-description")}
+                >
+                  <Select
+                    selectedOption={sourceEngine}
+                    options={engineOptions}
+                    disabled={busy}
+                    onChange={({ detail }) => {
+                      setSourceEngine(detail.selectedOption);
+                      setEngineEdited(true);
+                    }}
+                  />
+                </FormField>
+              </ColumnLayout>
+              <FormField
+                label={t("create-analysis.offline.database-info.engines-in-use-label")}
+                description={t("create-analysis.offline.database-info.engines-in-use-description")}
+              >
+                <Multiselect
+                  selectedOptions={enginesInUse}
+                  onChange={({ detail }) => setEnginesInUse(detail.selectedOptions)}
+                  options={enginesInUseOptions()}
+                  placeholder={t("create-analysis.offline.database-info.engines-in-use-placeholder")}
+                  disabled={busy}
+                />
+              </FormField>
+            </SpaceBetween>
+          </Container>
+
+          <Container
+            header={
+              <Header variant="h2" description={t("create-analysis.upload.targets.description")}>
+                {t("create-analysis.upload.targets.title")}
+              </Header>
+            }
+          >
+            <FormField
+              label={t("create-analysis.upload.targets.label")}
+              errorText={errors.targetDatabases}
+              stretch
+            >
+              <TargetEngineCheckboxes
+                ref={targetsRef}
+                disabled={busy}
+                selection={targets}
+                onChange={(key, checked) => {
+                  setTargets((prev) => ({ ...prev, [key]: checked }));
+                  setErrors((prev) => ({ ...prev, targetDatabases: undefined }));
+                }}
+              />
+            </FormField>
+          </Container>
+        </SpaceBetween>
+      </Form>
+    </form>
+  );
+}
+
+/**
+ * The live-database form, a Wizard, offered only where the API is not local (#2327).
+ */
+function OnlineAssessmentWizard({ onCancel }) {
+  const { t } = useTranslation();
+  const navigate = useNavigate();
   const [activeStepIndex, setActiveStepIndex] = useState(0);
-
   const [formData, setFormData] = useState({
     // Source database
     rdsInstance: null,
@@ -575,7 +978,7 @@ function DatabaseAnalysisForm() {
       value: "performance-insights",
     },
     // Target databases
-    targetDatabases: targetEngineSelection(true),
+    targetDatabases: defaultTargetSelection(),
     // Advanced options
     includeTablePatterns: "",
     excludeTablePatterns: "",
@@ -584,515 +987,181 @@ function DatabaseAnalysisForm() {
     customQueryPatterns: "",
     collectionInterval: "",
   });
-
   const [errors, setErrors] = useState({});
+  const [submitError, setSubmitError] = useState("");
   const [loading, setLoading] = useState(false);
-  const [flashbarItems, setFlashbarItems] = useState([]);
 
-  // Offline upload state
-  const [offlineFiles, setOfflineFiles] = useState([]);
-  const [offlineDatabaseName, setOfflineDatabaseName] = useState("");
-  const [offlineSourceType, setOfflineSourceType] = useState({ label: t("create-analysis.offline.database-info.source-type-detect"), value: "auto" });
-  const [offlineTargetDatabases, setOfflineTargetDatabases] = useState(
-    () => ({ ...targetEngineSelection(true), elasticache: false }),
-  );
-  const [offlineEnginesInUse, setOfflineEnginesInUse] = useState([]); // #1071
-  const [uploadState, setUploadState] = useState("idle"); // idle, preparing, uploading, confirming, ready, submitting
-  const [uploadProgress, setUploadProgress] = useState(0);
-  const [preparedJob, setPreparedJob] = useState(null); // { job_id, upload_url, upload_key }
+  const host = useRef(null);
+  const port = useRef(null);
+  const databaseName = useRef(null);
+  const secretArn = useRef(null);
+  const secretName = useRef(null);
+  const targetsRef = useRef(null);
+  const fieldRefs = useMemo(() => ({ host, port, databaseName, secretArn, secretName }), []);
 
-
-
-
-  //--|#######################| Handle Section  |#######################
-
-
-  //##-- Flashbar message handler
-  const addFlashbarMessage = useCallback((message) => {
-    setFlashbarItems(prevItems => [...prevItems, message]);
-  }, []);
-
-  const handleFlashbarDismiss = useCallback((itemId) => {
-    setFlashbarItems(prevItems => prevItems.filter(item => item.id !== itemId));
-  }, []);
-
-
-
-
-  //--|#######################| Validation Section  |#######################
-
-  const validateStep = (stepIndex) => {
-    const newErrors = {};
-
+  const errorsFor = useCallback((stepIndex) => {
     if (stepIndex === 0) {
-      // Step 1: Source database validation
-      if (!formData.host.trim()) {
-        newErrors.host = "Host is required";
-      }
-
-      if (!formData.port.trim()) {
-        newErrors.port = "Port is required";
-      } else if (
-        isNaN(formData.port) ||
-        parseInt(formData.port) < 1 ||
-        parseInt(formData.port) > 65535
-      ) {
-        newErrors.port = "Port must be a valid number between 1 and 65535";
-      }
-
-      if (!formData.databaseName.trim()) {
-        newErrors.databaseName = "Database name is required";
-      } else if (!isValidDatabaseName(formData.databaseName)) {
-        newErrors.databaseName = t("create-analysis.source.database-name.error-text");
-      }
-
-      if (formData.credentialsType === "secrets-arn") {
-        if (!formData.secretArn.trim()) {
-          newErrors.secretArn = "Secret ARN is required";
-        } else if (!formData.secretArn.startsWith("arn:aws:secretsmanager:")) {
-          newErrors.secretArn = "Please enter a valid AWS Secrets Manager ARN";
-        }
-      } else if (formData.credentialsType === "secrets-name") {
-        if (!formData.secretName.trim()) {
-          newErrors.secretName = "Secret name is required";
-        }
-      }
-    } else if (stepIndex === 2) {
-      // Step 3: Target databases validation
-      const hasSelectedDatabase = selectedTargetEngines(formData.targetDatabases).length > 0;
-      if (!hasSelectedDatabase) {
-        newErrors.targetDatabases = "Please select at least one target database";
-      }
-    } else if (stepIndex === 3) {
-      // Step 4: Advanced options validation
-      if (formData.collectionInterval.trim()) {
-        const interval = parseInt(formData.collectionInterval);
-        if (isNaN(interval) || interval < 1 || interval > 1440) {
-          newErrors.collectionInterval =
-            "Collection interval must be between 1 and 1440 minutes";
-        }
-      }
+      return validateSource(formData, t);
     }
+    if (stepIndex === 2) {
+      return validateTargets(formData.targetDatabases, t);
+    }
+    if (stepIndex === 3) {
+      return validateAdvanced(formData, t);
+    }
+    return {};
+  }, [formData, t]);
 
-    setErrors(newErrors);
-    return Object.keys(newErrors).length === 0;
+  const focusFirst = (found) => {
+    const key = [...SOURCE_FIELDS, "targetDatabases"].find((k) => found[k]);
+    const ref = key === "targetDatabases" ? targetsRef : fieldRefs[key];
+    // After the step's errors render, so a field of this step has mounted.
+    setTimeout(() => ref?.current?.focus(), 0);
   };
 
-  const validateForm = () => {
-    const newErrors = {};
-
-    // Validate host (required)
-    if (!formData.host.trim()) {
-      newErrors.host = "Host is required";
-    }
-
-    // Validate port (required and must be a valid number)
-    if (!formData.port.trim()) {
-      newErrors.port = "Port is required";
-    } else if (
-      isNaN(formData.port) ||
-      parseInt(formData.port) < 1 ||
-      parseInt(formData.port) > 65535
-    ) {
-      newErrors.port = "Port must be a valid number between 1 and 65535";
-    }
-
-    // Validate database name (required)
-    if (!formData.databaseName.trim()) {
-      newErrors.databaseName = "Database name is required";
-    } else if (!isValidDatabaseName(formData.databaseName)) {
-      newErrors.databaseName = t("create-analysis.source.database-name.error-text");
-    }
-
-    // Validate credentials based on type
-    if (formData.credentialsType === "secrets-arn") {
-      if (!formData.secretArn.trim()) {
-        newErrors.secretArn = "Secret ARN is required";
-      } else if (!formData.secretArn.startsWith("arn:aws:secretsmanager:")) {
-        newErrors.secretArn = "Please enter a valid AWS Secrets Manager ARN";
-      }
-    } else if (formData.credentialsType === "secrets-name") {
-      if (!formData.secretName.trim()) {
-        newErrors.secretName = "Secret name is required";
-      }
-    }
-
-    // Validate at least one target database is selected
-    const hasSelectedDatabase = selectedTargetEngines(formData.targetDatabases).length > 0;
-    if (!hasSelectedDatabase) {
-      newErrors.targetDatabases = "Please select at least one target database";
-    }
-
-    // Validate collection interval if provided
-    if (formData.collectionInterval.trim()) {
-      const interval = parseInt(formData.collectionInterval);
-      if (isNaN(interval) || interval < 1 || interval > 1440) {
-        newErrors.collectionInterval =
-          "Collection interval must be between 1 and 1440 minutes";
-      }
-    }
-    setErrors(newErrors);
-
-    // Log errors for debugging
-    if (Object.keys(newErrors).length > 0) {
-      console.log("Validation errors:", newErrors);
-    }
-    return Object.keys(newErrors).length === 0;
-  };
-
-
-
-
-  //--|#######################| API Call Section  |#######################
-
-
-  //##-- Upload file for offline mode (prepare → upload → confirm)
-  const handleOfflineUpload = useCallback(async () => {
-    if (!offlineFiles.length) {
-      addFlashbarMessage({ type: 'error', header: 'No file selected', content: 'Please select a collector output JSON file to upload.', dismissible: true, id: `error-${Date.now()}` });
+  const createAssessment = async () => {
+    const found = { ...validateSource(formData, t), ...validateTargets(formData.targetDatabases, t), ...validateAdvanced(formData, t) };
+    setErrors(found);
+    if (Object.keys(found).length) {
+      const step = Object.keys(validateSource(formData, t)).length ? 0
+        : Object.keys(validateTargets(formData.targetDatabases, t)).length ? 2 : 3;
+      setActiveStepIndex(step);
+      focusFirst(found);
       return;
     }
-    if (!offlineDatabaseName.trim()) {
-      addFlashbarMessage({ type: 'error', header: 'Database name required', content: 'Please enter a database name for this assessment.', dismissible: true, id: `error-${Date.now()}` });
-      return;
-    }
-    if (!isValidDatabaseName(offlineDatabaseName)) {
-      addFlashbarMessage({ type: 'error', header: 'Invalid database name', content: 'Use only letters, digits, _ and -, up to 128 characters.', dismissible: true, id: `error-${Date.now()}` });
-      return;
-    }
-
     setLoading(true);
-    setFlashbarItems([]);
-
+    setSubmitError("");
     try {
-      const apiManager = new ApiManager();
-
-      // Step 1: Prepare — get job_id + presigned URL
-      setUploadState("preparing");
-      const prepareResults = await apiManager.execute([{
-        id: 'prepare',
-        path: 'assessments/prepare',
-        method: 'POST',
-        params: {
-          database_name: normalizeDatabaseName(offlineDatabaseName),
-          source_database_type: offlineSourceType.value,
-        }
-      }]);
-
-      if (prepareResults['prepare']?.error) {
-        throw failureError(prepareResults['prepare'], 'prepare-upload');
-      }
-
-      const prepared = prepareResults['prepare'];
-      const { job_id, upload_url, upload_key } = prepared;
-      setPreparedJob({ job_id, upload_url, upload_key });
-
-      // Step 2: Upload file directly to S3 via presigned URL
-      setUploadState("uploading");
-      const file = offlineFiles[0];
-
-      await new Promise((resolve, reject) => {
-        const xhr = new XMLHttpRequest();
-        xhr.open('PUT', upload_url, true);
-        xhr.setRequestHeader('Content-Type', 'application/json');
-
-        xhr.upload.onprogress = (event) => {
-          if (event.lengthComputable) {
-            setUploadProgress(Math.round((event.loaded / event.total) * 100));
-          }
-        };
-
-        xhr.onload = () => {
-          if (xhr.status >= 200 && xhr.status < 300) {
-            resolve();
-          } else {
-            reject(failureError(xhr.status, 'upload-to-storage'));
-          }
-        };
-
-        xhr.onerror = () => reject(failureError('unreachable', 'upload-to-storage'));
-        xhr.ontimeout = () => reject(failureError('timeout', 'upload-to-storage'));
-        xhr.timeout = 300000; // 5 minutes
-        xhr.send(file);
-      });
-
-      // Step 3: Confirm upload
-      setUploadState("confirming");
-      const confirmResults = await apiManager.execute([{
-        id: 'confirm',
-        path: `assessments/${job_id}/uploads/confirm?database_name=${encodeURIComponent(normalizeDatabaseName(offlineDatabaseName))}`,
-        method: 'POST',
-        params: {}
-      }]);
-
-      if (confirmResults['confirm']?.error) {
-        throw failureError(confirmResults['confirm'], 'confirm-upload');
-      }
-
-      const confirmed = confirmResults['confirm'];
-      setUploadState("ready");
-
-      addFlashbarMessage({
-        type: 'success',
-        header: 'File uploaded',
-        content: `${file.name} (${(confirmed.size_bytes / 1024).toFixed(1)} KB) uploaded and confirmed. Ready to start analysis.`,
-        dismissible: true,
-        id: `success-upload-${Date.now()}`
-      });
-
-    } catch (error) {
-      console.error('Offline upload error:', error);
-      setUploadState("idle");
-      setPreparedJob(null);
-      addFlashbarMessage(failureFlash(t, error, { header: t('create-analysis.error.upload-failed'), context: 'upload' }));
-    } finally {
-      setLoading(false);
-    }
-  }, [offlineFiles, offlineDatabaseName, offlineSourceType, addFlashbarMessage, t]);
-
-
-  //##-- Start offline assessment after upload is confirmed
-  const createOfflineAssessment = useCallback(async () => {
-    if (!preparedJob) {
-      addFlashbarMessage({ type: 'error', header: 'No upload', content: 'Please upload a file first.', dismissible: true, id: `error-${Date.now()}` });
-      return;
-    }
-    if (selectedTargetEngines(offlineTargetDatabases).length === 0) {
-      // An empty scope is refused by the API too (#1328); say so before sending.
-      addFlashbarMessage({ type: 'error', header: 'No target database', content: 'Please select at least one target database', dismissible: true, id: `error-${Date.now()}` });
-      return;
-    }
-
-    setLoading(true);
-    setUploadState("submitting");
-
-    try {
-      const apiManager = new ApiManager();
-      // #1328: the engine scope the analysis applies (null when every engine is ticked).
-      const targetDatabasesArray = targetDatabasesScope(offlineTargetDatabases);
-
-      const results = await apiManager.execute([{
-        id: 'create-assessment',
-        path: 'assessments',
-        method: 'POST',
-        params: {
-          job_id: preparedJob.job_id,
-          source_database_type: offlineSourceType.value,
-          database_name: normalizeDatabaseName(offlineDatabaseName),
-          collection_mode: "offline",
-          offline_s3_key: preparedJob.upload_key,
-          target_databases: targetDatabasesArray,
-          engines_in_use: enginesInUseParam(offlineEnginesInUse),
-          full_analysis: false,
-        }
-      }]);
-
-      if (results['create-assessment']?.error) {
-        const result = results['create-assessment'];
-        throw failureError(result, 'create-assessment');
-      }
-
-      const jobId = results['create-assessment'].job_id;
-      addFlashbarMessage({
-        type: 'success',
-        header: 'Assessment started',
-        content: `Offline assessment created with Job ID: ${jobId}. Redirecting to monitoring...`,
-        dismissible: true,
-        id: `success-${Date.now()}`
-      });
-
-      setTimeout(() => navigate(`/analysis/monitor/summary/${jobId}`), 2000);
-
-    } catch (error) {
-      console.error('Error creating offline assessment:', error);
-      setUploadState("ready"); // Allow retry
-      addFlashbarMessage(failureFlash(t, error, { header: t('create-analysis.error.start-failed'), context: 'create-offline-assessment' }));
-    } finally {
-      setLoading(false);
-    }
-  }, [preparedJob, offlineDatabaseName, offlineSourceType, offlineTargetDatabases, offlineEnginesInUse, addFlashbarMessage, navigate, t]);
-
-
-  //##-- Create assessment for online mode
-  const createAssessment = useCallback(async () => {
-    if (!validateForm()) {
-      addFlashbarMessage({
-        type: 'error',
-        header: 'Validation Error',
-        content: 'Please fix the form errors before submitting',
-        dismissible: true,
-        id: `error-${Date.now()}`
-      });
-      return;
-    }
-
-    setLoading(true);
-    setFlashbarItems([]);
-
-    try {
-      const apiManager = new ApiManager();
-
-      // #1328: the engine scope the analysis applies (null when every engine is ticked).
-      const targetDatabasesArray = targetDatabasesScope(formData.targetDatabases);
-
-      // Credentials go by reference only (a Secrets Manager ARN or name),
-      // never a password (#723, ADR-004 Decision 5).
-      const connection = buildConnection(formData);
-
-      // Build options object
       const options = {
         query_log_period_days: formData.queryLogPeriod,
         query_log_source: formData.queryLogSource.value,
         top_sql_queries: parseInt(formData.topSqlQueries),
-        top_wait_events: parseInt(formData.topWaitEvents)
+        top_wait_events: parseInt(formData.topWaitEvents),
       };
-
-      // Add optional fields
       if (formData.includeTablePatterns.trim()) {
         options.include_table_patterns = formData.includeTablePatterns.trim();
       }
       if (formData.excludeTablePatterns.trim()) {
         options.exclude_table_patterns = formData.excludeTablePatterns.trim();
       }
-
-      const apiCalls = [
-        {
-          id: 'create-assessment',
-          path: 'assessments',
-          method: 'POST',
-          params: {
-            source_database_type: "mysql", // TODO: Get from RDS instance or form
-            database_name: normalizeDatabaseName(formData.databaseName),
-            connection: connection,
-            options: options,
-            target_databases: targetDatabasesArray,
-            full_analysis: false
-          }
-        }
-      ];
-
-      const results = await apiManager.execute(apiCalls);
-      console.log('Create assessment result:', results);
-
-      if (results['create-assessment']?.error) {
-        // The secrets refusal is the API's own sentence: show it (#2346 opt-in).
-        addFlashbarMessage(failureFlash(t, results['create-assessment'], { header: t('create-analysis.error.create-failed'), context: 'create-assessment', allowReason: true, variant: 'form' }));
-      } else if (results['create-assessment']?.success) {
-        const jobId = results['create-assessment'].job_id;
-
-        addFlashbarMessage({
-          type: 'success',
-          header: 'Assessment Created',
-          content: `Assessment created successfully with Job ID: ${jobId}`,
-          dismissible: true,
-          id: `success-${Date.now()}`
-        });
-
-        // Navigate to job monitoring page after 2 seconds
-        setTimeout(() => {
-          navigate(`/analysis/monitor/summary/${jobId}`);
-        }, 2000);
+      const result = (await new ApiManager().execute([{
+        id: 'create-assessment',
+        path: 'assessments',
+        method: 'POST',
+        params: {
+          source_database_type: "mysql", // TODO: Get from RDS instance or form
+          database_name: normalizeDatabaseName(formData.databaseName),
+          // Credentials go by reference only (a Secrets Manager ARN or name),
+          // never a password (#723, ADR-004 Decision 5).
+          connection: buildConnection(formData),
+          options,
+          // #1328: the engine scope the analysis applies (null when every engine is ticked).
+          target_databases: targetDatabasesScope(formData.targetDatabases),
+          full_analysis: false,
+        },
+      }]))['create-assessment'];
+      if (!result?.success) {
+        setSubmitError(failureText(t, result, "create-analysis.error.create-failed", 'create-assessment', { refusal: true }));
+        return;
       }
-
+      navigate(`/analysis/monitor/summary/${result.job_id}`);
     } catch (error) {
-      console.error('Error creating assessment:', error);
-      addFlashbarMessage(failureFlash(t, error, { header: t('create-analysis.error.create-failed'), context: 'create-assessment', variant: 'form' }));
+      setSubmitError(failureText(t, error, "create-analysis.error.create-failed", 'create-assessment'));
     } finally {
       setLoading(false);
     }
-  }, [formData, validateForm, addFlashbarMessage, navigate, t]);
+  };
 
+  const handleNavigate = (detail) => {
+    if (detail.requestedStepIndex > activeStepIndex) {
+      const found = errorsFor(activeStepIndex);
+      setErrors(found);
+      if (Object.keys(found).length) {
+        focusFirst(found);
+        return;
+      }
+    }
+    setActiveStepIndex(detail.requestedStepIndex);
+  };
 
-
-
-  //--|#######################| Wizard Steps Configuration  |#######################
-
-  const wizardSteps = useMemo(() => [
+  const steps = [
     {
       title: t("create-analysis.step.source-database.title"),
       description: t("create-analysis.step.source-database.description"),
-      content: (
-        <SourceDatabaseSection
-          formData={formData}
-          setFormData={setFormData}
-          errors={errors}
-        />
-      ),
-      isOptional: false
+      content: <SourceDatabaseSection formData={formData} setFormData={setFormData} errors={errors} fieldRefs={fieldRefs} />,
     },
     {
       title: t("create-analysis.step.collection-options.title"),
       description: t("create-analysis.step.collection-options.description"),
-      content: (
-        <CollectionOptionsSection
-          formData={formData}
-          setFormData={setFormData}
-        />
-      ),
-      isOptional: false
+      content: <CollectionOptionsSection formData={formData} setFormData={setFormData} />,
     },
     {
       title: t("create-analysis.step.target-databases.title"),
       description: t("create-analysis.step.target-databases.description"),
-      content: (
-        <TargetDatabasesSection
-          formData={formData}
-          setFormData={setFormData}
-          errors={errors}
-        />
-      ),
-      isOptional: false
+      content: <TargetDatabasesSection formData={formData} setFormData={setFormData} errors={errors} targetsRef={targetsRef} />,
     },
     {
       title: t("create-analysis.step.advanced-options.title"),
       description: t("create-analysis.step.advanced-options.description"),
-      content: (
-        <AdvancedOptionsSection
-          formData={formData}
-          setFormData={setFormData}
-          errors={errors}
-        />
-      ),
-      isOptional: true
-    }
-  ], [formData, errors, t]);
+      content: <AdvancedOptionsSection formData={formData} setFormData={setFormData} errors={errors} />,
+      isOptional: true,
+      errorText: submitError || undefined,
+    },
+  ];
 
+  return (
+    <Wizard
+      i18nStrings={{
+        stepNumberLabel: (stepNumber) => t("create-analysis.wizard.step-number-label", { stepNumber }),
+        collapsedStepsLabel: (stepNumber, stepsCount) => t("create-analysis.wizard.collapsed-steps-label", { stepNumber, stepsCount }),
+        skipToButtonLabel: (step) => t("create-analysis.wizard.skip-to-button-label", { title: step.title }),
+        navigationAriaLabel: t("create-analysis.wizard.navigation-aria-label"),
+        cancelButton: t("common.actions.cancel"),
+        previousButton: t("create-analysis.wizard.previous-button"),
+        nextButton: t("create-analysis.wizard.next-button"),
+        submitButton: t("create-analysis.upload.start-button"),
+        optional: t("create-analysis.wizard.optional"),
+      }}
+      onNavigate={({ detail }) => handleNavigate(detail)}
+      onCancel={onCancel}
+      onSubmit={createAssessment}
+      activeStepIndex={activeStepIndex}
+      steps={steps}
+      isLoadingNextStep={loading}
+    />
+  );
+}
 
-  //--|#######################| Action Handlers Section  |#######################
+function DatabaseAnalysisForm() {
+  const { t } = useTranslation();
+  const layoutAriaLabels = useLayoutAriaLabels();
+  const navigate = useNavigate();
 
+  // #2327: true when the API keeps uploads on this machine; null until it answers.
+  const [apiLocal, setApiLocal] = useState(null);
+  const [mode, setMode] = useState("upload");
+  const [modeChosen, setModeChosen] = useState(false);
 
-  const handleNavigate = useCallback((detail) => {
-    const requestedStepIndex = detail.requestedStepIndex;
-
-    // Validate current step before moving forward
-    if (requestedStepIndex > activeStepIndex) {
-      if (!validateStep(activeStepIndex)) {
-        addFlashbarMessage({
-          type: 'error',
-          header: 'Validation Error',
-          content: 'Please fix the errors in the current step before proceeding',
-          dismissible: true,
-          id: `error-${Date.now()}`
-        });
-        return;
+  useEffect(() => {
+    let live = true;
+    readApiLocal(ApiConfigurations.baseUrl).then((local) => {
+      if (live) {
+        setApiLocal(local);
       }
+    });
+    return () => { live = false; };
+  }, []);
+
+  // A deployment that is not local opens on the live-database form, until the user picks.
+  useEffect(() => {
+    if (apiLocal === false && !modeChosen) {
+      setMode("online");
     }
+  }, [apiLocal, modeChosen]);
 
-    setActiveStepIndex(requestedStepIndex);
-  }, [activeStepIndex, addFlashbarMessage, validateStep]);
+  const deployed = apiLocal === false;
+  const handleCancel = useCallback(() => navigate('/dashboard'), [navigate]);
 
-
-  const handleCancel = useCallback(() => {
-    console.log("Analysis cancelled");
-    navigate('/dashboard');
-  }, [navigate]);
-
-
-  const handleSubmit = useCallback(() => {
-    createAssessment();
-  }, [createAssessment]);
-  // An empty name is reported by handleOfflineUpload; this flags a typed one the API would reject
-  const offlineNameInvalid = offlineDatabaseName.trim() !== "" && !isValidDatabaseName(offlineDatabaseName);
   return (
     <>
       <AppHeader />
@@ -1101,224 +1170,51 @@ function DatabaseAnalysisForm() {
         breadcrumbs={
           <BreadcrumbGroup
             items={[
-              {
-                href: "/",
-                text: t("create-analysis.breadcrumb.home"),
-              },
-              {
-                href: "/dashboard",
-                text: t("create-analysis.breadcrumb.analyses"),
-              },
-              {
-                href: "#",
-                text: t("create-analysis.breadcrumb.create-analysis"),
-              },
+              { href: "/", text: t("create-analysis.breadcrumb.home") },
+              { href: "/dashboard", text: t("create-analysis.breadcrumb.analyses") },
+              { href: "#", text: t("create-analysis.breadcrumb.create-analysis") },
             ]}
           />
         }
         content={
           <SpaceBetween size="l">
+            <Header
+              variant="h1"
+              description={t(deployed ? "create-analysis.header.description-deployed" : "create-analysis.header.description")}
+            >
+              {t("create-analysis.header.title")}
+            </Header>
 
-            {flashbarItems.length > 0 && (
-              <Flashbar
-                items={flashbarItems.map(item => ({
-                  ...item,
-                  onDismiss: () => handleFlashbarDismiss(item.id)
-                }))}
-              />
-            )}
-
-            <SpaceBetween size="m">
-              <Box variant="h1">{t("create-analysis.header.title")}</Box>
-              <Box variant="p" color="text-body-secondary">
-                {t("create-analysis.header.description")}
-              </Box>
-
-              <FormField
-                label={t("create-analysis.form.analysis-mode.label")}
-                description={t("create-analysis.form.analysis-mode.description")}
-                stretch
-              >
+            {deployed && (
+              <FormField label={t("create-analysis.form.analysis-mode.label")} stretch>
                 <Tiles
                   items={[
                     {
-                      value: "online",
-                      label: t("create-analysis.form.analysis-mode.online-label"),
-                      description: t("create-analysis.form.analysis-mode.online-description")
+                      value: "upload",
+                      label: t("create-analysis.form.analysis-mode.offline-label"),
+                      description: t("create-analysis.form.analysis-mode.offline-description"),
                     },
                     {
-                      value: "offline",
-                      label: t("create-analysis.form.analysis-mode.offline-label"),
-                      description: t("create-analysis.form.analysis-mode.offline-description")
-                    }
+                      value: "online",
+                      label: t("create-analysis.form.analysis-mode.online-label"),
+                      description: t("create-analysis.form.analysis-mode.online-description"),
+                    },
                   ]}
-                  value={analysisMode}
-                  onChange={({ detail }) => setAnalysisMode(detail.value)}
+                  value={mode}
+                  onChange={({ detail }) => {
+                    setMode(detail.value);
+                    setModeChosen(true);
+                  }}
                 />
               </FormField>
-            </SpaceBetween>
-
-            {analysisMode === "online" ? (
-              <Wizard
-                i18nStrings={{
-                  stepNumberLabel: stepNumber => t("create-analysis.wizard.step-number-label", { stepNumber }),
-                  collapsedStepsLabel: (stepNumber, stepsCount) =>
-                    t("create-analysis.wizard.collapsed-steps-label", { stepNumber, stepsCount }),
-                  skipToButtonLabel: (step, stepNumber) =>
-                    t("create-analysis.wizard.skip-to-button-label", { title: step.title }),
-                  navigationAriaLabel: t("create-analysis.wizard.navigation-aria-label"),
-                  cancelButton: t("common.actions.cancel"),
-                  previousButton: t("create-analysis.wizard.previous-button"),
-                  nextButton: t("create-analysis.wizard.next-button"),
-                  submitButton: t("create-analysis.wizard.submit-button"),
-                  optional: t("create-analysis.wizard.optional")
-                }}
-                onNavigate={({ detail }) => handleNavigate(detail)}
-                onCancel={handleCancel}
-                onSubmit={handleSubmit}
-                activeStepIndex={activeStepIndex}
-                steps={wizardSteps}
-                isLoadingNextStep={loading}
-              />
-            ) : (
-              <SpaceBetween size="l">
-
-                <Container header={<Header variant="h2">{t("create-analysis.offline.database-info.title")}</Header>}>
-                  <ColumnLayout columns={2} variant="text-grid">
-                    <FormField
-                      label={t("create-analysis.offline.database-info.database-name-label")}
-                      description={t("create-analysis.offline.database-info.database-name-description")}
-                      constraintText={t("create-analysis.source.database-name.constraint-text")}
-                      errorText={offlineNameInvalid ? t("create-analysis.source.database-name.error-text") : undefined}
-                    >
-                      <Input
-                        placeholder="my_database"
-                        value={offlineDatabaseName}
-                        onChange={({ detail }) => setOfflineDatabaseName(detail.value)}
-                        disabled={uploadState !== "idle"}
-                      />
-                    </FormField>
-                    <FormField label={t("create-analysis.offline.database-info.source-type-label")} description={t("create-analysis.offline.database-info.source-type-description")}>
-                      <Select
-                        selectedOption={offlineSourceType}
-                        onChange={({ detail }) => setOfflineSourceType(detail.selectedOption)}
-                        options={[
-                          { label: t("create-analysis.offline.database-info.source-type-detect"), value: "auto" },
-                          { label: "MySQL", value: "mysql" },
-                          { label: "PostgreSQL", value: "postgresql" },
-                          { label: "MariaDB", value: "mariadb" },
-                          { label: "SQL Server", value: "sqlserver" },
-                          { label: "Oracle", value: "oracle" },
-                        ]}
-                        disabled={uploadState !== "idle"}
-                      />
-                    </FormField>
-                    <FormField label={t("create-analysis.offline.database-info.engines-in-use-label")} description={t("create-analysis.offline.database-info.engines-in-use-description")}>
-                      <Multiselect
-                        selectedOptions={offlineEnginesInUse}
-                        onChange={({ detail }) => setOfflineEnginesInUse(detail.selectedOptions)}
-                        options={enginesInUseOptions()}
-                        placeholder={t("create-analysis.offline.database-info.engines-in-use-placeholder")}
-                        disabled={uploadState === "submitting"}
-                      />
-                    </FormField>
-                  </ColumnLayout>
-                </Container>
-
-                <Container header={<Header variant="h2">{t("create-analysis.offline.upload.title")}</Header>}>
-                  <SpaceBetween size="l">
-                    <Alert type="info">
-                      {t("create-analysis.offline.upload.alert")}
-                    </Alert>
-
-                    <FormField label={t("create-analysis.offline.upload.file-label")} description={t("create-analysis.offline.upload.file-description")}>
-                      <FileUpload
-                        onChange={({ detail }) => {
-                          setOfflineFiles(detail.value);
-                          // Reset upload state if user changes file
-                          if (uploadState !== "idle") {
-                            setUploadState("idle");
-                            setPreparedJob(null);
-                            setUploadProgress(0);
-                          }
-                        }}
-                        value={offlineFiles}
-                        i18nStrings={{
-                          uploadButtonText: e => e ? t("create-analysis.offline.upload.choose-files") : t("create-analysis.offline.upload.choose-file"),
-                          dropzoneText: e => e ? t("create-analysis.offline.upload.drop-files") : t("create-analysis.offline.upload.drop-file"),
-                          removeFileAriaLabel: e => t("create-analysis.offline.upload.remove-file", { index: e + 1 }),
-                          limitShowFewer: t("create-analysis.offline.upload.show-fewer-files"),
-                          limitShowMore: t("create-analysis.offline.upload.show-more-files"),
-                          errorIconAriaLabel: t("create-analysis.offline.upload.error-icon-aria-label"),
-                        }}
-                        accept=".json"
-                        constraintText={t("create-analysis.offline.upload.constraint-text")}
-                        showFileSize
-                        showFileLastModified
-                        tokenLimit={1}
-                      />
-                    </FormField>
-
-                    {(uploadState === "uploading" || uploadState === "preparing" || uploadState === "confirming") && (
-                      <ProgressBar
-                        value={uploadState === "preparing" ? 0 : uploadState === "confirming" ? 100 : uploadProgress}
-                        label={t("create-analysis.offline.upload.progress-label")}
-                        description={
-                          uploadState === "preparing" ? t("create-analysis.offline.upload.progress-preparing") :
-                          uploadState === "uploading" ? t("create-analysis.offline.upload.progress-uploading") :
-                          t("create-analysis.offline.upload.progress-confirming")
-                        }
-                        status="in-progress"
-                      />
-                    )}
-
-                    {uploadState === "ready" && (
-                      <StatusIndicator type="success">
-                        {t("create-analysis.offline.upload.status-ready")}
-                      </StatusIndicator>
-                    )}
-
-                    {uploadState === "idle" && offlineFiles.length > 0 && (
-                      <Button
-                        variant="normal"
-                        onClick={handleOfflineUpload}
-                        loading={loading}
-                        disabled={offlineNameInvalid}
-                        iconName="upload"
-                      >
-                        {t("create-analysis.offline.upload.upload-button")}
-                      </Button>
-                    )}
-                  </SpaceBetween>
-                </Container>
-
-                <Container header={<Header variant="h2">{t("create-analysis.offline.target-databases.title")}</Header>}>
-                  <FormField description={t("create-analysis.offline.target-databases.description")}>
-                    <TargetEngineCheckboxes
-                      selection={offlineTargetDatabases}
-                      onChange={(key, checked) => setOfflineTargetDatabases(prev => ({ ...prev, [key]: checked }))}
-                    />
-                  </FormField>
-                </Container>
-
-                <SpaceBetween direction="horizontal" size="xs">
-                  <Button variant="link" onClick={handleCancel}>
-                    {t("common.actions.cancel")}
-                  </Button>
-                  <Button
-                    variant="primary"
-                    onClick={createOfflineAssessment}
-                    loading={loading && uploadState === "submitting"}
-                    disabled={uploadState !== "ready"}
-                  >
-                    {t("create-analysis.offline.start-analysis-button")}
-                  </Button>
-                </SpaceBetween>
-              </SpaceBetween>
             )}
+
+            {deployed && mode === "online"
+              ? <OnlineAssessmentWizard onCancel={handleCancel} />
+              : <UploadAssessmentForm local={apiLocal} onCancel={handleCancel} />}
           </SpaceBetween>
         }
-        contentType="wizard"
+        contentType="form"
         navigation={
           <SideNavigation
             activeHref="/analysis/create"

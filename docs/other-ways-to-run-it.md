@@ -163,7 +163,9 @@ Claude Code is the main way to run the tool, but the pipeline itself is a set of
     uv run python scripts/start_local_ui.py
     ```
 
-    It binds both servers to `127.0.0.1` and prints one JSON line with the URLs. Open <http://localhost:3000> to browse every job under `./artifacts`, or upload a collection from the create-analysis page. Stop both servers with `uv run python scripts/start_local_ui.py --stop`.
+    It binds both servers to `127.0.0.1` and prints one JSON line with the URLs. Open <http://localhost:3000> to browse every job under `./artifacts`. Stop both servers with `uv run python scripts/start_local_ui.py --stop`.
+
+    The New assessment page (New analysis in the side navigation) is one form with one action, Start assessment. You choose a collector output file (`.json`), which stays on this machine, under the artifact folder. The page fills in the database name and the source engine from the file, and you can change both. ElastiCache starts unticked in the target engines. A cache fronts the database's frequent reads and owns no query, so you opt in to it. A missing file, name or target engine is marked on its field. Connecting to a live database is offered only where the deployment supports it, never by the local API. <!-- claim: src/ui/src/pages/__tests__/CreateAnalysisUploadForm.test.js, tests/unit/api/test_health_local_flag.py::test_health_says_local_when_the_local_file_service_is_wired --> The local API cannot receive the file from the browser yet ([#2408](https://github.com/aws-samples/sample-aws-genai-db-modernizer/issues/2408)); until then, run an assessment from a file with Claude Code or the command line.
 
     To work on the UI with hot reload, run `make local` instead: it starts the API on `127.0.0.1:8000` and the UI's development server (`npm start` in `src/ui`) on `localhost:3000`, which proxies API calls to the API. Leave `API_HOST` unset: it defaults to `127.0.0.1`, and `API_HOST=0.0.0.0` opens the API to your network. Press Ctrl+C in that terminal to stop both servers (`--stop` above only stops what `start_local_ui.py` started).
 

@@ -19,11 +19,14 @@ import CreateAnalysis from '../pages/CreateAnalysis';
 
 jest.mock('react-i18next', () => {
   const strings = jest.requireActual('../locales/en.json');
-  return { useTranslation: () => ({ t: (key) => strings[key] ?? key }) };
+  const t = (key, vars = {}) => (strings[key] ?? key).replace(/\{\{(\w+)\}\}/g, (_, name) => vars[name]);
+  return { useTranslation: () => ({ t }) };
 });
 jest.mock('react-router-dom', () => ({ useNavigate: () => jest.fn() }));
 jest.mock('../classes/ApiManager', () => ({ __esModule: true, default: jest.fn() }));
 jest.mock('../components/AppHeader', () => ({ __esModule: true, default: () => null }));
+// #2327: an API that is not local, so the page offers the live-database Wizard too.
+jest.mock('../utils/apiRuntime', () => ({ readApiLocal: () => Promise.resolve(false) }));
 jest.mock('../config/GlobalConfigurations', () => ({
   SideNavigationConfigurations: {},
   ApiConfigurations: { baseUrl: 'http://localhost:8000/api/v1/' },
@@ -39,11 +42,12 @@ jest.mock('@cloudscape-design/components/wizard', () => ({
   __esModule: true,
   default: ({ steps, onSubmit }) => (
     <div>
-      {steps.map((step) => <section key={step.title}>{step.content}</section>)}
+      {steps.map((step) => <section key={step.title}>{step.content}<p className="step-error">{step.errorText}</p></section>)}
       <button type="button" data-testid="submit" onClick={onSubmit}>submit</button>
     </div>
   ),
 }));
+jest.mock('@cloudscape-design/components/form', () => ({ __esModule: true, default: ({ children }) => <div>{children}</div> }));
 jest.mock('@cloudscape-design/components/space-between', () => ({ __esModule: true, default: (p) => mockDiv(p) }));
 jest.mock('@cloudscape-design/components/button', () => ({
   __esModule: true,
@@ -127,7 +131,7 @@ let container;
 let root;
 let execute;
 
-beforeEach(() => {
+beforeEach(async () => {
   execute = jest.fn().mockResolvedValue({ 'create-assessment': { success: true, job_id: 'job-1' } });
   ApiManager.mockImplementation(() => ({ execute }));
   jest.spyOn(console, 'log').mockImplementation(() => {});
@@ -135,7 +139,7 @@ beforeEach(() => {
   container = document.createElement('div');
   document.body.appendChild(container);
   root = createRoot(container);
-  act(() => root.render(<CreateAnalysis />));
+  await act(async () => { root.render(<CreateAnalysis />); });
 });
 
 afterEach(() => {
@@ -231,6 +235,8 @@ test('the request sends the secret name by reference and no password', async () 
   });
 });
 
+const stepErrors = () => [...container.querySelectorAll('.step-error')].map((p) => p.textContent).join('');
+
 test("the API's refusal reaches the user (#2346: the opt-in reason)", async () => {
   const refusal = 'This request includes a password or secret (connection.password). Store the '
     + 'database credentials in a secrets manager such as AWS Secrets Manager.';
@@ -239,8 +245,9 @@ test("the API's refusal reaches the user (#2346: the opt-in reason)", async () =
   type(field(en['create-analysis.source.secret-arn.label']), SECRET_ARN);
   await submit();
 
-  const flash = container.querySelector('[data-testid="flashbar"]').textContent;
-  expect(flash).toContain(refusal);
+  // #2327: inline on the Wizard step, never in a Flashbar.
+  expect(stepErrors()).toBe(`${en['create-analysis.error.create-failed']}. ${refusal}`);
+  expect(container.querySelector('[data-testid="flashbar"]')).toBeNull();
 });
 
 test("an unsafe refusal text falls back to the fixed message (#2346)", async () => {
@@ -250,9 +257,8 @@ test("an unsafe refusal text falls back to the fixed message (#2346)", async () 
   type(field(en['create-analysis.source.secret-arn.label']), SECRET_ARN);
   await submit();
 
-  const flash = container.querySelector('[data-testid="flashbar"]').textContent;
-  expect(flash).toContain(en['errors.request.rejected-form']);
-  expect(flash).not.toMatch(/script|10\.0\.0\.5|8000/);
+  expect(stepErrors()).toContain(en['errors.request.rejected-form']);
+  expect(stepErrors()).not.toMatch(/script|10\.0\.0\.5|8000/);
 });
 
 test('no credentials choice in the form sends a password, whatever is typed', async () => {
