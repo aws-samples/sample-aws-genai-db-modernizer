@@ -204,13 +204,15 @@ def write_pg_job(
     triggers: list[dict[str, Any]] | None = None,
     indexes: dict[str, list[dict[str, Any]]] | None = None,
     columns: dict[str, list[dict[str, Any]]] | None = None,
+    extra_tables: list[dict[str, Any]] | None = None,
 ) -> LocalArtifactStore:
     """A finished PostgreSQL job ``shop/job1`` (assignment v2) with its step 1 contract and
     plan: ``public.orders`` has an identity column ``id`` (a ``nextval`` default) and a
     ``halfvec`` column, ``public.tags`` a quoted-name identity column, ``public.audit_log``
     no key and no identity, and one view. ``extensions`` are the collection's installed
     extensions; ``procedures`` and ``triggers`` its routines and triggers; ``indexes`` its
-    indexes by table name; ``columns`` more columns by table name."""
+    indexes by table name; ``columns`` more columns by table name; ``extra_tables`` more collector tables.
+    """
     seq = "nextval('orders_id_seq'::regclass)"
     tables = [
         table("public", "audit_log", [col("msg", "varchar(200)", 1, max_length=200)]),
@@ -220,7 +222,7 @@ def write_pg_job(
         table("public", "tags", [col('we"ird\'id', "int4", 1, is_auto_increment=True),
                                  col("label", "citext", 2, nullable=True)], pk=['we"ird\'id']),  # fmt: skip
     ]
-    tables = _with_indexes(tables, indexes)
+    tables = _with_indexes(tables, indexes) + list(extra_tables or [])
     for t in tables:
         t["columns"] += (columns or {}).get(t["table_name"], [])
     views = [{"view_id": "public.v_orders", "view_name": "v_orders", "schema_name": "public",

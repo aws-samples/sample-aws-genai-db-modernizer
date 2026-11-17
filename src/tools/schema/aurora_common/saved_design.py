@@ -45,6 +45,8 @@ from src.tools.schema.aurora_common.ddl_generator import (
     MYSQL,
     NOT_CREATED_REASON,
     POSTGRES,
+    SKIPPED_INDEX_PREFIX,
+    SKIPPED_INDEX_SUFFIX,
     Dialect,
     render_create_table,
     render_foreign_key,
@@ -340,13 +342,15 @@ def skipped_comments(
     payload: Mapping[str, Any],
     tables: list[Mapping[str, Any]],
     created: list[list[str]] | None = None,
+    legacy: list[dict[str, str]] | None = None,
 ) -> list[list[str]]:
     """Per table, the skipped-index comments its design may carry (Aurora MySQL): one for each
     ``index_key_prefix`` note the merge wrote for an index the key limit ruled out, exactly
     as ``skipped_index_comment`` writes it for that table and index. A note names
     ``table.index``; it belongs to the longest table name it starts with. A note for an
     index the table creates (``created[i]``, its checked statements) allows no comment: that
-    index was not skipped."""
+    index was not skipped. ``legacy[i]``, when given, maps main's exact spelling of each of
+    table ``i``'s comments (``_main_comment``) to today's, where the two differ."""
     made = [
         {_index_name(statement) for statement in statements}
         for statements in (created if created is not None else [[] for _ in tables])
@@ -372,7 +376,10 @@ def skipped_comments(
             name = tables[i]["table_name"]
             index = source[len(name) + 1 :]
             if index not in made[i]:
-                out[i].append(skipped_index_comment(name, index))
+                today = skipped_index_comment(name, index)
+                out[i].append(today)
+                if legacy is not None and (old := _main_comment(name, index)) != today:
+                    legacy[i][old] = today
     return out
 
 
@@ -385,6 +392,19 @@ def _index_name(statement: str) -> str | None:
     return None
 
 
+def _main_comment(table_name: str, index_name: str) -> str:
+    """The skipped-index comment main wrote before #2381: its ``comment_name`` replaced
+    C0, C1 and the Unicode line separators with a space and collapsed the whitespace, but
+    kept a format character (U+200B, U+202E, U+FEFF). A design main saved must keep
+    loading, so this exact string is accepted for a note, besides today's comment."""
+    name = " ".join(_LEGACY_UNSAFE.sub(" ", f"{table_name}.{index_name}").split())
+    return f"{SKIPPED_INDEX_PREFIX}{name}{SKIPPED_INDEX_SUFFIX}"
+
+
+#: What main's ``comment_name`` replaced (#2199), before #2381 cleaned format characters too.
+_LEGACY_UNSAFE = re.compile("[\\x00-\\x1f\\x7f-\\x9f\\u2028\\u2029]")
+
+
 def rebuild_ddl(
     dialect: Dialect,
     tables: list[Mapping[str, Any]],
@@ -392,6 +412,7 @@ def rebuild_ddl(
     fks: list[str],
     text: str,
     comments: list[list[str]] | None = None,
+    legacy: list[dict[str, str]] | None = None,
 ) -> str:
     """``generated_ddl`` as ``assemble_full_ddl`` writes it for ``tables``: every CREATE
     TABLE, then each table's indexes (``indexes[i]``, with, on Aurora MySQL, at most one of
@@ -405,7 +426,8 @@ def rebuild_ddl(
         statement, pos = _create_table(dialect, table, text, pos)
         pieces.append(statement)
     allowed = comments if comments is not None and dialect is MYSQL else [[] for _ in tables]
-    for table_indexes, table_comments in zip(indexes, allowed, strict=True):
+    aliases = legacy if legacy is not None else [{} for _ in tables]
+    for table_indexes, table_comments, table_aliases in zip(indexes, allowed, aliases, strict=True):
         queue = deque(table_indexes)
         notes = Counter(table_comments)  # each comment at most as often as its note
         left = len(table_comments)
@@ -416,9 +438,10 @@ def rebuild_ddl(
             else:
                 end = text.find("\n", start)
                 line = text[start : end if end >= 0 else len(text)]
-                if notes[line] <= 0:
+                key = line if notes[line] > 0 else table_aliases.get(line)
+                if key is None or notes[key] <= 0:
                     break
-                notes[line] -= 1
+                notes[key] -= 1
                 left -= 1
                 piece = line
             pieces.append(piece)
@@ -549,8 +572,9 @@ def check_design_ddl(payload: Mapping[str, Any], engine: str) -> Mapping[str, An
         if not isinstance(text, str):
             raise _Refused("is not a string")
         shaped = [_table_shape(t) for t in tables]
-        comments = skipped_comments(payload, shaped, indexes)
-        rebuild_ddl(dialect, shaped, indexes, fks, text, comments)
+        legacy: list[dict[str, str]] = [{} for _ in shaped]
+        comments = skipped_comments(payload, shaped, indexes, legacy)
+        rebuild_ddl(dialect, shaped, indexes, fks, text, comments, legacy)
     except _Refused as exc:
         raise SavedDesignError("generated_ddl", None, str(exc), kind=DDL_KIND) from None
     return payload

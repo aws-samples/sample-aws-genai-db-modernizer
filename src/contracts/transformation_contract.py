@@ -69,18 +69,21 @@ class Finding(BaseModel):
     @classmethod
     def _printable(cls, value: object) -> object:
         """A finding often quotes a collected name, which may hold a control, format,
-        surrogate or line separator character (#2381): each becomes U+FFFD, so a finding
-        about such a name is recorded and listed, never refused (a lone surrogate is not
-        even a valid string), and no deliverable carries it. The same categories as
-        ``src.shared.sql_identifiers``."""
-        if not isinstance(value, str):
-            return value
-        return "".join("\ufffd" if unicodedata.category(ch) in _UNPRINTABLE else ch for ch in value)
+        surrogate or line separator character (#2381): see ``printable``."""
+        return printable(value) if isinstance(value, str) else value
 
 
 #: Mirrors ``src.shared.sql_identifiers.UNPRINTABLE_CATEGORIES`` (a contract imports no
 #: tool code); ``tests/unit/contracts`` keeps the two equal.
 _UNPRINTABLE = frozenset({"Cc", "Cf", "Cs", "Zl", "Zp"})
+
+
+def printable(value: str) -> str:
+    """``value`` with each control, format, surrogate or line separator character replaced
+    by U+FFFD (#2381), so a finding or a rule about such a name is recorded and listed,
+    never refused (a lone surrogate is not even a valid string), and no deliverable carries
+    it."""
+    return "".join("\ufffd" if unicodedata.category(ch) in _UNPRINTABLE else ch for ch in value)
 
 
 class DependsOn(BaseModel):
@@ -176,6 +179,7 @@ class Rule(BaseModel):
         ..., pattern=TABLE_ID_PATTERN, description="Collector table id (schema.table)"
     )
     target_table: str = Field(..., min_length=1, description="Target table name")
+
     table_class: TableClass | None = Field(
         None, description="Wave 1 table class, when known (#1129)"
     )

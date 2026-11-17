@@ -25,14 +25,20 @@ from src.contracts.transformation_contract import (
     RuleStatus,
     StepContract,
     TargetSpec,
+    printable,
 )
 from src.shared.contract_versioning import load_contract
+from src.shared.sql_identifiers import UNSAFE_NAME_REASON, has_unprintable
 from src.tools.data_movement.plan import JobInputs, _aurora_wave, _Schema
 from src.tools.data_movement.validation_key import table_key
 from src.tools.schema.aurora_common.delta_merge import AuroraDesignBase, source_data_types
 from src.tools.schema.aurora_common.source_family import classify_source_family
 from src.tools.schema.aurora_common.source_types import resolve_source_type
 from src.tools.transformation_contract.pg_enums import EnumColumns, EnumType, enum_columns
+
+#: The finding that blocks a table whose name no SQL file may carry (#2381).
+UNSAFE_NAME = "unsafe_name"
+UNSAFE_TABLE_REASON = "the table's " + UNSAFE_NAME_REASON.removeprefix("its ")
 
 AURORA_FOR = {"mysql": "aurora_mysql", "mariadb": "aurora_mysql", "postgresql": "aurora_postgresql"}
 
@@ -275,6 +281,26 @@ def build_step1(inputs: JobInputs) -> StepContract:
             )
             continue
         t = tables[table_id]
+        if has_unprintable(table_id) or has_unprintable(t.table_name):
+            # A name no SQL file may carry (#2381): the rule names the table cleaned
+            # (``printable``; a lone surrogate is not even a valid string) and is blocked.
+            rules.append(
+                Rule(
+                    input_schema="collector",
+                    source_table=printable(table_id),
+                    target_table=printable(t.table_name),
+                    status="blocked",
+                    findings=[
+                        Finding(
+                            code=UNSAFE_NAME,
+                            severity="error",
+                            message=UNSAFE_TABLE_REASON,
+                            table_id=table_id,
+                        )
+                    ],
+                )
+            )
+            continue
         if names[t.table_name] > 1:
             # Targets are matched by table name; two schemas sharing one would share a target.
             finding = Finding(

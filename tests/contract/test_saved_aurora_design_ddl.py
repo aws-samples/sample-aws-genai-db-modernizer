@@ -19,6 +19,7 @@ from __future__ import annotations
 import copy
 import gzip
 import json
+import re
 from collections.abc import Callable
 from pathlib import Path
 
@@ -1009,3 +1010,71 @@ def test_each_ddl_field_alone_runs_the_check_in_an_aurora_folder(
     store, key = _at(tmp_path, folder, {"table_definitions": [table]}, True)
     with pytest.raises(ContractVersionError, match="names no Aurora engine"):
         store.read_json(key)
+
+
+def _main_comment_name(table: str, index: str) -> str:
+    """``comment_name`` as main wrote it before #2381: only C0, C1 and the Unicode line
+    separators became a space, so a format character (U+200B) stayed in the comment."""
+    return " ".join(
+        re.sub("[\\x00-\\x1f\\x7f-\\x9f\\u2028\\u2029]", " ", f"{table}.{index}").split()
+    )
+
+
+def _main_written(name: str) -> dict:
+    """A design main's code wrote for an index named ``name`` that the key limit skipped:
+    its comment and its note spell the name as main's ``comment_name`` did."""
+    design = _forms()
+    old = "accounts.ix too wide"
+    assert old in design["generated_ddl"]
+    design["generated_ddl"] = design["generated_ddl"].replace(
+        f"-- Index {old} ", f"-- Index {_main_comment_name('accounts', name)} ", 1
+    )
+    for note in design["app_layer_notes"]:
+        if note.get("source_object") == old:
+            note["source_object"] = f"accounts.{name}"
+    return design
+
+
+@pytest.mark.passes_on_main  # main loads what it wrote; this branch must keep loading it
+@pytest.mark.parametrize("name", ["ix\u00e9\u200b", "\u200bix", "ix\u202ewide", "ix\ufeff"])
+def test_a_design_main_wrote_with_a_format_character_in_a_skipped_index_name_loads(
+    tmp_path: Path, name: str
+) -> None:
+    design = _main_written(name)
+    store, key = _store(tmp_path, "aurora_mysql", design)
+    assert store.read_json(key) == json.loads(json.dumps(design))
+
+
+_NEAR_MISSES = [
+    # (index name, or None for the plain "ix too wide", the stored comment's head)
+    ("ix\u00e9\u200b", "-- Index accounts.ix\u00e9\u200b  not created", "double space"),
+    ("ix\u00e9\u200b", "-- Index accounts.ix\u00e9\u200b\x01 not created", "control character"),
+    (
+        "ix\u00e9\u200b",
+        "-- Index accounts.ix\u00e9\u200b\u200b not created",
+        "format character doubled",
+    ),
+    (None, "-- Index accounts.ix\u200btoo wide not created", "space replaced"),
+    (None, "-- Index accounts.ix too wide\u200b not created", "format character added"),
+    (None, "--\u200bIndex accounts.ix too wide not created", "inside the prefix"),
+    (None, "-- Index accounts.ix too\u202e wide not created", "override after a word"),
+]
+
+
+@pytest.mark.passes_on_main  # main compares exactly and refuses each; this branch must too
+@pytest.mark.parametrize(
+    "name, line", [c[:2] for c in _NEAR_MISSES], ids=[c[2] for c in _NEAR_MISSES]
+)
+def test_only_mains_exact_legacy_spelling_is_accepted(
+    tmp_path: Path, name: str | None, line: str
+) -> None:
+    """Each line cleans (``comment_text``) into the comment a note allows, so only the exact
+    comparison with main's spelling refuses it: main never wrote a format character where
+    its index name had none, nor doubled one."""
+    design = _main_written(name) if name else _forms()
+    shown = _main_comment_name("accounts", name) if name else "accounts.ix too wide"
+    head = f"-- Index {shown} not created"
+    assert head in design["generated_ddl"]
+    design["generated_ddl"] = design["generated_ddl"].replace(head, line, 1)
+    injected = next((c for c in line if c in "\u200b\u202e\x01"), "\u200b")
+    _refused(tmp_path, "aurora_mysql", design, "generated_ddl", injected)

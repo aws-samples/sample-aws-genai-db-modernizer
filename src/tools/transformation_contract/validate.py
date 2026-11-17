@@ -11,7 +11,14 @@ from __future__ import annotations
 
 from src.contracts.collector_output import Table
 from src.contracts.lineage_ops import UnsupportedOp
-from src.contracts.transformation_contract import NOT_MOVED, Finding, Rule, Severity, StepContract
+from src.contracts.transformation_contract import (
+    NOT_MOVED,
+    Finding,
+    Rule,
+    Severity,
+    StepContract,
+    printable,
+)
 from src.shared.catalog.dms_sizing import dms_sizing
 from src.shared.contract_versioning import load_contract
 from src.tools.data_movement.dms_sizing import not_moved_columns, target_engine_line
@@ -20,6 +27,7 @@ from src.tools.data_movement.validation_key import validation_problem
 from src.tools.transformation_contract.collations import database_collation, rule_collations
 from src.tools.transformation_contract.pg_enums import enum_columns
 from src.tools.transformation_contract.step1 import (
+    UNSAFE_NAME,
     TargetTable,
     _load_collector,
     _same_type,
@@ -27,7 +35,7 @@ from src.tools.transformation_contract.step1 import (
 )
 
 # Findings the builder or this validator wrote about a rule that cannot be re-checked.
-_KEPT = {"ambiguous_target", "missing_table"}
+_KEPT = {"ambiguous_target", "missing_table", UNSAFE_NAME}
 
 
 def _f(
@@ -160,7 +168,8 @@ def validate_step1(contract: StepContract, inputs: JobInputs) -> StepContract:
     if contract.status in ("no_relational_anchor", "staged_move_pending"):
         return contract
     collector = _load_collector(inputs)
-    tables = {t.table_id: t for t in collector.database_schema.tables}
+    # Keyed as a rule names its table: a name no SQL file may carry is cleaned (#2381).
+    tables = {printable(t.table_id): t for t in collector.database_schema.tables}
     targets = target_tables(inputs, contract.target.engine, collector)
     source = (inputs.collector.get("metadata") or {}).get("source_database") or {}
     dialect = dialect_of(str(source.get("engine") or "").lower())
@@ -172,7 +181,7 @@ def validate_step1(contract: StepContract, inputs: JobInputs) -> StepContract:
     waves = sorted(inputs.report.get("migration_waves") or [], key=lambda w: int(w["wave"]))
     wave = (_aurora_wave(waves) if waves else None) or {}
     ruled = {r.source_table for r in rules} | set(contract.views)
-    for missing in sorted(set(wave.get("tables") or []) - ruled):
+    for missing in sorted({printable(t) for t in wave.get("tables") or []} - ruled):
         t = tables.get(missing)
         name = t.table_name if t else missing.split(".")[-1]
         finding = _f("missing_table", "error", f"{missing} is in wave 1 but has no rule", missing)
