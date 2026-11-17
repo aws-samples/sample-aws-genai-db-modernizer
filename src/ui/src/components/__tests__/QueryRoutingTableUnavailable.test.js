@@ -36,7 +36,7 @@ const render = (props) => act(() => {
 test('an unreadable list shows the alert and no "(0)"', () => {
   render({ error: 'not-found' });
   expect(container.textContent).toContain("Query details aren't available for this assessment");
-  expect(container.textContent).toContain('The service has no query list for this assessment.');
+  expect(container.textContent).toContain('The service has no data for this request.');
   expect(container.textContent).not.toContain('(0)');
   expect(container.textContent).not.toContain('not-found');
 });

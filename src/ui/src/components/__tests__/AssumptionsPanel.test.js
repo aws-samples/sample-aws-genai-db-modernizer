@@ -11,6 +11,7 @@ import React, { act } from 'react';
 import { createRoot } from 'react-dom/client';
 import AssumptionsPanel from '../AssumptionsPanel';
 import ApiManager from '../../classes/ApiManager';
+import { errorFromResponse } from '../../utils/apiErrors';
 
 function mockPassThrough({ children, header, ...props }) {
   const data = Object.fromEntries(Object.entries(props).filter(([k]) => k.startsWith('data-')));
@@ -128,13 +129,26 @@ test('posts the change in the assumptions file form and reloads the results', as
 });
 
 test('a value out of range is sent as typed and the server reason is shown', async () => {
-  mockApi({ success: false, error: new Error('growth must be between 0 (excluded) and 100, got 500') });
+  mockApi({ success: false, status: 422, error: errorFromResponse(422, 'x', JSON.stringify({ detail: 'growth must be between 0 (excluded) and 100, got 500' })) });
   const onChanged = await render();
   await type('growth', '500');
   await clickApply('growth');
   expect(calls.find((c) => c.method === 'POST').params).toEqual({ growth: 500 });
   expect(container.querySelector('[data-figure="assumption-message"]').textContent)
     .toContain('growth must be between 0 (excluded) and 100');
+  expect(onChanged).not.toHaveBeenCalled();
+});
+
+test.each([
+  ['unsafe text', '<img src=x onerror=alert(1)> see https://10.0.0.5:8000/x'],
+  ['a very long text', 'x'.repeat(400)],
+])('%s as the reason falls back to the fixed message (#2346)', async (_, detail) => {
+  mockApi({ success: false, status: 422, error: errorFromResponse(422, 'x', JSON.stringify({ detail })) });
+  const onChanged = await render();
+  await type('growth', '500');
+  await clickApply('growth');
+  expect(container.querySelector('[data-figure="assumption-message"]').textContent)
+    .toBe('analysis-results.assumptions-panel.failed errors.request.rejected-form');
   expect(onChanged).not.toHaveBeenCalled();
 });
 

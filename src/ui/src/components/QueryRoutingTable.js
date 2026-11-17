@@ -12,6 +12,7 @@ import StatusIndicator from "@cloudscape-design/components/status-indicator";
 import TextFilter from "@cloudscape-design/components/text-filter";
 import SegmentedControl from "@cloudscape-design/components/segmented-control";
 import Pagination from "@cloudscape-design/components/pagination";
+import { failureMessageKey } from '../utils/requestFailure';
 import Link from "@cloudscape-design/components/link";
 import Table from "@cloudscape-design/components/table";
 import { filterQueryRoutingRows, queryRoutingFilterOptions } from "../utils/queryRouting";
@@ -155,7 +156,7 @@ const QueryRoutingTable = memo(({ rows, loading, error, hasLedger, truncated, on
         {error ? (
           <Alert type="warning" header={t('analysis-results.query-routing.unavailable-title')}>
             {t('analysis-results.query-routing.unavailable-body')}{' '}
-            {t(`analysis-results.query-routing.error-${error}`, { defaultValue: '' })}
+            {t(failureMessageKey(error))}
           </Alert>
         ) : (
           <SpaceBetween size="m">

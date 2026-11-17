@@ -370,6 +370,26 @@ def test_dashboard_with_the_api_down_shows_an_error_and_no_zeros(page: Page, ui:
     assert "Assessments unavailable" in text, text
 
 
+def test_a_failed_results_request_shows_a_fixed_message_and_no_server_text(
+    page: Page, ui: str, all_runs: list[PipelineResult]
+) -> None:
+    """#2346: a 500 whose body holds HTML and a URL reads as one short message with a
+    Retry, never the status, the request URL or the server's text."""
+    r = all_runs[0]
+    hostile = "<script>window.__pwned=1</script> GET http://10.0.0.5:8000/api/v1/x failed (500)"
+    page.route(
+        re.compile(rf"/api/v1/assessments/{re.escape(r.job_id)}/results$"),
+        lambda route: route.fulfill(status=500, content_type="text/html", body=hostile),
+    )
+    page.goto(f"{ui}/analysis/results/{r.job_id}")
+    expect(page.get_by_text("The service returned an error.")).to_be_visible(timeout=READY_MS)
+    expect(page.get_by_role("button", name="Retry")).to_be_visible()
+    text = page.inner_text("body")
+    for leak in ("10.0.0.5", "/api/v1", "500", "pwned", "<script"):
+        assert leak not in text, (leak, text)
+    assert page.evaluate("window.__pwned") is None
+
+
 def test_results_page_shows_the_ranked_engines(
     loaded_results: OpenResults, all_runs: list[PipelineResult]
 ) -> None:

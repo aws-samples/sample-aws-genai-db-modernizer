@@ -35,9 +35,10 @@ import ColumnLayout from "@cloudscape-design/components/column-layout";
 
 
 //##-- Custom Objects
-import { SideNavigationConfigurations, ApiConfigurations } from "../config/GlobalConfigurations";
+import { SideNavigationConfigurations } from "../config/GlobalConfigurations";
 import AppHeader from "../components/AppHeader";
 import ApiManager from "../classes/ApiManager";
+import { failureError, failureFlash } from "../utils/requestFailure";
 import { isValidDatabaseName, normalizeDatabaseName } from "../utils/databaseName";
 import { buildConnection } from "../utils/connectionPayload";
 import { enginesInUseOptions, enginesInUseParam, selectedTargetEngines, targetDatabasesScope, targetEngineSelection } from "../utils/targetEngines";
@@ -779,7 +780,7 @@ function DatabaseAnalysisForm() {
       }]);
 
       if (prepareResults['prepare']?.error) {
-        throw new Error(prepareResults['prepare'].error?.message || 'Failed to prepare upload');
+        throw failureError(prepareResults['prepare'], 'prepare-upload');
       }
 
       const prepared = prepareResults['prepare'];
@@ -805,12 +806,12 @@ function DatabaseAnalysisForm() {
           if (xhr.status >= 200 && xhr.status < 300) {
             resolve();
           } else {
-            reject(new Error(`Upload failed with status ${xhr.status}`));
+            reject(failureError(xhr.status, 'upload-to-storage'));
           }
         };
 
-        xhr.onerror = () => reject(new Error('Network error during upload'));
-        xhr.ontimeout = () => reject(new Error('Upload timed out'));
+        xhr.onerror = () => reject(failureError('unreachable', 'upload-to-storage'));
+        xhr.ontimeout = () => reject(failureError('timeout', 'upload-to-storage'));
         xhr.timeout = 300000; // 5 minutes
         xhr.send(file);
       });
@@ -825,7 +826,7 @@ function DatabaseAnalysisForm() {
       }]);
 
       if (confirmResults['confirm']?.error) {
-        throw new Error(confirmResults['confirm'].error?.message || 'Upload confirmation failed. The file may not have reached S3');
+        throw failureError(confirmResults['confirm'], 'confirm-upload');
       }
 
       const confirmed = confirmResults['confirm'];
@@ -843,17 +844,11 @@ function DatabaseAnalysisForm() {
       console.error('Offline upload error:', error);
       setUploadState("idle");
       setPreparedJob(null);
-      addFlashbarMessage({
-        type: 'error',
-        header: 'Upload failed',
-        content: error.message || 'An unexpected error occurred during upload.',
-        dismissible: true,
-        id: `error-${Date.now()}`
-      });
+      addFlashbarMessage(failureFlash(t, error, { header: t('create-analysis.error.upload-failed'), context: 'upload' }));
     } finally {
       setLoading(false);
     }
-  }, [offlineFiles, offlineDatabaseName, offlineSourceType, addFlashbarMessage]);
+  }, [offlineFiles, offlineDatabaseName, offlineSourceType, addFlashbarMessage, t]);
 
 
   //##-- Start offline assessment after upload is confirmed
@@ -894,7 +889,7 @@ function DatabaseAnalysisForm() {
 
       if (results['create-assessment']?.error) {
         const result = results['create-assessment'];
-        throw new Error(result.error?.message || 'Failed to create assessment');
+        throw failureError(result, 'create-assessment');
       }
 
       const jobId = results['create-assessment'].job_id;
@@ -911,17 +906,11 @@ function DatabaseAnalysisForm() {
     } catch (error) {
       console.error('Error creating offline assessment:', error);
       setUploadState("ready"); // Allow retry
-      addFlashbarMessage({
-        type: 'error',
-        header: 'Assessment creation failed',
-        content: error.message || 'Failed to start assessment.',
-        dismissible: true,
-        id: `error-${Date.now()}`
-      });
+      addFlashbarMessage(failureFlash(t, error, { header: t('create-analysis.error.start-failed'), context: 'create-offline-assessment' }));
     } finally {
       setLoading(false);
     }
-  }, [preparedJob, offlineDatabaseName, offlineSourceType, offlineTargetDatabases, offlineEnginesInUse, addFlashbarMessage, navigate]);
+  }, [preparedJob, offlineDatabaseName, offlineSourceType, offlineTargetDatabases, offlineEnginesInUse, addFlashbarMessage, navigate, t]);
 
 
   //##-- Create assessment for online mode
@@ -986,18 +975,8 @@ function DatabaseAnalysisForm() {
       console.log('Create assessment result:', results);
 
       if (results['create-assessment']?.error) {
-        const result = results['create-assessment'];
-        const errorMessage = result.error?.message || 'Failed to create assessment';
-        const statusCode = result.status || 'Unknown';
-        const apiUrl = `${ApiConfigurations.baseUrl}assessments`;
-
-        addFlashbarMessage({
-          type: 'error',
-          header: `API Error (Status: ${statusCode})`,
-          content: `Failed to create assessment at '${apiUrl}': ${errorMessage}`,
-          dismissible: true,
-          id: `error-${Date.now()}`
-        });
+        // The secrets refusal is the API's own sentence: show it (#2346 opt-in).
+        addFlashbarMessage(failureFlash(t, results['create-assessment'], { header: t('create-analysis.error.create-failed'), context: 'create-assessment', allowReason: true, variant: 'form' }));
       } else if (results['create-assessment']?.success) {
         const jobId = results['create-assessment'].job_id;
 
@@ -1017,19 +996,11 @@ function DatabaseAnalysisForm() {
 
     } catch (error) {
       console.error('Error creating assessment:', error);
-      const errorDetails = error.message || 'Failed to create assessment';
-
-      addFlashbarMessage({
-        type: 'error',
-        header: 'Unexpected Error',
-        content: `An unexpected error occurred: ${errorDetails}. Please check your network connection and try again.`,
-        dismissible: true,
-        id: `error-${Date.now()}`
-      });
+      addFlashbarMessage(failureFlash(t, error, { header: t('create-analysis.error.create-failed'), context: 'create-assessment', variant: 'form' }));
     } finally {
       setLoading(false);
     }
-  }, [formData, validateForm, addFlashbarMessage, navigate]);
+  }, [formData, validateForm, addFlashbarMessage, navigate, t]);
 
 
 

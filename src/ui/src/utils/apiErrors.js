@@ -1,6 +1,17 @@
 // Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
 // SPDX-License-Identifier: MIT-0
 
+// The API's own `detail`, kept apart from the Error so it has no property a page can read.
+// Only utils/requestFailure.js `failureReason` reads it, through `rawReason` (#2346).
+const REASONS = new WeakMap();
+function withReason(err, raw) {
+    REASONS.set(err, raw);
+    return err;
+}
+export function rawReason(err) {
+    return err && typeof err === 'object' ? REASONS.get(err) : undefined;
+}
+
 /**
  * Build the Error a failed (non-2xx) API request should resolve with (#548
  * round 2 review item 3). The API returns the real, customer-facing reason in
@@ -49,7 +60,7 @@ export function errorFromResponse(status, statusText, responseText) {
 
     const detail = body && body.detail;
     if (typeof detail === 'string' && detail) {
-        return new Error(detail);
+        return withReason(new Error(detail), { text: detail });
     }
     // FastAPI's 422 (#1328 review): a list of `{loc, msg}`, each message prefixed
     // "Value error, " for a validator's own ValueError (the engine scope's included).
@@ -57,7 +68,8 @@ export function errorFromResponse(status, statusText, responseText) {
         const messages = detail
             .map((e) => (e && typeof e.msg === 'string' ? e.msg.replace(/^Value error, /, '') : ''))
             .filter(Boolean);
-        return messages.length ? new Error(messages.join('; ')) : fallback();
+        const err = messages.length ? new Error(messages.join('; ')) : fallback();
+        return withReason(err, { locs: detail.map((e) => e && e.loc) });
     }
     if (detail && typeof detail === 'object') {
         const parts = [];
@@ -68,7 +80,7 @@ export function errorFromResponse(status, statusText, responseText) {
             parts.push(detail.errors.join('; '));
         }
         if (parts.length) {
-            return new Error(parts.join(': '));
+            return withReason(new Error(parts.join(': ')), { errors: Array.isArray(detail.errors) ? detail.errors : [] });
         }
     }
     return fallback();

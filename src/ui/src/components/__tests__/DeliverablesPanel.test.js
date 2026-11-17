@@ -134,8 +134,12 @@ test('says so when the folder has no files yet', () => {
 test('shows the loading state, then the error state', () => {
   render({ files: [], loading: true, error: null });
   expect(container.querySelector('[data-status="loading"]').textContent).toBe('Loading deliverables');
-  render({ files: [], loading: false, error: 'boom' });
-  expect(container.querySelector('[data-status="error"]').textContent).toBe('Deliverables unavailable: boom');
+  render({ files: [], loading: false, error: 'server' });
+  expect(container.querySelector('[data-status="error"]').textContent).toBe('Deliverables unavailable. The service returned an error.');
+  // #2346: an unknown error value is never printed.
+  render({ files: [], loading: false, error: 'GET http://10.0.0.5:8000/api/v1/x returned 500: <b>boom</b>' });
+  expect(container.querySelector('[data-status="error"]').textContent).toBe('Deliverables unavailable. The request failed.');
+  expect(container.querySelector('b')).toBeNull();
 });
 
 test('a hostile file title is rendered as text, never as markup', () => {

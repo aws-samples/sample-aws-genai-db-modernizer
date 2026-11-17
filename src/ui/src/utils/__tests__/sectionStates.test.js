@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: MIT-0
 
 /** #2308: "not loaded" and "partial" are told apart from a true "none found". */
-import { designBodyState, explorerAvailability, loadErrorKind } from '../sectionStates';
+import { designBodyState, explorerAvailability } from '../sectionStates';
 
 const synth = (count) => ({ facts: { engines: [{ engine: 'aurora_mysql', target_objects: count }] } });
 const none = {};
@@ -55,16 +55,6 @@ describe('explorerAvailability', () => {
   });
   test('rows loaded: available', () => {
     expect(explorerAvailability({ expectedCount: 12, shownCount: 12 })).toBe('available');
-  });
-});
-
-describe('loadErrorKind', () => {
-  test('tells not found, a server error and an unreachable API apart', () => {
-    expect(loadErrorKind(404)).toBe('not-found');
-    expect(loadErrorKind(500)).toBe('server');
-    expect(loadErrorKind(503)).toBe('server');
-    expect(loadErrorKind(403)).toBe('other');
-    expect(loadErrorKind(undefined)).toBe('unreachable');
   });
 });
 

@@ -14,6 +14,7 @@ import { act } from 'react';
 import { createRoot } from 'react-dom/client';
 import en from '../locales/en.json';
 import ApiManager from '../classes/ApiManager';
+import { errorFromResponse } from '../utils/apiErrors';
 import CreateAnalysis from '../pages/CreateAnalysis';
 
 jest.mock('react-i18next', () => {
@@ -230,15 +231,28 @@ test('the request sends the secret name by reference and no password', async () 
   });
 });
 
-test("the API's refusal reaches the user", async () => {
+test("the API's refusal reaches the user (#2346: the opt-in reason)", async () => {
   const refusal = 'This request includes a password or secret (connection.password). Store the '
     + 'database credentials in a secrets manager such as AWS Secrets Manager.';
-  execute.mockResolvedValue({ 'create-assessment': { error: { message: refusal }, status: 400 } });
+  execute.mockResolvedValue({ 'create-assessment': { error: errorFromResponse(400, 'Bad Request', JSON.stringify({ detail: refusal })), status: 400 } });
   fillSource();
   type(field(en['create-analysis.source.secret-arn.label']), SECRET_ARN);
   await submit();
 
-  expect(container.querySelector('[data-testid="flashbar"]').textContent).toContain(refusal);
+  const flash = container.querySelector('[data-testid="flashbar"]').textContent;
+  expect(flash).toContain(refusal);
+});
+
+test("an unsafe refusal text falls back to the fixed message (#2346)", async () => {
+  const hostile = '<script>alert(1)</script> at https://10.0.0.5:8000/api/v1/assessments';
+  execute.mockResolvedValue({ 'create-assessment': { error: errorFromResponse(400, 'Bad Request', JSON.stringify({ detail: hostile })), status: 400 } });
+  fillSource();
+  type(field(en['create-analysis.source.secret-arn.label']), SECRET_ARN);
+  await submit();
+
+  const flash = container.querySelector('[data-testid="flashbar"]').textContent;
+  expect(flash).toContain(en['errors.request.rejected-form']);
+  expect(flash).not.toMatch(/script|10\.0\.0\.5|8000/);
 });
 
 test('no credentials choice in the form sends a password, whatever is typed', async () => {
