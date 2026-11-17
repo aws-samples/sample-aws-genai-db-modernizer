@@ -9,6 +9,7 @@ import { useTranslation } from 'react-i18next';
 //##-- Cloudscape
 import AppLayoutToolbar from "@cloudscape-design/components/app-layout";
 import ProseText from '../components/ProseText';
+import { CardBox } from '../components/StyledBlocks';
 import BreadcrumbGroup from "@cloudscape-design/components/breadcrumb-group";
 import SpaceBetween from "@cloudscape-design/components/space-between";
 import Header from "@cloudscape-design/components/header";
@@ -931,8 +932,7 @@ const AssignmentGatePage = memo(() => {
                 <Box variant="awsui-key-label" margin={{ bottom: 'xs' }}>{t('assignment-gate.optimization-details.engine-consolidations')}</Box>
                 <SpaceBetween size="xs">
                   {consolidations.map((c, idx) => (
-                    <Box key={idx} padding={{ vertical: 'xs', horizontal: 's' }}
-                      style={{ borderLeft: '3px solid #d91515', backgroundColor: '#fef2f2', borderRadius: '4px' }}>
+                    <CardBox key={idx} tone="danger">
                       <SpaceBetween size="xxs">
                         <Box fontSize="body-s">
                           <Box display="inline">
@@ -948,7 +948,7 @@ const AssignmentGatePage = memo(() => {
                         </Box>
                         <Box fontSize="body-s" color="text-body-secondary"><ProseText text={c.reason} /></Box>
                       </SpaceBetween>
-                    </Box>
+                    </CardBox>
                   ))}
                 </SpaceBetween>
               </Box>
@@ -966,8 +966,7 @@ const AssignmentGatePage = memo(() => {
                       ...(engines.view_engine ? [engines.view_engine] : []),
                     ];
                     return (
-                      <Box key={idx} padding={{ vertical: 'xs', horizontal: 's' }}
-                        style={{ borderLeft: '3px solid #0972d3', backgroundColor: '#f2f8fd', borderRadius: '4px' }}>
+                      <CardBox key={idx} tone="info">
                         <SpaceBetween size="xxs">
                           <Box fontSize="body-s">
                             <Box fontWeight="bold" display="inline">{p.name}</Box>
@@ -990,7 +989,7 @@ const AssignmentGatePage = memo(() => {
                             <Box fontSize="body-s" color="text-body-secondary">{p.example}</Box>
                           )}
                         </SpaceBetween>
-                      </Box>
+                      </CardBox>
                     );
                   })}
                 </SpaceBetween>

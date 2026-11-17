@@ -24,3 +24,22 @@ test('the risk tabs are controlled and default to the highest open severity', ()
   // The default looks at every tab, UNRATED included (a report whose open risks are all unrated).
   expect(block).toMatch(/defaultRiskSeverity\(synthesis, risksBySeverity, riskTabIds\)/);
 });
+
+/**
+ * #2310: the cards get their look from a class, so the page must pass each card
+ * the right tone. The page cannot render here, so these read its source.
+ */
+test('each risk card takes its tone from the severity status, never a fixed tone', () => {
+  const at = SOURCE.indexOf('const status = riskSeverityStatus(severity)');
+  expect(at).toBeGreaterThan(0);
+  const card = SOURCE.indexOf('<CardBox key={risk.risk_id || idx}', at);
+  expect(card).toBeGreaterThan(at);
+  expect(SOURCE.slice(card, card + 80)).toContain('tone={status}');
+});
+
+test('the query table shows query text in a capped, labelled code block', () => {
+  const at = SOURCE.indexOf('{item.query_text}');
+  expect(at).toBeGreaterThan(0);
+  const open = SOURCE.lastIndexOf('<CodeBlock', at);
+  expect(SOURCE.slice(open, at)).toMatch(/<CodeBlock capped label=\{t\('analysis-results\.pattern-detail\.query-text'\)\}>/);
+});
