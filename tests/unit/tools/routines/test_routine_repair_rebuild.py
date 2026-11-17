@@ -212,3 +212,16 @@ def test_a_prose_word_counts_only_at_the_start() -> None:
         "AS $$ SELECT 'Please do not show the table' $$"
     )
     assert rebuild_refusal(exact, _seen(exact, PG), PG) is None
+
+
+@pytest.mark.parametrize(
+    "literal", ["x; SET ROLE admin", "then set session authorization app", "x; RESET all"]
+)
+def test_a_role_or_session_change_anywhere_in_a_literal_is_sql(literal) -> None:
+    """#2387 review: SET ROLE, SET SESSION and RESET count anywhere, as two-word or
+    statement patterns, though SET alone counts only as a literal's first word."""
+    exact = (
+        "CREATE FUNCTION public.f() RETURNS text LANGUAGE plpgsql AS $$ BEGIN "
+        f"RETURN '{literal}'; END $$"
+    )
+    assert rebuild_refusal(exact, _seen(exact, PG), PG) == "literal_holds_sql"
