@@ -167,3 +167,15 @@ UI_FIXTURE = (
 def test_the_ui_fixture_is_the_facts_the_python_deliverables_print() -> None:
     """RoutineMigrationSection.test.js renders this file: the same facts as here."""
     assert json.loads(UI_FIXTURE.read_text(encoding="utf-8")) == FACTS
+
+
+def test_a_pending_row_from_the_seam_alone_does_not_claim_the_loops_checks() -> None:
+    """A #1940 result (1.0, no attempts) never ran the checks on the exact text: its line
+    says only that a model proposed a repair (#2387 review)."""
+    from src.shared.routine_facts import intervention_line
+
+    seam_only = {"state": "repaired_pending_proof", "change_note": PENDING_NOTE, "attempts": []}
+    line = intervention_line(seam_only)
+    assert "exact text" not in line and "not carried" in line and PENDING_NOTE not in line
+    looped = {**seam_only, "attempts": [_attempt(1, "proof", "pending", "no_proof_target", "x")]}
+    assert "passed every check again on the exact text" in intervention_line(looped)

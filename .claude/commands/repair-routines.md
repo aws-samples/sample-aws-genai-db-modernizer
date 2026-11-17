@@ -40,8 +40,10 @@ The instruction, the rules a repair must keep and the response shape are in `src
 5. **Apply it**
 
    ```bash
-   uv run python scripts/run_routine_repair.py --job-id {job_id} --db {database_name} --finalize
+   uv run python scripts/run_routine_repair.py --job-id {job_id} --db {database_name} --finalize --proof local
    ```
+
+   Pass the same `--proof` as in step 2 (`--proof none` if you used it there). Never edit `loop_state.json` or `routine_repair.json`: the script writes them, refuses a state edited since it wrote it, and checks every saved repair again.
 
    It prints one JSON line:
    - `"status": "awaiting_llm"` with the next `round` (at most `max_rounds`, 3): some candidates failed and are asked again. Go back to step 3 with the same paths: read the new request, write a new response, and run `--finalize` again. The previous response was deleted; never reuse it.

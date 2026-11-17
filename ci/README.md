@@ -684,20 +684,11 @@ obvious entries lives here instead:
   `decisions/wave-edit/`, moves that wave's design files to `wave-redesign/` the
   same way, and prints one JSON line. It has no `--rollback`: a failed round
   is rolled back with `run_wave_redesign.py --rollback`.
-- `Bash(uv run python scripts/run_routine_repair.py *)` (#1940, #1941): `/repair-routines`.
-  It reads the job's routine-migration artifact and collection, writes the repair
-  request (`routines/v<N>/repair/llm_input.json`, the routines' redacted text only,
-  never the routine sources) and, with `--finalize`, validates the session's answer,
-  rebuilds each candidate onto the exact text from the job's routine sources in memory,
-  checks it again and writes the next round's request or
-  `routines/v<N>/routine_repair.json` (at most 3 rounds; their progress in
-  `routines/v<N>/repair/loop_state.json`). With `--proof local` it starts two
-  disposable engines of the source's engine and major on a Unix socket in a private
-  temporary folder (no TCP listener; under `MODERNIZER_CI_SANDBOX=1` too) for the
-  side-by-side proof, and stops them before it returns. It reads and writes only the
-  job's own artifacts, never connects to a customer database or a model outside Bedrock
-  mode, writes no routine text anywhere and prints one JSON line. The existing rule
-  covers the new flag: no new allow rule is needed.
+- `Bash(uv run python scripts/run_routine_repair.py *)` (#1940, #1941): `/repair-routines`,
+  up to 3 rounds. It writes the redacted request, rebuilds and checks each answer in
+  memory and writes the next request or `routine_repair.json`; `--proof local` starts
+  two disposable engines with no TCP listener and stops them. It writes no routine text.
+  Edit/Write of its `loop_state.json` and `routine_repair.json` are denied.
 - `Bash(uv run python scripts/run_schema_design.py *)` also covers
   `--mark-dispatched <id> ...` and `--mark-reported <id> ...` (#2215): the
   headless orchestrator's dispatch ledger. They write one file,

@@ -131,6 +131,19 @@ def test_the_text_is_never_searched_for_the_placeholder() -> None:
             MY,
             "literal_holds_sql",
         ),
+        # #1941 review: a statement word anywhere in a redacted literal, not only first.
+        (
+            "CREATE FUNCTION public.f() RETURNS text LANGUAGE plpgsql AS $$ BEGIN "
+            "RETURN ';DROP TABLE public.orders'; END $$",
+            PG,
+            "literal_holds_sql",
+        ),
+        (
+            "CREATE FUNCTION public.f() RETURNS text LANGUAGE plpgsql AS $$ BEGIN "
+            "RETURN 'x; select secret from vault'; END $$",
+            PG,
+            "literal_holds_sql",
+        ),
         # A backslash escape the redaction cannot read under unknown string settings: it
         # fails closed, and the counts no longer match.
         (
@@ -139,7 +152,15 @@ def test_the_text_is_never_searched_for_the_placeholder() -> None:
             "literal_count",
         ),
     ],
-    ids=["reads-placeholder", "like-shape", "dynamic-sql", "prepared-from-literal", "escape"],
+    ids=[
+        "reads-placeholder",
+        "like-shape",
+        "dynamic-sql",
+        "prepared-from-literal",
+        "sql-after-a-semicolon",
+        "sql-in-lower-case",
+        "escape",
+    ],
 )
 def test_a_routine_whose_literals_cannot_be_put_back_is_refused(exact, engine, code) -> None:
     seen = _seen(exact, engine)
@@ -174,3 +195,20 @@ def test_a_literal_that_would_close_the_candidates_quotes_is_not_rebuilt() -> No
     with pytest.raises(RebuildRefused) as refused:
         rebuild_exact(exact, seen, candidate, PG)
     assert refused.value.code == "not_rebuilt"
+
+
+def test_a_word_that_only_contains_a_statement_word_is_not_sql() -> None:
+    """Word boundaries: 'Selection' and 'updated_at' hold no statement."""
+    exact = (
+        "CREATE FUNCTION public.f() RETURNS text LANGUAGE sql "
+        "AS $$ SELECT 'Selection' || 'updated_at' $$"
+    )
+    assert rebuild_refusal(exact, _seen(exact, PG), PG) is None
+
+
+def test_a_prose_word_counts_only_at_the_start() -> None:
+    exact = (
+        "CREATE FUNCTION public.f() RETURNS text LANGUAGE sql "
+        "AS $$ SELECT 'Please do not show the table' $$"
+    )
+    assert rebuild_refusal(exact, _seen(exact, PG), PG) is None

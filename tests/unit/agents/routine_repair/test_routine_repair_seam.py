@@ -486,6 +486,7 @@ def test_a_mysql_candidate_is_checked_by_the_same_rules(tmp_path, edit, outcome)
     assert (row.state, row.refusal) == outcome
 
 
+@pytest.mark.passes_on_main  # #1933's guard, kept as the loop's states grew (#1941)
 def test_a_collection_that_opted_out_of_every_body_sends_nothing(tmp_path):
     # metadata.routine_capture.include_bodies = false (#1933): nothing goes to a model,
     # whatever the rows and the artifact say (here they still hold bodies, collected).

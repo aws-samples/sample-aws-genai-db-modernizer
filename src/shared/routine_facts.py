@@ -330,6 +330,12 @@ def intervention_line(item: Mapping[str, Any]) -> str:
             f"compared. What changed: {note} Step 1 does not deploy a repaired routine "
             "yet, so it stays to migrate yourself."
         )
+    if state == "repaired_pending_proof" and not item.get("attempts"):
+        # A result of the seam alone (#1940): no check ran on the exact text.
+        return (
+            "A model proposed a repair that no check after the model and no side-by-side "
+            "proof has accepted, so it is not carried."
+        )
     if state == "repaired_pending_proof":
         return (
             "A model proposed a repair that passed every check again on the exact text, "

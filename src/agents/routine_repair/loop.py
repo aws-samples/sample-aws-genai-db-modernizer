@@ -105,6 +105,19 @@ class _State:
             "settled": {_key(r): v for r, v in self.settled.items()},
         }
 
+    def seal(self, database_name: str, job_id: str, request: Mapping[str, Any]) -> str:
+        """A digest of this state with its job and the request it goes with. It holds no
+        secret: it shows an edited state (the proof mode raised, a routine settled by
+        hand), and the re-verification of every saved repair (:func:`_reverify`) is what
+        keeps a state its writer resealed from carrying anything."""
+        import hashlib
+        import json
+
+        body = {"db": database_name, "job": job_id, "state": self.dump(), "request": request}
+        return hashlib.sha256(
+            json.dumps(body, sort_keys=True, ensure_ascii=False).encode("utf-8")
+        ).hexdigest()
+
     def previous_failures(self) -> dict[Ref, str]:
         out = {}
         for ref, attempts in self.open.items():
@@ -196,14 +209,15 @@ def _apply_round(
     plan: seam.RoutineRepairPlan,
     answer: Mapping[str, Any] | RoutineRepairResponse | None,
     verifier: Any,
-) -> None:
+) -> set[Ref]:
     """One round's answer: screened by the seam, then rebuilt, checked again and proved
-    (module docstring). Raises ``pydantic.ValidationError`` for an answer off the
-    contract, before anything changes."""
+    (module docstring); the routines it settled. Raises ``pydantic.ValidationError`` for
+    an answer off the contract, before anything changes."""
     from src.tools.routines.repair_proof import RepairItem
     from src.tools.routines.repair_rebuild import changed_lines
 
     n = state.round + 1
+    before = set(state.settled)
     if answer is None:
         state.round = n
         state.skipped_reason = _NO_ANSWER_REASON
@@ -212,7 +226,7 @@ def _apply_round(
                 _attempt(n, "answer", "no_answer", "no_answer", _NO_ANSWER_REASON)
             )
             state.settled[ref] = {"state": "no_answer", "attempts": state.open.pop(ref)}
-        return
+        return set(state.settled) - before
     result = seam.apply_routine_repair_llm_output(plan, answer, llm_mode=state.llm_mode)
     state.round = n
     state.ignored += result.ignored_answers
@@ -258,6 +272,58 @@ def _apply_round(
                 "attention_detail": f"every one of {MAX_ATTEMPTS} attempts failed ({errors})"[:300],
                 "attempts": state.open.pop(ref),
             }
+    return set(state.settled) - before
+
+
+#: The states that carry a candidate: never taken from a saved state without checking.
+_CARRY = ("model_repaired", "repaired_pending_proof")
+
+
+def _reverify(state: _State, det: seam.RoutineRepairPlan, verifier: Any, fresh: set[Ref]) -> None:
+    """Every settled repair this process did not compute is checked again (#2387 review):
+    the saved state is the session's to write, so a ``model_repaired`` read from it is
+    rebuilt, screened, re-checked and proved again here, on this run's proof target. It is
+    ``model_repaired`` only when that proof accepts it; ``repaired_pending_proof`` when the
+    checks pass and no proof ran; *needs attention* (``not_verified``) otherwise."""
+    from src.tools.routines.repair_proof import RepairItem
+    from src.tools.routines.repair_rebuild import changed_lines
+
+    seen = {c.ref: c.create_text for c in det.candidates}
+    for ref in [r for r, e in state.settled.items() if e.get("state") in _CARRY]:
+        if ref in fresh:
+            continue
+        entry = state.settled[ref]
+        prior = [
+            a
+            for a in entry.get("attempts") or []
+            if isinstance(a, Mapping) and a.get("outcome") in ("failed", "no_answer")
+        ][: MAX_ATTEMPTS - 1]
+        prior = [{**a, "attempt": i} for i, a in enumerate(prior, start=1)]
+        n = len(prior) + 1
+        candidate, note = entry.get("repaired_create"), entry.get("change_note")
+        if ref not in seen or not isinstance(candidate, str) or not candidate.strip():
+            state.settled.pop(ref)
+            continue
+        (check,) = verifier.verify([RepairItem(ref[0], ref[1], seen[ref], candidate)]).values()
+        attempts = [*prior, _attempt(n, check.stage, check.outcome, check.code, check.error)]
+        if check.outcome == "failed" or not isinstance(note, str) or not note.strip():
+            state.settled[ref] = {
+                "state": "needs_attention",
+                "attention": "not_verified",
+                "attention_detail": (
+                    "the saved repair failed its checks again: " + str(check.error or "")
+                )[:300],
+                "attempts": attempts,
+            }
+            continue
+        state.settled[ref] = {
+            "state": "model_repaired" if check.outcome == "proved" else "repaired_pending_proof",
+            "repaired_create": candidate,
+            "change_note": note,
+            "diff": "\n".join(changed_lines(seen[ref], candidate)),
+            "proof_source": check.proof_source if check.outcome == "proved" else None,
+            "attempts": attempts,
+        }
 
 
 def _result(det: seam.RoutineRepairPlan, state: _State) -> RoutineRepairContract:
@@ -318,7 +384,10 @@ def _awaiting(store: Any, det: seam.RoutineRepairPlan, plan: seam.RoutineRepairP
     if store.exists(response) is True:
         store.delete(response)  # never finalize a round on an earlier round's answer
     store.write_json(routine_repair_request_path(db, job, version), request)
-    store.write_json(routine_repair_state_path(db, job, version), state.dump())
+    store.write_json(
+        routine_repair_state_path(db, job, version),
+        {**state.dump(), "seal": state.seal(db, job, request)},
+    )
     return {
         "status": "awaiting_llm",
         "assignment_version": version,
@@ -365,7 +434,7 @@ def run_repair_loop(
     while state.open and state.round < MAX_ATTEMPTS:
         plan = _round_plan(migration, collector, state)
         answer = seam._ask_bedrock(seam.prepare_routine_repair_llm_input(plan))
-        _apply_round(state, plan, answer, verifier)
+        _apply_round(state, plan, answer, verifier)  # every repair settled in this process
     result = _result(det, state)
     return _status("complete", result, _write(store, result))
 
@@ -376,10 +445,14 @@ def finalize_repair_loop(
     job_id: str,
     *,
     assignment_version: int | None = None,
+    proof: str = "none",
     proof_options: Mapping[str, Any] | None = None,
 ) -> dict[str, Any]:
     """Apply the external session's answer to the current round, then write the next
-    round's request (``awaiting_llm``) or the result (``complete``). Raises
+    round's request (``awaiting_llm``) or the result (``complete``). The proof target is
+    the lower of ``proof`` and the one the first run saved: the state file can lower it,
+    never raise it; every repair the saved state carries is verified again here
+    (:func:`_reverify`). Raises
     ``FileNotFoundError`` with no request, answer or loop state, ``StaleRepairRequest``
     when the request is not the one the job's artifacts and the loop give now, and
     ``pydantic.ValidationError`` for an answer off the contract (nothing is written)."""
@@ -396,22 +469,28 @@ def finalize_repair_loop(
     for path in paths:
         if store.exists(path) is not True:
             raise FileNotFoundError(f"{path} not found")
-    state = _State(store.read_json(paths[2]))
+    saved = store.read_json(paths[2])
+    state = _State(saved)
     det = seam.run_routine_repair_deterministic(collector, migration)
     plan = _round_plan(migration, collector, state)
     if (
-        state.assignment_version != version
+        saved.get("seal") != state.seal(db, job_id, store.read_json(paths[0]))
+        or state.assignment_version != version
         or not set(state.open) <= {c.ref for c in det.candidates}
         or store.read_json(paths[0]) != seam.prepare_routine_repair_llm_input(plan)
     ):
         raise seam.StaleRepairRequest(
-            f"{paths[0]} is not the request the job's routines give now: run the repair again"
+            f"{paths[0]} or its loop state is not what the job's routines and the loop "
+            "give now: run the repair again"
         )
     answer = store.read_json(paths[1])
-    verifier = _verifier(store, migration, list(state.open), state.proof, proof_options)
-    _apply_round(state, plan, answer, verifier)
+    state.proof = "local" if state.proof == "local" and proof == "local" else "none"
+    carried = [r for r, e in state.settled.items() if e.get("state") in _CARRY]
+    verifier = _verifier(store, migration, [*state.open, *carried], state.proof, proof_options)
+    fresh = _apply_round(state, plan, answer, verifier)
     if state.open and state.round < MAX_ATTEMPTS:
         return _awaiting(store, det, _round_plan(migration, collector, state), state)
+    _reverify(state, det, verifier, fresh)
     result = _result(det, state)
     store.write_json(routine_repair_state_path(db, job_id, version), state.dump())
     return _status("complete", result, _write(store, result))
