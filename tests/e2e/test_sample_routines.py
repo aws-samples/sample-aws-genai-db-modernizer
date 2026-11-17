@@ -325,7 +325,9 @@ def test_the_executive_report_and_the_final_summary_print_the_routine_facts(
     pdf = norm(" ".join(pdf_page_texts(str(sample_run.deliverable("executive-report.pdf")))))
     summary = norm(_final_summary(sample_run))
     for name, text in (("executive-report.pdf", pdf), ("final summary", summary)):
-        assert norm(facts["line"]) in text, (name, facts["line"])
+        # #2411: the executive report prints the short form, the summary the detailed line.
+        line = facts["executive_line"] if name == "executive-report.pdf" else facts["line"]
+        assert norm(line) in text, (name, line)
         assert norm(facts["migrate_yourself_line"]).lower() in text.lower(), name
         for _kind, rid in EXPECTED[sample_run.db]:
             assert rid not in text, (name, rid)

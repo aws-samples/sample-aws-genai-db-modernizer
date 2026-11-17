@@ -32,7 +32,9 @@ a carried row also has its ``proof`` (:class:`RoutineProofEntry`) and the artifa
 ``proof_run`` (:class:`RoutineProofRun`): a routine carried as it is was loaded and called
 there; a rewritten or repaired one was compared side by side with the original on a
 disposable engine of the source. Both are optional: an artifact the proof has not run on
-has neither.
+has neither. The ``proof_run`` names the routines file it ran on by a digest of that file's
+index (``routine_sources_sha256``, #2411), which already lists each part's SHA-256: step 1's
+deploy gate counts a proof on another routines file as not tested.
 
 No row holds a routine's text, a diff of it or a hash of it: the exact text, literals
 included, stays only in the job's routine sources (ADR-034 Decision 4), which the
@@ -228,6 +230,16 @@ class RoutineProofRun(BaseModel):
     not_carried: int = Field(0, ge=0, description="Routines not proved because not carried")
     coverage_limits: list[str] = Field(
         default_factory=list, description="What a proved routine's result does not cover"
+    )
+    routine_sources_sha256: str | None = Field(
+        None,
+        pattern=r"^[0-9a-f]{64}$",
+        description=(
+            "The digest of the routines file's index the proof ran on (its parts' paths, "
+            "counts and SHA-256s, #2411): the deploy gate counts a proof whose digest differs "
+            "from the routines file's, or that has none (a proof written before #2411), as "
+            "not tested"
+        ),
     )
 
 

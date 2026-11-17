@@ -71,6 +71,7 @@ class Step1:
     contract: dict[str, Any]
     routines: dict[str, Any]  # run_dms_step.py routines' result line
     triggers: dict[str, Any]  # run_dms_step.py triggers-scripts' result line
+    untested: dict[str, Any]  # routines' result line before any routine test (#2411)
 
     @property
     def common(self) -> list[str]:
@@ -162,11 +163,20 @@ def _build_step1(
 
     inputs = {**INPUTS, "target_database_name": TARGET_DATABASE[sample]}
     (step / "inputs.json").write_text(json.dumps(inputs))
-    routines = _routines_after_the_full_load(root, run)
-    triggers = _script("scripts/run_dms_step.py", "triggers-scripts", *common)
     [path] = sorted((root / run.db / run.job_id / "transformation-contract").glob("v*/step-1.json"))
     contract = json.loads(path.read_text())
-    return Step1(run, root, step, contract, routines, triggers)
+    # #2411: before any routine test the scripts hold every carried routine back; then the
+    # job records a /test-routines result with no difference on any carried routine, on the
+    # sample's routines file, and the scripts carry them.
+    untested = _routines_after_the_full_load(root, run)
+    from src.storage.local_store import LocalArtifactStore
+    from tests.unit.tools.data_movement.routine_fixtures import mark_tested
+
+    mark_tested(LocalArtifactStore(base_dir=str(root)), db=run.db, job_id=run.job_id,
+                version=contract["routines"]["routine_migration_version"])  # fmt: skip
+    routines = _routines_after_the_full_load(root, run)
+    triggers = _script("scripts/run_dms_step.py", "triggers-scripts", *common)
+    return Step1(run, root, step, contract, routines, triggers, untested)
 
 
 def _bucket(sample: str, kind: str, status: str) -> str:
@@ -201,6 +211,11 @@ def test_each_routine_lands_in_its_step_1_bucket(step1: Step1) -> None:
     assert line["status"] == "ready" and line["label"] == "checked, not load-tested"
     assert (line["carried"], line["deferred"]) == (carried, deferred)
     assert line["in_script"] == carried and line["refused"] == 0
+    assert (line["proof"], line["held_back"]) == ("current", 0)
+    # Before the test (#2411): none in the script, each held back as not tested.
+    before = step1.untested
+    assert (before["in_script"], before["proof"], before["held_back"]) == (0, "not_run", carried)
+    assert {r["reason"] for r in before["held_back_routines"]} == {"not_tested"}
     not_carried = {(r["kind"], r["routine_id"]): r["reasons"] for r in line["not_carried_routines"]}
     [(kind, rid)] = [k for k, s in EXPECTED[sample].items() if s == "needs_attention"]
     assert not_carried.pop((kind, rid)) == [FAILED[sample]]

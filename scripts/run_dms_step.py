@@ -2383,9 +2383,11 @@ def routines(clients: MoveClients, root: str, db: str, job_id: str, inputs: Move
         VIEW_LEFT_OUT,
         VIEW_LEFT_OUT_WHY,
         case_differs_keys,
+        proof_line,
         read_migration,
         write_routine_scripts,
     )
+    from src.tools.data_movement.routine_test_gate import HELD_WHY, TEST_COMMAND
 
     store = LocalArtifactStore(base_dir=root)
     step = load_step1(store, db, job_id, with_ddl=False)
@@ -2413,10 +2415,16 @@ def routines(clients: MoveClients, root: str, db: str, job_id: str, inputs: Move
     refused = [{"routine_id": i, "kind": k, "reason": c,
                 **({"why": CASE_DIFFERS_WHY} if c in (CASE_DIFFERS, "depends_on_refused")
                    and (k, i) in clashes else {}),
-                **({"why": VIEW_LEFT_OUT_WHY} if c == VIEW_LEFT_OUT else {})}
+                **({"why": VIEW_LEFT_OUT_WHY} if c == VIEW_LEFT_OUT else {}),
+                **({"why": HELD_WHY[c]} if c in HELD_WHY else {})}
                for k, i, c in scripts.refused]  # fmt: skip
+    # The deploy gate (#2411): only routines the current test proved are in the scripts.
+    held = [r for r in refused if r["reason"] in HELD_WHY]
     return {"status": "ready", **base, "in_script": scripts.in_script, "refused": len(refused),
-            "refused_routines": refused[:ROUTINES_SHOWN], "files": scripts.files}  # fmt: skip
+            "refused_routines": refused[:ROUTINES_SHOWN], "proof": scripts.proof,
+            "held_back": len(held), "held_back_routines": held[:ROUTINES_SHOWN],
+            "proof_line": proof_line(scripts.proof, scripts.held), "test_with": TEST_COMMAND,
+            "files": scripts.files}  # fmt: skip
 
 
 def routines_check(root: str, db: str, job_id: str, inputs: MoveInputs) -> dict[str, Any]:
@@ -2434,6 +2442,7 @@ def routines_check(root: str, db: str, job_id: str, inputs: MoveInputs) -> dict[
         case_differs_keys,
         read_migration,
     )
+    from src.tools.data_movement.routine_test_gate import HELD_WHY, held_routines
 
     store = LocalArtifactStore(base_dir=root)
     step = load_step1(store, db, job_id, with_ddl=False)
@@ -2455,6 +2464,7 @@ def routines_check(root: str, db: str, job_id: str, inputs: MoveInputs) -> dict[
     # missing on the target: its line says why, as `routines` did.
     section = step.contract.routines
     clashes: set[tuple[str, str]] = set()
+    held: dict[tuple[str, str], str] = {}
     if section is not None and section.carried:
         try:
             migration = read_migration(store, db, job_id, section)
@@ -2462,8 +2472,17 @@ def routines_check(root: str, db: str, job_id: str, inputs: MoveInputs) -> dict[
             migration = None
         if migration is not None:
             clashes = case_differs_keys(step.contract, migration, inputs.target_database_name)
-    mismatches = [{**m.model_dump(mode="json"),
-                   **({"why": CASE_DIFFERS_WHY} if m.problem == "missing" and (m.kind, m.routine_id) in clashes else {})}
+            held = held_routines(store, db, job_id, migration)  # the deploy gate (#2411)
+
+    def why(m: Any) -> dict[str, str]:
+        key = (m.kind, m.routine_id)
+        if m.problem != "missing":
+            return {}
+        if key in clashes:
+            return {"why": CASE_DIFFERS_WHY}
+        return {"why": HELD_WHY[held[key]], "held_back": held[key]} if key in held else {}
+
+    mismatches = [{**m.model_dump(mode="json"), **why(m)}
                   for m in result.mismatches[:ROUTINES_SHOWN]]  # fmt: skip
     return {"status": result.status, "label": result.label, "carried": result.carried,
             "confirmed": result.confirmed, "deferred": result.deferred,
@@ -2697,12 +2716,17 @@ def triggers_scripts(root: str, db: str, job_id: str, inputs: MoveInputs,
                                     target_database=inputs.target_database_name,
                                     target_user=target_user, present=present)  # fmt: skip
     from src.tools.data_movement.routine_scripts import CASE_DIFFERS_TRIGGERS_WHY
+    from src.tools.data_movement.routine_test_gate import HELD_WHY, TEST_COMMAND
 
     excluded = [{"routine_id": i, "kind": k, "reason": c,
-                 **({"why": CASE_DIFFERS_TRIGGERS_WHY} if (k, i) in scripts.case_differs else {})}
+                 **({"why": CASE_DIFFERS_TRIGGERS_WHY} if (k, i) in scripts.case_differs else {}),
+                 **({"why": HELD_WHY[c]} if c in HELD_WHY else {})}
                 for k, i, c in scripts.excluded]  # fmt: skip
+    held = [e for e in excluded if e["reason"] in HELD_WHY]
     out: dict[str, Any] = {"status": scripts.status, "expected": scripts.expected,
                            "excluded": len(excluded), "excluded_routines": excluded[:ROUTINES_SHOWN],
+                           "held_back": len(held), "held_back_routines": held[:ROUTINES_SHOWN],
+                           "test_with": TEST_COMMAND,
                            "runs_it": "the customer; /move never runs it"}  # fmt: skip
     if scripts.status == "ready":
         out.update({"in_script": scripts.in_script, "stays_disabled": scripts.stays_disabled,

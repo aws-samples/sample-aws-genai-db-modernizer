@@ -30,7 +30,8 @@
   },
   "proof": "checked, not load-tested",
   "proof_counts": null,
-  "line": "1 of 4 routines carry over: 1 rewritten. 3 were not carried automatically: 3 need repair. For 1 carried routine not every check could run.",
+  "line": "1 of 4 routines carry over: 1 rewritten. 3 were not carried automatically: 3 need repair. For 1 carried routine not every check could run. The carried routine is not tested yet; test it on a test Aurora with /test-routines before it is deployed.",
+  "executive_line": "your routines can move to Aurora with the database: 1 of 4 for this database, 1 rewritten; 3 need work before wave 1. Before it is deployed, test it on a throwaway Aurora with the /test-routines command.",
   "routines": [
     {
       "routine_id": "public.hidden(integer)",

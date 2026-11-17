@@ -479,8 +479,11 @@ def prove_routines(
 
 def apply_proof(migration: RoutineMigrationContract, entries: Mapping[str, RoutineProofEntry], *,
                 target: str, source: str | None, strict_check: str, seconds: float,
-                error_fields: bool = False) -> RoutineMigrationContract:  # fmt: skip
-    """``migration`` with each carried row's ``proof`` and the ``proof_run``, validated."""
+                error_fields: bool = False,
+                sources_digest: str | None = None) -> RoutineMigrationContract:  # fmt: skip
+    """``migration`` with each carried row's ``proof`` and the ``proof_run``, validated.
+    ``sources_digest`` names the routines file the proof ran on (``routine_sources_digest``):
+    step 1's deploy gate counts the proof only on that file (#2411)."""
     rows = []
     counts: dict[Any, int] = {"proved": 0, "needs_attention": 0, "not_proved": 0}
     for row in migration.routines:
@@ -499,7 +502,7 @@ def apply_proof(migration: RoutineMigrationContract, entries: Mapping[str, Routi
         strict_check=strict_check if migration.source_engine == "postgresql" else "not_applicable",  # type: ignore[arg-type]
         proved_at=datetime.now(UTC), seconds=round(seconds, 1),
         counts=counts, not_carried=sum(r.status not in CARRIED for r in migration.routines),
-        coverage_limits=limits,
+        coverage_limits=limits, routine_sources_sha256=sources_digest,
     )  # fmt: skip
     fields = {**dict(migration), "routines": rows, "proof_run": run}
     return RoutineMigrationContract(**fields)  # validated: the counts must match the rows
@@ -526,7 +529,7 @@ def run_proof(
     """The routine proof of the job's newest routine-migration artifact on the test
     cluster ``cluster`` (``proof-target-status``'s ``cluster``), written back into that
     artifact; returns the command's JSON line (ids, counts and fixed reasons only)."""
-    from src.agents.collector.routine_sources import read_routine_sources
+    from src.agents.collector.routine_sources import read_routine_sources, routine_sources_digest
     from src.storage.assignment_versioning import resolve_downstream_assignment_version
     from src.storage.routine_migration_store import latest_routine_migration, routine_migration_path
     from src.tools.routines.proof_targets import disposable_target
@@ -607,6 +610,8 @@ def run_proof(
             return {"status": "error", "sqlstate": exc.sqlstate,
                     "message": why + tail, "left_on_cluster": left}  # fmt: skip
         collector = store.read_json(f"{db}/{job_id}/collector/output.json")
+        # The routines file this proof reads, named before it is read (#2411).
+        digest = routine_sources_digest(store, db, job_id)
         user = runner.definer if engine == "mysql" else runner.username
         plan = plan_proof(migration, read_routine_sources(store, db, job_id), collector,
                           target_user=user)  # fmt: skip
@@ -646,7 +651,7 @@ def run_proof(
     written = apply_proof(migration, entries, target=where,
                           source=f"a disposable {engine} {major} engine" if plan.side_by_side and major else None,
                           strict_check=(strict_check[0] if strict_check else "not_available"),
-                          seconds=time.monotonic() - started)  # fmt: skip
+                          seconds=time.monotonic() - started, sources_digest=digest)  # fmt: skip
     key = routine_migration_path(db, job_id, version)
     store.write_json(key, written.model_dump(mode="json"))
     run = written.proof_run

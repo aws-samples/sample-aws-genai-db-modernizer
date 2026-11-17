@@ -120,6 +120,12 @@ def test_proof_target_run_proves_the_routines_and_writes_them_into_the_artifact(
         saved["routines"][0]["proof"]["outcome"] == "proved"
         and saved["proof_run"]["counts"]["proved"] == 1
     )
+    # #2411: the test names the routines file it ran on, so the deploy gate can tell a stale one.
+    from src.agents.collector.routine_sources import routine_sources_digest
+    from src.storage.local_store import LocalArtifactStore
+
+    digest = routine_sources_digest(LocalArtifactStore(base_dir=str(tmp_path)), "shop", "job1")
+    assert digest and saved["proof_run"]["routine_sources_sha256"] == digest
     assert "SELECT 1" not in json.dumps(saved) and "SELECT 1" not in json.dumps(out)
     assert not client.databases  # every scratch database is gone
     routine = [s for s in client.sent if s.sql.startswith("CREATE OR REPLACE FUNCTION public.f")]

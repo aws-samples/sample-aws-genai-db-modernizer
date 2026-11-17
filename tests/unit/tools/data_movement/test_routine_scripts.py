@@ -30,6 +30,7 @@ from tests.unit.tools.data_movement.routine_fixtures import (
     SENTINEL,
     contract_with_routines,
     dep_routine,
+    mark_tested,
     migration,
     mysql_source,
     pg_source,
@@ -46,6 +47,7 @@ def _job(tmp_path: Path, artifact, sources, engine: str = "postgresql") -> Local
     if sources is not None:
         collector = {"metadata": {"source_database": {"engine": engine, "version": "16.2"}}}
         write_routine_sources(store, "shop", "job1", collector, sources)
+        mark_tested(store)  # the deploy gate (#2411): tested on this routines file
     return store
 
 
@@ -95,7 +97,9 @@ def test_the_postgresql_deploy_script_carries_in_order_and_disables_each_trigger
     assert begin < audit < trigger < disable < later < commit
     assert "SET check_function_bodies = on;" in text[:begin] and "ON_ERROR_STOP" in text[:begin]
     assert "plpythonu" not in text  # not carried, so never written
-    assert "Checked, not load-tested" in text
+    assert (
+        "Tested on a test Aurora: only the routines that showed no difference on the calls" in text
+    )
 
 
 def test_a_routine_text_and_its_literals_reach_only_the_deploy_script(tmp_path, capsys):
@@ -219,6 +223,7 @@ def test_a_mysql_body_with_a_delimiter_line_is_refused(tmp_path):
                             "BEGIN\n  SELECT 'a\ndelimiter //\nb', p;\nEND")]  # fmt: skip
     write_routine_sources(store, "shop", "job1", {"metadata": {"source_database": {"engine": "mysql"}}},
                           sources)  # fmt: skip
+    mark_tested(store)
     refused = {i: c for _, i, c in _write(tmp_path, store, contract).refused}
     assert refused == {"shop.place_order": "delimiter_in_text"}
     assert "delimiter //" not in (tmp_path / "step" / DEPLOY_FILE).read_text()

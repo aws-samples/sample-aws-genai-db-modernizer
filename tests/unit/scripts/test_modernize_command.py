@@ -81,6 +81,7 @@ COMMANDS_WITH_TOOL_USE_RULE = [
     "review-schema.md",
     "explore.md",
     "move.md",
+    "test-routines.md",
     "wave-edit.md",
 ]
 

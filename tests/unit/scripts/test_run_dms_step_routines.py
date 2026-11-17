@@ -23,6 +23,7 @@ from tests.unit.tools.data_movement.routine_fixtures import (
     SENTINEL,
     contract_with_routines,
     dep_routine,
+    mark_tested,
     migration,
     mysql_source,
     row,
@@ -38,6 +39,7 @@ def _job(
     schema: str = "shop",
     target_database: str | None = "shop",
     extra=(),
+    tested: bool = True,
 ) -> str:
     rows = rows if rows is not None else [
         row("shop.place_order", "procedure", schema="shop", status="rewritten", signature="IN int",
@@ -50,6 +52,8 @@ def _job(
                           [mysql_source("place_order", "CREATE DEFINER=`app`@`%` PROCEDURE "
                                         f"`place_order`(IN p INT)\nBEGIN SELECT '{SENTINEL}'; END",
                                         schema=schema), *extra])  # fmt: skip
+    if tested:
+        mark_tested(store)  # the deploy gate (#2411): tested on this routines file
     store.write_bytes("shop/job1/transformation-contract/v2/step-1.json", canonical_json(contract))
     store.write_json(f"{STEP}/plan.json", make_plan(contract).model_dump(mode="json"))
     inputs = {k: v for k, v in base.INPUTS.items() if k != "target_database_name"}
@@ -186,3 +190,44 @@ def test_a_routine_left_out_for_depending_on_a_case_clash_says_why_too(tmp_path,
     code, line = base._run(tmp_path, "routines-check", capsys=capsys)
     got = {m["routine_id"]: (m["problem"], m.get("why")) for m in line["mismatches"]}
     assert got["shop.total"] == ("missing", why["Shop.place_order"][1])
+
+
+def test_routines_with_no_test_hold_every_routine_back_and_point_to_test_routines(tmp_path, capsys):
+    """#2411: a customer who declined the test (or never ran /test-routines) gets no routine
+    in the deploy script; each is named with its reason and what to do."""
+    sha = _job(tmp_path, tested=False)
+    cred = StubbedCredMgr()
+    _loaded(cred, 100)
+    code, line = base._run(tmp_path, "routines", clients=base._clients(cred), capsys=capsys)
+    assert code == 0, line
+    assert (line["in_script"], line["proof"], line["held_back"], line["test_with"]) == (
+        0, "not_run", 1, "/test-routines")  # fmt: skip
+    held = line["held_back_routines"][0]
+    assert (held["routine_id"], held["reason"]) == ("shop.place_order", "not_tested")
+    assert "/test-routines" in held["why"] and line["proof_line"].startswith("Not tested yet")
+    assert SENTINEL not in (tmp_path / STEP / "routines-deploy.sql").read_text()
+    # The check then reports it missing, and says why.
+    (tmp_path / STEP / "routines-check.tsv").write_text(_output(sha, []))
+    code, line = base._run(tmp_path, "routines-check", capsys=capsys)
+    missing = line["mismatches"][0]
+    assert (missing["problem"], missing["held_back"]) == ("missing", "not_tested")
+    assert "/test-routines" in missing["why"]
+
+
+def test_routines_after_a_test_deploy_only_what_it_proved(tmp_path, capsys):
+    rows = [row("shop.place_order", "procedure", schema="shop", status="rewritten", signature="IN int",
+                specific="place_order"),
+            row("shop.other", "procedure", schema="shop", status="as_is", signature="IN int",
+                specific="other")]  # fmt: skip
+    _job(tmp_path, rows, tested=False,
+         extra=[mysql_source("other", "CREATE DEFINER=`app`@`%` PROCEDURE `other`(IN p INT)\n"
+                             "BEGIN SELECT p; END", schema="shop")])  # fmt: skip
+    store = LocalArtifactStore(base_dir=str(tmp_path))
+    mark_tested(store, {"shop.other": "not_proved"})
+    cred = StubbedCredMgr()
+    _loaded(cred, 100)
+    code, line = base._run(tmp_path, "routines", clients=base._clients(cred), capsys=capsys)
+    assert (code, line["in_script"], line["proof"], line["held_back"]) == (0, 1, "current", 1)
+    assert [(r["routine_id"], r["reason"]) for r in line["held_back_routines"]] == [
+        ("shop.other", "not_proved")]  # fmt: skip
+    assert SENTINEL in (tmp_path / STEP / "routines-deploy.sql").read_text()

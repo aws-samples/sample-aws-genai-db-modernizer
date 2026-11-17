@@ -94,6 +94,7 @@ def _deploy(tmp_path: Path, store: LocalArtifactStore, schema: str = "shop_funct
     from src.agents.collector.routine_sources import write_routine_sources
     from src.contracts.transformation_contract import StepContract
     from src.tools.routines.migration import routine_migration_path
+    from tests.unit.tools.data_movement.routine_fixtures import mark_tested
 
     rows = [row(f"{schema}.p0", "procedure", schema=schema, name="p0", specific="p0",
                 status="rewritten", signature="IN int")]  # fmt: skip
@@ -103,6 +104,7 @@ def _deploy(tmp_path: Path, store: LocalArtifactStore, schema: str = "shop_funct
                             "SELECT p;\nEND", schema=schema, database_collation="utf8mb4_unicode_ci")]  # fmt: skip
     write_routine_sources(store, "shop", "job1",
                           {"metadata": {"source_database": {"engine": "mysql", "version": "8.0.32"}}}, sources)  # fmt: skip
+    mark_tested(store)  # the deploy gate (#2411)
     contract = StepContract.model_validate(_contract(store))
     step = tmp_path / "step"
     write_routine_scripts(store, "shop", "job1", contract_with_routines(artifact, contract=contract),
@@ -116,6 +118,7 @@ def _triggers(tmp_path: Path, store: LocalArtifactStore, schema: str = "jobs") -
     from src.contracts.transformation_contract import StepContract
     from src.tools.data_movement.triggers_scripts import TRIGGERS_FILE, write_triggers_scripts
     from src.tools.routines.migration import routine_migration_path
+    from tests.unit.tools.data_movement.routine_fixtures import mark_tested
 
     rows = [row(f"{schema}.ev0", "event", schema=schema, name="ev0", specific="ev0",
                 status="rewritten")]  # fmt: skip
@@ -126,6 +129,7 @@ def _triggers(tmp_path: Path, store: LocalArtifactStore, schema: str = "jobs") -
                             schema=schema)]  # fmt: skip
     write_routine_sources(store, "shop", "job1",
                           {"metadata": {"source_database": {"engine": "mysql", "version": "8.0.32"}}}, sources)  # fmt: skip
+    mark_tested(store)  # the deploy gate (#2411)
     contract = StepContract.model_validate(_contract(store))
     write_triggers_scripts(store, "shop", "job1", contract_with_routines(artifact, contract=contract),
                            "a" * 64, tmp_path / "step")  # fmt: skip

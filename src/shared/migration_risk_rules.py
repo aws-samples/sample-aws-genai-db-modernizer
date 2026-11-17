@@ -673,8 +673,9 @@ def routine_risks(
                 "check on the target: " + "; ".join(p for p in parts if p) + "."
             )
             mitigation = _routine_mitigation(
-                f"Check the carried routines when they are deployed on {name} in step 1, and "
-                "that the target user's privileges cover what each rewritten one does",
+                "Test the carried routines on a throwaway Aurora with /test-routines before "
+                "step 1 deploys them, and check the target user's privileges cover what each "
+                "rewritten one does",
                 wave,
             )
             details = None
