@@ -92,6 +92,7 @@ from dataclasses import dataclass, field, replace
 from src.agents.referee.table_resolution import TableNameResolver
 from src.shared.catalog.routing import threshold
 from src.shared.row_counts import is_unmeasured_ddl_table
+from src.shared.unique_index_keys import unique_key_columns
 from src.tools.schema.design_metrics import row_count_or_assumed
 from src.tools.sql.access_signature import AccessSignature, scope_signature
 from src.tools.sql.facade import AccessFacts, ColumnFact, ScopeFacts, ScopeSource
@@ -294,17 +295,17 @@ def _table_keys(table: Mapping) -> TableKeys:
         if str(index.get("index_type") or "").lower() in _NON_KEY_INDEX_TYPES:
             continue
         # An expression index (#2381) keys on an expression, which no query's columns
-        # name, and its plain ``columns`` are only part of its keys, in an order the
-        # collection does not record: a unique (tenant_id, lower(name)) does not make
-        # tenant_id unique. Like the index types above, it is no key evidence.
-        if index.get("has_expressions") is True:
+        # name, and its plain ``columns`` are only part of its keys: a unique (tenant_id,
+        # lower(name)) does not make tenant_id unique (``unique_key_columns``). Like the
+        # index types above, it is no key evidence.
+        if index.get("has_expressions"):
             continue
         columns = _lower(index.get("columns") or [])
         if not columns:
             continue
-        if index.get("is_unique") or index.get("is_primary"):
-            unique.append(frozenset(columns))
-            key_columns.add(columns[0])
+        if unique_columns := unique_key_columns(index):
+            unique.append(frozenset(unique_columns))
+            key_columns.add(unique_columns[0])
             continue
         column = by_name.get(columns[0], {})
         low = _is_low_cardinality(column, table.get("row_count"))

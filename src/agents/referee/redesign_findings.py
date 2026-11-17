@@ -94,6 +94,7 @@ from src.shared.key_refusals import (
     in_guard_order,
     refusal_sentence,
 )
+from src.shared.unique_index_keys import unique_key_columns
 from src.tools.sql.query_facts import query_facts, source_engine_of
 from src.tools.sql.view_lineage import access_text
 
@@ -249,11 +250,7 @@ class RedesignModel:
             }
             columns[table_id] = (by_name, table.get("row_count"))
             composites = [[str(c).lower() for c in table.get("primary_key") or []]]
-            composites += [
-                [str(c).lower() for c in i.get("columns") or []]
-                for i in table.get("indexes") or []
-                if i.get("is_unique") or i.get("is_primary")
-            ]
+            composites += [list(unique_key_columns(i)) for i in table.get("indexes") or []]
             leading = {c[0] for c in composites if c}
             tails[table_id] = frozenset(
                 col for c in composites if len(c) > 1 for col in c[1:] if col not in leading

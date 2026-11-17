@@ -69,6 +69,7 @@ from src.shared import catalog
 from src.shared.catalog import patterns as catalog_patterns
 from src.shared.catalog.prices import SECONDS_PER_MONTH, price_basis
 from src.shared.row_counts import collected_storage_mb, known_row_count, unknown_size_line
+from src.shared.unique_index_keys import unique_key_columns
 from src.tools.analysis.dynamodb_pattern_catalog import (
     ANTI_PATTERN_BY_ID,
     DYNAMODB_ANTI_PATTERNS,
@@ -1952,8 +1953,8 @@ def detect_relationships(collector_output: dict) -> list[dict]:
         tid = t.get("table_id", "")
         uq: set[str] = set()
         for idx in t.get("indexes") or []:
-            if idx.get("is_unique") and len(idx.get("columns", [])) == 1:
-                uq.add(idx["columns"][0].lower())
+            if len(key := unique_key_columns(idx)) == 1:
+                uq.add(key[0])
         pk = t.get("primary_key") or []
         for c in pk:
             uq.add(c.lower())

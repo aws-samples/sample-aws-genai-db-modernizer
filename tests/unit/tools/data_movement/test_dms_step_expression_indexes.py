@@ -13,6 +13,7 @@ Collector text never reaches the file as written, whatever it holds.
 from __future__ import annotations
 
 import re
+import unicodedata
 
 import pytest
 
@@ -28,7 +29,25 @@ from src.tools.data_movement.dms_step import (
 from .dms_step_fixtures import make_bundle, write_job, write_pg_job
 
 
-def _ix(name, expressions, *, columns=(), unique=False, method="btree", predicate=None):
+def _ix(
+    name,
+    expressions,
+    *,
+    columns=(),
+    unique=False,
+    method="btree",
+    predicate=None,
+    keys=None,
+    after="",
+):
+    """A collected expression index; its ``index_def`` is what ``pg_get_indexdef`` writes for
+    it: ``keys`` (default: the expressions) is the key list as written there, ``after`` what
+    follows the key list before the predicate (NULLS NOT DISTINCT, INCLUDE, WITH)."""
+    definition = (
+        f"CREATE {'UNIQUE ' if unique else ''}INDEX {name} ON public.t USING {method} "
+        f"({expressions if keys is None else keys}){after}"
+        + (f" WHERE {predicate}" if predicate else "")
+    )
     return {
         "index_name": name,
         "columns": list(columns),
@@ -37,7 +56,7 @@ def _ix(name, expressions, *, columns=(), unique=False, method="btree", predicat
         "predicate": predicate,
         "has_expressions": True,
         "index_expressions": expressions,
-        "index_def": f"CREATE INDEX {name} ON public.t USING {method} ({expressions})",
+        "index_def": definition,
     }
 
 
@@ -47,6 +66,13 @@ def _pg(tmp_path, **indexes):
 
 def _creates_index(ddl: str, name: str) -> list[str]:
     return [s.strip() for s in ddl.split("\n") if s.startswith("CREATE") and f'"{name}"' in s]
+
+
+def _unprintable(text: str) -> list[str]:
+    """Every control, format or line separator character of ``text`` but its newlines."""
+    return [
+        ch for ch in text if ch != "\n" and unicodedata.category(ch) in {"Cc", "Cf", "Zl", "Zp"}
+    ]
 
 
 def _left_out_lines(text: str) -> list[str]:
@@ -104,9 +130,13 @@ LEFT_OUT = [
     ("lower((id)::text)", {}, _OUTSIDE),  # a cast that changes a non-text column's type
     ("lower(nope)", {}, _OUTSIDE),  # not a column of the table
     ("note", {}, _OUTSIDE),  # a bare column: no expression at all
-    ("lower(note)", {"columns": ["id"]}, "its keys mix columns and expressions"),
+    ("lower(note)", {"columns": ["id"]}, "this release does not recreate indexes that mix"),
     ("lower(note)", {"method": "hash"}, "this release recreates B-tree expression indexes only"),
     ("lower(note)", {"predicate": "(created_at)::date > now()"}, "its predicate is outside"),
+    ('"LOWER"(note)', {}, _OUTSIDE),  # a quoted name is another function than lower
+    ('"left"(note, \u0663)', {}, _OUTSIDE),  # an Arabic-Indic digit is no length
+    ("COALESCE(note, \uff11::text)", {}, _OUTSIDE),  # nor a fullwidth one a number
+    ("lower(note)", {"predicate": "(id = \u0663)"}, "its predicate is outside"),
 ]
 
 
@@ -130,6 +160,14 @@ HOSTILE = [
     "lower(note)) WITH (fillfactor=10",
     "lower(note)) TABLESPACE evil (",
     "COALESCE(note, 'x''; DROP TABLE orders; --')",  # a second statement inside a literal
+    # control, format and line separator characters inside a literal (#2381 review)
+    "COALESCE(note, 'x\x00'), COALESCE(note, 'DROP TABLE orders')",
+    "COALESCE(note, 'x\x0b DROP TABLE orders')",
+    "COALESCE(note, 'x\u2028DROP TABLE orders')",
+    "COALESCE(note, 'x\u2029DROP TABLE orders')",
+    "COALESCE(note, 'x\u202eDROP TABLE orders')",
+    "COALESCE(note, 'x\u200bDROP TABLE orders')",
+    "COALESCE(note, 'x\x85DROP TABLE orders')",
 ]
 
 
@@ -143,6 +181,7 @@ def test_hostile_expression_text_is_refused_and_never_reaches_a_file(tmp_path, e
     assert line.startswith(f"-- - public.orders.orders_ix: {_OUTSIDE}")
     for text in files.values():
         assert "DROP TABLE" not in text
+        assert not _unprintable(text)
         assert "TABLESPACE" not in text
         assert "fillfactor" not in text
 
@@ -200,3 +239,87 @@ def test_a_bundle_carries_the_indexes_its_ddl_does_not_create():
     inputs = bundle_inputs(DmsStepBundle.model_validate({**bundle, "left_out_indexes": [left_out]}))
 
     assert _left_out_lines(render_ddl(inputs)) == ["-- - public.orders.orders_flag: a reason."]
+
+
+# ---------------------------------------------------------------------------
+# The source definition says more than the expression (#2381 review)
+# ---------------------------------------------------------------------------
+
+_MORE = "its source definition has more than its expression and predicate"
+
+# The four the review reproduced on PostgreSQL 16, then INCLUDE, WITH and a missing text.
+SAYS_MORE = [
+    ({"keys": "lower(note) text_pattern_ops"}, "an operator class"),
+    ({"keys": "lower(note) DESC NULLS LAST"}, "a sort order"),
+    ({"keys": 'lower(note) COLLATE "C"', "unique": True}, "a collation"),
+    ({"after": " NULLS NOT DISTINCT", "unique": True}, "NULLS NOT DISTINCT"),
+    ({"after": " INCLUDE (id)"}, "INCLUDE"),
+    ({"after": " WITH (fillfactor='50')"}, "storage parameters"),
+]
+
+
+@pytest.mark.parametrize("extra, what", SAYS_MORE, ids=[w for _, w in SAYS_MORE])
+def test_an_index_whose_definition_says_more_is_listed_not_created(tmp_path, extra, what):
+    inputs = _pg(tmp_path, orders=[_ix("orders_ix", "lower(note)", **extra)])
+
+    assert _creates_index(inputs.ddl, "orders_ix") == []
+    [line] = _left_out_lines(render_ddl(inputs))
+    assert line.startswith(f"-- - public.orders.orders_ix: {_MORE}")
+
+
+def test_an_index_with_no_collected_definition_is_listed_not_created(tmp_path):
+    inputs = _pg(tmp_path, orders=[{**_ix("orders_ix", "lower(note)"), "index_def": None}])
+
+    assert _creates_index(inputs.ddl, "orders_ix") == []
+    [line] = _left_out_lines(render_ddl(inputs))
+    assert line.startswith(f"-- - public.orders.orders_ix: {_MORE}")
+
+
+def test_a_definition_whose_uniqueness_differs_is_listed_not_created(tmp_path):
+    ix = {**_ix("orders_ix", "lower(note)", unique=True), "is_unique": False}
+    inputs = _pg(tmp_path, orders=[ix])
+
+    assert _creates_index(inputs.ddl, "orders_ix") == []
+
+
+# ---------------------------------------------------------------------------
+# The header lines stay comment lines
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize("separator", ["\u2028", "\u2029", "\x85", "\u202e", "\x0b", "\x00"])
+def test_a_bundle_reason_with_a_line_separator_stays_on_its_comment_line(separator):
+    left_out = {"table_id": "public.orders", "index_name": "orders_flag",
+                "reason": f"a reason{separator}DROP TABLE orders"}  # fmt: skip
+    bundle = make_bundle("aurora_postgresql").model_dump()
+    inputs = bundle_inputs(DmsStepBundle.model_validate({**bundle, "left_out_indexes": [left_out]}))
+
+    ddl = render_ddl(inputs)
+    assert _left_out_lines(ddl) == ["-- - public.orders.orders_flag: a reason DROP TABLE orders."]
+    assert not _unprintable(ddl)
+
+
+# ---------------------------------------------------------------------------
+# A plain partial index's predicate (the Aurora draft's path on main too)
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize("bad", ["\x00", "\u2028", "\u202e", "\x0b"])
+def test_a_plain_partial_index_predicate_with_a_control_character_is_not_carried(tmp_path, bad):
+    plain = {"index_name": "orders_open", "columns": ["note"], "is_unique": False,
+             "index_type": "btree", "predicate": f"(note = 'a{bad}b')"}  # fmt: skip
+    inputs = _pg(tmp_path, orders=[plain])
+
+    [statement] = _creates_index(inputs.ddl, "orders_open")
+    assert statement == 'CREATE INDEX "orders_open" ON "orders" ("note");'
+    assert not _unprintable(render_ddl(inputs))
+
+
+@pytest.mark.passes_on_main  # main carries a printable predicate; the guard must keep it
+def test_a_plain_partial_index_with_a_printable_predicate_keeps_it(tmp_path):
+    plain = {"index_name": "orders_open", "columns": ["note"], "is_unique": False,
+             "index_type": "btree", "predicate": "(note = 'caf\u00e9')"}  # fmt: skip
+    inputs = _pg(tmp_path, orders=[plain])
+
+    [statement] = _creates_index(inputs.ddl, "orders_open")
+    assert statement.endswith("WHERE ( \"note\" = 'caf\u00e9' );")

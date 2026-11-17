@@ -15,6 +15,7 @@ model can act on.
 from __future__ import annotations
 
 import re
+import unicodedata
 from collections.abc import Iterable
 from dataclasses import dataclass, field
 
@@ -28,6 +29,23 @@ _FORBIDDEN_SEQUENCES = ("\n", "\r", "\\", "--", "/*", "*/", ";")
 
 class SqlFragmentError(ValueError):
     """A delta fragment does not match its grammar."""
+
+
+#: Unicode categories no fragment may hold anywhere, literals included (#2381 review): a
+#: control character (NUL cuts a ``psql -f`` line short and leaves a literal open), a
+#: format character (zero-width, bidirectional overrides) or a line or paragraph separator.
+_UNPRINTABLE_CATEGORIES = frozenset({"Cc", "Cf", "Zl", "Zp"})
+
+
+def is_unprintable(character: str) -> bool:
+    """Whether ``character`` is one no fragment, and no SQL comment, may carry."""
+    return unicodedata.category(character) in _UNPRINTABLE_CATEGORIES
+
+
+def refuse_unprintable(text: str, what: str) -> None:
+    """Raise ``SqlFragmentError`` when ``text`` holds a character ``is_unprintable`` names."""
+    if any(is_unprintable(ch) for ch in text):
+        raise SqlFragmentError(f"{what}: a control, format or line separator character")
 
 
 def resolve_column(columns: list[str], name: str) -> str | None:
@@ -45,7 +63,7 @@ def resolve_column(columns: list[str], name: str) -> str | None:
 _PREDICATE_TOKENS = re.compile(
     r"\s*(?:"
     r"(?P<string>'(?:[^'\\\n\r]|'')*')"
-    r"|(?P<number>-?\d+(?:\.\d+)?)"
+    r"|(?P<number>-?[0-9]+(?:\.[0-9]+)?)"
     r"|(?P<quoted>\"[A-Za-z_][A-Za-z0-9_$]*\")"
     r"|(?P<word>[A-Za-z_][A-Za-z0-9_$]*)"
     r"|(?P<op><>|!=|<=|>=|=|<|>)"
@@ -62,6 +80,7 @@ def render_predicate(text: str, columns: list[str], quote) -> str:
     ``AND``/``OR``/``NOT``, parentheses, numbers, single-quoted strings and
     ``TRUE``/``FALSE``. Every identifier must be a column of the table.
     """
+    refuse_unprintable(text, "where")
     text = text.strip()
     if not text:
         raise SqlFragmentError("where must not be blank")
@@ -110,7 +129,7 @@ _STRING = re.compile(r"'(?:[^'\\\n\r]|'')*'")
 _COLUMN_TEXT_CASTS = frozenset({"text", "character varying", "varchar", "bpchar"})
 _CAST_OPERAND = re.compile(
     r"(?:\(\s*(?P<pcol>\"?[A-Za-z_][A-Za-z0-9_$]*\"?)\s*\)"
-    r"|(?<![A-Za-z0-9_$.\"])(?P<num>-?\d+(?:\.\d+)?)"
+    r"|(?<![A-Za-z0-9_$.\"])(?P<num>-?[0-9]+(?:\.[0-9]+)?)"
     r"|(?<![A-Za-z0-9_$.])(?P<col>\"?[A-Za-z_][A-Za-z0-9_$]*\"?))\s*$"
 )
 
@@ -159,6 +178,7 @@ def render_source_predicate(
     notes it. The rest must pass the strict predicate grammar, so collector
     text never reaches DDL unchecked.
     """
+    refuse_unprintable(text, "where")
     texts = {c.lower() for c in text_columns}
     out: list[str] = []
     pos = 0
@@ -266,7 +286,7 @@ _MAX_EXPRESSION_DEPTH = 6
 _EXPRESSION_TOKENS = re.compile(
     r"\s*(?:"
     r"(?P<string>'(?:[^'\\\n\r]|'')*')"
-    r"|(?P<number>\d+)"
+    r"|(?P<number>[0-9]+)"
     r"|(?P<quoted>\"[A-Za-z_][A-Za-z0-9_$]*\")"
     r"|(?P<word>[A-Za-z_][A-Za-z0-9_$]*)"
     r"|(?P<cast>::)"
@@ -283,8 +303,9 @@ _EXPRESSION_FUNCTIONS: dict[str, tuple[int, int, str]] = {
     "left": (2, 2, '"left"'),
     "coalesce": (2, 8, "COALESCE"),
 }
-#: The casts a literal may keep (``'-1'::integer``), as the DDL spells them.
-_LITERAL_CASTS = frozenset({"integer", "bigint", "smallint", "text"})
+#: The casts a literal may keep (``'-1'::integer``, ``'none'::character varying``), as the DDL
+#: spells them.
+_LITERAL_CASTS = frozenset({"integer", "bigint", "smallint", "text", "character varying"})
 
 
 @dataclass
@@ -368,6 +389,10 @@ class _ExpressionParser:
             name = value.strip('"')
             nxt = self._peek()
             if nxt is not None and nxt[1] == "(":
+                if kind == "quoted" and name != name.lower():
+                    # A quoted name is case-sensitive: "LOWER" is another function than the
+                    # built-in lower; "left" (pg_get_expr's spelling, LEFT is a keyword) is it.
+                    raise SqlFragmentError("expression: a quoted function name not in lower case")
                 return self._call(name.lower(), depth)
             column = resolve_column(self.columns, name)
             if column is None:
@@ -387,7 +412,9 @@ class _ExpressionParser:
         self._take(")")
         if not fewest <= len(args) <= most:
             raise SqlFragmentError("expression: a function called with the wrong arguments")
-        if name == "left" and (args[1].kind != "literal" or not args[1].sql.isdigit()):
+        if name == "left" and (
+            args[1].kind != "literal" or not re.fullmatch("[0-9]+", args[1].sql)
+        ):
             raise SqlFragmentError("expression: left() takes a length")
         return _Node(
             "call",
@@ -423,11 +450,12 @@ def render_index_expressions(
     Allowed: a call of ``lower``, ``upper``, ``md5``, ``left`` (a column and a length) or
     ``COALESCE`` on columns of the table and literals; the no-op text casts PostgreSQL puts
     on a text column (``(email)::text``, dropped, ``text_columns`` names those columns);
-    and ``integer``, ``bigint``, ``smallint`` or ``text`` casts on a literal. Every key
+    and ``integer``, ``bigint``, ``smallint``, ``text`` or ``character varying`` casts on a literal. Every key
     must call a function on a column. Anything else (operators, other functions or casts,
     JSON paths, comments, a second statement) raises ``SqlFragmentError`` with a fixed
     message that quotes none of the text.
     """
+    refuse_unprintable(text, "expression")
     text = text.strip()
     if not text:
         raise SqlFragmentError("expression: blank")

@@ -39,6 +39,7 @@ from src.tools.schema.aurora_common.source_family import classify_type_family
 from src.tools.schema.aurora_common.source_types import resolve_source_type
 from src.tools.schema.aurora_common.sql_safety import (
     SqlFragmentError,
+    is_unprintable,
     render_index_expressions,
     render_source_predicate,
 )
@@ -938,6 +939,13 @@ def comment_name(table_name: str, index_name: str) -> str:
     return " ".join(_COMMENT_UNSAFE.sub(" ", f"{table_name}.{index_name}").split())
 
 
+def comment_text(text: str) -> str:
+    """``text`` made safe for one ``--`` comment line (#2381 review): each control, format
+    or line separator character (``sql_safety.is_unprintable``) replaced by a space, then
+    the whitespace collapsed."""
+    return " ".join("".join(" " if is_unprintable(ch) else ch for ch in text).split())
+
+
 def skipped_index_comment(table_name: str, index_name: str) -> str:
     """The SQL comment standing in for an index the key limit rules out."""
     return f"{SKIPPED_INDEX_PREFIX}{comment_name(table_name, index_name)}{SKIPPED_INDEX_SUFFIX}"
@@ -1159,18 +1167,16 @@ def recreated_expression_index(
     (#2381), as ``(statement, None)``, or ``(None, why)`` when it cannot be created.
 
     Only the key text the strict grammar accepts is used (``render_index_expressions``),
-    re-rendered key by key with the identifiers quoted; ``index_def`` is never read, so
-    no collector text reaches the statement as written. ``why`` is a fixed sentence
-    that quotes none of the collector's text. Left out: an index mixing column and
-    expression keys (the collection does not record their order), one with INCLUDE
-    columns or an access method other than B-tree, and one whose expression or
-    predicate is outside the grammar.
+    re-rendered key by key with the identifiers quoted. ``why`` is a fixed sentence that
+    quotes none of the collector's text. Left out: an index mixing column and expression
+    keys, one with INCLUDE columns or an access method other than B-tree, one whose
+    expression or predicate is outside the grammar, and one whose source definition says
+    more than the statement would (``_definition_is_only``): an operator class, a sort
+    order, a collation, NULLS NOT DISTINCT or storage parameters, which the expression
+    text does not carry (#2381 review).
     """
     if idx.columns or idx.included_columns:
-        return None, (
-            "its keys mix columns and expressions, and the collection does not record "
-            "their order"
-        )
+        return None, "this release does not recreate indexes that mix columns and expressions"
     if index_method(idx) not in (None, "btree"):
         return None, "this release recreates B-tree expression indexes only"
     columns = [c.name for c in column_ddls]
@@ -1192,12 +1198,47 @@ def recreated_expression_index(
             )
         except SqlFragmentError:
             return None, "its predicate is outside the supported grammar"
-    unique = "UNIQUE " if idx.is_unique else ""  # nosemgrep: is-function-without-parentheses
+    unique = bool(idx.is_unique)  # nosemgrep: is-function-without-parentheses
+    if not _definition_is_only(idx, unique):
+        return None, (
+            "its source definition has more than its expression and predicate (an operator "
+            "class, a sort order, a collation, NULLS NOT DISTINCT, INCLUDE or storage "
+            "parameters), which this release does not recreate"
+        )
     keys_sql = ", ".join(f"({k})" for k in keys)
     return (
-        f"CREATE {unique}INDEX {POSTGRES.q(idx.index_name)} ON {POSTGRES.q(table_name)} "
-        f"({keys_sql}){where};",
+        f"CREATE {'UNIQUE ' if unique else ''}INDEX {POSTGRES.q(idx.index_name)} ON "
+        f"{POSTGRES.q(table_name)} ({keys_sql}){where};",
         None,
+    )
+
+
+_INDEX_DEF_HEAD = re.compile(r"CREATE (?P<unique>UNIQUE )?INDEX ")
+
+
+def _definition_is_only(idx: AgentIndex, unique: bool) -> bool:
+    """Whether the source's ``pg_get_indexdef`` (``index_def``) is exactly the B-tree
+    index its expressions and predicate describe, with nothing more (#2381 review).
+
+    ``pg_get_indexdef`` writes ``CREATE [UNIQUE] INDEX <name> ON [ONLY] <table> USING
+    btree (<keys>)`` and then any NULLS NOT DISTINCT, INCLUDE, WITH (...) and WHERE; each
+    key is the ``pg_get_expr`` text the collector also reads, unparenthesized for the
+    function-like keys the grammar allows, followed by any COLLATE, operator class, DESC or
+    NULLS FIRST/LAST. So the definition must end with exactly ``USING btree (<the
+    collected expressions>)`` and the predicate, and start with the uniqueness the index
+    has. The text is only compared, never written anywhere. A definition the collection
+    lacks is not checked, so the index is left out.
+    """
+    definition = idx.index_def or ""
+    tail = f" USING btree ({idx.index_expressions or ''})"
+    if idx.predicate:
+        tail += f" WHERE {idx.predicate}"
+    head = _INDEX_DEF_HEAD.match(definition)
+    return (
+        head is not None
+        and bool(head.group("unique")) == unique
+        and definition.endswith(tail)
+        and " ON " in definition[: len(definition) - len(tail)]
     )
 
 

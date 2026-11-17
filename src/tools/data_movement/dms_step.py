@@ -1934,9 +1934,11 @@ def render_ddl(inputs: Step1Inputs) -> str:
 
 def _left_out_index_lines(inputs: Step1Inputs) -> list[str]:
     """The source indexes this file does not create (#2381), one line each: the name as a
-    skipped-index comment writes it (``comment_name``) and the generator's fixed reason, so
-    no collector expression text reaches the file."""
-    from src.tools.schema.aurora_common.ddl_generator import comment_name
+    skipped-index comment writes it (``comment_name``) and the generator's fixed reason,
+    both cleaned of every control, format and line separator character (``comment_text``),
+    so each stays on its one comment line and no collector expression text reaches the
+    file."""
+    from src.tools.schema.aurora_common.ddl_generator import comment_name, comment_text
 
     if not inputs.left_out_indexes:
         return []
@@ -1944,7 +1946,7 @@ def _left_out_index_lines(inputs: Step1Inputs) -> list[str]:
         "Source indexes not created (YOUR DECISION: create them on Aurora if the application needs "
         "them; the source's own definition is in the collection):",
         *(
-            f"- {comment_name(i.table_id, i.index_name)}: {i.reason}."
+            f"- {comment_text(comment_name(i.table_id, i.index_name))}: {comment_text(i.reason)}."
             for i in inputs.left_out_indexes
         ),
     ]
