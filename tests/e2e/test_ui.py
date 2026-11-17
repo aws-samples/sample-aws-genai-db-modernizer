@@ -843,7 +843,7 @@ def _expand_query_routing(page: Page) -> None:
 # GlobalConfigurations.timeout), not on network silence. The budget covers
 # rendering the rows on a loaded machine; CI measures a few seconds.
 ROUTING_DATA_TIMEOUT_MS = 60_000
-ROUTING_LOAD_ERROR = "The query list could not be loaded"
+ROUTING_LOAD_ERROR = "Query details aren't available for this assessment"
 
 
 def _wait_for_query_routing_rows(

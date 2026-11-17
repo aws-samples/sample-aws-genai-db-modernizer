@@ -38,6 +38,10 @@ jest.mock('@cloudscape-design/components/header', () => ({
     <header><h2>{children}</h2><span className="mock-counter">{counter}</span><p>{description}</p></header>
   ),
 }));
+jest.mock('@cloudscape-design/components/alert', () => ({
+  __esModule: true,
+  default: ({ header, children }) => <div data-alert><b>{header}</b>{children}</div>,
+}));
 jest.mock('@cloudscape-design/components/status-indicator', () => ({
   __esModule: true,
   default: ({ type, children }) => <span data-status={type}>{children}</span>,
@@ -223,8 +227,10 @@ test('pages of 25 queries, with named pager buttons and a named table', () => {
 });
 
 test('an error or an empty list says so instead of an empty table', () => {
-  render({ rows: [], error: 'boom' });
-  expect(container.textContent).toContain('The query list could not be loaded: boom');
+  render({ rows: [], error: 'server' });
+  expect(container.textContent).toContain("Query details aren't available for this assessment");
+  expect(container.textContent).not.toContain('server');
+  expect(container.querySelector('.mock-counter').textContent).toBe('');
   render({ rows: [] });
   expect(container.textContent).toContain('No queries match.');
 });

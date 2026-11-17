@@ -7,6 +7,7 @@ import SpaceBetween from "@cloudscape-design/components/space-between";
 import Badge from "@cloudscape-design/components/badge";
 import ExpandableSection from "@cloudscape-design/components/expandable-section";
 import Select from "@cloudscape-design/components/select";
+import Alert from "@cloudscape-design/components/alert";
 import StatusIndicator from "@cloudscape-design/components/status-indicator";
 import TextFilter from "@cloudscape-design/components/text-filter";
 import SegmentedControl from "@cloudscape-design/components/segmented-control";
@@ -85,7 +86,9 @@ const QueryRoutingTable = memo(({ rows, loading, error, hasLedger, truncated, on
   const typeOptions = [anyType, ...options.queryTypes.map(q => ({ value: q, label: q }))];
   const anyEngine = { value: '', label: t('analysis-results.query-routing.engine-any') };
   const engineOptions = [anyEngine, ...options.engines.map(e => ({ value: e.engine, label: e.engineName }))];
-  const counter = isFiltered ? `(${filtered.length} of ${(rows || []).length})` : `(${(rows || []).length})`;
+  // No count while the list loads or when it could not be read: a "(0)" there reads as
+  // "no queries" (#2308).
+  const counter = (loading || error) ? undefined : isFiltered ? `(${filtered.length} of ${(rows || []).length})` : `(${(rows || []).length})`;
 
   // #1244: Engine and Routing, the columns a reader opens this table for, come right
   // after the query id, and long text wraps (the Table's wrapLines) instead of widening
@@ -150,7 +153,10 @@ const QueryRoutingTable = memo(({ rows, loading, error, hasLedger, truncated, on
         headerDescription={t('analysis-results.query-routing.description')}
       >
         {error ? (
-          <StatusIndicator type="error">{t('analysis-results.query-routing.error', { message: error })}</StatusIndicator>
+          <Alert type="warning" header={t('analysis-results.query-routing.unavailable-title')}>
+            {t('analysis-results.query-routing.unavailable-body')}{' '}
+            {t(`analysis-results.query-routing.error-${error}`, { defaultValue: '' })}
+          </Alert>
         ) : (
           <SpaceBetween size="m">
             <SpaceBetween direction="horizontal" size="s">
