@@ -356,13 +356,26 @@ def _waiting_reason(job: str, db: str, agents: list[dict[str, Any]]) -> str:
     )
 
 
+#: A /modernize Phase 6f round subagent's dispatch description (#2385): a hung round
+#: fails the routine repair phase only, never the run.
+ROUTINE_REPAIR_ROUND = "Routine repair, round "
+
+
 def _hung_reason(phase: str, task: dict[str, Any], minutes: int) -> str:
     label = _label(task)
-    return (
+    head = (
         f"Blocked: the subagent '{label}' was dispatched {minutes} minutes ago and has not "
         f"reported; a headless run treats a subagent that has not reported within "
         f"{HUNG_AFTER_SECONDS // 60} minutes as hung. Stop it with the TaskStop tool "
-        f"(task id {task.get('id')}), then end the run with "
+        f"(task id {task.get('id')}), then "
+    )
+    if label.startswith(ROUTINE_REPAIR_ROUND):
+        return head + (
+            'set `phase_status.routine_repair` = "failed" and go on to Phase 7 (Synthesis): '
+            "a routine repair round never ends the run."
+        )
+    return head + (
+        "end the run with "
         f"`MODERNIZE_RESULT: failed phase={phase} reason=subagent {label} did not report "
         f"within {HUNG_AFTER_SECONDS // 60} minutes`."
     )

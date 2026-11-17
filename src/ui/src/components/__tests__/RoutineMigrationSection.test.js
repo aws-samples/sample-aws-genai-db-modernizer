@@ -234,6 +234,9 @@ test('lists each intervention with its line, and every attempt of one that needs
   });
   const repaired = withInterventions.interventions.find(i => i.state === 'model_repaired');
   expect(box.textContent).toContain(`What changed: ${repaired.change_note}`);
+  // #2385: a model repair reads as compared on a local engine, not tested on Aurora.
+  expect(box.textContent).toContain('a local engine of the source');
+  expect(box.textContent).toContain('it is checked, not tested yet on a test Aurora');
   const pending = withInterventions.interventions.find(i => i.state === 'repaired_pending_proof');
   expect(box.textContent).not.toContain(pending.change_note);
 });

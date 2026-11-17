@@ -83,31 +83,21 @@ def unzip_sample(name: str, dest: Path) -> Path:
 
 def sample_routines(name: str) -> Path | None:
     """The sample's synthetic routine set (#1954), when it has one:
-    ``docs/examples/<name>/<name>-routines.json``, the routine sections the collection
-    script writes (``procedures``, ``routine_parameters``, ``triggers``, ``events`` and
-    ``metadata.routine_capture``), kept apart from the zip's collection."""
-    path = REPO / "docs" / "examples" / name / f"{name}-routines.json"
-    return path if path.exists() else None
+    ``docs/examples/<name>/<name>-routines.json`` (``ci/llm/sample_routines.py``)."""
+    from ci.llm.sample_routines import sample_routines as found
+
+    return found(name, REPO)
 
 
 def add_sample_routines(collection: Path, name: str) -> Path:
-    """Add the sample's routine set to an extracted collection, in place: each list
-    section is appended to the collection's own, each ``metadata`` key is set. The file
+    """Add the sample's routine set to an extracted collection, in place, with the same
+    step the headless e2e-llm run uses (``ci/llm/sample_routines.py``, #2385). The file
     then reaches the routine phase the way any collection does: ``run_collect.py`` lists
     the routines in the collector output and keeps each ``CREATE`` in the job's routine
     sources (ADR-034 Decision 4). A sample with no routine set is left as it is."""
-    routines = sample_routines(name)
-    if routines is None:
-        return collection
-    from src.tools.database.collection_text import extract_json_object
+    from ci.llm.sample_routines import add_sample_routines as add
 
-    raw = json.loads(extract_json_object(collection.read_text(encoding="utf-8")))
-    for key, value in json.loads(routines.read_text(encoding="utf-8")).items():
-        if key == "metadata":
-            raw.setdefault("metadata", {}).update(value)
-        else:
-            raw[key] = [*(raw.get(key) or []), *value]
-    collection.write_text(json.dumps(raw), encoding="utf-8")
+    add(collection, name, REPO)
     return collection
 
 

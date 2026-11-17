@@ -17,6 +17,8 @@ Every other routine is held back, by id, with one of :data:`HELD_REASONS`:
   differently, or a call left the role it runs as.
 - ``depends_on_held``: the test found no difference on it, but it calls a held routine,
   directly or not (``routine_holds``, the same rule ``facts.routines`` counts).
+- ``repaired_not_deployed``: a model repaired it (#2385); step 1 does not deploy a repaired
+  routine yet (#2384), whatever the test found.
 
 The gate reads the routine-migration artifact's ``proof`` entries and its ``proof_run``,
 and the routines file's digest (``routine_sources_digest``); nothing else.
@@ -50,6 +52,10 @@ HELD_WHY: dict[str, str] = {
     "depends_on_held": (
         "it calls a routine that is held back, so its CREATE could fail without it: settle "
         f"that routine with {TEST_COMMAND}, then generate the routine scripts again"
+    ),
+    "repaired_not_deployed": (
+        "a model repaired it, and step 1 does not deploy a repaired routine yet: migrate it "
+        "yourself, and test it on a test Aurora before you deploy it"
     ),
 }
 

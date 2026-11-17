@@ -331,3 +331,17 @@ def test_the_executive_report_and_the_final_summary_print_the_routine_facts(
         assert norm(facts["migrate_yourself_line"]).lower() in text.lower(), name
         for _kind, rid in EXPECTED[sample_run.db]:
             assert rid not in text, (name, rid)
+
+
+def test_each_sample_has_a_routine_to_repair(sample_run: PipelineResult) -> None:
+    """#2385: the sample's set gives the repair loop at least one routine, so a headless
+    /modernize run on it (ci/e2e-llm.sh adds the same set) reaches a repair round."""
+    from src.agents.routine_repair.handler import run_routine_repair_deterministic
+    from src.contracts.routine_migration import RoutineMigrationContract
+    from src.storage.collector_for_models import read_collector_for_models
+
+    store = LocalArtifactStore(base_dir=str(sample_run.artifact_root))
+    db, job = sample_run.job_dir().parent.name, sample_run.job_dir().name
+    migration = RoutineMigrationContract.model_validate(_migration(sample_run))
+    plan = run_routine_repair_deterministic(read_collector_for_models(store, db, job), migration)
+    assert len(plan.candidates) >= 1

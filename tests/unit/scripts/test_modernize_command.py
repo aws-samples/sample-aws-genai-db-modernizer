@@ -27,6 +27,8 @@ DISPATCHED_SUBCOMMANDS = [
     "design-schema-aurora-mysql.md",
     "design-schema-aurora-postgresql.md",
     "review-schema.md",
+    # #2385: one subagent per routine repair round (Phase 6f).
+    "repair-routines.md",
     "synthesize.md",
 ]
 

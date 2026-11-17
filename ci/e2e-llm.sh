@@ -335,6 +335,10 @@ else
   WORK="$OUT/input"
   mkdir -p "$WORK"
   unzip -o -q "$REPO_ROOT/docs/examples/$FIXTURE/$FIXTURE.zip" -d "$WORK"
+  # The sample's synthetic routine set (#2385), as the deterministic e2e adds it, so the
+  # headless run checks routines and reaches a routine repair round (Phase 6f).
+  uv run python ci/llm/sample_routines.py "$WORK/$FIXTURE-collection.json" "$FIXTURE" \
+    >"$OUT/sample-routines.json"
   # This is the job cursor the orchestrator reads/writes, not a data source of
   # truth -- removing it only resets which job the NEXT run picks up from, and
   # never touches anything under $ARTIFACT_ROOT. See ci/README.md.

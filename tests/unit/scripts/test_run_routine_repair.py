@@ -28,6 +28,10 @@ def _run(tmp_path: Path, *args: str) -> tuple[int, list[dict]]:
     return proc.returncode, lines
 
 
+def _write(path: str, data: dict) -> None:
+    Path(path).write_text(json.dumps(data))
+
+
 def test_mode_none_prints_one_skipped_line(tmp_path):
     fx.job(tmp_path)
     code, lines = _run(tmp_path, "--llm-mode", "none")
@@ -38,12 +42,13 @@ def test_mode_none_prints_one_skipped_line(tmp_path):
 
 
 def test_external_then_finalize(tmp_path):
-    store = fx.job(tmp_path)
+    fx.job(tmp_path)
     code, (line,) = _run(tmp_path, "--llm-mode", "external")
     assert code == 0 and line["status"] == "awaiting_llm"
-    request = store.read_json(line["llm_request"])
+    # #2385 review: the paths are printed under the artifact root, ready to read and write.
+    request = json.loads(Path(line["llm_request"]).read_text())
     assert fx.LITERAL_MARK not in json.dumps(request)
-    store.write_json(
+    _write(
         line["llm_response"],
         {
             "repairs": [
@@ -62,10 +67,57 @@ def test_external_then_finalize(tmp_path):
 
 
 def test_finalize_with_an_answer_off_the_contract_is_an_error_naming_where(tmp_path):
-    store = fx.job(tmp_path)
+    fx.job(tmp_path)
     _, (line,) = _run(tmp_path, "--llm-mode", "external")
-    store.write_json(line["llm_response"], {"repairs": [], "status": "proved"})
+    _write(line["llm_response"], {"repairs": [], "status": "proved"})
     code, (err,) = _run(tmp_path, "--finalize")
     assert code == 1 and err["status"] == "error"
     assert "RoutineRepairResponse" in err["message"]
     assert "proved" not in err["message"]
+
+
+def _rule_matches(rule: str, tool: str, path: str) -> bool:
+    """Whether an ``Edit(...)``/``Write(...)`` permission rule covers ``path``."""
+    import fnmatch
+
+    if not (rule.startswith(f"{tool}(") and rule.endswith(")")):
+        return False
+    return fnmatch.fnmatchcase(path, rule[len(tool) + 1 : -1])
+
+
+def test_a_headless_round_writes_its_answer_where_the_ci_settings_allow(tmp_path, monkeypatch):
+    """#2385 review: /modernize hands the round subagent the line's ``llm_response`` as
+    printed. Run from the repo root with the default artifact root, it is a path under
+    ``artifacts/`` that ``.claude/settings.ci.json`` lets the Write tool write, and the
+    file the next ``--finalize`` reads."""
+    from scripts import run_routine_repair
+
+    fx.job(tmp_path / "artifacts")
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.delenv("MODERNIZER_CI_SANDBOX", raising=False)
+    monkeypatch.delenv("ARTIFACT_DIR", raising=False)
+    monkeypatch.setattr(run_routine_repair, "_JOB", {})
+    argv = ["run_routine_repair.py", "--job-id", fx.JOB, "--db", fx.DB, "--llm-mode", "external"]
+    monkeypatch.setattr(sys, "argv", argv)
+    import contextlib
+    import io
+
+    out = io.StringIO()
+    with contextlib.redirect_stdout(out):
+        run_routine_repair.main()
+    (line,) = [json.loads(x) for x in out.getvalue().splitlines() if x.startswith("{")]
+    response, request = line["llm_response"], line["llm_request"]
+    assert response == f"artifacts/{fx.DB}/{fx.JOB}/routines/v1/repair/llm_response.json"
+    assert (tmp_path / request).is_file()
+    permissions = json.loads((REPO / ".claude" / "settings.ci.json").read_text())["permissions"]
+    assert any(_rule_matches(r, "Write", response) for r in permissions["allow"])
+    assert not any(_rule_matches(r, "Write", response) for r in permissions["deny"])
+    # The answer written there is the one --finalize applies.
+    (tmp_path / response).write_text(json.dumps({"repairs": []}))
+    monkeypatch.setattr(sys, "argv", argv[:5] + ["--finalize"])
+    out = io.StringIO()
+    with contextlib.redirect_stdout(out):
+        run_routine_repair.main()
+    (done,) = [json.loads(x) for x in out.getvalue().splitlines() if x.startswith("{")]
+    assert done["status"] == "complete" and done["counts"]["no_answer"] == 1
+    assert done["artifact"].startswith(f"artifacts/{fx.DB}/{fx.JOB}/")

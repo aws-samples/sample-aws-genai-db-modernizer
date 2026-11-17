@@ -167,6 +167,24 @@ def test_a_subagent_out_past_the_hang_limit_asks_for_the_failed_line(run_hook, p
     assert "--wait-for-report" not in res.stderr
 
 
+def test_a_hung_routine_repair_round_fails_the_phase_not_the_run(run_hook, project) -> None:
+    """#2385: a /modernize Phase 6f round subagent that never reports is stopped and the
+    routine repair phase is marked failed; the run goes on to synthesis, with no failed
+    result line."""
+    round_1 = {"id": "a1", "type": "local_agent", "description": "Routine repair, round 1 of 3"}
+    records = [
+        _rec("user", AUTO_PROMPT),
+        _launch("a1", datetime.now(UTC) - timedelta(minutes=31)),
+        _rec("assistant", "Waiting."),
+    ]
+    res = run_hook(SCRIPT, _event(project, records, background_tasks=[round_1]), env=_env(project))
+    assert res.blocked, res.stderr
+    assert "'Routine repair, round 1 of 3' was dispatched 31 minutes ago" in res.stderr
+    assert "TaskStop" in res.stderr
+    assert '`phase_status.routine_repair` = "failed" and go on to Phase 7' in res.stderr
+    assert "MODERNIZE_RESULT" not in res.stderr
+
+
 def test_with_no_launch_record_the_hook_keeps_its_own_clock(run_hook, project) -> None:
     """Review of #2178: with no launch record (a resume, a fork) the hung rule had no clock,
     and each block's tool call resets the CLI's block cap, so a hung part held the run in

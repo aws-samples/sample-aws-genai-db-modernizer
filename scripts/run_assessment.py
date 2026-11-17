@@ -1151,6 +1151,45 @@ def phase_routine_migration(store, job_id: str, db: str) -> dict:
     return {"status": "complete", "assignment_version": version, "counts": artifact.counts}
 
 
+def phase_routine_repair(store, job_id: str, db: str, llm_mode: str) -> dict:
+    """The routine repair loop (#1941) in process (#2385): in Bedrock mode every round runs
+    here, on the newest routine-migration version (the one synthesis reads), proving on the
+    engines this machine has (``--proof auto``: ``local`` when a disposable engine of the
+    source's major is here, else ``none``, and a repair then waits for the proof). Without a
+    model it is skipped with the loop's reason; ``external`` leaves the rounds to
+    ``/modernize``. A failed loop is this phase's ``failed`` line, never routine text, and
+    the run goes on: the routines stay not carried. Nothing here deploys a routine."""
+    from src.agents.routine_repair import handler
+    from src.agents.routine_repair.loop import proof_for_run
+    from src.shared.bedrock_guardrail import GuardrailConfigError
+
+    if llm_mode != "bedrock":
+        reason = (
+            handler.LLM_MODE_NONE_REASON
+            if llm_mode == "none"
+            else f"llm_mode={llm_mode}: /modernize runs the repair rounds"
+        )
+        status = {"status": "skipped", "reason": reason}
+        _log("routine_repair", f"skipped: {reason}")
+        _output("routine_repair", status)
+        return status
+    _banner("ROUTINE REPAIR")
+    try:
+        proof = proof_for_run(store, db, job_id, "auto")
+        status = handler.run_routine_repair(store, db, job_id, llm_mode="bedrock", proof=proof)
+    except GuardrailConfigError:
+        raise
+    except Exception as exc:  # noqa: BLE001 -- reported without its message (routine text)
+        status = {
+            "status": "failed",
+            "reason": f"routine repair failed: {type(exc).__name__}; the routines stay "
+            "not carried",
+        }
+    _log("routine_repair", json.dumps(status))
+    _output("routine_repair", status)
+    return status
+
+
 def phase_reality_check_finalize(
     store, job_id: str, db: str, assignment_version: int | None = None
 ) -> None:
@@ -1903,6 +1942,12 @@ def _run(args) -> None:  # type: ignore[no-untyped-def]
         _write_state(state)
         # A post-schema reroute (in process, Bedrock mode) writes a version synthesis reads.
         phase_routine_migration(store, job_id, db_name)
+        # #2385: the repair loop on that version, before synthesis reads its result.
+        _start_phase("routine_repair")
+        repair = phase_routine_repair(store, job_id, db_name, args.llm_mode)
+        # Its reason is on the status line and in the log.
+        state["phase_status"]["routine_repair"] = repair["status"]
+        _write_state(state)
 
         _start_phase("synthesis")
         phase_synthesis(store, job_id, db_name, args.llm_mode)

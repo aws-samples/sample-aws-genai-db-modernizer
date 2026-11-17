@@ -31,7 +31,7 @@
   "proof": "checked, not load-tested",
   "proof_counts": null,
   "line": "1 of 4 routines carry over: 1 rewritten. 3 were not carried automatically: 3 need repair. For 1 carried routine not every check could run. The carried routine is not tested yet; test it on a test Aurora with /test-routines before it is deployed.",
-  "executive_line": "your routines can move to Aurora with the database: 1 of 4 for this database, 1 rewritten; 3 need work before wave 1. Before it is deployed, test it on a throwaway Aurora with the /test-routines command.",
+  "executive_line": "your routines can move to Aurora with the database: 1 of 4 for this database, 1 rewritten; 3 need work before wave 1. Before it is deployed, test it on a throwaway Aurora with the /test-routines command. A model repaired 1 of the routines that need work, compared on a local engine of the source: it is checked, not tested yet on a test Aurora, and step 1 does not deploy it yet.",
   "routines": [
     {
       "routine_id": "public.hidden(integer)",
@@ -202,7 +202,7 @@
           "error": "no differences found"
         }
       ],
-      "line": "A model repaired it, and side by side on a disposable postgresql 16 engine the repair gave the same results as the original on every call compared. What changed: Calls pg_current_wal_lsn, the name PostgreSQL 10 gave the function. Step 1 does not deploy a repaired routine yet, so it stays to migrate yourself.",
+      "line": "A model repaired it. Its repair was compared with the original on a disposable postgresql 16 engine, a local engine of the source, and gave the same results on the calls compared; it is checked, not tested yet on a test Aurora. What changed: Calls pg_current_wal_lsn, the name PostgreSQL 10 gave the function. Step 1 does not deploy a repaired routine yet, so it stays to migrate yourself.",
       "attempt_lines": []
     },
     {

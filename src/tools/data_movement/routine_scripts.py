@@ -497,8 +497,9 @@ PROOF_LINES = {
     ),
     "current": (
         "Tested on a test Aurora: only the routines that showed no difference on the calls "
-        "made are here; every other is held back (not_tested, not_proved, needs_attention, or "
-        "depends_on_held when it calls a held routine)."
+        "made are here; every other is held back (not_tested, not_proved, needs_attention, "
+        "depends_on_held when it calls a held routine, or repaired_not_deployed for a "
+        "model-repaired one)."
     ),
 }
 
