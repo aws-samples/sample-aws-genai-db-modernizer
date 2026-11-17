@@ -1198,7 +1198,9 @@ def recreated_expression_index(
             )
         except SqlFragmentError:
             return None, "its predicate is outside the supported grammar"
-    unique = bool(idx.is_unique)  # nosemgrep: is-function-without-parentheses
+    unique = bool(
+        idx.is_unique
+    )  # nosemgrep: is-function-without-parentheses -- field, not a method
     if not _definition_is_only(idx, unique):
         return None, (
             "its source definition has more than its expression and predicate (an operator "
