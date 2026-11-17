@@ -122,6 +122,16 @@ the owner is dead, any server still running from that folder (recognised by the
 folder in its command line) is stopped the engine's own way first, and then the
 folder is removed.
 
+Owner death. The sweep only runs at the next ``start``, and a server outliving its
+owner can run for days (a ``mysqld`` that lost its data folder filled a disk with its
+error log, #2350). So ``start`` also runs ``_engine_watcher.py``, a small process
+holding a pipe from the owner: when the owner dies by any means the pipe closes and
+the watcher stops every process that has the folder in its command line, the engine's
+own way first. ``stop`` closes the pipe too, once the servers are down. Servers keep
+``start_new_session=True``: a Ctrl-C or ``killpg`` aimed at the test process must not
+reach the server behind the owner's cleanup (a signalled postmaster leaks its
+shared-memory segment), and the server's own group is what ``_reap`` may ``SIGKILL``.
+
 Input shape for routines. ``SourceRoutine`` is the typed input this module takes:
 the exact ``CREATE`` text of one routine plus its kind and name. It is the shape
 the routine collection (#1920) will provide; this module does not read the
@@ -144,6 +154,7 @@ import signal
 import socket
 import stat
 import subprocess  # nosec B404 - runs the engine binaries, fixed argument lists
+import sys
 import tempfile
 import threading
 import time
@@ -914,6 +925,44 @@ def _sweepable(entry: Path) -> bool:
     if time.time() - info.st_mtime < _SWEEP_MIN_AGE_S:
         return False
     return not _owner_alive(_read_owner(entry))
+
+
+_WATCHER_SCRIPT = Path(__file__).with_name("_engine_watcher.py")
+_WATCHERS: dict[Path, subprocess.Popen[bytes]] = {}
+
+
+def _start_watcher(workdir: Path) -> None:
+    """Run the watcher that stops this folder's servers when we are gone (#2350).
+
+    A separate process holding the read end of a pipe whose write end only we have:
+    the system closes it when we exit however we exit, and ``sweep_stale`` only runs
+    in the next ``start``. A watcher that cannot start is logged, not fatal: the sweep
+    stays as the backstop. ``start_new_session`` keeps a Ctrl-C meant for us away from it.
+    """
+    try:
+        _WATCHERS[workdir] = subprocess.Popen(  # nosec B603 - fixed arguments, no shell
+            [sys.executable, "-I", str(_WATCHER_SCRIPT), str(workdir)],
+            stdin=subprocess.PIPE,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+            start_new_session=True,
+        )
+    except OSError as exc:
+        logger.warning(
+            "no watcher for %s (%s); a hard kill leaves it to the next sweep", workdir, exc
+        )
+
+
+def _release_watcher(workdir: Path) -> None:
+    """Let the watcher go once the servers are stopped: closing the pipe is its cue."""
+    proc = _WATCHERS.pop(workdir, None)
+    if proc is None:
+        return
+    with contextlib.suppress(OSError):
+        if proc.stdin is not None:
+            proc.stdin.close()
+    with contextlib.suppress(subprocess.TimeoutExpired):
+        proc.wait(timeout=_SHUTDOWN_TIMEOUT_S)
 
 
 def sweep_stale() -> list[Path]:
@@ -2135,6 +2184,7 @@ def start(
         )
     sweep_stale()
     workdir = _short_tempdir()
+    _start_watcher(workdir)
     server: Any = None
     backend: _Backend | None = None
     try:
@@ -2172,6 +2222,7 @@ def start(
         # _PgserverServer.stop, because the injection test relies on the pair.
         _stop_workdir_servers(workdir)
         shutil.rmtree(workdir, ignore_errors=True)
+        _release_watcher(workdir)
         raise
     _LIVE.append(handle)
     return handle
@@ -2338,6 +2389,7 @@ def stop(handle: EngineHandle) -> None:
     finally:
         _stop_workdir_servers(handle.workdir)
         shutil.rmtree(handle.workdir, ignore_errors=True)
+        _release_watcher(handle.workdir)
         if handle in _LIVE:
             _LIVE.remove(handle)
 
