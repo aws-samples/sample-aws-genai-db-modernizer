@@ -424,3 +424,24 @@ def test_a_table_with_an_unsafe_name_is_listed_with_its_name_as_the_reason(tmp_p
     [blocked] = [r for r in inputs.contract.rules if r.source_table.startswith("public.lo")]
     assert [f.code for f in blocked.findings] == ["unsafe_name"]
     assert 'CREATE TABLE "orders"' in inputs.ddl  # the other tables still move
+
+
+# ---------------------------------------------------------------------------
+# A table's second index of one name (#2402)
+# ---------------------------------------------------------------------------
+
+
+def test_a_second_index_of_one_name_is_listed_for_the_customer(tmp_path):
+    """Step 1 creates the first and lists the second, in the customer's words."""
+    pair = [{"index_name": "orders_note", "columns": ["note"], "is_unique": False},
+            {"index_name": "orders_note", "columns": ["id", "note"], "is_unique": False}]  # fmt: skip
+    inputs = _pg(tmp_path, orders=pair)
+
+    files = render_files(inputs)
+    assert len(_creates_index(inputs.ddl, "orders_note")) == 1
+    [line] = _left_out_lines(files["step-1.ddl.sql"])
+    assert line == (
+        "-- - index public.orders.orders_note: the table already has an index named "
+        "orders_note, so this one was not created; create it under another name if the "
+        "queries need it."
+    )

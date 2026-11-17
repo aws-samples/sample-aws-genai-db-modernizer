@@ -24,13 +24,13 @@ from collections.abc import Callable
 from pathlib import Path
 
 import pytest
-from hypothesis import HealthCheck, given, settings
+from hypothesis import HealthCheck, example, given, settings
 from hypothesis import strategies as st
 from pydantic import BaseModel
 
 from src.contracts.aurora_mysql_model_output import AuroraMySQLModelOutputContract
 from src.contracts.aurora_postgresql_model_output import AuroraPostgresqlModelOutputContract
-from src.contracts.schema_design_input import AgentTable
+from src.contracts.schema_design_input import AgentColumn, AgentIndex, AgentTable
 from src.shared.contract_versioning import ContractVersionError, read_contract_payload
 from src.storage.local_store import LocalArtifactStore
 from src.tools.schema.aurora_common.delta_merge import AuroraDesignBase, merge_design_delta
@@ -114,19 +114,37 @@ def _merged(engine: str, tables: list[AgentTable], delta: dict | None = None) ->
     return result.output
 
 
-@pytest.mark.passes_on_main
+def _same_named(wide_first: bool) -> list[AgentTable]:
+    """#2402's falsifying shape: two indexes of table ``zq9x`` both named ``zq9x``. On
+    Aurora MySQL the one on ``[zq9x0, zq9x3]`` is over the key limit (a TEXT key part next
+    to a 753-character string), the one on ``[zq9x0]`` is not."""
+    columns = [
+        AgentColumn(column_name="zq9x0", data_type="text", nullable=True),
+        AgentColumn(column_name="zq9x1", data_type="int", nullable=True),
+        AgentColumn(column_name="zq9x2", data_type="int", nullable=True),
+        AgentColumn(column_name="zq9x3", data_type="varchar", max_length=753, nullable=True),
+    ]
+    wide = AgentIndex(index_name="zq9x", columns=["zq9x0", "zq9x3"], is_unique=False)
+    narrow = AgentIndex(index_name="zq9x", columns=["zq9x0"], is_unique=False)
+    indexes = [wide, narrow] if wide_first else [narrow, wide]
+    return [AgentTable(table_id="s.zq9x", table_name="zq9x", row_count=1, columns=columns,
+                       indexes=indexes)]  # fmt: skip
+
+
 @settings(max_examples=scaled(150), deadline=None, suppress_health_check=[HealthCheck.too_slow])
 @given(
     tables=_tables(),
     more=_tables(),
     engine=st.sampled_from(sorted(MODELS)),
 )
+@example(tables=_same_named(True), more=[], engine="aurora_mysql")
+@example(tables=_same_named(False), more=[], engine="aurora_mysql")
 def test_every_design_the_generator_writes_loads_unchanged(
     tmp_path_factory: pytest.TempPathFactory, tables, more, engine: str
 ) -> None:
     """Hostile collector text (quotes, backticks, newlines, comments, backslashes in
     names, defaults and predicates) makes no design the generator writes unloadable."""
-    if tables[0].table_name == more[0].table_name:
+    if more and tables[0].table_name == more[0].table_name:
         more = []
     design = _merged(engine, tables + more)
     store, key = _store(tmp_path_factory.mktemp("d"), engine, design)
@@ -1078,3 +1096,65 @@ def test_only_mains_exact_legacy_spelling_is_accepted(
     design["generated_ddl"] = design["generated_ddl"].replace(head, line, 1)
     injected = next((c for c in line if c in "\u200b\u202e\x01"), "\u200b")
     _refused(tmp_path, "aurora_mysql", design, "generated_ddl", injected)
+
+
+# --- Designs main wrote for two same-named indexes (#2402) ------------------------------
+
+
+def _main_wrote(wide_first: bool, engine: str = "aurora_mysql") -> dict:
+    """The design main's generator wrote for ``_same_named``: before #2402 no index was
+    left out for its name, so the base keeps the collector's tables as they are."""
+    base = AuroraDesignBase(engine=engine, job_id=JOB, source_database=DB,
+                            source_engine="mysql", tables=[])  # fmt: skip
+    base.tables = _same_named(wide_first)
+    result = merge_design_delta(base, {"delta_version": "1.0"}, strict=False)
+    assert result.output is not None
+    return result.output
+
+
+@pytest.mark.passes_on_main
+@pytest.mark.parametrize("wide_first", [True, False], ids=["wide-first", "narrow-first"])
+def test_a_design_main_wrote_with_a_skipped_and_a_created_index_of_one_name_stays_refused(
+    tmp_path: Path, wide_first: bool
+) -> None:
+    """Main wrote a comment for one ``zq9x`` and a statement for the other; its note names
+    an index the table creates, so the comment stays refused, as on main. A rerun writes
+    the design below, which loads."""
+    design = _main_wrote(wide_first)
+    assert len(design["table_definitions"][0]["indexes"]) == 1
+    assert "\n-- Index zq9x.zq9x not created: " in design["generated_ddl"]
+    _refused(tmp_path, "aurora_mysql", design, "generated_ddl", "DROP")
+
+
+@pytest.mark.passes_on_main
+@pytest.mark.parametrize("engine", sorted(MODELS))
+def test_a_design_main_wrote_with_two_statements_of_one_name_still_loads(
+    tmp_path: Path, engine: str
+) -> None:
+    """Two created indexes of one name (no key limit in the way): main's design loaded,
+    and still does, unchanged."""
+    tables = _same_named(False)
+    tables[0].indexes = [
+        i.model_copy(update={"columns": ["zq9x1"]}) for i in tables[0].indexes or []
+    ]
+    base = AuroraDesignBase(engine=engine, job_id=JOB, source_database=DB,
+                            source_engine="mysql", tables=[])  # fmt: skip
+    base.tables = tables
+    design = merge_design_delta(base, {"delta_version": "1.0"}, strict=False).output
+    assert design is not None and len(design["table_definitions"][0]["indexes"]) == 2
+    store, key = _store(tmp_path, engine, design)
+    assert store.read_json(key) == json.loads(json.dumps(design))
+
+
+@pytest.mark.parametrize("wide_first", [True, False], ids=["wide-first", "narrow-first"])
+def test_the_generator_now_writes_one_index_per_name_and_the_design_loads(
+    tmp_path: Path, wide_first: bool
+) -> None:
+    design = _merged("aurora_mysql", _same_named(wide_first))
+    ddl = design["generated_ddl"]
+    created = design["table_definitions"][0]["indexes"]
+    assert len(created) + ddl.count("\n-- Index zq9x.zq9x not created: ") == 1
+    assert [n["source_object"] for n in design["app_layer_notes"]
+            if n["feature"] == "duplicate_index_name"] == ["zq9x.zq9x"]  # fmt: skip
+    store, key = _store(tmp_path, "aurora_mysql", design)
+    assert store.read_json(key) == json.loads(json.dumps(design))

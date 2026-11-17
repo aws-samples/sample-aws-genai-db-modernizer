@@ -1692,3 +1692,19 @@ def test_the_two_reasons_a_key_is_not_measured_are_stated_apart() -> None:
     text = risk["description"]
     assert "Per-key load not measured for 1 of these tables: the collection has no " in text
     assert "Per-key load not measured for 1 of these tables: the collection counts " in text
+
+
+def test_a_duplicate_index_name_note_raises_no_application_code_risk() -> None:
+    """An index left out for its name (#2402) is no source logic: it raises no
+    design.app_layer risk, alone or next to a note that does."""
+    note = {"feature": "duplicate_index_name", "source_object": "t.ix",
+            "recommendation": "Index not created: the table already has an index named ix."}  # fmt: skip
+    alone = _build(migration_waves=WAVES, schema_designs={AURORA: {"app_layer_notes": [note]}})
+    assert [r for r in alone if r["rule"] == "design.app_layer"] == []
+    extension = {"feature": "extension", "source_object": "pg_x", "recommendation": "y"}
+    both = _build(
+        migration_waves=WAVES, schema_designs={AURORA: {"app_layer_notes": [note, extension]}}
+    )
+    risk = _one(both, "design.app_layer")
+    assert "duplicate index name" not in risk["description"]
+    assert "1 source object needs application code" in risk["description"]
