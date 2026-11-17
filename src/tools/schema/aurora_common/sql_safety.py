@@ -460,3 +460,30 @@ def render_index_expressions(
         raise SqlFragmentError("expression: newlines, backslashes, comments or ';'")
     texts = {c.lower() for c in text_columns}
     return _ExpressionParser(text, columns, quote, texts).keys()
+
+
+def index_definition_is_only(
+    index_def: str | None, index_expressions: str | None, predicate: str | None, unique: bool
+) -> bool:
+    """Whether the source's ``pg_get_indexdef`` (``index_def``) is exactly the B-tree index
+    its expressions and predicate describe, with nothing more (#2381 review).
+
+    ``pg_get_indexdef`` writes ``CREATE [UNIQUE] INDEX <name> ON [ONLY] <table> USING
+    btree (<keys>)`` and then any NULLS NOT DISTINCT, INCLUDE, WITH (...) and WHERE; each
+    key is the ``pg_get_expr`` text the collector also reads, unparenthesized for the
+    function-like keys the grammar allows, followed by any COLLATE, operator class, DESC or
+    NULLS FIRST/LAST. So the definition must end with exactly ``USING btree (<the
+    collected expressions>)`` and the predicate, and start with the uniqueness the index
+    has. The text is only compared, never written anywhere. A definition the collection
+    lacks is not checked, so the index is left out.
+    """
+    definition = index_def or ""
+    tail = f" USING btree ({index_expressions or ''})"
+    if predicate:
+        tail += f" WHERE {predicate}"
+    head = "CREATE UNIQUE INDEX " if unique else "CREATE INDEX "
+    return (
+        definition.startswith(head)
+        and definition.endswith(tail)
+        and " ON " in definition[len(head) : len(definition) - len(tail)]
+    )

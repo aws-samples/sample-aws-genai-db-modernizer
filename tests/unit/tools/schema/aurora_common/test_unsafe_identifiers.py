@@ -19,7 +19,6 @@ import unicodedata
 import pytest
 
 from src.contracts.schema_design_input import AgentColumn, AgentForeignKey, AgentIndex, AgentTable
-from src.shared.sql_identifiers import UNSAFE_NAME_REASON, UnsafeIdentifierError
 from src.tools.schema.aurora_common.ddl_generator import (
     MYSQL,
     POSTGRES,
@@ -44,6 +43,12 @@ UNSAFE = [
 ]
 IDS = [f"U+{ord(c):04X}" for c in UNSAFE]
 GENERATORS = [generate_pg_ddl, generate_mysql_ddl]
+# Spelled out, not imported: a test that cannot import fails on main for a missing name, not
+# for the behaviour it checks (``./ci/pre_merge.sh``).
+_REASON = (
+    "its name holds a control, format, surrogate or line separator character, which no SQL "
+    "file this release writes may carry"
+)
 
 
 def _unprintable(text: str) -> list[str]:
@@ -73,7 +78,7 @@ def _index(name, columns):
 @pytest.mark.parametrize("dialect", [POSTGRES, MYSQL], ids=["postgres", "mysql"])
 @pytest.mark.parametrize("bad", UNSAFE, ids=IDS)
 def test_quoting_refuses_an_unsafe_name_in_both_dialects(dialect, bad):
-    with pytest.raises(UnsafeIdentifierError):
+    with pytest.raises(ValueError, match="not a name SQL may quote"):
         dialect.q(f"a{bad} tail")
 
 
@@ -91,7 +96,7 @@ def test_a_table_with_an_unsafe_name_is_left_out(generate, bad):
     assert not _unprintable(result.full_ddl)
     assert "CREATE TABLE" in result.full_ddl  # the other table is still created
     assert {"table": f"or{bad}ders", "kind": "table", "name": f"or{bad}ders",
-            "reason": UNSAFE_NAME_REASON} in result.left_out  # fmt: skip
+            "reason": _REASON} in result.left_out  # fmt: skip
 
 
 @pytest.mark.parametrize("generate", GENERATORS, ids=["postgres", "mysql"])
