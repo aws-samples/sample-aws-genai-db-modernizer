@@ -233,6 +233,8 @@ ALLOWED_CLOCKS = {
     # times one no-op install attempt in the same process; the hang limit is a multiple
     # of it, so the check is a ratio against a same-process reference (#1529)
     "tests/unit/ci/test_playwright_install_retry.py": {"time.monotonic"},
+    # only the deadline of a wait for a process to exit; nothing is timed (#2350)
+    "tests/unit/tools/database/test_disposable_engine_owner_death.py": {"time.monotonic"},
     # this file's self-tests of the helper's own clock
     "tests/unit/tools/sql/test_timing_helper.py": {"time.thread_time"},
 }

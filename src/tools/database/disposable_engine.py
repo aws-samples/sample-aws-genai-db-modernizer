@@ -126,11 +126,14 @@ Owner death. The sweep only runs at the next ``start``, and a server outliving i
 owner can run for days (a ``mysqld`` that lost its data folder filled a disk with its
 error log, #2350). So ``start`` also runs ``_engine_watcher.py``, a small process
 holding a pipe from the owner: when the owner dies by any means the pipe closes and
-the watcher stops every process that has the folder in its command line, the engine's
-own way first. ``stop`` closes the pipe too, once the servers are down. Servers keep
+the watcher stops every server process that has the folder in its command line, the
+engine's own way first. ``stop`` closes the pipe too, once the servers are down. Servers keep
 ``start_new_session=True``: a Ctrl-C or ``killpg`` aimed at the test process must not
-reach the server behind the owner's cleanup (a signalled postmaster leaks its
-shared-memory segment), and the server's own group is what ``_reap`` may ``SIGKILL``.
+reach the server behind the owner's cleanup (a group ``SIGKILL`` would leak the
+postmaster's System V segment; ``SIGINT`` and ``SIGTERM`` remove it), and the server's own
+group is what ``_reap`` may ``SIGKILL``. A child the owner forks with ``os.fork`` or
+``multiprocessing`` (nothing in ``src/`` does) inherits the pipe and delays the watcher
+until it exits.
 
 Input shape for routines. ``SourceRoutine`` is the typed input this module takes:
 the exact ``CREATE`` text of one routine plus its kind and name. It is the shape
@@ -940,13 +943,14 @@ def _start_watcher(workdir: Path) -> None:
     stays as the backstop. ``start_new_session`` keeps a Ctrl-C meant for us away from it.
     """
     try:
-        _WATCHERS[workdir] = subprocess.Popen(  # nosec B603 - fixed arguments, no shell
-            [sys.executable, "-I", str(_WATCHER_SCRIPT), str(workdir)],
-            stdin=subprocess.PIPE,
-            stdout=subprocess.DEVNULL,
-            stderr=subprocess.DEVNULL,
-            start_new_session=True,
-        )
+        with (workdir / "watcher.log").open("ab") as log:  # its errors; the folder is its own
+            _WATCHERS[workdir] = subprocess.Popen(  # nosec B603 - fixed arguments, no shell
+                [sys.executable, "-I", str(_WATCHER_SCRIPT), str(workdir)],
+                stdin=subprocess.PIPE,
+                stdout=subprocess.DEVNULL,
+                stderr=log,
+                start_new_session=True,
+            )
     except OSError as exc:
         logger.warning(
             "no watcher for %s (%s); a hard kill leaves it to the next sweep", workdir, exc
