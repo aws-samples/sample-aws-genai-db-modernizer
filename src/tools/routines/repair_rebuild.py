@@ -20,8 +20,10 @@ A routine is not rebuilt, and stays *needs attention* with the reason
 - ``literal_reads_placeholder``: a literal of the exact text reads ``?`` itself;
 - ``literal_partly_redacted``: the model saw a literal only in part (a pattern's shape,
   a statement inside a string redacted as SQL), or a literal's quote form differs;
-- ``literal_holds_sql``: a redacted literal holds a statement the model never saw, or
-  the routine builds a statement at run time while a literal is redacted;
+- ``literal_holds_sql``: a redacted literal starts with a statement word, or holds one
+  that changes data, an object or a session anywhere (a whole word, any case:
+  ``';DROP TABLE t'``), or the routine builds a statement at run time while a literal is
+  redacted;
 - ``literal_count``: the exact text and the redacted one hold different numbers of
   literals;
 - ``literal_in_quoted_text``: the candidate holds a placeholder inside a string whose
@@ -36,6 +38,7 @@ a log or a model input).
 
 from __future__ import annotations
 
+import re
 from collections.abc import Sequence
 from dataclasses import dataclass
 from typing import Literal
@@ -190,7 +193,24 @@ def _placeholder(seen: Literal_, exact: Literal_) -> bool:
     return seen.kind in _ZEROED and set(seen.content) <= {"0"} and seen.content != exact.content
 
 
+#: The statement words looked for anywhere in a literal: those that change data, an
+#: object or a session, or run another statement. Words common in prose (``do``, ``with``,
+#: ``set``, ``table``, ``show``, ``begin``) count only as a literal's first word.
+_ANYWHERE_WORDS = frozenset(
+    {
+        "SELECT", "INSERT", "UPDATE", "DELETE", "MERGE", "CREATE", "ALTER", "DROP",
+        "TRUNCATE", "GRANT", "REVOKE", "CALL", "EXECUTE", "PREPARE", "COPY", "RENAME",
+        "DECLARE", "PERFORM", "VACUUM", "REFRESH", "NOTIFY", "DISCARD",
+    }
+)  # fmt: skip
+_ANYWHERE = re.compile(r"\b(?:" + "|".join(sorted(_ANYWHERE_WORDS)) + r")\b", re.IGNORECASE)
+
+
 def _holds_sql(content: str, engine: str) -> bool:
+    """Whether a literal holds SQL the model never saw (#1941 review): a statement word as
+    its first word, or one of :data:`_ANYWHERE_WORDS` anywhere (a whole word, any case)."""
+    if _ANYWHERE.search(content) is not None:
+        return True
     try:
         tokens = routine_tokens(content, engine)
     except RoutineTokenError:

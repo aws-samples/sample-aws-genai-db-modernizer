@@ -439,3 +439,50 @@ def test_a_mysql_trigger_keeps_its_timing_event_and_order(edit):
     refusal = _screen().refusal_of(trigger, edit(fixed), "mysql")
     assert refusal is not None and refusal[0] == "signature_changed", refusal
     assert _screen().refusal_of(trigger, fixed, "mysql") is None
+
+
+# --------------------------------------------------------------------------- dynamic SQL
+# #1941 review: a candidate may not add a statement built at run time, which no screen can
+# read: a new PL/pgSQL EXECUTE (of a parameter, a format() call, a literal, with USING or
+# INTO), or a new MySQL PREPARE or EXECUTE. Counted by kind, as created objects are.
+
+PG_DYNAMIC = (
+    "CREATE OR REPLACE FUNCTION public.run_it(p integer)\n RETURNS integer\n LANGUAGE plpgsql\n"
+    "AS $function$\nBEGIN\n  EXECUTE format('?', p);\n  RETURN p;\nEND\n$function$\n"
+)
+
+
+@pytest.mark.parametrize(
+    "added",
+    [
+        "  EXECUTE p::text;\n",
+        "  EXECUTE p::text INTO STRICT p;\n",
+        "  EXECUTE format('?', p) USING p;\n",
+        "  EXECUTE 'SELECT 1';\n",
+    ],
+    ids=["parameter", "into-strict", "format-using", "literal"],
+)
+def test_a_postgresql_candidate_that_adds_dynamic_sql_is_refused(added):
+    candidate = PLPGSQL_FIXED.replace("BEGIN\n", "BEGIN\n" + added)
+    refusal = _screen().refusal_of(_pg(PLPGSQL, name="report"), candidate, "postgresql")
+    assert refusal is not None and refusal[0] == "adds_dynamic_sql", refusal
+
+
+def test_the_dynamic_sql_the_routine_already_runs_is_not_held_against_it():
+    candidate = PG_DYNAMIC.replace("RETURN p;", "RETURN p + 0;")
+    assert _screen().refusal_of(_pg(PG_DYNAMIC, name="run_it"), candidate, "postgresql") is None
+    # A second one of the same kind is still new.
+    twice = candidate.replace("RETURN p + 0;", "EXECUTE format('?', p);\n  RETURN p + 0;")
+    refusal = _screen().refusal_of(_pg(PG_DYNAMIC, name="run_it"), twice, "postgresql")
+    assert refusal is not None and refusal[0] == "adds_dynamic_sql", refusal
+
+
+@pytest.mark.parametrize(
+    "added",
+    ["  PREPARE st FROM @s;\n", "  EXECUTE st;\n"],
+    ids=["prepare", "execute"],
+)
+def test_a_mysql_candidate_that_adds_dynamic_sql_is_refused(added):
+    candidate = MYSQL_FIXED.replace("INTO r;\n", "INTO r;\n" + added)
+    refusal = _screen().refusal_of(_my(MYSQL), candidate, "mysql")
+    assert refusal is not None and refusal[0] == "adds_dynamic_sql", refusal

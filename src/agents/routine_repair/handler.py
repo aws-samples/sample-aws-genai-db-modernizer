@@ -531,6 +531,7 @@ def finalize_routine_repair(
     job_id: str,
     *,
     assignment_version: int | None = None,
+    proof: str = "none",
     proof_options: Mapping[str, Any] | None = None,
 ) -> dict[str, Any]:
     """Apply the external session's answer to the loop's current round
@@ -545,5 +546,6 @@ def finalize_routine_repair(
         database_name,
         job_id,
         assignment_version=assignment_version,
+        proof=proof,
         proof_options=proof_options,
     )

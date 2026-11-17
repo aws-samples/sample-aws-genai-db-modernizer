@@ -18,7 +18,7 @@ from src.tools.routines.repair_proof import RepairItem, RepairVerifier
 
 ROLE_EXACT = (
     "CREATE OR REPLACE FUNCTION public.as_admin(p integer)\n RETURNS integer\n"
-    " LANGUAGE plpgsql\nAS $function$BEGIN RAISE NOTICE 'note SET ROLE admin'; RETURN p; END$function$\n"
+    " LANGUAGE plpgsql\nAS $function$BEGIN RAISE NOTICE 'see search_path docs'; RETURN p; END$function$\n"
 )
 
 
@@ -51,12 +51,12 @@ def _job(exact: str) -> tuple[Any, dict[str, Any], list[RoutineSource]]:
 
 def test_a_restored_literal_the_proofs_screen_refuses_is_caught_on_the_exact_text() -> None:
     """The candidate the model saw reads RAISE NOTICE '?': nothing for the screen to
-    refuse, and nothing that stops the rebuild. With the literal back, the text names a
-    role change the proof's screen reads in every string, and the screen run again on the
-    rebuilt text refuses it."""
+    refuse, and nothing that stops the rebuild. With the literal back, the text names
+    search_path, which the proof's screen reads in every string, and the screen run again
+    on the rebuilt text refuses it."""
     migration, collector, sources = _job(ROLE_EXACT)
     (row,) = migration.routines
-    seen = ROLE_EXACT.replace("'note SET ROLE admin'", "'?'")
+    seen = ROLE_EXACT.replace("'see search_path docs'", "'?'")
     candidate = seen.replace("RETURN p;", "RETURN p + 0;")
     verifier = RepairVerifier(
         migration, collector, lambda: sources, refs=[(row.kind, row.routine_id)]
@@ -64,7 +64,7 @@ def test_a_restored_literal_the_proofs_screen_refuses_is_caught_on_the_exact_tex
     assert verifier.blocker(row.kind, row.routine_id, seen) is None
     (check,) = verifier.verify([RepairItem(row.kind, row.routine_id, seen, candidate)]).values()
     assert (check.stage, check.outcome, check.code) == ("rescreen", "failed", "screen_refused")
-    assert "admin" not in (check.error or "")
+    assert "docs" not in (check.error or "")
 
 
 def test_a_routine_with_no_exact_text_is_never_rebuilt() -> None:

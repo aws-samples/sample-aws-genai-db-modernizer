@@ -99,6 +99,7 @@ __all__ = [
     "created_identity",
     "created_objects",
     "literal_sequence",
+    "dynamic_executions",
     "dynamic_sql",
     "named_schemas",
     "named_time_zones",
@@ -951,6 +952,45 @@ def written_statements(text: str, engine: str) -> Counter[tuple[str, ...]] | Non
         for i, tok in enumerate(tokens):
             if tok.text.upper() in _WRITES and tok.kind not in ("IDENTIFIER",):
                 found[(tok.text.upper(), *(_key(t, engine) for t in tokens[i + 1 : i + 3]))] += 1
+    return found
+
+
+def dynamic_executions(text: str, engine: str) -> Counter[tuple[str, ...]] | None:
+    """Each statement ``text`` builds and runs at run time, counted by kind, its body and
+    strings included (#1941 review): a PL/pgSQL ``EXECUTE`` (not a trigger's ``EXECUTE
+    FUNCTION``) by what it runs (a string literal, ``format(...)``, anything else) and
+    whether it binds ``USING``, and a MySQL ``PREPARE`` or ``EXECUTE`` (not ``DEALLOCATE
+    PREPARE``); None when it does not tokenize."""
+    levels = _deep_levels(text, engine)
+    if levels is None:
+        return None
+    found: Counter[tuple[str, ...]] = Counter()
+    for tokens in levels:
+        for i, tok in enumerate(tokens):
+            word = tok.text.upper()
+            if tok.kind == "IDENTIFIER" or tok.kind.endswith("STRING"):
+                continue
+            nxt = tokens[i + 1] if i + 1 < len(tokens) else None
+            before = tokens[i - 1].text.upper() if i else ""
+            if engine == "postgresql" and word == "EXECUTE":
+                if nxt is not None and nxt.text.upper() in ("FUNCTION", "PROCEDURE"):
+                    continue
+                if nxt is None:
+                    what = "nothing"
+                elif nxt.kind.endswith("STRING") and not nxt.command_rest:
+                    what = "literal"
+                elif nxt.text.lower() == "format":
+                    what = "format"
+                else:
+                    what = "expression"
+                rest = []
+                for t in tokens[i + 1 :]:
+                    if t.kind == "SEMICOLON":
+                        break
+                    rest.append(t.text.upper())
+                found[("EXECUTE", what, "USING" if "USING" in rest else "")] += 1
+            elif engine == "mysql" and word in ("PREPARE", "EXECUTE") and before != "DEALLOCATE":
+                found[(word,)] += 1
     return found
 
 

@@ -6,8 +6,9 @@
 The routine repair seam (``src.agents.routine_repair.handler``) refuses a candidate
 ``CREATE`` that is not exactly one statement of the routine's kind, renames the routine
 (its kind, schema, name, or a trigger's table), changes its signature (argument types
-or return type), creates an object the routine does not, names a schema the routine does
-not, or changes nothing (:func:`refusal_of`). Each rule compares the candidate with the
+or return type), creates an object the routine does not, builds and runs a statement at
+run time the routine does not (``EXECUTE``, ``PREPARE``, by count and kind, #1941), names
+a schema the routine does not, or changes nothing (:func:`refusal_of`). Each rule compares the candidate with the
 routine's own redacted text, so what the routine already does is never held against it.
 
 Pure: no I/O, no model, and no reason holds routine text. Passing these rules accepts
@@ -31,6 +32,7 @@ from src.tools.routines.proof_screen import (
     create_refusal,
     created_identity,
     created_objects,
+    dynamic_executions,
     literal_sequence,
     named_schemas,
     privilege_clauses,
@@ -162,6 +164,16 @@ def refusal_of(c: RepairedRoutine, text: str, engine: str) -> tuple[RefusalCode,
         return "not_one_statement", "the candidate's text does not read"
     if _over(writes, writes_before):
         return "adds_statements", "the candidate writes or changes an object the routine does not"
+    dynamic, dynamic_before = dynamic_executions(text, engine), dynamic_executions(
+        c.create_text, engine
+    )
+    if dynamic is None or dynamic_before is None:
+        return "not_one_statement", "the candidate's text does not read"
+    if _over(dynamic, dynamic_before):
+        return "adds_dynamic_sql", (
+            "the candidate builds and runs a statement at run time (EXECUTE, PREPARE) the "
+            "routine does not"
+        )
     calls, calls_before = called_functions(text, engine), called_functions(c.create_text, engine)
     if calls is None or calls_before is None:
         return "not_one_statement", "the candidate's text does not read"

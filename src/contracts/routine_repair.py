@@ -82,6 +82,7 @@ RefusalCode = Literal[
     "adds_objects",
     "adds_statements",
     "adds_calls",
+    "adds_dynamic_sql",
     "names_other_schema",
     "unchanged",
     "duplicate_answer",
@@ -100,7 +101,7 @@ MAX_ATTEMPTS = 3
 #: exact text, the screen and the checks again on it, and the side-by-side proof.
 AttemptStage = Literal["answer", "screen", "rebuild", "rescreen", "recheck", "proof"]
 #: Why a routine needs attention after the loop.
-AttentionCode = Literal["not_rebuildable", "attempts_used"]
+AttentionCode = Literal["not_rebuildable", "attempts_used", "not_verified"]
 #: The longest change note a model may write: one or two plain sentences.
 CHANGE_NOTE_MAX = 300
 #: The longest repaired CREATE a model may return.
@@ -234,7 +235,11 @@ class RoutineRepairRow(BaseModel):
         description="The repair loop's attempts, in order (#1941); empty for the seam alone",
     )
     attention: AttentionCode | None = Field(
-        None, description="needs_attention: not_rebuildable or attempts_used"
+        None,
+        description=(
+            "needs_attention: not_rebuildable, attempts_used, or not_verified (a repair the "
+            "loop's saved state carried that failed its checks again in this run)"
+        ),
     )
     attention_detail: str | None = Field(
         None, max_length=300, description="needs_attention: why, in words, never routine text"

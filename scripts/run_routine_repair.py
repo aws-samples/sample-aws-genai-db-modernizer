@@ -23,7 +23,9 @@ three attempts. ``external`` writes round 1's request ``routines/v<N>/repair/
 llm_input.json`` and prints ``awaiting_llm`` with ``round`` and the request and
 response paths; each ``--finalize`` applies the answer written to
 ``routines/v<N>/repair/llm_response.json`` and prints ``awaiting_llm`` for the next
-round or ``complete``. The proof target given to the first run holds for its rounds.
+round or ``complete``. Pass the same ``--proof`` to each ``--finalize``: the proof target
+is the lower of that and the first run's, and every repair the saved state carries is
+verified again before it is written.
 
 One JSON status line on stdout; nothing else.
 """
@@ -131,7 +133,11 @@ def main() -> None:
     if args.finalize:
         try:
             status = finalize_routine_repair(
-                store, args.db, args.job_id, assignment_version=args.assignment_version
+                store,
+                args.db,
+                args.job_id,
+                assignment_version=args.assignment_version,
+                proof=args.proof,
             )
         except (FileNotFoundError, StaleRepairRequest) as exc:
             _error(str(exc))

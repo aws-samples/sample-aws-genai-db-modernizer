@@ -93,3 +93,44 @@ def test_saved_assess_results_are_never_regenerated(name: str, run_hook) -> None
     assert res.blocked
     assert "historical record" in res.stderr and "never regenerate it (#1648)" in res.stderr
     assert "--write" not in res.stderr
+
+
+# #1941 review: the routine repair loop's state and result are written by the script only,
+# so a session can never forge a model_repaired routine by hand.
+@pytest.mark.parametrize(
+    "rel",
+    [
+        "artifacts/shop/job-1/routines/v1/repair/loop_state.json",
+        "artifacts/shop/job-1/routines/v12/routine_repair.json",
+        "/abs/elsewhere/artifacts/db/j/routines/v3/repair/loop_state.json",
+    ],
+)
+@pytest.mark.parametrize("tool", ["Edit", "Write", "MultiEdit"])
+def test_the_routine_repair_state_and_result_are_never_edited_by_hand(
+    rel: str, tool: str, run_hook
+) -> None:
+    res = run_hook("block_baseline_edit.py", edit(rel, tool))
+    assert res.blocked
+    assert "run_routine_repair.py" in res.stderr
+
+
+@pytest.mark.parametrize(
+    "rel",
+    [
+        "artifacts/shop/job-1/routines/v1/repair/llm_response.json",
+        "artifacts/shop/job-1/routines/v1/repair/llm_input.json",
+        "artifacts/shop/job-1/routines/v1/routine_migration.json",
+    ],
+)
+@pytest.mark.passes_on_main  # the negative control: what stays writable
+def test_the_repair_response_stays_writable(rel: str, run_hook) -> None:
+    assert run_hook("block_baseline_edit.py", edit(rel)).code == 0
+
+
+def test_the_ci_settings_deny_hand_edits_of_the_repair_state_and_result() -> None:
+    import json
+
+    deny = json.loads((REPO_ROOT / ".claude/settings.ci.json").read_text())["permissions"]["deny"]
+    for tool in ("Edit", "Write"):
+        assert f"{tool}(artifacts/**/routines/**/repair/loop_state.json)" in deny
+        assert f"{tool}(artifacts/**/routines/**/routine_repair.json)" in deny

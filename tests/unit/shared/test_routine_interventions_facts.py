@@ -67,9 +67,10 @@ def test_a_repaired_routine_is_an_intervention_with_what_changed() -> None:
             "attention": None,
             "attention_detail": None,
             "attempts": [],
+            # A result of the seam alone: no attempt, so no claim of the loop's checks.
             "line": (
-                "A model proposed a repair that passed every check again on the exact text, "
-                "but no side-by-side proof has accepted it, so it is not carried."
+                "A model proposed a repair that no check after the model and no side-by-side "
+                "proof has accepted, so it is not carried."
             ),
             "attempt_lines": [],
         }

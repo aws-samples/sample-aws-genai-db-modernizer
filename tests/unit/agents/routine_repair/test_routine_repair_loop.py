@@ -431,3 +431,152 @@ def test_the_proof_catches_a_swapped_literal_and_carries_a_faithful_repair(
     assert "Wrote the comparison with the constant first." in item["line"]
     # Not counted as carried: step 1 does not deploy it yet.
     assert facts["repaired_count"] == 0
+
+
+# --------------------------------------------------------------------------- #2387 review
+
+
+def _state_path() -> str:
+    return f"{fx.DB}/{fx.JOB}/routines/v1/repair/loop_state.json"
+
+
+def _forge(
+    store, status, *, proof: str = "local", candidate: str = "CREATE anything", reseal: bool = True
+) -> None:
+    """The review's forgery: a session rewrites the loop state between rounds so that the
+    routine reads as proved, with an empty request and answer to match."""
+    from src.agents.routine_repair import handler
+
+    state = store.read_json(_state_path())
+    state["proof"] = proof
+    state["open"] = {}
+    state["settled"] = {
+        f"function\u0000{fx.WAL}": {
+            "state": "model_repaired",
+            "repaired_create": candidate,
+            "change_note": NOTE,
+            "diff": "-a\n+b",
+            "proof_source": "a disposable postgresql 9 engine",
+            "attempts": [{"attempt": 1, "stage": "proof", "outcome": "proved", "code": None,
+                          "error": "no differences found"}],  # fmt: skip
+        }
+    }
+    empty = handler.RoutineRepairPlan(
+        job_id=fx.JOB, database_name=fx.DB, assignment_version=1, source_engine="postgresql",
+        target_engine="aurora_postgresql", target_line="14", candidates=(),
+    )  # fmt: skip
+    request = handler.prepare_routine_repair_llm_input(empty)
+    if reseal:  # a writer that knows how the seal is made: only re-verification stops it
+        from src.agents.routine_repair.loop import _State
+
+        state.pop("seal", None)
+        state["seal"] = _State(state).seal(fx.DB, fx.JOB, request)
+    store.write_json(_state_path(), state)
+    store.write_json(status["llm_request"], request)
+    store.write_json(status["llm_response"], {"repairs": []})
+
+
+def test_an_edited_loop_state_is_refused(tmp_path):
+    from src.agents.routine_repair.handler import (
+        StaleRepairRequest,
+        finalize_routine_repair,
+        run_routine_repair,
+    )
+
+    store = _job(tmp_path)
+    status = run_routine_repair(store, fx.DB, fx.JOB, llm_mode="external")
+    _forge(store, status, reseal=False)
+    with pytest.raises(StaleRepairRequest):
+        finalize_routine_repair(store, fx.DB, fx.JOB, proof="local")
+    assert not store.exists(f"{fx.DB}/{fx.JOB}/routines/v1/routine_repair.json")
+
+
+@pytest.mark.parametrize(
+    "candidate", ["CREATE anything", fx.WAL_REPAIRED], ids=["any-text", "a-real-candidate"]
+)
+def test_a_forged_loop_state_never_carries_a_repair(tmp_path, candidate):
+    """finalize re-verifies every settled repair it did not compute itself; with no proof
+    in this invocation, nothing is carried, whatever the file says."""
+    from src.agents.routine_repair.handler import finalize_routine_repair, run_routine_repair
+
+    store = _job(tmp_path)
+    status = run_routine_repair(store, fx.DB, fx.JOB, llm_mode="external")
+    _forge(store, status, candidate=candidate)
+    done = finalize_routine_repair(store, fx.DB, fx.JOB)
+    assert done["counts"]["model_repaired"] == 0
+    row = _row(_result(store, done))
+    assert row.state != "model_repaired"
+    assert all(a.outcome != "proved" for a in row.attempts)
+    if candidate == fx.WAL_REPAIRED:
+        # Rebuilt and checked again in this invocation: it waits for a proof.
+        assert row.state == "repaired_pending_proof"
+    else:
+        assert row.state == "needs_attention" and row.attention == "not_verified"
+
+
+def test_the_state_file_cannot_raise_the_proof_mode(tmp_path, monkeypatch):
+    """The first run chose --proof none. A state edited to say local is refused; and a
+    finalize that asks for local still proves nothing (the lower of the two holds)."""
+    from src.agents.routine_repair.handler import (
+        StaleRepairRequest,
+        finalize_routine_repair,
+        run_routine_repair,
+    )
+
+    store = _job(tmp_path)
+    status = run_routine_repair(store, fx.DB, fx.JOB, llm_mode="external")
+    saved = store.read_json(_state_path())
+    assert saved["proof"] == "none"
+    store.write_json(_state_path(), {**saved, "proof": "local"})
+    store.write_json(status["llm_response"], _answer(fx.WAL_REPAIRED))
+    with pytest.raises(StaleRepairRequest):
+        finalize_routine_repair(store, fx.DB, fx.JOB, proof="local")
+    store.write_json(_state_path(), saved)
+    asked: list[str] = []
+    import src.tools.routines.repair_proof as rp
+
+    real = rp.RepairVerifier.__init__
+
+    def spy(self, *a, **k):
+        asked.append(k.get("proof", "none"))
+        real(self, *a, **k)
+
+    monkeypatch.setattr(rp.RepairVerifier, "__init__", spy)
+    done = finalize_routine_repair(store, fx.DB, fx.JOB, proof="local")
+    assert asked and set(asked) == {"none"}
+    assert _row(_result(store, done)).state == "repaired_pending_proof"
+
+
+def test_an_inverted_condition_with_no_proof_stays_pending_and_its_note_is_not_printed(
+    tmp_path, model
+):
+    """The rebuild puts the literals back by position, so flipping a condition around two
+    '?' passes every screen and check; only the proof would tell. With --proof none it is
+    repaired_pending_proof, and the deliverables never print its note as what changed."""
+    from src.agents.routine_repair.handler import run_routine_repair
+    from src.shared.routine_facts import read_routine_facts
+
+    store = _sign_job(tmp_path)
+    flipped = _seen(SIGN_EXACT).replace("p > 0", "p <= 0")
+    note = "Wrote the test the other way round."
+    model([_answer(flipped, note, SIGN_ID)])
+    status = run_routine_repair(store, fx.DB, fx.JOB, llm_mode="bedrock")
+    row = _row(_result(store, status), SIGN_ID)
+    assert row.state == "repaired_pending_proof"
+    (item,) = read_routine_facts(store, fx.DB, fx.JOB, 1)["interventions"]
+    assert note not in item["line"] and "not carried" in item["line"]
+
+
+def test_a_candidate_that_turns_a_literal_into_dynamic_sql_is_never_built(tmp_path, model):
+    """The review's repro: the exact text returns ';DROP TABLE public.orders', redacted to
+    '?'. A candidate writing EXECUTE '?' would rebuild into that statement: the routine is
+    not rebuildable, so it is never sent; and an added EXECUTE is refused by the screen."""
+    from src.agents.routine_repair.handler import run_routine_repair
+
+    exact = WAL_EXACT.replace(f"|| '{fx.LITERAL_MARK}'", "|| ';DROP TABLE public.orders'")
+    store = _job(tmp_path, exact)
+    fake = model([])
+    status = run_routine_repair(store, fx.DB, fx.JOB, llm_mode="bedrock")
+    assert fake.requests == []
+    row = _row(_result(store, status))
+    assert (row.state, row.attention) == ("needs_attention", "not_rebuildable")
