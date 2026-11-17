@@ -379,7 +379,7 @@ def test_a_plain_index_with_an_unsafe_name_is_listed_not_created(tmp_path, bad):
     assert line.startswith(f"-- - index public.orders.a tail: {_UNSAFE_NAME}")
 
 
-@pytest.mark.parametrize("bad", ["\x00", "\u2028", "\u202e"])
+@pytest.mark.parametrize("bad", ["\x00", "\u2028", "\u202e", "\ud800"])
 def test_a_column_with_an_unsafe_name_is_listed_not_created(tmp_path, bad):
     extra = {"column_name": f"no{bad}te2", "data_type": "text", "nullable": True,
              "ordinal_position": 4}  # fmt: skip
@@ -391,7 +391,7 @@ def test_a_column_with_an_unsafe_name_is_listed_not_created(tmp_path, bad):
     # The contract finds no target column for it and blocks its table, which is listed.
     ddl = files["step-1.ddl.sql"]
     assert 'CREATE TABLE "orders"' not in inputs.ddl
-    assert "-- - public.orders: " in ddl and "no te2 has no column in the Aurora DDL" in ddl
+    assert "-- - public.orders: no\ufffdte2 has no column in the Aurora DDL" in ddl
 
 
 @pytest.mark.parametrize(

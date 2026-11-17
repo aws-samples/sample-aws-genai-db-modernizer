@@ -33,9 +33,10 @@ Version History:
   (no cutover timing)
 """
 
+import unicodedata
 from typing import Literal
 
-from pydantic import BaseModel, Field, model_validator
+from pydantic import BaseModel, Field, field_validator, model_validator
 
 from .lineage_ops import (
     TABLE_ID_PATTERN,
@@ -63,6 +64,23 @@ class Finding(BaseModel):
     message: str = Field(..., min_length=1, description="One sentence for the report")
     table_id: str | None = Field(None, description="The source table, when it is about one")
     column: str | None = Field(None, description="The source column, when it is about one")
+
+    @field_validator("message", "table_id", "column", mode="before")
+    @classmethod
+    def _printable(cls, value: object) -> object:
+        """A finding often quotes a collected name, which may hold a control, format,
+        surrogate or line separator character (#2381): each becomes U+FFFD, so a finding
+        about such a name is recorded and listed, never refused (a lone surrogate is not
+        even a valid string), and no deliverable carries it. The same categories as
+        ``src.shared.sql_identifiers``."""
+        if not isinstance(value, str):
+            return value
+        return "".join("\ufffd" if unicodedata.category(ch) in _UNPRINTABLE else ch for ch in value)
+
+
+#: Mirrors ``src.shared.sql_identifiers.UNPRINTABLE_CATEGORIES`` (a contract imports no
+#: tool code); ``tests/unit/contracts`` keeps the two equal.
+_UNPRINTABLE = frozenset({"Cc", "Cf", "Cs", "Zl", "Zp"})
 
 
 class DependsOn(BaseModel):
