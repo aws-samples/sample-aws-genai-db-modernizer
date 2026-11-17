@@ -138,6 +138,18 @@ class SkippedRule:
     reason: str
 
 
+class LeftOutIndex(BaseModel):
+    """A source index step 1's DDL does not create (#2381), by table id: an expression
+    index it cannot recreate. ``reason`` is the DDL generator's fixed sentence, never
+    collector text."""
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    table_id: str
+    index_name: str
+    reason: str
+
+
 @dataclass(frozen=True)
 class UnsupportedField:
     """A field of a moved table no operation can express: DMS copies the source value and
@@ -193,6 +205,8 @@ class Step1Inputs:
     extensions: tuple[str, ...] | None = None
     # The PostgreSQL enum types the moved columns keep (#1834), by schema and name.
     enum_types: tuple[EnumType, ...] = ()
+    # The source indexes the DDL does not create (#2381), sorted by table id and name.
+    left_out_indexes: tuple[LeftOutIndex, ...] = ()
 
     @property
     def unbounded_varchar(self) -> UnboundedVarchar:
@@ -233,6 +247,8 @@ class DmsStepBundle(BaseModel):
     source_objects: SourceObjects | None = None
     # The collection's installed extensions, by name (None: not read).
     extensions: list[str] | None = None
+    # The source indexes the DDL does not create (#2381).
+    left_out_indexes: list[LeftOutIndex] = Field(default_factory=list)
 
 
 def _selected(contract: StepContract) -> list[Rule]:
@@ -392,7 +408,8 @@ def bundle_inputs(bundle: DmsStepBundle) -> Step1Inputs:
         Step1Inputs(plan=bundle.plan, contract=bundle.contract, contract_sha256=sha, ddl=bundle.ddl,
                     zero_date_defaults=tuple(sorted(set(bundle.zero_date_defaults))),
                     identity_columns=tuple(sorted(set(bundle.identity_columns))),
-                    source_objects=bundle.source_objects, extensions=extensions)
+                    source_objects=bundle.source_objects, extensions=extensions,
+                    left_out_indexes=_sorted_left_out(bundle.left_out_indexes))
     )  # fmt: skip
 
 
@@ -437,13 +454,60 @@ def _zero_date_defaults(job: Any, contract: StepContract) -> tuple[str, ...]:
     return tuple(sorted(out))
 
 
+def _sorted_left_out(indexes: Any) -> tuple[LeftOutIndex, ...]:
+    return tuple(sorted(indexes, key=lambda i: (i.table_id, i.index_name)))
+
+
+def _expression_indexes(
+    base: Any, generated: dict[str, Any], rules: dict[str, Rule], engine: str
+) -> tuple[dict[str, Any], tuple[LeftOutIndex, ...]]:
+    """``generated`` with each moved table's expression indexes the DDL can recreate
+    added to its index statements, and the ones it cannot (#2381).
+
+    The Aurora DDL generator leaves every expression index out of its draft with a note
+    (``expression_indexes``): the design's indexes are re-rendered from column lists. Step
+    1 moves the source's schema as is, so on Aurora PostgreSQL from a PostgreSQL source
+    it recreates each one whose keys pass the strict expression grammar
+    (``recreated_expression_index``); every other is listed, never dropped silently."""
+    from src.tools.schema.aurora_common.ddl_generator import (
+        expression_indexes,
+        recreated_expression_index,
+    )
+
+    same_engine = engine == "aurora_postgresql" and base.source_engine == "postgresql"
+    out = dict(generated)
+    left_out: list[LeftOutIndex] = []
+    for source in base.tables:
+        table = out.get(source.table_name)
+        if table is None or source.table_name not in rules:
+            continue
+        added: list[str] = []
+        for idx in expression_indexes(source):
+            if same_engine:
+                statement, why = recreated_expression_index(table.table_name, idx, table.columns)
+            else:
+                statement, why = None, "this release recreates PostgreSQL expression indexes only"
+            if statement is not None:
+                added.append(statement)
+            else:
+                left_out.append(LeftOutIndex(table_id=rules[source.table_name].source_table,
+                                             index_name=idx.index_name, reason=str(why)))  # fmt: skip
+        if added:
+            out[source.table_name] = dataclasses.replace(
+                table, index_sql=[*table.index_sql, *added]
+            )
+    return out, _sorted_left_out(left_out)
+
+
 def _step1_ddl(
     job: Any, plan: DataMovementPlan, contract: StepContract
-) -> tuple[str, tuple[tuple[str, str], ...]]:
+) -> tuple[str, tuple[tuple[str, str], ...], tuple[LeftOutIndex, ...]]:
     """The DDL of every table step 1 moves: the Aurora DDL generator over the whole
     collector (``step1.design_base``), each column declared as the contract's
-    ``target_type``, kept to the moved tables (and foreign keys between them); and the
-    columns it declares identity (AUTO_INCREMENT on Aurora MySQL), as (table id, column)."""
+    ``target_type``, kept to the moved tables (and foreign keys between them), with the
+    source's expression indexes it can recreate (``_expression_indexes``); the columns
+    it declares identity (AUTO_INCREMENT on Aurora MySQL), as (table id, column); and the
+    source indexes it does not create."""
     from src.tools.schema.aurora_common.ddl_generator import TypeOverride, assemble_full_ddl
     from src.tools.transformation_contract.step1 import _load_collector, design_base
 
@@ -480,6 +544,7 @@ def _step1_ddl(
             ):
                 raise DmsStepError(f"{rule.source_table}.{f.target_column}: the DDL declares "
                                    f"{declared.get(f.target_column)}, the contract {f.target_type}")  # fmt: skip
+    generated, left_out = _expression_indexes(base, generated, rules, engine)
     line = contract.target.engine_line
     ordered = [_with_collations(generated[name], rules[name], line) for name in sorted(generated)]
     identity = sorted(
@@ -488,7 +553,7 @@ def _step1_ddl(
         for c in generated[name].columns
         if c.identity
     )
-    return assemble_full_ddl(ordered) + "\n", tuple(identity)
+    return assemble_full_ddl(ordered) + "\n", tuple(identity), left_out
 
 
 def _with_collations(table: Any, rule: Rule, engine_line: str | None = None) -> Any:
@@ -572,13 +637,14 @@ def load_step1(store: Any, db: str, job_id: str, *, with_ddl: bool = True) -> St
     if not with_ddl:
         return inputs
     job = _load_job(store, db, job_id, plan)
-    ddl, identity = _step1_ddl(job, plan, contract)
+    ddl, identity, left_out = _step1_ddl(job, plan, contract)
     defaults = _zero_date_defaults(job, contract)
     objects, extensions = _collection(job)
     enums = _step1_enum_types(job, contract)
     return _checked(dataclasses.replace(inputs, ddl=ddl, zero_date_defaults=defaults,
                                         identity_columns=identity, source_objects=objects,
-                                        extensions=extensions, enum_types=enums))  # fmt: skip
+                                        extensions=extensions, enum_types=enums,
+                                        left_out_indexes=left_out))  # fmt: skip
 
 
 def table_mappings(inputs: Step1Inputs) -> dict[str, Any]:
@@ -1766,7 +1832,12 @@ def render_ddl(inputs: Step1Inputs) -> str:
         "order does not matter but a renamed column gets no data.",
         f"- {_collation_sentence(inputs.contract.target)}",
         "- The indexes of a saved schema design are not in this file: it creates the keys, the source's "
-        "indexes and the foreign keys between moved tables only. Add the design's indexes when you choose.",
+        "indexes and the foreign keys between moved tables only. Add the design's indexes when you choose."
+        + (
+            " The source indexes it cannot create are listed below."
+            if inputs.left_out_indexes
+            else ""
+        ),
         f"- DMS keeps its control tables in {CONTROL_SCHEMA} (the task's ControlSchema): the apply "
         "exceptions, the replication status, history and suspended tables, and the records that did "
         "not validate (awsdms_validation_failures_v1"
@@ -1806,6 +1877,7 @@ def render_ddl(inputs: Step1Inputs) -> str:
     else:
         head.append("Unsupported fields: none.")
     head += _enum_header_lines(inputs)
+    head += _left_out_index_lines(inputs)
     out = with_header("", head, "--")
     if pg:
         out += (
@@ -1858,6 +1930,24 @@ def render_ddl(inputs: Step1Inputs) -> str:
             + "\n"
         )
     return out
+
+
+def _left_out_index_lines(inputs: Step1Inputs) -> list[str]:
+    """The source indexes this file does not create (#2381), one line each: the name as a
+    skipped-index comment writes it (``comment_name``) and the generator's fixed reason, so
+    no collector expression text reaches the file."""
+    from src.tools.schema.aurora_common.ddl_generator import comment_name
+
+    if not inputs.left_out_indexes:
+        return []
+    return [
+        "Source indexes not created (YOUR DECISION: create them on Aurora if the application needs "
+        "them; the source's own definition is in the collection):",
+        *(
+            f"- {comment_name(i.table_id, i.index_name)}: {i.reason}."
+            for i in inputs.left_out_indexes
+        ),
+    ]
 
 
 def _enum_header_lines(inputs: Step1Inputs) -> list[str]:
@@ -1970,5 +2060,6 @@ def write_step1_delivery(store: Any, db: str, job_id: str) -> dict[str, Any]:
         "contract_sha256": inputs.contract_sha256,
         "replica_identity_recommended": len(contract_tables(inputs.contract)) if pg else 0,
         "sequences_to_set": len(moved_identity_columns(inputs)) if pg else 0,
+        "indexes_not_created": len(inputs.left_out_indexes),
         "extensions": [e.name for e in required_extensions(inputs)],
     }

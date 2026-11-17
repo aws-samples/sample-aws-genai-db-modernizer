@@ -37,7 +37,11 @@ from src.tools.schema.aurora_common.constraint_translator import (
 )
 from src.tools.schema.aurora_common.source_family import classify_type_family
 from src.tools.schema.aurora_common.source_types import resolve_source_type
-from src.tools.schema.aurora_common.sql_safety import SqlFragmentError, render_source_predicate
+from src.tools.schema.aurora_common.sql_safety import (
+    SqlFragmentError,
+    render_index_expressions,
+    render_source_predicate,
+)
 from src.tools.schema.aurora_common.type_map import (
     TypeResolution,
     resolve_mysql_type,
@@ -450,7 +454,10 @@ def expression_indexes(table: AgentTable) -> list[AgentIndex]:
 
     The collector names only the plain column keys (#295), so the key list is
     incomplete and anything the draft built from it would be a different index.
-    They leave the draft through ``DdlResult.index_notes`` instead.
+    They leave the draft through ``DdlResult.index_notes`` instead: a design's index
+    statements are re-rendered from column lists wherever a saved design is read. Step
+    1's DDL, which moves the source schema as is, recreates the ones it can check
+    (``recreated_expression_index``, #2381).
     """
     return [i for i in table.indexes or [] if i.has_expressions]
 
@@ -1143,6 +1150,55 @@ def render_index(
     if where_sql:
         sql += f" WHERE {where_sql}"
     return sql + ";"
+
+
+def recreated_expression_index(
+    table_name: str, idx: AgentIndex, column_ddls: list[ColumnDDL]
+) -> tuple[str | None, str | None]:
+    """An Aurora PostgreSQL ``CREATE INDEX`` for a PostgreSQL source's expression index
+    (#2381), as ``(statement, None)``, or ``(None, why)`` when it cannot be created.
+
+    Only the key text the strict grammar accepts is used (``render_index_expressions``),
+    re-rendered key by key with the identifiers quoted; ``index_def`` is never read, so
+    no collector text reaches the statement as written. ``why`` is a fixed sentence
+    that quotes none of the collector's text. Left out: an index mixing column and
+    expression keys (the collection does not record their order), one with INCLUDE
+    columns or an access method other than B-tree, and one whose expression or
+    predicate is outside the grammar.
+    """
+    if idx.columns or idx.included_columns:
+        return None, (
+            "its keys mix columns and expressions, and the collection does not record "
+            "their order"
+        )
+    if index_method(idx) not in (None, "btree"):
+        return None, "this release recreates B-tree expression indexes only"
+    columns = [c.name for c in column_ddls]
+    text_columns = _text_columns(column_ddls)
+    try:
+        keys = render_index_expressions(
+            idx.index_expressions or "", columns, POSTGRES.q, text_columns
+        )
+    except SqlFragmentError:
+        return None, (
+            "its expression is outside what this release can check: calls of lower, upper, "
+            "md5, left or COALESCE on the table's columns"
+        )
+    where = ""
+    if idx.predicate:
+        try:
+            where = " WHERE " + render_source_predicate(
+                idx.predicate, columns, POSTGRES.q, text_columns
+            )
+        except SqlFragmentError:
+            return None, "its predicate is outside the supported grammar"
+    unique = "UNIQUE " if idx.is_unique else ""  # nosemgrep: is-function-without-parentheses
+    keys_sql = ", ".join(f"({k})" for k in keys)
+    return (
+        f"CREATE {unique}INDEX {POSTGRES.q(idx.index_name)} ON {POSTGRES.q(table_name)} "
+        f"({keys_sql}){where};",
+        None,
+    )
 
 
 def _fk_sql(table: AgentTable, dialect: Dialect) -> list[str]:

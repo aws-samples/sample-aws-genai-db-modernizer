@@ -54,7 +54,7 @@ def test_bundle_writes_the_inputs(tmp_path, capsys):
     assert script.main(_args(tmp_path, "--bundle", str(target))) == 0
     data = json.loads(target.read_text())
     assert set(data) == {"plan", "contract", "ddl", "zero_date_defaults", "identity_columns",
-                         "source_objects", "extensions"}  # fmt: skip
+                         "source_objects", "extensions", "left_out_indexes"}  # fmt: skip
     assert data["zero_date_defaults"] == ["shop.orders.created"]
     assert data["source_objects"] == {"procedures": 0, "functions": 0, "triggers": 0, "views": 1}
 
@@ -130,3 +130,14 @@ def test_an_unexpected_failure_is_one_typed_error_line(tmp_path, capsys, monkeyp
         "status": "error",
         "message": "RuntimeError: boom",
     }
+
+
+def test_bundle_carries_the_indexes_the_ddl_does_not_create(tmp_path):
+    ix = {"index_name": "orders_lower_note", "columns": [], "is_unique": False,
+          "has_expressions": True, "index_expressions": "lower(`note`)"}  # fmt: skip
+    write_job(tmp_path, indexes={"orders": [ix]})
+    target = tmp_path / "input.json"
+    assert script.main(_args(tmp_path, "--bundle", str(target))) == 0
+
+    [left_out] = json.loads(target.read_text())["left_out_indexes"]
+    assert (left_out["table_id"], left_out["index_name"]) == ("shop.orders", "orders_lower_note")

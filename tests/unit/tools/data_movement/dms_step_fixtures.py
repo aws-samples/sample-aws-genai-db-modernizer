@@ -143,6 +143,15 @@ def _job_tables(fk: bool = False, dates: bool = False) -> list[dict[str, Any]]:
     ]
 
 
+def _with_indexes(
+    tables: list[dict[str, Any]], indexes: dict[str, list[dict[str, Any]]] | None
+) -> list[dict[str, Any]]:
+    for t in tables:
+        if indexes and t["table_name"] in indexes:
+            t["indexes"] = indexes[t["table_name"]]
+    return tables
+
+
 def write_job(
     root: Path,
     *,
@@ -151,14 +160,16 @@ def write_job(
     plan: bool = True,
     fk: bool = False,
     dates: bool = False,
+    indexes: dict[str, list[dict[str, Any]]] | None = None,
 ) -> LocalArtifactStore:
     """A finished MySQL job ``shop/job1`` (assignment v2): the three tables and the view in
     wave 1; ``design`` is a saved Aurora MySQL design's ``table_definitions`` (its
     ``generated_ddl`` covers those tables only, as a saved design does). ``contract`` and
     ``plan`` run the step 1 contract and plan writers; ``fk`` gives ``orders`` a
     ``customer_id`` foreign key to ``customers``; ``dates`` gives it a DATETIME column that
-    defaults to a zero date and a DATE column without a default."""
-    tables = _job_tables(fk, dates)
+    defaults to a zero date and a DATE column without a default; ``indexes`` are collector
+    indexes by table name."""
+    tables = _with_indexes(_job_tables(fk, dates), indexes)
     views = [{"view_id": "shop.v_orders", "view_name": "v_orders", "schema_name": "shop",
               "definition": "select id from orders"}]  # fmt: skip
     coll = collector("mysql", tables, views)
@@ -191,12 +202,14 @@ def write_pg_job(
     extensions: list[dict[str, Any]] | None = None,
     procedures: list[dict[str, Any]] | None = None,
     triggers: list[dict[str, Any]] | None = None,
+    indexes: dict[str, list[dict[str, Any]]] | None = None,
 ) -> LocalArtifactStore:
     """A finished PostgreSQL job ``shop/job1`` (assignment v2) with its step 1 contract and
     plan: ``public.orders`` has an identity column ``id`` (a ``nextval`` default) and a
     ``halfvec`` column, ``public.tags`` a quoted-name identity column, ``public.audit_log``
     no key and no identity, and one view. ``extensions`` are the collection's installed
-    extensions; ``procedures`` and ``triggers`` its routines and triggers."""
+    extensions; ``procedures`` and ``triggers`` its routines and triggers; ``indexes`` its
+    indexes by table name."""
     seq = "nextval('orders_id_seq'::regclass)"
     tables = [
         table("public", "audit_log", [col("msg", "varchar(200)", 1, max_length=200)]),
@@ -206,6 +219,7 @@ def write_pg_job(
         table("public", "tags", [col('we"ird\'id', "int4", 1, is_auto_increment=True),
                                  col("label", "citext", 2, nullable=True)], pk=['we"ird\'id']),  # fmt: skip
     ]
+    tables = _with_indexes(tables, indexes)
     views = [{"view_id": "public.v_orders", "view_name": "v_orders", "schema_name": "public",
               "definition": "select id from orders"}]  # fmt: skip
     coll = collector("postgresql", tables, views)
