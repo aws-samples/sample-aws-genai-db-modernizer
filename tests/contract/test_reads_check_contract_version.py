@@ -176,6 +176,10 @@ FILE_READS: dict[tuple[str, str, str], str] = {
         "the run's model usage record (_logs/model_usage.json, a declared internal file, "
         "#1494): token counts to price, no contract"
     ),
+    ("scripts/render_sample_routines.py", "routine_set", "<expr>"): (
+        "a bundled sample's synthetic routine set (docs/examples/<sample>/<sample>-routines.json, "
+        "#1954): the routine sections a collection script writes, not a contract"
+    ),
     ("scripts/build_docs_sample.py", "update_scan_baseline", "data"): (
         "the repository's detect-secrets baseline (.secrets.baseline), not a contract"
     ),

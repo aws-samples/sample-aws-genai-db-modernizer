@@ -358,6 +358,16 @@ repos:
         files: '(\.claude/commands/design-schema-dynamodb\.md|src/skills/dynamodb-data-modeling\.md|src/contracts/dynamodb_model_output\.py|scripts/render_group_draft_agent\.py|\.claude/agents/dynamodb-group-draft\.md)'
         pass_filenames: false
 
+  # The samples' demo routine scripts are generated from their routine sets (#1954)
+  - repo: local
+    hooks:
+      - id: render-sample-routines
+        name: Sample demo routine scripts are fresh
+        entry: uv run python scripts/render_sample_routines.py --check
+        language: system
+        files: '(docs/examples/(wordpress|discourse)/.*-routines.*|scripts/render_sample_routines\.py|src/agents/collector/(routine_sources|mysql_routine_create)\.py)'
+        pass_filenames: false
+
   # The assess() request and result JSON Schemas are generated from the public models (#1183)
   - repo: local
     hooks:

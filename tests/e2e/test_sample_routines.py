@@ -305,3 +305,27 @@ def test_the_counts_hold_only_the_routines_with_code(sample_run: PipelineResult)
         f"we could not translate {n} routine{'' if n == 1 else 's'} automatically; "
         f"migrate {them} yourself before wave 1"
     )
+
+
+def _final_summary(run: PipelineResult) -> str:
+    """The final summary /modernize quotes, as ``scripts/print_summary.py`` prints it."""
+    from tests.e2e.test_print_summary import _print
+
+    return _print(run, "--final")
+
+
+@pytest.mark.passes_on_main
+def test_the_executive_report_and_the_final_summary_print_the_routine_facts(
+    sample_run: PipelineResult,
+) -> None:
+    """The routine headline and the to-do reach the executive report's PDF and the final
+    chat summary as ``facts.routines`` holds them (the fields, never a sentence of our
+    own), and both name no routine."""
+    facts = _report(sample_run)["facts"]["routines"]
+    pdf = norm(" ".join(pdf_page_texts(str(sample_run.deliverable("executive-report.pdf")))))
+    summary = norm(_final_summary(sample_run))
+    for name, text in (("executive-report.pdf", pdf), ("final summary", summary)):
+        assert norm(facts["line"]) in text, (name, facts["line"])
+        assert norm(facts["migrate_yourself_line"]).lower() in text.lower(), name
+        for _kind, rid in EXPECTED[sample_run.db]:
+            assert rid not in text, (name, rid)
