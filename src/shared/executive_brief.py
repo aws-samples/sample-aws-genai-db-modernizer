@@ -33,6 +33,7 @@ from typing import Any
 
 from src.shared.engine_names import SOURCE_ENGINE_DISPLAY_NAMES, display_engine
 from src.shared.engines_in_use import retired_in_use_statement
+from src.shared.exposure_wording import EXPOSURE_PHRASES
 from src.shared.report_facts import whole_dollars
 
 # The longest summary a reader meets first: three short parts.
@@ -46,34 +47,18 @@ _RISK_KINDS = {
     "MIGRATION_COMPLEXITY": "migration complexity risk",
 }
 
-# Each migration-risk rule as the summary names it: (what it is, what to do about it).
-# A risk with no rule here is named by its severity, type and engine.
-_EXPOSURES: dict[str, tuple[str, str]] = {
-    "sync.wave": (
-        "the tables kept current by change data capture (CDC)",
-        "test the CDC replication",
-    ),
-    "routing.close_calls": (
-        "the queries where two engines scored almost the same",
-        "confirm where those queries run",
-    ),
-    "routing.tie_open": (
-        "the queries tied between two engines",
-        "choose their engine",
-    ),
-    "design.redesign": (
-        "the queries whose plan relies on a schema redesign",
-        "confirm the redesign in the schema design",
-    ),
-    "design.carried_writes": (
-        "the writes the target engine serves poorly",
-        "review those writes",
-    ),
-    "relational.gaps": (
-        "the SQL features that need a rewrite or behave differently",
-        "fix them",
-    ),
+# The same, for several identical risks the facts counted as one exposure (#2324).
+_RISK_KINDS_PLURAL = {
+    "PERFORMANCE_DEGRADATION": "risks of slower performance",
+    "DATA_CONSISTENCY": "risks to data consistency",
+    "MIGRATION_COMPLEXITY": "migration complexity risks",
 }
+_REVIEW_ONE = "review it in the risk register"
+_REVIEW_SEVERAL = "review them in the risk register"
+
+# Each migration-risk rule as the summary names it (one table with the facts layer's
+# grouping, src.shared.exposure_wording).
+_EXPOSURES = EXPOSURE_PHRASES
 
 
 def _count_word(n: int) -> str:
@@ -243,24 +228,39 @@ def _retired(row: Mapping[str, Any], whole: Mapping[str, Any]) -> str:
     return retired_in_use_statement(row)
 
 
-def _exposure_phrase(exposure: Mapping[str, Any]) -> tuple[str, str, Any]:
-    """(what the exposure is, what to do about it, the wave to do it before)."""
+def _exposure_count(exposure: Mapping[str, Any]) -> int:
+    """How many identical risks the exposure stands for (#2324); one in an older block."""
+    n = exposure.get("count")
+    return n if isinstance(n, int) and not isinstance(n, bool) and n > 1 else 1
+
+
+def _exposure_phrase(exposure: Mapping[str, Any]) -> tuple[str, str, list[Any]]:
+    """(what the exposure is, what to do about it, the waves to do it before)."""
     rule = exposure.get("rule")
-    wave = exposure.get("wave")
+    waves = exposure.get("waves")
+    if not isinstance(waves, list) or not waves:
+        waves = [exposure.get("wave")]
     engine = exposure.get("engine")
+    n = _exposure_count(exposure)
     if rule in _EXPOSURES:
         what, act = _EXPOSURES[str(rule)]
     else:
         severity = str(exposure.get("severity") or "").lower()
         severity = "" if severity == "unrated" else f"{severity}-severity "
         risk_type = str(exposure.get("risk_type") or "")
-        kind = _RISK_KINDS.get(risk_type) or (
-            f"{risk_type.replace('_', ' ').lower()} risk" if risk_type else "risk"
+        kinds = _RISK_KINDS if n == 1 else _RISK_KINDS_PLURAL
+        plain = risk_type.replace("_", " ").lower()
+        kind = kinds.get(risk_type) or (
+            (f"{plain} risk" if n == 1 else f"{plain} risks")
+            if risk_type
+            else ("risk" if n == 1 else "risks")
         )
         on = f" on {display_engine(str(engine))}" if engine else ""
-        what, act = f"a {severity}{kind}{on}", "review it in the risk register"
+        count = "a" if n == 1 else _count_word(n)
+        what = f"{count} {severity}{kind}{on}"
+        act = _REVIEW_ONE if n == 1 else _REVIEW_SEVERAL
     # The wave is named once, in the action ("... before wave 3 starts").
-    return what, act, wave
+    return what, act, waves
 
 
 def _before(waves: list[Any]) -> str:
@@ -277,19 +277,23 @@ def _wave_order(wave: Any) -> tuple[int, int]:
     return (0, wave) if isinstance(wave, int) and not isinstance(wave, bool) else (1, 0)
 
 
-def _actions(exposures: list[tuple[str, str, Any]]) -> str:
-    """Each wave's actions once, joined, then the wave they come before, in wave order.
+def _actions(exposures: list[tuple[str, str, list[Any]]], several: bool) -> str:
+    """Each wave's actions once, joined, then the waves they come before, in wave order.
     When every exposure is only to be reviewed, one clause names every wave (#2125:
-    never "review them ... before wave 3 starts, and review them ... before wave 1")."""
+    never "review them ... before wave 3 starts, and review them ... before wave 1"); the
+    same actions before several waves are one clause too (#2324)."""
+    pairs = [(act, wave) for _, act, waves in exposures for wave in waves]
     by_wave: dict[Any, list[str]] = {}
-    for _, act, wave in sorted(exposures, key=lambda e: _wave_order(e[2])):
+    for act, wave in sorted(pairs, key=lambda p: _wave_order(p[1])):
         acts = by_wave.setdefault(wave, [])
         if act not in acts:
             acts.append(act)
-    several = len(exposures) > 1  # facts: presentation (verb agreement)
-    if several and all(a == "review it in the risk register" for _, a, _ in exposures):
-        return "review them in the risk register" + _before(list(by_wave))
-    parts = [_join(acts) + _before([wave]) for wave, acts in by_wave.items()]
+    if several and all(a in (_REVIEW_ONE, _REVIEW_SEVERAL) for a, _ in pairs):
+        return _REVIEW_SEVERAL + _before(list(by_wave))
+    by_acts: dict[tuple[str, ...], list[Any]] = {}
+    for wave, acts in by_wave.items():
+        by_acts.setdefault(tuple(acts), []).append(wave)
+    parts = [_join(list(acts)) + _before(waves) for acts, waves in by_acts.items()]
     return ", and ".join(parts)
 
 
@@ -297,15 +301,19 @@ def _risk(brief: Mapping[str, Any], open_risk_count: int) -> str:
     level = str(brief.get("overall_risk_level") or "LOW").lower()
     if not open_risk_count:
         return f"Risk: overall risk is {level}, with no open risks."
-    exposures = [_exposure_phrase(e) for e in brief.get("exposures") or [] if isinstance(e, dict)]
+    listed = [e for e in brief.get("exposures") or [] if isinstance(e, dict)]
     out = f"Risk: overall risk is {level}."
-    if not exposures:
+    if not listed:
         return out
+    # #2324: the facts group the risks the summary would name the same way
+    # (``exposure_wording.group_exposures``), so each exposure here reads differently.
+    exposures = [_exposure_phrase(e) for e in listed]
     whats = _join([w for w, _, _ in exposures])
-    one = len(exposures) == 1  # facts: presentation (verb agreement)
-    verb = "is" if one else "are"
-    noun = "exposure" if one else "exposures"
-    return f"{out} The main {noun} {verb} {whats}: {_actions(exposures)}."
+    one = len(listed) == 1  # facts: presentation (verb agreement)
+    several = not one or any(_exposure_count(e) > 1 for e in listed)
+    verb = "are" if several else "is"
+    noun = "exposures" if several else "exposure"
+    return f"{out} The main {noun} {verb} {whats}: {_actions(exposures, several)}."
 
 
 _SUMMARY_STEPS = {

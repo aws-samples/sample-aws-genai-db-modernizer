@@ -12,7 +12,7 @@ from src.agents.referee.synthesis_prose import clean_schema_design_prose
 from src.api.dependencies import job_id_param, validated_filename
 from src.api.services.local_execution import LocalExecutionService
 from src.api.services.local_s3 import LocalS3Service
-from src.report.deliverables import FOLDER_ENTRIES, INDEX_FILENAME
+from src.report.deliverables import FOLDER_ENTRIES, INDEX_FILENAME, deliverable_report
 from src.report.engineering_report import brief_summary, summary_paragraphs
 from src.report.facts import report_facts, with_step_gate
 from src.report.formatting import label_summary_counts
@@ -21,8 +21,6 @@ from src.report.risks import NO_OPEN_RISKS_CAVEAT, shared_mitigation_refs
 from src.shared.cache_engines import CACHE_ENGINES
 from src.shared.contract_versioning import ContractVersionError
 from src.shared.database_name import validate_database_name
-from src.shared.design_text import design_prose_report
-from src.shared.migration_risk_rules import backfill_report_risks
 from src.shared.prose_style import collector_identifiers
 from src.shared.ranking import PIN_RULE_PREDATES_NOTE, report_predates_pin_rule
 from src.shared.report_facts import (
@@ -59,12 +57,9 @@ def get_results(job_id: str = Depends(job_id_param)):
     if not synthesis:
         raise HTTPException(status_code=404, detail="Results not available yet")
 
-    # #1148: the risks a report-only rule raises, for a report synthesized before
-    # the rule existed, the same ones the deliverables show (before its facts).
-    synthesis = backfill_report_risks(synthesis)
-    # #1574: the design trade-offs with each long sentence stated once, as synthesis
-    # and the deliverables state them.
-    synthesis = design_prose_report(synthesis)
+    # #1148, #1574, #2324: the report as every deliverable reads it (the backfilled
+    # risks, the design prose as synthesis now writes it), before its facts.
+    synthesis = deliverable_report(synthesis)
     # #1403: a report whose facts carry the executive summary's own (read before an
     # older report's facts are computed here, which would add them).
     brief_era = brief_summary(synthesis) is not None

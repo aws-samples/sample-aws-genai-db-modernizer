@@ -103,9 +103,12 @@ def _names(run: PipelineResult) -> set[str]:
 
 
 def test_the_file_is_report_json_rendered_byte_for_byte(run: PipelineResult) -> None:
-    """Determinism: the folder's PDF is exactly what report.json renders, and two
-    renders of it are byte-identical."""
-    report = _report(run)
+    """Determinism: the folder's PDF is exactly what report.json renders, read the way
+    every deliverable reads it (``deliverable_report``), and two renders of it are
+    byte-identical."""
+    from src.report.deliverables import deliverable_report
+
+    report = deliverable_report(_report(run))
     names = collected_identifiers(_collected(run))
     line = _commit_line(run)
     first = executive_report.render_executive_report_pdf(report, names, commit_line=line)

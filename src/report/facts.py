@@ -19,6 +19,7 @@ from typing import Any
 from src.shared.adoption_facts import adoption_facts, slice_plan_facts
 from src.shared.cache_role import cache_role_sentence
 from src.shared.cutover_message import CUTOVER_MESSAGE
+from src.shared.exposure_wording import group_exposures
 from src.shared.report_facts import (
     COST_CAVEAT,
     COST_SCOPE_LABEL,
@@ -172,6 +173,13 @@ def report_facts(report: dict[str, Any]) -> dict[str, Any]:
             reviews = dynamodb_merge_review_facts(report)
             if reviews is not None:
                 missing["dynamodb_merge_reviews"] = reviews
+        brief = facts.get("executive_brief")
+        if isinstance(brief, dict) and isinstance(brief.get("exposures"), list):
+            # #2324: a block saved before exposures were counted, or with two the summary
+            # words the same, grouped by the same function synthesis uses.
+            grouped = group_exposures(brief["exposures"])
+            if grouped != brief["exposures"]:
+                missing["executive_brief"] = {**brief, "exposures": grouped}
         if "trade_off_topics" not in facts:
             # A block written before #1221: the design trade-offs by topic, each saved
             # without one read as other, from the same function.

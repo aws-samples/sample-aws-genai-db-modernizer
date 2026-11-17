@@ -16,7 +16,12 @@ import re
 from collections.abc import Mapping
 from typing import Any
 
-from src.shared.engine_names import display_engine_ids
+from src.shared.engine_names import (
+    ENGINE_DISPLAY_NAMES,
+    canonical_engine_id,
+    display_engine,
+    display_engine_ids,
+)
 from src.shared.unsupported_pattern import unsupported_pattern_label
 
 # A leading review marker a designer puts on a line: "[PE note] ...", "PE note: ...".
@@ -159,6 +164,256 @@ def said_once_trade_offs(trade_offs: list[dict[str, Any]]) -> list[dict[str, Any
     return out
 
 
+def trade_off_placeholder(engine: str) -> str:
+    """The description a rejected trade-off naming no table falls back to (#2324)."""
+    return f"{display_engine(engine)} design trade-off."
+
+
+def trade_off_review_line(engine: str) -> str:
+    """The impact a rejected trade-off falls back to."""
+    return (
+        f"Review this trade-off with the {display_engine(engine)} schema design before migration."
+    )
+
+
+_ENGINE_NAMES = "|".join(
+    re.escape(n) for n in sorted(set(ENGINE_DISPLAY_NAMES.values()), key=len, reverse=True)
+)
+_PLACEHOLDER_RE = re.compile(rf"^(?:{_ENGINE_NAMES}) design trade-off\.?$", re.IGNORECASE)
+_REVIEW_LINE_RE = re.compile(
+    rf"^Review this trade-off with the (?:{_ENGINE_NAMES}) schema design before migration\.?$",
+    re.IGNORECASE,
+)
+
+
+def is_placeholder_trade_off(trade_off: Any) -> bool:
+    """Whether a trade-off states nothing of its own (#2324): its description is the
+    fallback that names no table ("Aurora MySQL design trade-off.") and its impact is
+    empty, the same text or the fallback review line. The prose seam's fallback writes
+    one; a model can too. It is never a decision, so synthesis drops it and a stored
+    report reads without it. A trade-off that names a table, or whose impact is the
+    model's own text, is kept."""
+    if isinstance(trade_off, str):
+        return bool(_PLACEHOLDER_RE.match(" ".join(trade_off.split())))
+    if not isinstance(trade_off, Mapping):
+        return False
+    description = " ".join(str(trade_off.get("description") or "").split())
+    if not _PLACEHOLDER_RE.match(description):
+        return False
+    impact = " ".join(str(trade_off.get("impact") or "").split())
+    return not impact or impact == description or bool(_REVIEW_LINE_RE.match(impact))
+
+
+def trade_off_risk_text(engine: str, count: int, wave: int | None) -> tuple[str, str]:
+    """The ``design.trade_offs`` risk's description (without its ``[engine]`` prefix) and
+    mitigation for an engine whose design records ``count`` trade-offs (#2324).
+
+    Synthesis writes the risk with it (``migration_risks._trade_off_risks``) and the
+    saved-report reader rewords a stored one with it after a placeholder leaves the list,
+    so both say the same count."""
+    name = display_engine(engine)
+    noun = "trade-off" if count == 1 else "trade-offs"
+    these = "this trade-off" if count == 1 else "these trade-offs"
+    start = f"Wave {wave} starts" if wave else "cutover"
+    return (
+        f"The {name} schema design records {count} {noun} to review, listed under "
+        "Migration trade-offs in the engineering report.",
+        f"Review {these} with the team that builds {name} before {start}, and test each "
+        "one the application depends on.",
+    )
+
+
+_ENGINE_PREFIX_RE = re.compile(r"^\[(?P<engine>[^\]]+)\] ")
+
+
+def trade_offs_by_engine_title(
+    trade_offs: list[Any] | None,
+) -> dict[str, dict[str, Mapping[str, Any]]]:
+    """Each engine's design trade-offs by title (``design_text_item`` of the
+    description), the first of each title kept: what a ``design.trade_offs`` risk counts
+    and lists. The engine is the catalog id (``canonical_engine_id``: a model can tag a
+    trade-off "Aurora MySQL"); the reality check's lines and an empty title are left out.
+    Synthesis builds the risk from it, and the saved-report reader counts it again after
+    a placeholder leaves (#2324)."""
+    by_engine: dict[str, dict[str, Mapping[str, Any]]] = {}
+    for t in trade_offs or []:
+        if not isinstance(t, Mapping):
+            continue
+        engine = canonical_engine_id(str(t.get("engine") or ""))
+        title = design_text_item(str(t.get("description") or ""))
+        if not engine or engine == "reality-check" or not title:
+            continue
+        by_engine.setdefault(engine, {}).setdefault(title, t)
+    return by_engine
+
+
+def _trade_off_risk_after(
+    risk: dict[str, Any], titles: dict[str, dict[str, Mapping[str, Any]]], engines: set[str]
+) -> dict[str, Any] | None:
+    """A stored ``design.trade_offs`` risk for one of ``engines`` (those that lost a
+    placeholder) listing the titles its engine keeps (``titles``, from
+    :func:`trade_offs_by_engine_title`) with its count worded again
+    (:func:`trade_off_risk_text`); None when none is left, as synthesis then raises no
+    such risk. A risk for another engine comes back unchanged."""
+    match = _ENGINE_PREFIX_RE.match(str(risk.get("description") or ""))
+    engine = canonical_engine_id(match.group("engine")) if match else ""
+    if engine not in engines:
+        return risk
+    kept = sorted(titles.get(engine, {}))
+    if not kept:
+        return None
+    wave = risk.get("wave")
+    description, mitigation = trade_off_risk_text(
+        engine, len(kept), wave if isinstance(wave, int) and not isinstance(wave, bool) else None
+    )
+    return {
+        **risk,
+        "details": kept,
+        "description": f"[{match.group('engine') if match else engine}] {description}",
+        "mitigation": mitigation,
+    }
+
+
+def _shift_index(i: Any, dropped: list[int]) -> Any:
+    if not isinstance(i, int) or isinstance(i, bool):
+        return i
+    return i - sum(1 for d in dropped if d < i)
+
+
+def _facts_without(facts: Any, dropped: list[int]) -> Any:
+    """A stored facts block with its trade-off positions and counts as they read once
+    the ``dropped`` trade-offs are gone (the reality check's positions, the topic groups
+    and the trade-off count)."""
+    if not isinstance(facts, dict):
+        return facts
+    out = dict(facts)
+    gone = set(dropped)
+    for key in ("reality_check_trade_offs", "reality_check_decisions"):
+        rows = facts.get(key)
+        if isinstance(rows, list):
+            out[key] = [
+                (
+                    {**r, "index": _shift_index(r.get("index"), dropped)}
+                    if isinstance(r, dict) and "index" in r
+                    else r
+                )
+                for r in rows
+                if not (isinstance(r, dict) and r.get("index") in gone)
+            ]
+    groups = facts.get("trade_off_topics")
+    if isinstance(groups, list):
+        kept_groups = []
+        for g in groups:
+            if not isinstance(g, dict) or not isinstance(g.get("indexes"), list):
+                kept_groups.append(g)
+                continue
+            indexes = [_shift_index(i, dropped) for i in g["indexes"] if i not in gone]
+            if indexes:
+                kept_groups.append({**g, "indexes": indexes, "trade_off_count": len(indexes)})
+        out["trade_off_topics"] = kept_groups
+    count = facts.get("trade_off_count")
+    if isinstance(count, int) and not isinstance(count, bool):
+        out["trade_off_count"] = max(count - len(dropped), 0)
+    tabs = facts.get("results_tab_counts")
+    if isinstance(tabs, dict) and isinstance(tabs.get("risks"), int):
+        # #2363: the Risks and decisions tab counts the trade-offs too.
+        n = max(tabs["risks"] - len(dropped), 0)
+        rest = {k: v for k, v in tabs.items() if k != "risks"}
+        out["results_tab_counts"] = {**rest, **({"risks": n} if n > 0 else {})}
+    return out
+
+
+def without_placeholder_trade_offs(report: dict[str, Any]) -> dict[str, Any]:
+    """``report`` with no placeholder trade-off (:func:`is_placeholder_trade_off`, #2324).
+
+    Synthesis never writes one now; a report saved before reads the same way: the
+    placeholder leaves ``trade_offs``, each ``schema_designs[engine].trade_offs`` and each
+    ``design.trade_offs`` risk's ``details``, and the stored facts' positions into
+    ``trade_offs`` follow. The reality check's own lines are never touched. A report
+    with none comes back unchanged (the same object); the input is not changed.
+    """
+    out = report
+    designs = report.get("schema_designs")
+    if isinstance(designs, dict):
+        new_designs = {}
+        for engine, summary in designs.items():
+            listed = summary.get("trade_offs") if isinstance(summary, dict) else None
+            if isinstance(listed, list) and any(map(is_placeholder_trade_off, listed)):
+                summary = {
+                    **summary,
+                    "trade_offs": [t for t in listed if not is_placeholder_trade_off(t)],
+                }
+            new_designs[engine] = summary
+        if new_designs != designs:
+            out = {**out, "schema_designs": new_designs}
+    trade_offs = report.get("trade_offs")
+    if not isinstance(trade_offs, list):
+        return out
+    # A model can tag a trade-off with the engine's name ("Aurora MySQL"): every
+    # deliverable and the results page group by the catalog id, as synthesis tags it.
+    named = [_with_engine_id(t) for t in trade_offs]
+    renamed = named != trade_offs
+    dropped = [
+        i
+        for i, t in enumerate(named)
+        if not (isinstance(t, dict) and t.get("engine") == "reality-check")
+        and is_placeholder_trade_off(t)
+    ]
+    if not dropped and not renamed:
+        return out
+    kept = [t for i, t in enumerate(named) if i not in dropped]
+    out = {**out, "trade_offs": kept}
+    engines = {
+        canonical_engine_id(str(named[i].get("engine") or "") if isinstance(named[i], dict) else "")
+        for i in dropped
+    }
+    assessment = report.get("risk_assessment")
+    gone: list[str] = []
+    if dropped and isinstance(assessment, dict) and isinstance(assessment.get("risks"), list):
+        titles = trade_offs_by_engine_title(kept)
+        risks = []
+        for r in assessment["risks"]:
+            if isinstance(r, dict) and r.get("rule") == "design.trade_offs":
+                after = _trade_off_risk_after(r, titles, engines)
+                if after is None:
+                    gone.append(str(r.get("risk_id") or ""))
+                    continue
+                r = after
+            risks.append(r)
+        out["risk_assessment"] = {**assessment, "risks": risks}
+        if gone:
+            # #2324 review: a risk left with no trade-off leaves the register, so each
+            # wave's gate line and the strategies stop naming it (the helpers the risk
+            # backfill uses).
+            from src.shared.migration_risk_rules import with_gate_lines_for
+
+            out = with_gate_lines_for(report, out)
+    if isinstance(report.get("facts"), dict):
+        facts = _facts_without(report["facts"], dropped)
+        if renamed and "trade_off_topics" in facts:
+            # Grouped again by engine id, with the same function synthesis uses.
+            from src.shared.report_facts import trade_off_topic_facts
+
+            facts["trade_off_topics"] = trade_off_topic_facts(
+                out, facts.get("reality_check_trade_offs")
+            )
+        if gone:
+            # Every risk figure counted again from the same function synthesis uses.
+            from src.shared.report_facts import refresh_risk_facts
+
+            facts = refresh_risk_facts(facts, out)
+        out["facts"] = facts
+    return out
+
+
+def _with_engine_id(t: Any) -> Any:
+    """A trade-off tagged with its engine's catalog id (``canonical_engine_id``)."""
+    if not isinstance(t, dict) or not isinstance(t.get("engine"), str):
+        return t
+    engine = canonical_engine_id(t["engine"])
+    return t if engine == t["engine"] else {**t, "engine": engine}
+
+
 # The model-written prose fields of a report's per-engine design summary
 # (``schema_designs[engine]``) that the synthesis prose seam cleans.
 _DESIGN_PROSE_FIELDS: tuple[tuple[str, tuple[str, ...]], ...] = (
@@ -194,7 +449,8 @@ def design_prose_report(report: dict[str, Any]) -> dict[str, Any]:
     """
     from src.shared.shared_sentences import grouped_report
 
-    report = grouped_report(report)
+    # #2324: a placeholder trade-off saved before synthesis dropped it is not shown.
+    report = grouped_report(without_placeholder_trade_offs(report))
     out = report
     designs = report.get("schema_designs")
     if isinstance(designs, dict):

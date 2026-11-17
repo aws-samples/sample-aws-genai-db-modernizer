@@ -78,6 +78,7 @@ import DeliverablesPanel from "../components/DeliverablesPanel";
 import RequestError from "../components/RequestError";
 import AssumptionsPanel from "../components/AssumptionsPanel";
 import TradeOffTopicGroups from "../components/TradeOffTopicGroups";
+import TradeOffsEmptyNote from "../components/TradeOffsEmptyNote";
 import { buildQueryRoutingRows, journeyWorkloadFit } from "../utils/queryRouting";
 import { getCacheOverlay, ownerDistribution, formatCacheLayerLine, cacheChangeSentence, targetEngineEntries, resolveCostBreakdown, ownerSchemaDesigns, cacheAccessPatternCount, addCacheOverlayNode, cacheLayerAccessPatterns } from "../utils/cacheLayer";
 import { summaryFallbackInfo } from "../utils/summaryFallback";
@@ -98,7 +99,7 @@ import { destinationOf, destinationKey } from "../utils/destinations";
 import { WORKLOAD_FIT_DEFINITION } from "../utils/workloadFitLabels";
 import { optimizationLabel } from "../utils/optimizationLabels";
 import { displayTables } from "../utils/tableNames";
-import { accessPatternTotals, assumptionLinesOf, cacheLayerFactsOf, costAssumptionsOf, rateWindowRiskNoteOf, rateWindowScenarioOf, rateWindowStatementOf, rowCountStatementOf, derivedCopySyncOf, costCaveatOf, costScopeLabelOf, costSizingOf, costSizingText, defaultRiskSeverity, finalEngineCounts, noEngineInScopeOf, openRiskCountAt, procedureInternalQueryCountOf, procedureInternalRoutineCountOn, procedureInternalRoutineCountsOf, queryPatternCountsOf, resolvedRiskCountOf, resolvedRisksBySeverityText, routingHistoryRecorded, routingKindsById, tradeOffsByTab, tradeOffTabLabel, tradeOffTopicGroupsOf } from "../utils/reportFacts";
+import { accessPatternTotals, assumptionLinesOf, cacheLayerFactsOf, costAssumptionsOf, rateWindowRiskNoteOf, rateWindowScenarioOf, rateWindowStatementOf, rowCountStatementOf, derivedCopySyncOf, costCaveatOf, costScopeLabelOf, costSizingOf, costSizingText, defaultRiskSeverity, finalEngineCounts, noEngineInScopeOf, openRiskCountAt, procedureInternalQueryCountOf, procedureInternalRoutineCountOn, procedureInternalRoutineCountsOf, queryPatternCountsOf, resolvedRiskCountOf, resolvedRisksBySeverityText, routingHistoryRecorded, routingKindsById, tradeOffsByTab, tradeOffTabLabel, tradeOffTabsShown, tradeOffTopicGroupsOf } from "../utils/reportFacts";
 
 
 // ============================================
@@ -2986,14 +2987,13 @@ const AnalysisResultsPage = memo(() => {
         <RelatedSectionPointer target={relatedPointers.toRisks === 'dynamodb-merge-conflicts' ? relatedPointers.toPlan : null} t={t} />
 
         {/* Engine-specific Trade-offs */}
-        {Object.entries(engineTradeOffs).some(([, tradeOffList]) => tradeOffList.length > 0) && (
+        {tradeOffTabsShown(engineTradeOffs).length > 0 && (
           <Container
             id="tradeoffs-section"
             header={<Header variant="h2">{t('analysis-results.tradeoffs.title')}</Header>}
           >
             <Tabs
-              tabs={Object.entries(engineTradeOffs)
-                .filter(([, tradeOffList]) => tradeOffList.length > 0)
+              tabs={tradeOffTabsShown(engineTradeOffs)
                 .map(([engine, tradeoffs]) => {
                   // Separate PE notes from design decisions. Only the fallback below
                   // (a tab the facts list no topic groups for, e.g. a design the report
@@ -3123,6 +3123,8 @@ const AnalysisResultsPage = memo(() => {
                     label: tradeOffTabLabel(engine, tradeoffs.length, t, ENGINE_LABELS),
                     content: (
                       <SpaceBetween size="m">
+                        {/* #2324: a design with no trade-off left says so. */}
+                        <TradeOffsEmptyNote engine={engine} tradeOffs={tradeoffs} engineLabels={ENGINE_LABELS} t={t} />
                         {/* Design Decisions */}
                         {topicGroups ? (
                           <TradeOffTopicGroups groups={topicGroups.topics} renderTradeOff={renderDecision} t={t} />

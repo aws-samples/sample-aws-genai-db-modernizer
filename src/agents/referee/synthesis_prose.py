@@ -54,6 +54,11 @@ from typing import Any
 
 from src.agents.referee.aurora_choice import AURORA_ENGINES
 from src.shared.cutover_wording import cutover_claims
+from src.shared.design_text import (
+    is_placeholder_trade_off,
+    trade_off_placeholder,
+    trade_off_review_line,
+)
 from src.shared.engine_names import display_engine, display_engine_ids
 from src.shared.prose_style import (
     find_style_hits,
@@ -105,8 +110,9 @@ def _trade_off_fallback(
             return f"{name} design trade-off: {source} maps to {target}."
         if source or target:
             return f"{name} design trade-off for {source or target}."
-        return f"{name} design trade-off."
-    return f"Review this trade-off with the {name} schema design before migration."
+        # #2324: names nothing of its own; clean_schema_design_prose drops the entry.
+        return trade_off_placeholder(engine)
+    return trade_off_review_line(engine)
 
 
 def _access_pattern_fallback(engine: str, ap: dict[str, Any]) -> str:
@@ -198,6 +204,10 @@ def clean_schema_design_prose(
         ("description", "impact"),
         lambda f, t: _trade_off_fallback(engine, f, t, order_source_tables),
     )
+    if isinstance(trade_offs, list):
+        # #2324: a trade-off left with nothing of its own (the fallback naming no table,
+        # or a model writing the same) is never listed as a decision.
+        out["trade_offs"] = [t for t in trade_offs if not is_placeholder_trade_off(t)]
     for key, fields in _EMPTY_FALLBACK_FIELDS:
         each_field(key, fields, lambda f, e: "")
     each_field(

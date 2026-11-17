@@ -206,13 +206,14 @@ def test_a_risk_stored_before_2167_is_stated_in_todays_words() -> None:
 
 
 def test_a_quoted_in_sync_in_a_producer_fails(tmp_path: Path) -> None:
-    """The review of #2169: ``executive_brief.py`` with its exposure phrase quoting "in sync"
-    fails the guard; the quoted mention is allowed only in the prompts' rule."""
-    name = "src/shared/executive_brief.py"
+    """The review of #2169: the exposure phrases (``exposure_wording.py`` since #2324)
+    quoting "in sync" fail the guard; the quoted mention is allowed only in the prompts'
+    rule."""
+    name = "src/shared/exposure_wording.py"
     source = (REPO / name).read_text()
     phrase = '"the tables kept current by change data capture (CDC)"'
     assert phrase in source
-    planted = tmp_path / "executive_brief.py"
+    planted = tmp_path / "exposure_wording.py"
     planted.write_text(source.replace(phrase, "'the tables CDC keeps \"in sync\"'"))
     assert _in_sync_strings(name, _strings(planted)) != []
     assert _in_sync_strings(name, _strings(REPO / name)) == []

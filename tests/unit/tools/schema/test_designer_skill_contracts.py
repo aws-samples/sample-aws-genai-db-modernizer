@@ -160,7 +160,7 @@ def _customer_fields_cleaned(engine: str) -> set[tuple[str, str]]:
     found by running ``clean_schema_design_prose`` over a design that breaks the list
     in every string field of every customer-facing list."""
     lists = CUSTOMER_LISTS[engine]
-    design = {
+    design: dict[str, list[dict[str, Any]]] = {
         key: [
             {
                 name: f"We leverage {name}."
@@ -170,6 +170,9 @@ def _customer_fields_cleaned(engine: str) -> set[tuple[str, str]]:
         ]
         for key, model in lists.items()
     }
+    if "trade_offs" in design:
+        # #2324: a trade-off rejected with no table left is dropped; one table keeps it.
+        design["trade_offs"][0]["source_tables"] = ["orders"]
     cleaned, _ = clean_schema_design_prose(engine, design)
     assert cleaned is not None
     return {

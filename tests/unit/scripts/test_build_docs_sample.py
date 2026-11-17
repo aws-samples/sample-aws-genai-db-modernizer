@@ -320,6 +320,8 @@ _NEWER_FIELDS_THAN_THE_RECORDING = {
     # #2166: the rule the lines follow, filled in from them for the recorded run.
     "table_owner_lines": ("unwritten_owner_rule",),
 }
+# Fields added to each executive-summary exposure, filled in the same way (#2324).
+_NEWER_EXPOSURE_FIELDS_THAN_THE_RECORDING = ("count", "risk_ids", "waves")
 # Fields added to each engine row, filled in the same way (#2162).
 _NEWER_ENGINE_FIELDS_THAN_THE_RECORDING = ("kept_in_sync_counted_under",)
 
@@ -329,6 +331,23 @@ def _recorded(facts: dict[str, Any]) -> dict[str, Any]:
     for key, fields in _NEWER_FIELDS_THAN_THE_RECORDING.items():
         if isinstance(out.get(key), dict):
             out[key] = {k: v for k, v in out[key].items() if k not in fields}
+    brief = out.get("executive_brief")
+    if isinstance(brief, dict) and isinstance(brief.get("exposures"), list):
+        out["executive_brief"] = {
+            **brief,
+            "exposures": [
+                (
+                    {
+                        k: v
+                        for k, v in e.items()
+                        if k not in _NEWER_EXPOSURE_FIELDS_THAN_THE_RECORDING
+                    }
+                    if isinstance(e, dict)
+                    else e
+                )
+                for e in brief["exposures"]
+            ],
+        }
     if isinstance(out.get("engines"), list):
         out["engines"] = [
             (

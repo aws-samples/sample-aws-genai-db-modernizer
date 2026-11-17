@@ -78,11 +78,7 @@ from src.shared.report_facts import (
     scope_unservable_rows,
 )
 from src.shared.risk_severity import overall_risk_level, severity_rank
-from src.shared.routine_facts import (
-    CUTOVER_SENTENCE,
-    ROUTINE_DETAILS_LISTED,
-    ROUTINE_RISK_SEVERITY,
-)
+from src.shared.routine_facts import CUTOVER_SENTENCE, ROUTINE_DETAILS_LISTED, ROUTINE_RISK_SEVERITY
 from src.shared.wave_readiness import NON_HOLDING_RULES
 
 # A wave-gate strategy line names its risk ids up to this many, else counts them.
@@ -966,6 +962,38 @@ def _with_gate_lines(strategies: list[Any], new: list[str]) -> list[Any]:
     return [*rest[:at], *new, *rest[at:]]
 
 
+def with_gate_lines_for(report: dict[str, Any], out: dict[str, Any]) -> dict[str, Any]:
+    """``out``, a copy of ``report`` with risks taken out of its register (#2324: a
+    ``design.trade_offs`` risk left with no trade-off), with each wave's gate line, the
+    gate strategies, the overall level and the summary's risk sentence as the register
+    left states them, by the helpers :func:`backfill_report_risks` uses. ``report`` is
+    not changed."""
+    before = [
+        r
+        for r in (report.get("risk_assessment") or {}).get("risks") or []
+        if isinstance(r, dict) and r.get("rule") in RULES
+    ]
+    assessment = out["risk_assessment"]
+    risks = [r for r in assessment.get("risks") or [] if isinstance(r, dict)]
+    after = [r for r in risks if r.get("rule") in RULES]
+    waves = copy.deepcopy(out.get("migration_waves"))
+    left = add_gate_lines(waves, after, before)
+    result = {
+        **out,
+        "risk_assessment": {
+            **assessment,
+            "overall_risk_level": overall_risk_level(risks),
+            "mitigation_strategies": _with_gate_lines(
+                list(assessment.get("mitigation_strategies") or []), left
+            ),
+        },
+    }
+    if waves is not None:
+        result["migration_waves"] = waves
+    _with_risk_summary(report, result, len(after) - len(before))
+    return result
+
+
 def _with_risk_summary(report: dict[str, Any], out: dict[str, Any], added: int) -> None:
     """The summary of ``out`` stating the backfilled register's risk count and level.
 
@@ -999,9 +1027,13 @@ def _with_risk_summary(report: dict[str, Any], out: dict[str, Any], added: int) 
         out["summary_source"] = "deterministic_fallback"
         out["summary_validation_warnings"] = [
             *(report.get("summary_validation_warnings") or []),
-            f"[high confidence] The generated summary was checked against the risk register "
-            f"before {added} more {'risk was' if added == 1 else 'risks were'} raised for "
-            f"this report, but the risk register has {len(risks)} open risks (overall: "
+            "[high confidence] The generated summary was checked against the risk register "
+            + (
+                f"before {added} more {'risk was' if added == 1 else 'risks were'} raised for "
+                if added >= 0
+                else f"before {-added} {'risk' if added == -1 else 'risks'} left the register of "
+            )
+            + f"this report, but the risk register has {len(risks)} open risks (overall: "
             f"{assessment.get('overall_risk_level')}).",
         ]
 

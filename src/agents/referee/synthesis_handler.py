@@ -2345,7 +2345,8 @@ def _collect_trade_offs(data):
                 entry = {
                     **t,
                     **nulls,
-                    "engine": t.get("engine") or engine,
+                    # #2324: the catalog id, whatever the model tagged it ("Aurora MySQL").
+                    "engine": canonical_engine_id(str(t.get("engine") or engine)),
                     "topic": trade_off_topic(t),
                     "note_kind": trade_off_note_kind(t, legacy),
                 }

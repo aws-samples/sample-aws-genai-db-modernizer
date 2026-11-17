@@ -150,18 +150,24 @@ export function currentTradeOffs(synthesis) {
 
 // The results page's "Trade-offs and design decisions" tabs (ADR-032 Decision 7):
 // each engine's own trade-offs, plus a "reality-check" tab for the decisions the
-// reality check made. An empty list gets no tab.
+// reality check made. An engine with an empty list gets a tab with an empty state
+// (#2324); the reality check gets no tab when it decided nothing.
 export const REALITY_CHECK_TAB = 'reality-check';
 
 // #1574: an engine's tab lists the report's own trade-offs for it when synthesis wrote
 // them (each long sentence stated once across the design's parts, as every deliverable
-// states them); a design with none in the report keeps its own list.
+// states them); a design with none in the report keeps its own list. #2324: a design the
+// report covers (schema_designs) lists the report's trade-offs only, so one with none
+// left (synthesis drops a placeholder) gets an empty tab, never the design's raw text.
 export function tradeOffsByTab(designTradeOffs, synthesis) {
   const map = { ...designTradeOffs };
   const reported = (synthesis && synthesis.trade_offs) || [];
+  const covered = (synthesis && synthesis.schema_designs) || {};
   Object.keys(map).forEach(engine => {
     const own = reported.filter(t => t && t.engine === engine);
-    if (own.length > 0) map[engine] = own;
+    if (own.length > 0 || (Array.isArray(synthesis && synthesis.trade_offs) && engine in covered)) {
+      map[engine] = own;
+    }
   });
   const rc = realityCheckDecisions(synthesis || {});
   if (rc.length > 0) map[REALITY_CHECK_TAB] = rc;
@@ -192,6 +198,12 @@ export function tradeOffTopicGroupsOf(synthesis, engine) {
     reviewNoteCount: notes ? notes.trade_off_count : 0,
     reviewNoteLabel: notes ? notes.label : '',
   };
+}
+
+// #2324: the tabs the section shows, in order: every engine tradeOffsByTab lists, an
+// empty one too (its tab says it has none), and the reality check's when it decided.
+export function tradeOffTabsShown(byTab) {
+  return Object.entries(byTab || {}).filter(([, list]) => Array.isArray(list));
 }
 
 export function tradeOffTabLabel(tab, count, t, engineLabels) {

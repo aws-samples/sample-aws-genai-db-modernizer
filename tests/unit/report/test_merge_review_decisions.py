@@ -41,6 +41,7 @@ from src.report.facts import report_facts
 from src.report.merge_reviews import MERGE_REVIEWS_PDF_NOTE, MERGE_REVIEWS_TITLE
 from src.report.renderers import render_engineering_report_md
 from src.shared.cutover_message import CUTOVER_MESSAGE
+from src.shared.exposure_wording import group_exposures
 from src.shared.report_facts import (
     RECONSTRUCTED_NOTE,
     compute_report_facts,
@@ -403,11 +404,26 @@ def test_an_old_job_loads_and_renders_unchanged() -> None:
     # #2107: and the cutover sentence, which a block written before it reads back with.
     assert facts["cutover_responsibility"] == CUTOVER_MESSAGE
     # The reader fills these for an older report (ADR-032 Decision 4; #1221, #2107, #1128).
-    READ_TIME_FILLED = ("trade_off_topics", SAID, "slice_plan", "adoption", "engine_query_counts")
+    # #2324: and the executive summary's exposures, grouped and counted.
+    READ_TIME_FILLED = (
+        "trade_off_topics",
+        SAID,
+        "slice_plan",
+        "adoption",
+        "engine_query_counts",
+        "executive_brief",
+    )
+    brief = stored["executive_brief"]
+    assert facts["executive_brief"] == {
+        **brief,
+        "exposures": group_exposures(brief["exposures"]),
+    }
     # #2358: and each engine's final query count, from the ranking.
     assert facts["engine_query_counts"] == engine_query_count_facts(old, facts["engines"])
     assert facts["engine_query_counts"]
-    assert {k: v for k, v in facts.items() if k not in READ_TIME_FILLED} == (as_read_back(stored))
+    assert {k: v for k, v in facts.items() if k not in READ_TIME_FILLED} == {
+        k: v for k, v in as_read_back(stored).items() if k not in READ_TIME_FILLED
+    }
     assert facts["trade_off_topics"] == trade_off_topic_facts(
         old, stored["reality_check_trade_offs"]
     )
