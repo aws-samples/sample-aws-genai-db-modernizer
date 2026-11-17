@@ -533,7 +533,8 @@ def _step1_ddl(
     ]  # fmt: skip
     result = dataclasses.replace(base, tables=tables).generate(overrides)
     generated = {t.table_name: t for t in result.tables}
-    # The objects the generator leaves out for a name it cannot quote (#2381 review 2).
+    # The objects the generator leaves out: a name it cannot quote (#2381 review 2), or an
+    # index whose name an earlier index of its table already has (#2402).
     unsafe = [LeftOutObject(table_id=rules[o["table"]].source_table, kind=o["kind"],
                             name=o["name"], reason=o["reason"])
               for o in [*base.left_out, *result.left_out] if o["table"] in rules]  # fmt: skip

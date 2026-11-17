@@ -119,11 +119,12 @@ class AuroraDesignBase:
     """
     left_out: list[dict] = field(default_factory=list)
     """The source objects taken out of ``tables`` because their name cannot be quoted into
-    SQL (#2381 review 2, ``ddl_generator.quotable_tables``), kept across
+    SQL (#2381 review 2) or another index of the table has it (#2402), by
+    ``ddl_generator.quotable_tables``, kept across
     ``dataclasses.replace``. Never written into DDL; each becomes an app-layer note."""
 
     def __post_init__(self) -> None:
-        self.tables, left_out = quotable_tables(self.tables)
+        self.tables, left_out = quotable_tables(self.tables, self.dialect)
         self.left_out = [*self.left_out, *left_out]
 
     @property
@@ -508,10 +509,11 @@ def _drop_index_notes(notes: list[dict], table: str, index: str) -> None:
 
 def _left_out_notes(base: AuroraDesignBase) -> list[dict]:
     """One app-layer note per source object the draft does not create because its name
-    cannot be quoted into SQL (#2381 review 2); the names cleaned like a comment's."""
+    cannot be quoted into SQL (#2381 review 2) or another index of its table has it
+    (#2402, feature ``duplicate_index_name``); the names cleaned like a comment's."""
     return [
         {
-            "feature": "unsafe_name",
+            "feature": o.get("feature", "unsafe_name"),
             "source_object": comment_text(f"{o['table']}.{o['name']}"),
             "recommendation": f"{o['kind'].capitalize()} not created: {o['reason']}.",
         }

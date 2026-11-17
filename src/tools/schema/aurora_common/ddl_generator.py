@@ -1410,11 +1410,29 @@ def _unsafe_table(table: AgentTable, dialect: Dialect) -> TableDDL:
     )
 
 
-def quotable_tables(tables: list[AgentTable]) -> tuple[list[AgentTable], list[dict]]:
+def _duplicate_index(table: str, name: str, kept: str) -> dict:
+    """A table's later index of one name (#2402), with the reason the customer reads in the
+    design's note and in step 1's DDL file."""
+    reason = (
+        f"the table already has an index named {kept}, so this one was not created; "
+        "create it under another name if the queries need it"
+    )
+    return {"table": table, "kind": "index", "name": name, "reason": reason,
+            "feature": "duplicate_index_name"}  # fmt: skip
+
+
+def quotable_tables(
+    tables: list[AgentTable], dialect: Dialect
+) -> tuple[list[AgentTable], list[dict]]:
     """``tables`` with every object whose name cannot be quoted into SQL taken out (#2381
     review 2, ``sql_identifiers``), and each one taken out as a ``DdlResult.left_out``
     record: a table, a column (and a primary key that names one), an index whose name or
     columns hold such a character, a foreign key whose name, columns or referenced names do.
+    A table's index whose name an earlier index of the table already has is taken out too
+    (#2402): one table cannot hold two indexes of one name, and the merge pairs statements
+    with names. ``dialect`` decides what one name is: Aurora MySQL compares index names
+    without case; Aurora PostgreSQL, where the draft quotes every name, compares them as
+    written, so ``Ix_A`` and ``ix_a`` are two indexes there.
     ``AuroraDesignBase`` applies it once, so the draft, the merge, a saved design's check
     and step 1 all read the same quotable tables."""
     out: list[AgentTable] = []
@@ -1432,11 +1450,16 @@ def quotable_tables(tables: list[AgentTable]) -> tuple[list[AgentTable], list[di
             )  # fmt: skip
             continue
         indexes = []
+        kept: dict[str, str] = {}  # one name (folded on Aurora MySQL) -> the index kept
         for idx in table.indexes or []:
             names = [idx.index_name, *idx.columns, *(idx.included_columns or [])]
+            name = idx.index_name.lower() if dialect is MYSQL else idx.index_name
             if any(has_unprintable(n) for n in names):
                 left_out.append(_unsafe(table.table_name, "index", idx.index_name))
+            elif name in kept:
+                left_out.append(_duplicate_index(table.table_name, idx.index_name, kept[name]))
             else:
+                kept[name] = idx.index_name
                 indexes.append(idx)
         fks = []
         for fk in table.foreign_keys or []:
