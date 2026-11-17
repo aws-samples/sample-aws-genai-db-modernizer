@@ -35,7 +35,6 @@ import Link from "@cloudscape-design/components/link";
 import Multiselect from "@cloudscape-design/components/multiselect";
 import KeyValuePairs from "@cloudscape-design/components/key-value-pairs";
 import Tabs from "@cloudscape-design/components/tabs";
-import Icon from "@cloudscape-design/components/icon";
 import CodeEditor from "@cloudscape-design/components/code-editor";
 import StatusIndicator from "@cloudscape-design/components/status-indicator";
 import CopyToClipboard from "@cloudscape-design/components/copy-to-clipboard";
@@ -77,7 +76,7 @@ import TableOwnersCallout from "../components/TableOwnersCallout";
 import DeliverablesPanel from "../components/DeliverablesPanel";
 import RequestError from "../components/RequestError";
 import AssumptionsPanel from "../components/AssumptionsPanel";
-import TradeOffTopicGroups from "../components/TradeOffTopicGroups";
+import TradeOffDecisions from "../components/TradeOffDecisions";
 import TradeOffsEmptyNote from "../components/TradeOffsEmptyNote";
 import { buildQueryRoutingRows, journeyWorkloadFit } from "../utils/queryRouting";
 import { getCacheOverlay, ownerDistribution, formatCacheLayerLine, cacheChangeSentence, targetEngineEntries, resolveCostBreakdown, ownerSchemaDesigns, cacheAccessPatternCount, addCacheOverlayNode, cacheLayerAccessPatterns } from "../utils/cacheLayer";
@@ -92,7 +91,7 @@ import { costBaselineStats } from "../utils/tcoAnalysis";
 // rather than this page's own hand-kept copy.
 import { ENGINE_LABELS, displayEngine } from "../utils/engineNames";
 import { formatMoney, formatRate } from "../utils/format";
-import { badgeTextColor, engineHex } from "../utils/engineColors";
+import { engineHex } from "../utils/engineColors";
 import EngineBadge from "../components/EngineBadge";
 import DestinationTables from "../components/DestinationTables";
 import { destinationOf, destinationKey } from "../utils/destinations";
@@ -109,17 +108,6 @@ import { accessPatternTotals, assumptionLinesOf, cacheLayerFactsOf, costAssumpti
 // GET /assessments/{job_id}/query-journeys returns at most 200 a page (#822).
 const JOURNEY_PAGE_SIZE = 200;
 const JOURNEY_MAX_PAGES = 50;
-
-// #1246: a trade-off's Mapping shows its source tables in a neutral grey (they belong to
-// the source database, no target engine) and its target tables in the tab engine's own
-// catalog colour -- before, the targets were red, ElastiCache's colour, on every tab.
-const SOURCE_TABLE_CHIP = '#5f6b7a';
-// The trade-off query-id chips: an explicit dark text on the light chip (the
-// text inherited the page's light-grey, 1.4:1 on #e9ebed, #1353); white on the
-// hover/focus blue.
-const QUERY_CHIP_BG = '#e9ebed';
-const QUERY_CHIP_TEXT = '#0f141a';
-const QUERY_CHIP_ACTIVE_BG = '#0972d3';
 
 const OP_CATEGORY = {
   GetItem: 'read', Query: 'read', Scan: 'read', BatchGetItem: 'read',
@@ -3018,106 +3006,6 @@ const AnalysisResultsPage = memo(() => {
                   const peNotesHeader = topicGroups
                     ? t('analysis-results.tradeoffs.topic-heading', { label: topicGroups.reviewNoteLabel, count: peNoteCount })
                     : t('analysis-results.trade-offs.pe-notes-header', { count: peNoteCount });
-                  const renderDecision = (tradeOff, idx) => (
-                    <CardBox key={idx} tone="info">
-                      <SpaceBetween size="xxs">
-                        <SpaceBetween direction="horizontal" size="xs" alignItems="center">
-                          <Icon name="status-positive" />
-                          <Link variant="primary" fontSize="body-s" fontWeight="bold" onFollow={() => {}} external={false}>
-                            <span style={{ textDecoration: 'underline' }}><ProseText text={tradeOff.description} /></span>
-                          </Link>
-                        </SpaceBetween>
-                        {tradeOff.impact && (
-                          <Box fontSize="body-s" color="text-body-secondary"><ProseText text={tradeOff.impact} /></Box>
-                        )}
-                        {(tradeOff.source_tables?.length > 0 || tradeOff.target_tables?.length > 0) && (
-                          <Box fontSize="body-s" padding={{ left: 'xl' }}>
-                            <Link variant="secondary" fontSize="body-s" onFollow={() => {}}>{t('analysis-results.tradeoffs.mapping')}</Link>
-                            <Box margin={{ top: 'xxxs' }}>
-                              <SpaceBetween direction="horizontal" size="xxs" alignItems="center">
-                                {tradeOff.source_tables?.length > 0 && (
-                                  <SpaceBetween direction="horizontal" size="xxs">
-                                    {tradeOff.source_tables.map((table, ti) => (
-                                      <span key={ti} data-mapping="source" style={{
-                                        display: 'inline-block',
-                                        padding: '1px 4px',
-                                        fontSize: '10px',
-                                        backgroundColor: SOURCE_TABLE_CHIP,
-                                        color: badgeTextColor(SOURCE_TABLE_CHIP),
-                                        borderRadius: '2px',
-                                        fontWeight: '500'
-                                      }}>
-                                        {table}
-                                      </span>
-                                    ))}
-                                  </SpaceBetween>
-                                )}
-                                {tradeOff.source_tables?.length > 0 && tradeOff.target_tables?.length > 0 && (
-                                  <span style={{ fontSize: '11px', fontWeight: 'bold', padding: '0 2px' }}>→</span>
-                                )}
-                                {tradeOff.target_tables?.length > 0 && (
-                                  <SpaceBetween direction="horizontal" size="xxs">
-                                    {tradeOff.target_tables.map((table, ti) => (
-                                      <span key={ti} data-mapping="target" data-engine={engine} style={{
-                                        display: 'inline-block',
-                                        padding: '1px 4px',
-                                        fontSize: '10px',
-                                        backgroundColor: engineHex(engine),
-                                        color: badgeTextColor(engineHex(engine)),
-                                        borderRadius: '2px',
-                                        fontWeight: '500'
-                                      }}>
-                                        {table}
-                                      </span>
-                                    ))}
-                                  </SpaceBetween>
-                                )}
-                              </SpaceBetween>
-                            </Box>
-                          </Box>
-                        )}
-                        {tradeOff.query_ids?.length > 0 && (
-                          <Box fontSize="body-s" margin={{ top: 's' }} padding={{ left: 'xl' }}>
-                            <Link variant="secondary" fontSize="body-s" onFollow={() => {}}>{t('analysis-results.tradeoffs.sql-ids')}</Link>
-                            <Box margin={{ top: 'xxxs' }}>
-                              <SpaceBetween direction="horizontal" size="xxs">
-                                {tradeOff.query_ids.map((qid, qi) => (
-                                  <span key={qi}
-                                    role="button"
-                                    tabIndex={0}
-                                    aria-label={t('analysis-results.query-routing.open-label', { id: qid })}
-                                    onClick={() => fetchQueryJourney(qid)}
-                                    onKeyDown={(e) => {
-                                      if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); fetchQueryJourney(qid); }
-                                    }}
-                                    style={{
-                                      display: 'inline-block',
-                                      padding: '1px 4px',
-                                      fontSize: '10px',
-                                      fontFamily: 'monospace',
-                                      backgroundColor: QUERY_CHIP_BG,
-                                      color: QUERY_CHIP_TEXT,
-                                      borderRadius: '2px',
-                                      cursor: 'pointer',
-                                      transition: 'background-color 0.15s',
-                                    }}
-                                    onMouseEnter={e => { e.target.style.backgroundColor = QUERY_CHIP_ACTIVE_BG; e.target.style.color = '#fff'; }}
-                                    onMouseLeave={e => { e.target.style.backgroundColor = QUERY_CHIP_BG; e.target.style.color = QUERY_CHIP_TEXT; }}
-                                    onFocus={e => { e.target.style.backgroundColor = QUERY_CHIP_ACTIVE_BG; e.target.style.color = '#fff'; }}
-                                    onBlur={e => { e.target.style.backgroundColor = QUERY_CHIP_BG; e.target.style.color = QUERY_CHIP_TEXT; }}
-                                    title={`View query history for ${qid}`}
-                                  >
-                                    {qid}
-                                  </span>
-                                ))}
-                              </SpaceBetween>
-                            </Box>
-                          </Box>
-                        )}
-                      </SpaceBetween>
-                    </CardBox>
-                  );
-
                   return {
                     id: engine,
                     label: tradeOffTabLabel(engine, tradeoffs.length, t, ENGINE_LABELS),
@@ -3126,13 +3014,13 @@ const AnalysisResultsPage = memo(() => {
                         {/* #2324: a design with no trade-off left says so. */}
                         <TradeOffsEmptyNote engine={engine} tradeOffs={tradeoffs} engineLabels={ENGINE_LABELS} t={t} />
                         {/* Design Decisions */}
-                        {topicGroups ? (
-                          <TradeOffTopicGroups groups={topicGroups.topics} renderTradeOff={renderDecision} t={t} />
-                        ) : decisions.length > 0 && (
-                          <SpaceBetween size="xs">
-                            {decisions.map(renderDecision)}
-                          </SpaceBetween>
-                        )}
+                        <TradeOffDecisions
+                          groups={topicGroups ? topicGroups.topics : null}
+                          decisions={decisions}
+                          engine={engine}
+                          onOpenQuery={fetchQueryJourney}
+                          t={t}
+                        />
 
                         {/* Principal Engineer Notes */}
                         {shownPeNotes.length > 0 && (

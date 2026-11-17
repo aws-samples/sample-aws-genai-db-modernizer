@@ -123,6 +123,9 @@ const GUARDED_UI_FILES = [
   'components/QueryDecisionTrace.js',
   // #1801: step 1's gate evidence, from facts.step_gate.
   'components/StepGateEvidence.js',
+  // #2323: the trade-off decisions list and one decision.
+  'components/TradeOffDecisions.js',
+  'components/TradeOffDecision.js',
   // #308: every experimental graph explorer file (EXPLORER_UI_FILES below).
   'pages/GraphExplorer.js',
   'components/ExploreGraphButton.js',
