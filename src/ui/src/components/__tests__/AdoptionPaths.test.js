@@ -597,7 +597,7 @@ describe('the one-step option', () => {
     const link = figure('one-step-adopt').querySelector('a');
     expect(link.getAttribute('href')).toBe('#target-engines');
     expect(figure('one-step-adopt').textContent).toBe(
-      'To take the full target in one step, adopt the target architecture in the Target engines table above directly.',
+      'To take the full target in one step, adopt the target architecture in the Target engines table on the Summary tab directly.',
     );
   });
 
@@ -608,7 +608,7 @@ describe('the one-step option', () => {
     const link = figure('one-step-adopt').querySelector('a');
     expect(link.getAttribute('href')).toBe('#access-patterns-section');
     expect(figure('one-step-adopt').textContent).toBe(
-      'To take the full target in one step, adopt the target schemas below directly.',
+      'To take the full target in one step, adopt the target schemas on the Queries tab directly.',
     );
   });
 
@@ -629,6 +629,17 @@ describe('the one-step option', () => {
     act(() => { figure('one-step-adopt').querySelector('a').dispatchEvent(event); });
     expect(goTo).toHaveBeenCalledWith('access-patterns-section');
     expect(event.defaultPrevented).toBe(true);
+  });
+
+  // #2362: the page names the tab the target is on, never "above" or "below".
+  test('the schemas are named by the tab their section is on', () => {
+    const s = synthesis();
+    s.schema_designs = { aurora_mysql: { status: 'completed' } };
+    render(s, { schemaSectionId: 'table-design-section' });
+    expect(figure('one-step-adopt').textContent).toBe(
+      'To take the full target in one step, adopt the target schemas on the Data model tab directly.',
+    );
+    expect(figure('one-step-adopt').textContent).not.toMatch(/\b(above|below)\b/);
   });
 
   test('a report with no schema designs at all points at the Target engines', () => {
