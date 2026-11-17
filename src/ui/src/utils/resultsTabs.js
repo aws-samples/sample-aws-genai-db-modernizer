@@ -10,6 +10,9 @@
 // The URL names the tab (`?tab=`), so a tab can be linked. A hash naming a section
 // (an old anchor, or a #2300 `?engine=` link) lands on that section's tab.
 
+import { formatCount } from './format';
+import { resultsTabCountOf } from './reportFacts';
+
 export const RESULTS_TAB_PARAM = 'tab';
 export const DEFAULT_RESULTS_TAB = 'summary';
 
@@ -140,4 +143,14 @@ export function onThisPageAnchors(tabId, presentIds, t) {
 export function sectionIdsOf(tabId) {
   const tab = RESULTS_TABS.find(x => x.id === tabId);
   return tab ? tab.sections.map(s => s.id) : [];
+}
+
+// #2363: a tab's label with the count the facts state for it (resultsTabCountOf), "Queries
+// (107)". The page only formats the figure, it never counts; a tab the facts give no count for,
+// or a report saved before them, shows the plain label.
+export function tabLabel(t, tab, synthesis) {
+  const label = t(tab.labelKey);
+  const n = resultsTabCountOf(synthesis, tab.id);
+  if (n === null) return label;
+  return t('analysis-results.tabs.with-count', { label, number: formatCount(n) });
 }

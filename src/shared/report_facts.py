@@ -1127,6 +1127,11 @@ def refresh_risk_facts(facts: dict[str, Any], report: dict[str, Any]) -> dict[st
                 facts.get("routines"),
             )
             out["wave_readiness_notes"] = wave_readiness_notes(rows)
+    if isinstance(facts.get("results_tab_counts"), dict):
+        # #2363: the Risks and decisions tab counts the open risks, so it follows them.
+        counts = {k: v for k, v in facts["results_tab_counts"].items() if k != "risks"}
+        n = risks["open_risk_count"] + int(facts.get("trade_off_count") or 0)
+        out["results_tab_counts"] = {**counts, **({"risks": n} if n > 0 else {})}
     no_migration = facts.get("no_migration")
     if isinstance(no_migration, dict):
         out["no_migration"] = {
@@ -3894,6 +3899,28 @@ def apply_wave_readiness(
             row.update({k: v for k, v in found.items() if k != "wave"})
 
 
+def results_tab_count_facts(
+    *,
+    query_total_count: int,
+    wave_count: int,
+    open_risk_count: int,
+    trade_off_count: int,
+) -> dict[str, int]:
+    """The count each results-page tab shows in its label (#2363, ADR-032).
+
+    ``queries``: every query the page routes (``query_total_count``); ``plan``: the
+    waves; ``risks``: the open risks plus the trade-offs that still
+    apply, the two lists the Risks and decisions tab opens with. A tab with nothing to
+    count has no entry, so its label stands alone.
+    """
+    counts = {
+        "queries": query_total_count,
+        "plan": wave_count,
+        "risks": open_risk_count + trade_off_count,
+    }
+    return {tab: n for tab, n in counts.items() if n > 0}
+
+
 def compute_report_facts(
     report: dict[str, Any],
     waves: list[dict[str, Any]] | None = None,
@@ -4050,6 +4077,15 @@ def compute_report_facts(
         "trade_off_topics": trade_off_topic_facts(report, rc_trade_offs),
         "trade_off_count": n_trade_offs - sum(1 for t in rc_trade_offs if t["reversed"]),
         **risks,
+        # #2363: the counts the results page's tabs show.
+        "results_tab_counts": results_tab_count_facts(
+            query_total_count=query_total_facts(report, moves["in_scope_query_count"])[
+                "query_total_count"
+            ],
+            wave_count=len(wave_rows),
+            open_risk_count=risks["open_risk_count"],
+            trade_off_count=n_trade_offs - sum(1 for t in rc_trade_offs if t["reversed"]),
+        ),
         "tied_query_count": len(tied),
         # #1003: the open ties as one choice per table, and --auto's decisions.
         **engine_choice_facts(report),

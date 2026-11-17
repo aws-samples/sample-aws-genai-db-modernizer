@@ -6,6 +6,7 @@
  * names the tab (`?tab=`), so a tab can be linked. A link that names a section in its
  * hash (an old anchor, or the `?engine=` links of #2300) lands on that section's tab.
  */
+import { createInstance } from 'i18next';
 import en from '../../locales/en.json';
 import {
   DEFAULT_RESULTS_TAB,
@@ -15,6 +16,7 @@ import {
   onThisPageAnchors,
   resultsTabFromLocation,
   searchWithTab,
+  tabLabel,
   tabOfAnchor,
 } from '../resultsTabs';
 import { linkedSectionId, RESULTS_ENGINE_SECTION_ID } from '../resultsLinks';
@@ -161,3 +163,44 @@ describe('On this page', () => {
     expect(onThisPageAnchors('nope', ['table-design-section'], t)).toEqual([]);
   });
 });
+
+// #2363: the counts on the tab labels are report facts (facts.results_tab_counts); the page
+// formats them and never counts.
+describe('the tab labels with their counts', () => {
+  let tr;
+  beforeAll(async () => {
+    const i18n = createInstance();
+    await i18n.init({ resources: { en: { translation: en } }, lng: 'en', interpolation: { escapeValue: false } });
+    tr = i18n.t.bind(i18n);
+  });
+  const of = counts => ({ facts: { results_tab_counts: counts } });
+  const tab = id => RESULTS_TABS.find(x => x.id === id);
+
+  test('a tab with a count in the facts reads "Label (n)"', () => {
+    const counts = { queries: 107, risks: 9 };
+    const facts = { facts: { results_tab_counts: counts } };
+    expect(tabLabel(tr, tab('queries'), facts)).toBe('Queries (107)');
+    expect(tabLabel(tr, tab('risks'), facts)).toBe('Risks and decisions (9)');
+  });
+
+  test('a count is written with thousands separators', () => {
+    expect(tabLabel(tr, tab('queries'), of({ queries: 1234 }))).toBe('Queries (1,234)');
+  });
+
+  test('a tab with no count in the facts, or a report with none, reads its plain label', () => {
+    expect(tabLabel(tr, tab('summary'), of({ queries: 107 }))).toBe('Summary');
+    expect(tabLabel(tr, tab('plan'), of({ queries: 107 }))).toBe('Plan');
+    [null, undefined, {}, 'x'].forEach((counts) => {
+      expect(tabLabel(tr, tab('queries'), { facts: { results_tab_counts: counts } })).toBe('Queries');
+    });
+  });
+
+  test('a figure that is not a count is not shown', () => {
+    ['9', null, -1, 2.5, NaN].forEach((bad) => {
+      expect(tabLabel(tr, tab('risks'), of({ risks: bad }))).toBe('Risks and decisions');
+    });
+  });
+});
+
+// #2363 review: the guard reads the count through resultsTabCountOf, so arithmetic on it is a
+// violation (ADR-032 Decision 2), and resultsTabs.js is a guarded file.

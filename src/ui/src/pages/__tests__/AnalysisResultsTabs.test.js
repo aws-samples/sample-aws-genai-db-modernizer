@@ -52,6 +52,12 @@ test('every tab is listed from RESULTS_TABS with its content, kept once viewed',
   expect(tabs).toMatch(/contentRenderStrategy: 'lazy'/);
 });
 
+test('each tab label carries the count the facts state, never one the page counts (#2363)', () => {
+  const tabs = src(attr(RESULTS_TABS_ELEMENT[0], 'tabs').value);
+  expect(tabs).toMatch(/label: tabLabel\(t, tab, synthesis\)/);
+  expect(SOURCE).toMatch(/import \{[^}]*\btabLabel\b[^}]*\} from "\.\.\/utils\/resultsTabs"/);
+});
+
 test('On this page sits in the tools panel, listing the open tab\'s sections', () => {
   expect(LOADED_LAYOUT).toHaveLength(1);
   const layout = LOADED_LAYOUT[0];

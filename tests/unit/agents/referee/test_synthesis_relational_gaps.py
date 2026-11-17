@@ -82,6 +82,7 @@ def _without_risks(report: dict[str, Any]) -> dict[str, Any]:
 _RISK_STATED = {"risk_assessment", "summary", "summary_deterministic", "timestamp"}
 _RISK_FACTS = {
     "relational_gaps",
+    "results_tab_counts",  # #2363: the Risks tab counts the open risks
     "open_risk_count",
     "open_risks_by_severity",
     "critical_high_risk_count",

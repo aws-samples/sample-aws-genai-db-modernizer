@@ -62,7 +62,7 @@ import StepGateEvidence from "../components/StepGateEvidence";
 import { schemaSectionIdOf } from "../utils/adoptionPaths";
 import { engineFromSearch, linkedEngineTarget, linkedSectionId, activeDesignEngine } from "../utils/resultsLinks";
 import useResultsTabs, { ResultsSectionNav, useSectionsOnPage } from "../hooks/useResultsTabs";
-import { RESULTS_TABS, hashId, onThisPageAnchors } from "../utils/resultsTabs";
+import { RESULTS_TABS, hashId, onThisPageAnchors, tabLabel } from "../utils/resultsTabs";
 import ResultsOnThisPage from "../components/ResultsOnThisPage";
 import { schemaDesignsRefusal } from "../utils/schemaDesignsLoad";
 import RoutineMigrationSection from "../components/RoutineMigrationSection";
@@ -3207,7 +3207,7 @@ const AnalysisResultsPage = memo(() => {
                   onChange={({ detail }) => selectTab(detail.activeTabId)}
                   tabs={RESULTS_TABS.map(tab => ({
                     id: tab.id,
-                    label: t(tab.labelKey),
+                    label: tabLabel(t, tab, synthesis),
                     // A tab once opened stays mounted, so what the reader expanded or
                     // filtered there is as they left it.
                     contentRenderStrategy: 'lazy',

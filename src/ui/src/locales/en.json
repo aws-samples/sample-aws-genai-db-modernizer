@@ -1046,6 +1046,7 @@
   "analysis-results.tabs.queries": "Queries",
   "analysis-results.tabs.data-model": "Data model",
   "analysis-results.tabs.risks": "Risks and decisions",
+  "analysis-results.tabs.with-count": "{{label}} ({{number}})",
   "analysis-results.on-this-page.title": "On this page",
   "analysis-results.on-this-page.executive-summary": "Executive summary",
   "analysis-results.on-this-page.cost-breakdown": "Cost breakdown",

@@ -86,6 +86,8 @@ const LIST_HELPERS = new Set([
   'groupRisksBySeverity', 'splitRankingByRole', 'cacheLayerCostBreakdown', 'accessPatternTotals',
   // #1801: step 1's gate evidence (facts.step_gate).
   'stepGateOf',
+  // #2363: a results tab's count (facts.results_tab_counts).
+  'resultsTabCountOf',
 ]);
 const ARRAY_WALKERS = new Set([
   'forEach', 'map', 'filter', 'some', 'every', 'find', 'findIndex', 'flatMap', 'reduce', 'sort',
@@ -105,6 +107,7 @@ const GUARDED_UI_FILES = [
   'pages/AnalysisResults.js',
   'pages/JobMonitoringSummary.js',
   'utils/reportFacts.js',
+  'utils/resultsTabs.js',
   'utils/riskAssessment.js',
   'utils/tcoAnalysis.js',
   'utils/cacheLayer.js',
@@ -1016,6 +1019,15 @@ function render(synthesis, wave) {
         lineOf('const bare = risks.length'),
       ]);
       expect([...flagged].sort()).toEqual([...expected].sort());
+    });
+
+    // #2363: a tab's count is read through resultsTabCountOf, in a guarded file.
+    test('arithmetic on a results tab count is flagged in resultsTabs.js', () => {
+      const real = fs.readFileSync(`${UI_SRC}/utils/resultsTabs.js`, 'utf8');
+      expect(violationsIn(real, 'src/ui/src/utils/resultsTabs.js')).toEqual([]);
+      const mutated = real.replace('number: formatCount(n)', 'number: formatCount(n + 1)');
+      expect(mutated).not.toBe(real);
+      expect(violationsIn(mutated, 'src/ui/src/utils/resultsTabs.js').join(' ')).toMatch('n + 1');
     });
 
     const flaggedLines = (code) => new Set(violationsIn(code, 'probe').map(v => Number(v.split(':')[1])));
