@@ -406,3 +406,21 @@ def test_a_lone_surrogate_is_refused_by_both_grammars(tmp_path, expressions, ext
     files = render_files(inputs)  # a surrogate in a file would not even encode
     assert not any(_unprintable(t) for t in files.values())
     assert _left_out_lines(files["step-1.ddl.sql"])
+
+
+@pytest.mark.parametrize("bad", ["\x00", "\u2028", "\u202e", "\ud800"])
+def test_a_table_with_an_unsafe_name_is_listed_with_its_name_as_the_reason(tmp_path, bad):
+    from tests.unit.tools.transformation_contract.conftest import col, table
+
+    odd = table("public", f"lo{bad}g", [col("v", "text", 1)])
+    inputs = load_step1(write_pg_job(tmp_path, extra_tables=[odd]), "shop", "job1")
+
+    files = render_files(inputs)
+    assert not any(_unprintable(t) for t in files.values())
+    ddl = files["step-1.ddl.sql"]
+    [line] = [ln for ln in ddl.splitlines() if ln.startswith("-- - public.lo")]
+    assert line.startswith("-- - public.lo\ufffdg: the table's name holds a control, format")
+    assert "has no column" not in line and "not in the collection" not in line
+    [blocked] = [r for r in inputs.contract.rules if r.source_table.startswith("public.lo")]
+    assert [f.code for f in blocked.findings] == ["unsafe_name"]
+    assert 'CREATE TABLE "orders"' in inputs.ddl  # the other tables still move
