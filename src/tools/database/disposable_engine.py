@@ -169,6 +169,7 @@ from pathlib import Path
 from typing import Any, Literal
 
 from src.contracts.aurora_design_delta import validate_aurora_type
+from src.shared.sql_identifiers import quote_identifier
 from src.tools.database.mysql_grants import grant_database
 
 logger = logging.getLogger(__name__)
@@ -420,10 +421,11 @@ def _quote(name: str, mark: str) -> str:
 
 def _quote_table(name: str, mark: str) -> str:
     """Quote one table name of any spelling (``odd log``): the mark doubled inside it. A
-    NUL or another control character is refused, since no engine names a table so."""
-    if not name or any(ord(c) < 32 or ord(c) == 127 for c in name):
+    NUL or another control, format, surrogate or line separator character is refused
+    (``quote_identifier``), since no engine names a table so."""
+    if not name:
         raise ValueError("not a table name a statement may write")
-    return mark + name.replace(mark, mark + mark) + mark
+    return quote_identifier(name, mark)
 
 
 _SQL_NOTE = "identifiers are validated by _parts and quoted; values are bound"
@@ -541,7 +543,7 @@ def _pg_user_type(text: str) -> str:
     arrays = text[i:]
     if arrays.replace("[]", ""):
         raise ValueError("not a type name")
-    return ".".join('"' + n.replace('"', '""') + '"' for n in parts) + arrays
+    return ".".join(quote_identifier(n, '"') for n in parts) + arrays
 
 
 def pg_cast_type(type_name: str) -> str:

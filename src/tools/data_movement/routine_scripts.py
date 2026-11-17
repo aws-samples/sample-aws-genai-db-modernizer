@@ -61,6 +61,7 @@ from src.contracts.transformation_contract import (
     TargetSpec,
 )
 from src.shared.cutover_message import CUTOVER_DISCLAIMER
+from src.shared.sql_identifiers import quote_identifier
 
 __all__ = [
     "CASE_DIFFERS",
@@ -160,7 +161,7 @@ def _comment(text: str) -> str:
 
 
 def _pg_ident(name: str) -> str:
-    return '"' + name.replace('"', '""') + '"'
+    return quote_identifier(name, '"')
 
 
 def _pg_literal(text: str) -> str:
@@ -168,7 +169,7 @@ def _pg_literal(text: str) -> str:
 
 
 def _mysql_ident(name: str) -> str:
-    return "`" + name.replace("`", "``") + "`"
+    return quote_identifier(name, "`")
 
 
 def _mysql_literal(text: str) -> str:

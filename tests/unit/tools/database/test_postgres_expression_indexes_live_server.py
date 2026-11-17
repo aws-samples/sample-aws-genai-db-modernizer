@@ -143,9 +143,13 @@ def _psql_file(server, path) -> subprocess.CompletedProcess:
 
 
 def _audit_log_statements(ddl: str) -> list[str]:
+    """The DDL's statements on ``audit_log``, each without the comment lines before it."""
+    chunks = [
+        "\n".join(ln for ln in s.splitlines() if not ln.startswith("--")) for s in ddl.split(";\n")
+    ]
     return [
         s.strip()
-        for s in ddl.split(";\n")
+        for s in chunks
         if s.lstrip().startswith(('CREATE TABLE "audit_log"', "CREATE INDEX", "CREATE UNIQUE"))
         and '"audit_log"' in s
     ]
@@ -186,7 +190,7 @@ def test_step_1_creates_the_checked_indexes_again_with_the_sources_expressions(s
     assert set(target) == _RECREATED | {"audit_log_plain"}
     for name in _RECREATED:
         assert target[name] == source[name], name
-    assert {i.index_name for i in inputs.left_out_indexes} == _LISTED
+    assert {i.name for i in inputs.left_out_objects} == _LISTED
 
 
 def test_every_recreated_index_has_the_sources_whole_definition(server, tmp_path):
@@ -233,5 +237,31 @@ def test_psql_runs_no_collected_literal_as_sql_after_a_nul(server, tmp_path):
     assert ran.returncode == 0, ran.stderr
     assert not re.search(r"syntax error", ran.stderr)
     assert set(_expressions(server, "step1_nul")) == {"next_ix"}
-    assert [i.index_name for i in inputs.left_out_indexes] == ["nul_ix"]
+    assert [i.name for i in inputs.left_out_objects] == ["nul_ix"]
+    assert b"\x00" not in script.read_bytes()
+
+
+def test_psql_runs_no_collected_name_as_sql_after_a_nul(server, tmp_path):
+    """Review 2's repro: an index named ``a<NUL> tail`` then one named ``SELECT 1``. A NUL
+    in a quoted name cut the ``psql -f`` line short and left the identifier open, so the
+    next index's name ran as SQL (``syntax error at or near "SELECT"``)."""
+    plain = [
+        {"index_name": "a\x00 tail", "columns": ["msg"], "is_unique": False},
+        {"index_name": "SELECT 1", "columns": ["msg"], "is_unique": False},
+    ]
+    inputs = load_step1(write_pg_job(tmp_path, indexes={"audit_log": plain}), "shop", "job1")
+    script = tmp_path / "step1.sql"
+    script.write_bytes(
+        (
+            "CREATE SCHEMA step1_name;\nSET search_path TO step1_name;\n"
+            + ";\n".join(_audit_log_statements(inputs.ddl))
+            + ";\n"
+        ).encode()
+    )
+
+    ran = _psql_file(server, script)
+    assert ran.returncode == 0, ran.stderr
+    assert not re.search(r"syntax error", ran.stderr)
+    assert set(_indexdefs(server, "step1_name")) == {"SELECT 1"}
+    assert [(o.kind, o.name) for o in inputs.left_out_objects] == [("index", "a\x00 tail")]
     assert b"\x00" not in script.read_bytes()

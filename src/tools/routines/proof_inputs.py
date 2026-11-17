@@ -102,6 +102,7 @@ from typing import Any, Literal
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 from src.contracts.schema_design_input import AgentTable
+from src.shared.sql_identifiers import quote_identifier
 from src.tools.database import disposable_engine as de
 from src.tools.schema.aurora_common.constraint_translator import (
     MYSQL_TARGET,
@@ -716,7 +717,7 @@ def _qualify(result: DdlResult, schemas: Mapping[str, str], dialect: Dialect) ->
     mark = '"' if dialect == "postgresql" else "`"
 
     def q(name: str) -> str:
-        return mark + name.replace(mark, mark + mark) + mark
+        return quote_identifier(name, mark)
 
     def qualified(name: str) -> str:
         return f"{q(schemas[name])}.{q(name)}" if name in schemas else q(name)

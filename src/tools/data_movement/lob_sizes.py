@@ -45,6 +45,7 @@ from pathlib import Path
 
 from src.contracts.data_movement_plan import LobTable
 from src.contracts.lob_sizes import LobSizeColumn, LobSizes
+from src.shared.sql_identifiers import quote_identifier
 from src.tools.data_movement.dms_sizing import LOB_SIZES_SQL, needs_measuring
 
 __all__ = [
@@ -130,7 +131,7 @@ def layout_sha(columns: list[MeasureColumn]) -> str:
 
 
 def _ident(name: str) -> str:
-    return "`" + name.replace("`", "``") + "`"
+    return quote_identifier(name, "`")
 
 
 def _literal(text: str) -> str:

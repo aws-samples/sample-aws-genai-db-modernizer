@@ -12,6 +12,8 @@ the name this way; ``CREATE DATABASE`` and a ``USE`` take the plain quoted name.
 
 from __future__ import annotations
 
+from src.shared.sql_identifiers import quote_identifier
+
 __all__ = ["GRANT_WILDCARD_NOTE", "grant_database"]
 
 #: What a grant note a script leaves to the customer says about these wildcards (#2082).
@@ -25,4 +27,4 @@ def grant_database(name: str) -> str:
     """``name`` as the database part of a ``GRANT``/``REVOKE``: quoted, with ``\\``, ``_``
     and ``%`` escaped so each matches itself only."""
     escaped = name.replace("\\", "\\\\").replace("_", "\\_").replace("%", "\\%")
-    return "`" + escaped.replace("`", "``") + "`"
+    return quote_identifier(escaped, "`")

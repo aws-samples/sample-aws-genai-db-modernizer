@@ -54,7 +54,7 @@ def test_bundle_writes_the_inputs(tmp_path, capsys):
     assert script.main(_args(tmp_path, "--bundle", str(target))) == 0
     data = json.loads(target.read_text())
     assert set(data) == {"plan", "contract", "ddl", "zero_date_defaults", "identity_columns",
-                         "source_objects", "extensions", "left_out_indexes"}  # fmt: skip
+                         "source_objects", "extensions", "left_out_objects"}  # fmt: skip
     assert data["zero_date_defaults"] == ["shop.orders.created"]
     assert data["source_objects"] == {"procedures": 0, "functions": 0, "triggers": 0, "views": 1}
 
@@ -139,5 +139,5 @@ def test_bundle_carries_the_indexes_the_ddl_does_not_create(tmp_path):
     target = tmp_path / "input.json"
     assert script.main(_args(tmp_path, "--bundle", str(target))) == 0
 
-    [left_out] = json.loads(target.read_text())["left_out_indexes"]
-    assert (left_out["table_id"], left_out["index_name"]) == ("shop.orders", "orders_lower_note")
+    [left_out] = json.loads(target.read_text())["left_out_objects"]
+    assert (left_out["table_id"], left_out["name"]) == ("shop.orders", "orders_lower_note")

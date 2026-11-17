@@ -30,6 +30,8 @@ import re
 from collections.abc import Mapping, Sequence
 from typing import Any
 
+from src.shared.sql_identifiers import quote_identifier
+
 _INTEGER = re.compile(r"[0-9]+")
 # A string, national, hex or bit literal: the catalog may have dropped its introducer.
 _LITERAL = re.compile(r"'|\b0x[0-9a-f]|\b0b[01]", re.I)
@@ -53,7 +55,7 @@ def _upper(value: object) -> str:
 
 def quote_ident(name: object) -> str:
     """``name`` in backticks, each backtick doubled: a name in any sql_mode."""
-    return "`" + str(name).replace("`", "``") + "`"
+    return quote_identifier(str(name), "`")
 
 
 def definer_clause(definer: object) -> str:
