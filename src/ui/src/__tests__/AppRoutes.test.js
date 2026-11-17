@@ -170,7 +170,7 @@ test.each(['results-v2', 'report'])('/analysis/%s/:jobId keeps the query and the
 });
 
 test('the version-suffixed results page module is gone', () => {
-  expect(() => jest.requireActual('../pages/AnalysisResults')).toThrow();
+  expect(() => jest.requireActual('../pages/AnalysisResultsV2')).toThrow(/Cannot find module/);
 });
 
 test('the removed job-monitoring page and its /analysis/monitor/:jobId route are gone', async () => {

@@ -331,6 +331,7 @@ def test_dashboard_with_the_api_down_shows_an_error_and_no_zeros(page: Page, ui:
     text = page.inner_text("body")
     assert "0.0%" not in text and "0.0h" not in text, text
     assert "/api/v1" not in text and "No records" not in text, text
+    assert "(0)" not in text, text  # no count while the list has not loaded
     assert "Assessments unavailable" in text, text
 
 

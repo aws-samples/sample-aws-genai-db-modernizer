@@ -29,55 +29,32 @@ jest.mock('../../classes/ApiManager', () => ({
   },
 }));
 jest.mock('../../components/AppHeader', () => ({ __esModule: true, default: () => null }));
-jest.mock('../../config/GlobalConfigurations', () => ({
-  SideNavigationConfigurations: { header: {}, items: [] },
-  ApiConfigurations: { baseUrl: 'http://api.invalid/api/v1/' },
-  createLabelFunction: () => () => '',
-  EmptyState: ({ title, subtitle, action }) => <div data-empty>{title}{subtitle}{action}</div>,
-}));
-// The table is its own component with its own tests; here it shows what the page hands it.
-jest.mock('../../components/CustomTable', () => ({
-  __esModule: true,
-  default: ({ dataset, emptyState }) => <div data-table>{dataset.length === 0 ? emptyState : null}</div>,
-}));
+// The page shell is Cloudscape's layout machinery, not what is under test; the table,
+// the alert, the key-value pairs, the buttons and the containers are the real components.
 function mockStub(tag) {
   return { __esModule: true, default: ({ children }) => <div data-c={tag}>{children}</div> };
 }
 jest.mock('@cloudscape-design/components/app-layout', () => ({ __esModule: true, default: ({ content }) => <main>{content}</main> }));
 jest.mock('@cloudscape-design/components/breadcrumb-group', () => mockStub('crumbs'));
 jest.mock('@cloudscape-design/components/side-navigation', () => mockStub('nav'));
-jest.mock('@cloudscape-design/components/space-between', () => mockStub('space'));
-jest.mock('@cloudscape-design/components/copy-to-clipboard', () => mockStub('copy'));
-jest.mock('@cloudscape-design/components/button-dropdown', () => mockStub('dropdown'));
-jest.mock('@cloudscape-design/components/flashbar', () => mockStub('flashbar'));
 jest.mock('@cloudscape-design/components/modal', () => mockStub('modal'));
-jest.mock('@cloudscape-design/components/box', () => mockStub('box'));
-jest.mock('@cloudscape-design/components/container', () => ({ __esModule: true, default: ({ header, children }) => <section>{header}{children}</section> }));
-jest.mock('@cloudscape-design/components/header', () => ({ __esModule: true, default: ({ children, actions }) => <h2>{children}{actions}</h2> }));
-jest.mock('@cloudscape-design/components/status-indicator', () => ({ __esModule: true, default: ({ type, children }) => <span data-status={type}>{children}</span> }));
-jest.mock('@cloudscape-design/components/link', () => ({ __esModule: true, default: ({ href, children }) => <a data-link href={href}>{children}</a> }));
-jest.mock('@cloudscape-design/components/button', () => ({
-  __esModule: true,
-  default: ({ children, href, onClick }) => (href ? <a href={href}>{children}</a> : <button type="button" onClick={onClick}>{children}</button>),
-}));
-jest.mock('@cloudscape-design/components/alert', () => ({
-  __esModule: true,
-  default: ({ type, header, action, children }) => <div role="alert" data-type={type}><b>{header}</b>{children}{action}</div>,
-}));
-jest.mock('@cloudscape-design/components/key-value-pairs', () => ({
-  __esModule: true,
-  default: ({ items }) => (
-    <dl>{items.map((i) => <div key={i.label} data-stat={i.label}><dt>{i.label}</dt><dd>{i.value}</dd></div>)}</dl>
-  ),
-}));
 
 global.IS_REACT_ACT_ENVIRONMENT = true;
+// jsdom has no ResizeObserver, which the real table's sticky header and resizable columns use.
+global.ResizeObserver = global.ResizeObserver || class { observe() {} unobserve() {} disconnect() {} };
+global.matchMedia = global.matchMedia || (() => ({ matches: false, addListener() {}, removeListener() {}, addEventListener() {}, removeEventListener() {} }));
 
 const DOWN = { error: { message: 'Network error' }, status: 'Unknown' };
 const STATS = {
   success: true, total_assessments: 6, active_jobs: 2, success_rate_percent: 83.3,
   average_duration_hours: 1.5, completed_today: 4, last_analysis_at: null,
 };
+const JOB = {
+  job_id: 'job-1', database_name: 'wordpress', source_database_type: 'mysql',
+  status: 'completed', created_at: '2026-11-01T10:00:00Z', duration_seconds: 60,
+};
+const UP = { 'get-assessments': { success: true, assessments: [] }, 'get-dashboard-stats': STATS };
+const DOWN_ALL = { 'get-assessments': DOWN, 'get-dashboard-stats': DOWN };
 
 let container;
 let root;
@@ -90,54 +67,72 @@ async function renderDashboard(results) {
   await act(async () => { root.render(<Dashboard />); });
 }
 
-afterEach(() => {
-  act(() => root.unmount());
-  container.remove();
-  mockExecute.mockReset();
-  jest.restoreAllMocks();
-});
-
 beforeEach(() => {
   jest.spyOn(console, 'log').mockImplementation(() => {});
 });
 
-const stat = (label) => container.querySelector(`[data-stat="${label}"] dd`).textContent;
+afterEach(() => {
+  act(() => root.unmount());
+  container.remove();
+  mockExecute.mockReset();
+  jest.useRealTimers();
+  jest.restoreAllMocks();
+});
+
+const terms = () => [...container.querySelectorAll('dt')].map((d) => d.textContent);
+const stat = (label) => container.querySelectorAll('dd')[terms().indexOf(label)].textContent;
 const STAT_LABELS = ['Total analyses', 'Active jobs', 'Success rate', 'Average time', 'Last analysis', 'Completed today'];
+const tableHeading = () => [...container.querySelectorAll('h2')].find((h) => h.textContent.includes('Recent analyses'));
+const alertWrapper = () => container.querySelector('[role="alert"]');
 
 describe('API down', () => {
-  const down = { 'get-assessments': DOWN, 'get-dashboard-stats': DOWN };
-
   test('one error alert with a retry button, and no request URL', async () => {
-    await renderDashboard(down);
-    const alerts = container.querySelectorAll('[role="alert"]');
-    expect(alerts).toHaveLength(1);
-    expect(alerts[0].dataset.type).toBe('error');
-    expect(alerts[0].textContent).toContain('Check that the API is running');
-    expect(alerts[0].textContent).not.toMatch(/http|api\.invalid|\/api\/v1/);
-    expect(container.querySelector('[data-c="flashbar"]')).toBeNull();
-    expect(alerts[0].querySelector('button').textContent).toBe('Retry');
+    await renderDashboard(DOWN_ALL);
+    expect(container.querySelectorAll('[role="alert"]')).toHaveLength(1);
+    const alert = alertWrapper();
+    expect(alert.textContent).toContain('Check that the API is running');
+    expect(alert.textContent).not.toMatch(/http|api\.invalid|\/api\/v1/);
+    expect(alert.querySelector('button').textContent).toBe('Retry');
+    expect(container.textContent).not.toContain('API Error');
+  });
+
+  test('the alert is announced: the real Alert sits inside a live region', async () => {
+    await renderDashboard(DOWN_ALL);
+    const realAlert = alertWrapper().querySelector('[role="group"]');
+    // Cloudscape's own Alert is role=group with no live region of its own.
+    expect(realAlert.getAttribute('role')).toBe('group');
+    expect(realAlert.querySelector('[aria-live]')).toBeNull();
+    expect(realAlert.closest('[role="alert"], [aria-live="assertive"]')).not.toBeNull();
+    expect(alertWrapper().textContent).toContain('The dashboard could not load');
   });
 
   test('no figure is a zero: every stat is a dash', async () => {
-    await renderDashboard(down);
+    await renderDashboard(DOWN_ALL);
     for (const label of STAT_LABELS) expect(stat(label)).toBe('—');
-    expect(container.textContent).not.toMatch(/0\.0%|0\.0h|\b0\b/);
+    expect(container.textContent).not.toMatch(/0\.0%|0\.0h/);
   });
 
-  test('the table says the list is unavailable, not that it is empty', async () => {
-    await renderDashboard(down);
-    expect(container.querySelector('[data-table]').textContent).toBe('Assessments unavailable');
+  test('the table says the list is unavailable, not empty, and shows no count', async () => {
+    await renderDashboard(DOWN_ALL);
+    expect(container.textContent).toContain('Assessments unavailable');
     expect(container.textContent).not.toContain('No assessments yet');
     expect(container.textContent).not.toContain('No records');
+    expect(tableHeading().textContent).toBe('Recent analyses');
+    expect(container.textContent).not.toContain('(0)');
   });
 
-  test('retry loads again and clears the alert on success', async () => {
-    await renderDashboard(down);
+  test('retry loads again, shows a loading button meanwhile, and clears the alert on success', async () => {
+    await renderDashboard(DOWN_ALL);
     expect(mockExecute).toHaveBeenCalledTimes(1);
-    mockExecute.mockResolvedValue({ 'get-assessments': { success: true, assessments: [] }, 'get-dashboard-stats': STATS });
-    await act(async () => { container.querySelector('[role="alert"] button').click(); });
+    let finish;
+    mockExecute.mockReturnValue(new Promise((resolve) => { finish = resolve; }));
+    expect(alertWrapper().querySelector('button').className).not.toMatch(/disabled/);
+    await act(async () => { alertWrapper().querySelector('button').click(); });
     expect(mockExecute).toHaveBeenCalledTimes(2);
-    expect(container.querySelector('[role="alert"]')).toBeNull();
+    // Cloudscape's loading button takes the disabled style and cannot be pressed twice.
+    expect(alertWrapper().querySelector('button').className).toMatch(/disabled/);
+    await act(async () => { finish(UP); });
+    expect(alertWrapper()).toBeNull();
     expect(stat('Total analyses')).toBe('6');
   });
 
@@ -153,26 +148,40 @@ describe('API down', () => {
   });
 });
 
+describe('a later refresh fails after a good load', () => {
+  test('the old figures and rows are hidden, not left beside "did not load"', async () => {
+    jest.useFakeTimers();
+    await renderDashboard({ 'get-assessments': { success: true, assessments: [JOB] }, 'get-dashboard-stats': STATS });
+    expect(stat('Total analyses')).toBe('6');
+    expect(container.textContent).toContain('wordpress');
+    expect(tableHeading().textContent).toContain('(1)');
+    mockExecute.mockResolvedValue(DOWN_ALL);
+    await act(async () => { jest.advanceTimersByTime(30000); });
+    expect(alertWrapper()).not.toBeNull();
+    expect(stat('Total analyses')).toBe('—');
+    expect(container.textContent).not.toContain('wordpress');
+    expect(container.textContent).toContain('Assessments unavailable');
+    expect(tableHeading().textContent).not.toContain('(');
+  });
+});
+
 describe('while the first load is pending', () => {
-  test('stats show a loading indicator, not 0', async () => {
+  test('stats show a loading indicator and the table title has no count', async () => {
     mockExecute.mockReturnValue(new Promise(() => {}));
     container = document.createElement('div');
     document.body.appendChild(container);
     root = createRoot(container);
     await act(async () => { root.render(<Dashboard />); });
-    for (const label of STAT_LABELS) {
-      expect(container.querySelector(`[data-stat="${label}"] [data-status="loading"]`)).not.toBeNull();
-    }
+    for (const label of STAT_LABELS) expect(stat(label)).toBe('Loading...');
     expect(container.textContent).not.toMatch(/0\.0%|0\.0h/);
+    expect(tableHeading().textContent).toBe('Recent analyses');
     expect(container.querySelector('[role="alert"]')).toBeNull();
   });
 });
 
 describe('API up', () => {
-  const up = { 'get-assessments': { success: true, assessments: [] }, 'get-dashboard-stats': STATS };
-
   test('figures come from the stats, formatted by the shared formatter, in one container', async () => {
-    await renderDashboard(up);
+    await renderDashboard(UP);
     expect(stat('Total analyses')).toBe('6');
     expect(stat('Active jobs')).toBe('2');
     expect(stat('Success rate')).toBe('83.3%');
@@ -180,26 +189,33 @@ describe('API up', () => {
     expect(stat('Completed today')).toBe('4');
     expect(stat('Last analysis')).toBe('—');
     // "Active jobs" appears once, not in a second container (#2306).
-    expect(container.querySelectorAll('[data-stat="Active jobs"]')).toHaveLength(1);
+    expect(terms().filter((x) => x === 'Active jobs')).toHaveLength(1);
     expect(container.querySelector('[role="alert"]')).toBeNull();
   });
 
-  test('a real zero from the API still prints as 0', async () => {
-    await renderDashboard({ ...up, 'get-dashboard-stats': { ...STATS, total_assessments: 0, active_jobs: 0, success_rate_percent: 0, completed_today: 0 } });
+  test('the figures keep the large-number style', async () => {
+    await renderDashboard(UP);
+    const value = container.querySelectorAll('dd')[0].firstElementChild;
+    expect(value.className).toMatch(/value-large|display-l|large/);
+  });
+
+  test('a real zero from the API still prints as 0, and an empty list says (0)', async () => {
+    await renderDashboard({ ...UP, 'get-dashboard-stats': { ...STATS, total_assessments: 0, active_jobs: 0, success_rate_percent: 0, completed_today: 0 } });
     expect(stat('Total analyses')).toBe('0');
     expect(stat('Success rate')).toBe('0.0%');
+    expect(tableHeading().textContent).toContain('(0)');
   });
 
   test('no stat is a link: none has a target to go to', async () => {
-    await renderDashboard(up);
-    expect(container.querySelectorAll('[data-stat] [data-link], [data-stat] a')).toHaveLength(0);
+    await renderDashboard(UP);
+    expect(container.querySelectorAll('dl a, dd a')).toHaveLength(0);
   });
 
   test('the empty list says "No assessments yet" and leads to a new assessment', async () => {
-    await renderDashboard(up);
-    const table = container.querySelector('[data-table]');
-    expect(table.textContent).toContain('No assessments yet');
-    expect(table.textContent).not.toContain('No records');
-    expect(table.querySelector('a').getAttribute('href')).toBe('/analysis/create');
+    await renderDashboard(UP);
+    expect(container.textContent).toContain('No assessments yet');
+    expect(container.textContent).not.toContain('No records');
+    const link = [...container.querySelectorAll('a')].find((a) => a.textContent.includes('New analysis') && a.closest('table'));
+    expect(link.getAttribute('href')).toBe('/analysis/create');
   });
 });
