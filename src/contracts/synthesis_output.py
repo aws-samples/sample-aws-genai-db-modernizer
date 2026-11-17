@@ -3382,6 +3382,24 @@ class RoutineInterventionFact(BaseModel):
         None, description="needs_attention: not_rebuildable or attempts_used"
     )
     attention_detail: str | None = Field(None, description="needs_attention: why, in words")
+    deploy_gate: (
+        Literal[
+            "deployed",
+            "not_tested",
+            "not_proved",
+            "needs_attention",
+            "depends_on_held",
+            "rebuild_differs",
+        ]
+        | None
+    ) = Field(
+        None,
+        description=(
+            "model_repaired (#2384): deployed when step 1 deploys the repair, else why its "
+            "deploy gate holds it back (not_tested, not_proved, needs_attention, "
+            "depends_on_held, rebuild_differs); None in a report written before it"
+        ),
+    )
     attempts: list[RoutineAttemptFact] = Field(
         default_factory=list, description="The loop's attempts, in order (#1941)"
     )

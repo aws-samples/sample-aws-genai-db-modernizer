@@ -72,13 +72,16 @@
       "Write(artifacts/**/routines/**/repair/loop_state.json)",
       "Edit(artifacts/**/routines/**/routine_repair.json)",
       "Write(artifacts/**/routines/**/routine_repair.json)",
+      "Edit(artifacts/**/routines/**/routine_migration.json)",
+      "Write(artifacts/**/routines/**/routine_migration.json)",
       "Bash(rm *)",
       "Bash(sudo *)",
       "Bash(curl *)",
       "Bash(wget *)",
       "Bash(nc *)",
       "Bash(uv run python scripts/run_dms_step.py proof-target-*)",
-      "Bash(uv run python scripts/run_dms_step.py * proof-target-*)"
+      "Bash(uv run python scripts/run_dms_step.py * proof-target-*)",
+      "Bash(uv run python scripts/run_routine_repair.py *test-cluster*)"
     ]
   },
   "hooks": {

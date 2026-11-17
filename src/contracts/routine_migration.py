@@ -203,6 +203,16 @@ class RoutineProofEntry(BaseModel):
     strict_check_errors: list[str] = Field(
         default_factory=list, description="The SQLSTATE of each strict-check error"
     )
+    repair_sha256: str | None = Field(
+        None,
+        pattern=r"^[0-9a-f]{64}$",
+        description=(
+            "A model-repaired routine (#2384): the digest of the repair loop's redacted "
+            "candidate (routine_repair.json's repaired_create, no literal) whose rebuilt "
+            "text the test ran; never a digest of the exact text. Step 1 deploys the repair "
+            "only when it is the one the test ran; None for a routine tested as carried"
+        ),
+    )
 
 
 class RoutineProofRun(BaseModel):

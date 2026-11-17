@@ -57,6 +57,7 @@ from src.storage.routine_repair_store import (
     routine_repair_response_path,
     routine_repair_state_path,
 )
+from src.tools.routines.repair_proof import PROOF_CHOICES  # the one list (#2384)
 
 __all__ = [
     "MAX_ATTEMPTS",
@@ -65,9 +66,6 @@ __all__ = [
     "proof_for_run",
     "run_repair_loop",
 ]
-
-#: The proof targets a run may name; ``auto`` resolves to one of the other two.
-PROOF_CHOICES = ("auto", "local", "none")
 
 _NO_ANSWER_REASON = "the model gave no usable answer"
 Ref = tuple[str, str]
@@ -418,10 +416,12 @@ def proof_for_run(
     *,
     assignment_version: int | None = None,
 ) -> str:
-    """The proof target a run uses (#2385): ``local`` or ``none`` as given; ``auto`` is
+    """The proof target a run uses (#2385): ``local``, ``none`` or ``test-cluster`` as given;
+    ``auto`` is
     ``local`` when a disposable engine of the source's engine and major is on this machine
     (``disposable_engine.available``: no engine starts), else ``none``, and ``none`` for a
-    job with no routine-migration artifact or no source version."""
+    job with no routine-migration artifact or no source version; never ``test-cluster``
+    (#2384), which only an attended ``/test-routines`` names."""
     if proof not in PROOF_CHOICES:
         raise ValueError(f"unknown proof {proof!r}")
     if proof != "auto":
@@ -491,8 +491,8 @@ def finalize_repair_loop(
 ) -> dict[str, Any]:
     """Apply the external session's answer to the current round, then write the next
     round's request (``awaiting_llm``) or the result (``complete``). The proof target is
-    the lower of ``proof`` and the one the first run saved: the state file can lower it,
-    never raise it; every repair the saved state carries is verified again here
+    the one the first run saved when ``proof`` names it too, else ``none``: the state file
+    can lower it, never raise it; every repair the saved state carries is verified again here
     (:func:`_reverify`). Raises
     ``FileNotFoundError`` with no request, answer or loop state, ``StaleRepairRequest``
     when the request is not the one the job's artifacts and the loop give now, and
@@ -525,7 +525,11 @@ def finalize_repair_loop(
             "give now: run the repair again"
         )
     answer = store.read_json(paths[1])
-    state.proof = "local" if state.proof == "local" and proof == "local" else "none"
+    # The proof the first run saved, only when this run names the same one: a state file
+    # can lower it, never raise it or swap it (#2384: test-cluster is its own target).
+    state.proof = (
+        state.proof if state.proof == proof and proof in ("local", "test-cluster") else "none"
+    )
     carried = [r for r, e in state.settled.items() if e.get("state") in _CARRY]
     verifier = _verifier(store, migration, [*state.open, *carried], state.proof, proof_options)
     fresh = _apply_round(state, plan, answer, verifier)

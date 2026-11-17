@@ -119,7 +119,6 @@ def test_the_routine_repair_state_and_result_are_never_edited_by_hand(
     [
         "artifacts/shop/job-1/routines/v1/repair/llm_response.json",
         "artifacts/shop/job-1/routines/v1/repair/llm_input.json",
-        "artifacts/shop/job-1/routines/v1/routine_migration.json",
     ],
 )
 @pytest.mark.passes_on_main  # the negative control: what stays writable
@@ -134,3 +133,28 @@ def test_the_ci_settings_deny_hand_edits_of_the_repair_state_and_result() -> Non
     for tool in ("Edit", "Write"):
         assert f"{tool}(artifacts/**/routines/**/repair/loop_state.json)" in deny
         assert f"{tool}(artifacts/**/routines/**/routine_repair.json)" in deny
+
+
+# #2384 review: the routine-migration artifact holds the test's results and each tested
+# repair's digest, which step 1's deploy gate reads: a session never writes it by hand.
+@pytest.mark.parametrize(
+    "rel",
+    [
+        "artifacts/shop/job-1/routines/v1/routine_migration.json",
+        "/abs/elsewhere/artifacts/db/j/routines/v12/routine_migration.json",
+    ],
+)
+@pytest.mark.parametrize("tool", ["Edit", "Write", "MultiEdit"])
+def test_the_routine_migration_artifact_is_never_edited_by_hand(
+    rel: str, tool: str, run_hook
+) -> None:
+    res = run_hook("block_baseline_edit.py", edit(rel, tool))
+    assert res.blocked and "proof-target-run" in res.stderr
+
+
+def test_the_ci_settings_deny_hand_edits_of_the_routine_migration_artifact() -> None:
+    import json
+
+    deny = json.loads((REPO_ROOT / ".claude/settings.ci.json").read_text())["permissions"]["deny"]
+    for tool in ("Edit", "Write"):
+        assert f"{tool}(artifacts/**/routines/**/routine_migration.json)" in deny

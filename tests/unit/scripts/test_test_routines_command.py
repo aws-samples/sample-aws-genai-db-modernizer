@@ -56,7 +56,8 @@ def test_it_carries_the_tool_use_rule_and_names_only_real_scripts() -> None:
     assert validate_skills.validate(REPO_ROOT) == []
     scripts = [shlex.split(c)[3] for c in _bash_commands()]
     assert scripts[:3] == [f"scripts/{s}" for s in PREPARE]
-    assert set(scripts) == {*(f"scripts/{s}" for s in PREPARE), "scripts/run_dms_step.py"}
+    assert set(scripts) == {*(f"scripts/{s}" for s in PREPARE), "scripts/run_dms_step.py",
+                            "scripts/run_routine_repair.py"}  # fmt: skip
 
 
 def test_it_runs_every_test_cluster_command_and_each_write_only_with_approve() -> None:
@@ -109,7 +110,8 @@ def test_the_scratch_schema_test_and_the_repair_hook_are_named() -> None:
     assert "this is the scratch-schema test (#1945)" in test
     assert "never runs on the customer's migration Aurora" in test
     assert "only when it ran on the routines file as it is now" in test
-    assert "(`--proof test-cluster`) are not part of this command yet (#2384)" in test
+    assert "The repair rounds against the test cluster (`--proof test-cluster`, Step 5b)" in test
+    assert "not part of this command yet" not in _flat()
 
 
 def test_every_no_ends_with_a_stopped_line_and_the_routines_held_back() -> None:
@@ -157,7 +159,7 @@ def test_a_rerun_finds_the_deployed_cluster_and_never_asks_to_deploy_it_again() 
     where = _flat(_section("Step 3: Where the test cluster stands"))
     assert "proof-target-status --job-id {job_id} --db {db}" in where
     assert where.index('`"status": "deployed"`') < where.index("Never ask to deploy it again")
-    assert "go to Step 6 without asking its `question`" in where
+    assert "go to Step 5b, and on to Step 6, without asking its `question`" in where
     assert "When the customer only asked to tear it down, go to Step 7" in where
     assert "show its `stack_status` and `stack_reason`, then go to Step 7" in where
     flat = _flat()
@@ -190,3 +192,27 @@ def test_a_rerun_on_a_stack_still_being_created_waits_then_offers_the_test() -> 
     assert "waits while it is still being created, then offers the test and the teardown" in _flat(
         _section("Step 5: Deploy")
     )
+
+
+def test_the_repair_rounds_are_asked_before_the_test_and_never_under_auto() -> None:
+    """#2384: with routines that may be repaired, the repair rounds run on the test cluster
+    before the test, only after the plan's repair_question is answered yes, each run of the
+    script with --approve; --auto runs no command at all, so none ever runs headless."""
+    from scripts import run_routine_repair
+
+    repairs = _section("Step 5b: Model repairs on the test cluster")
+    flat = _flat(repairs)
+    assert "only when the plan's `repairable` is above 0" in flat
+    assert flat.index("ask the plan's `repair_question` verbatim") < flat.index("Only on a yes")
+    assert flat.index("Only on a yes") < flat.index("run_routine_repair.py")
+    runs = [c for c in _bash_commands(repairs) if "run_routine_repair.py" in c]
+    assert len(runs) == 2 and all("--proof test-cluster --approve" in c for c in runs)
+    assert "--finalize" in runs[1] and "--llm-mode external" in runs[0]
+    assert "src/skills/routine-repair.md" in flat
+    assert "test-cluster" in run_routine_repair.__doc__
+    whole = _flat()
+    assert whole.index("## Step 5b") < whole.index("## Step 6: The test")
+    assert "go to Step 5b" in _flat(_section("Step 3: Where the test cluster stands"))
+    assert "go to Step 5b" in _flat(_section("Step 5: Deploy"))
+    assert "Run the routine repair rounds" not in whole  # the script's question, never here
+    assert "Run no command at all" in _flat(_section("Arguments"))

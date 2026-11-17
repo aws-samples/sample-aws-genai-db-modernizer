@@ -212,6 +212,12 @@ def _schema_fields(schema: dict[str, Any]) -> set[str]:
 #: that file's index, whose parts' SHA-256s the index already lists in the job folder. It
 #: is no hash of a routine's text: it changes when any part of the file changes.
 INDEX_DIGEST = "routine_sources_sha256"
+#: The repair digest (#2384): on a test's entry for a model-repaired routine, the SHA-256 of
+#: the repair loop's redacted candidate (routine_repair.json's repaired_create, which holds
+#: no literal and is already in the job folder as it is), naming the repair the test ran.
+#: Never a digest of the exact text.
+REPAIR_DIGEST = ("RoutineProofEntry", "repair_sha256")
+ALLOWED_DIGESTS = {("RoutineProofRun", INDEX_DIGEST), REPAIR_DIGEST}
 
 
 @pytest.mark.passes_on_main  # the guard main has, narrowed to allow the one index digest (#2411)
@@ -222,11 +228,10 @@ def test_no_field_of_the_contract_can_hold_routine_text_or_its_hash():
         for f in d.get("properties", {})
     ]  # fmt: skip
     for word in ("create", "statement", "body_text", "definition", "sha", "hash", "diff", "sql"):
-        # The index digest is allowed on the test's run record only (RoutineProofRun).
-        assert not [
-            (m, f) for m, f in fields if word in f and (m, f) != ("RoutineProofRun", INDEX_DIGEST)
-        ], word
-    assert ("RoutineProofRun", INDEX_DIGEST) in fields
+        # The index digest on the test's run record only (RoutineProofRun), and the repair
+        # digest on a test's entry only (RoutineProofEntry, #2384).
+        assert not [(m, f) for m, f in fields if word in f and (m, f) not in ALLOWED_DIGESTS], word
+    assert ALLOWED_DIGESTS <= set(fields)
 
 
 def test_the_index_digest_is_a_digest_of_the_index_never_of_one_routine(tmp_path):

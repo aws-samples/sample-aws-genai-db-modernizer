@@ -649,10 +649,11 @@ def write_triggers_scripts(
     deploy = block_of(engine, migration, user, target_database)
     tables_in = step_schemas(contract)
     states: dict[tuple[str, str], str | None] = {}
-    from src.tools.data_movement.routine_test_gate import HELD_REASONS, held_routines, proof_state
+    from src.tools.data_movement.routine_scripts import repaired_source, stale_holds
+    from src.tools.data_movement.routine_test_gate import HELD_REASONS, REBUILD_DIFFERS, deploy_gate
 
-    proof = proof_state(store, db, job_id, migration)
-    untested = held_routines(store, db, job_id, migration)
+    gate = deploy_gate(store, db, job_id, migration)
+    proof, untested = gate.proof, stale_holds(gate, section.routines)
 
     def block(
         row: StepRoutine, source: RoutineSource, position: int, total: int
@@ -663,6 +664,10 @@ def write_triggers_scripts(
             return None, CASE_DIFFERS
         if (row.kind, row.routine_id) in untested:  # the deploy gate (#2411)
             return None, untested[(row.kind, row.routine_id)]
+        carried = repaired_source(gate, row, source)  # a model repair's rebuilt text (#2384)
+        if carried is None:  # the contract and the deploy gate disagree on the repair
+            return None, REBUILD_DIFFERS
+        source = carried
         text, code = deploy(row, source, position, total)
         if text is not None and row.carry == "deferred_to_cutover" and row.kind == "event":
             states[(row.kind, row.routine_id)] = event_state(

@@ -25,10 +25,19 @@ response paths (under the artifact root, ``artifacts/<db>/<job>/...`` by default
 paths to read and write as printed); each ``--finalize`` applies the answer written to
 ``routines/v<N>/repair/llm_response.json`` and prints ``awaiting_llm`` for the next
 round or ``complete``. Pass the same ``--proof`` to each ``--finalize``: the proof target
-is the lower of that and the first run's, and every repair the saved state carries is
-verified again before it is written. ``--proof auto`` (what ``/modernize`` passes, #2385)
-is ``local`` when a disposable engine of the source's major is on this machine, else
-``none``; the status line's ``proof`` says which.
+is the first run's only when it is named again, else none, and every repair the saved state
+carries is verified again before it is written. ``--proof auto`` (what ``/modernize`` passes,
+#2385) is ``local`` when a disposable engine of the source's major is on this machine, else
+``none``, never ``test-cluster``; the status line's ``proof`` says which.
+
+``--proof test-cluster --approve`` (#2384, from ``/test-routines``): the original on a
+disposable engine of the source's major, the repair on this job's throwaway Aurora test
+cluster through the RDS Data API, run as a restricted runner made for the run, each
+comparison in a scratch database dropped afterwards. It needs the customer's yes to the
+repair question (``--approve``) and the job's test cluster deployed and available
+(``run_dms_step.py`` reads the stack and its inputs file, as for ``proof-target-run``), and
+it is refused under ``MODERNIZER_CI_SANDBOX=1``, so a headless run never reaches a cluster.
+Each run and each ``--finalize`` opens the cluster again and cleans up after itself.
 
 One JSON status line on stdout; nothing else.
 """
@@ -92,15 +101,28 @@ def main() -> None:
         action="store_true",
         help="Apply the external session's answer and write the result",
     )
+    from src.agents.routine_repair.loop import PROOF_CHOICES
+
     parser.add_argument(
         "--proof",
         default="none",
-        choices=["none", "local", "auto"],
+        choices=list(PROOF_CHOICES),
         help=(
             "Where the side-by-side proof runs: local (two disposable engines of the "
-            "source's major), none (a candidate waits for the proof; default: none), or "
-            "auto (local when those engines are on this machine, else none)"
+            "source's major), test-cluster (the repair on this job's test cluster; needs "
+            "--approve), none (a candidate waits for the proof; default: none), or auto "
+            "(local when those engines are on this machine, else none)"
         ),
+    )
+    parser.add_argument(
+        "--approve",
+        action="store_true",
+        help="--proof test-cluster: the customer approved the repair rounds on the test cluster",
+    )
+    parser.add_argument(
+        "--inputs",
+        default=None,
+        help="--proof test-cluster: the test cluster's inputs file (default: the job's)",
     )
     parser.add_argument(
         "--assignment-version",
@@ -153,29 +175,74 @@ def main() -> None:
         store, args.db, args.job_id, args.proof, assignment_version=args.assignment_version
     )
 
-    if args.finalize:
-        try:
-            status = finalize_routine_repair(
-                store,
-                args.db,
-                args.job_id,
-                assignment_version=args.assignment_version,
-                proof=args.proof,
-            )
-        except (FileNotFoundError, StaleRepairRequest) as exc:
-            _error(str(exc))
-        except ValidationError as exc:
-            _error(f"the answer is off RoutineRepairResponse: {validation_error_note(exc)}")
-    else:
-        status = run_routine_repair(
+    def run(proof_options: dict | None = None) -> dict:
+        if args.finalize:
+            try:
+                return finalize_routine_repair(
+                    store,
+                    args.db,
+                    args.job_id,
+                    assignment_version=args.assignment_version,
+                    proof=args.proof,
+                    proof_options=proof_options,
+                )
+            except (FileNotFoundError, StaleRepairRequest) as exc:
+                _error(str(exc))
+            except ValidationError as exc:
+                _error(f"the answer is off RoutineRepairResponse: {validation_error_note(exc)}")
+        return run_routine_repair(
             store,
             args.db,
             args.job_id,
             llm_mode=args.llm_mode,
             assignment_version=args.assignment_version,
             proof=args.proof,
+            proof_options=proof_options,
         )
+
+    if args.proof == "test-cluster":
+        status = _on_test_cluster(args, store, run)
+        if status.get("status") == "error":
+            _error(str(status.get("message")))
+    else:
+        status = run()
     _output(_paths_under_root(status, args.artifact_root))
+
+
+def _on_test_cluster(args, store, run) -> dict:
+    """``run`` with the job's test cluster as the repair's side (#2384): the refusals of every
+    test-cluster write (``run_dms_step.run_on_test_cluster``), then the cluster session
+    (``proof_run.cluster_session``), which drops what it made when the round ends."""
+    from scripts._sandbox import SANDBOX_ENV
+    from scripts.run_dms_step import run_on_test_cluster
+
+    if os.environ.get(SANDBOX_ENV) == "1":
+        return {"status": "error", "message": "--proof test-cluster acts on the routine-proof "
+                f"test cluster in AWS: refused under {SANDBOX_ENV}=1"}  # fmt: skip
+    if args.llm_mode == "none" and not args.finalize:
+        return dict(run())  # no repair runs, so no cluster is opened
+
+    def on_cluster(*, cluster, data_api, secrets_client) -> dict:
+        from src.storage.assignment_versioning import resolve_downstream_assignment_version
+        from src.storage.routine_migration_store import latest_routine_migration
+        from src.tools.routines.proof_run import cluster_session
+
+        version = args.assignment_version or resolve_downstream_assignment_version(
+            store, args.db, args.job_id
+        )
+        found = latest_routine_migration(store, args.db, args.job_id, version)
+        if found is None:
+            return dict(run())  # skipped: the job has no routine-migration artifact
+        with cluster_session(found[1], data_api=data_api, cluster=cluster,
+                             secrets_client=secrets_client, job_id=args.job_id) as opened:  # fmt: skip
+            if opened.get("status") != "open":
+                return opened
+            status = run(opened["options"])
+        left = opened.get("left_on_cluster") or []
+        return {**status, "left_on_cluster": left} if left else status
+
+    return run_on_test_cluster(artifact_root=args.artifact_root, db=args.db, job_id=args.job_id,
+                               approve=args.approve, inputs=args.inputs, on_cluster=on_cluster)  # fmt: skip
 
 
 def _job_ctx():

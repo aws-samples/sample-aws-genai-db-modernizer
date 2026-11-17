@@ -658,6 +658,7 @@ def routine_risks(
         else:
             rewritten = int(routines.get("rewritten_carried_count") or 0)
             unknown = int(routines.get("unknown_checks_count") or 0)
+            repaired = int(routines.get("repaired_count") or 0)
             runs = "it runs" if rewritten == 1 else "they run"
             parts = [
                 (
@@ -667,6 +668,7 @@ def routine_risks(
                     else ""
                 ),
                 (f"for {unknown}, not every check could run" if unknown else ""),
+                (f"{n_of(repaired, 'was', 'were')} repaired by a model" if repaired else ""),
             ]
             description = (
                 f"{n_of(k, 'routine is', 'routines are')} carried to {name} and need a "

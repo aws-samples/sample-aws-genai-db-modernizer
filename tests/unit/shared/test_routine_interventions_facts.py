@@ -66,6 +66,7 @@ def test_a_repaired_routine_is_an_intervention_with_what_changed() -> None:
             "proof_source": None,
             "attention": None,
             "attention_detail": None,
+            "deploy_gate": None,  # #2384: only a model_repaired routine has one
             "attempts": [],
             # A result of the seam alone: no attempt, so no claim of the loop's checks.
             "line": (

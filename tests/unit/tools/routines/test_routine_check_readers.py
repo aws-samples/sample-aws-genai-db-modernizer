@@ -61,6 +61,13 @@ READERS = LOADERS | {
     # The repair loop (#1941): it rebuilds, re-checks and proves each candidate through
     # src.tools.routines.repair_proof; not a routing or synthesis module.
     "src.agents.routine_repair.loop",
+    # Step 1's deploy gate (#2384): it rebuilds, screens and checks each model repair again
+    # in step 1's own process through src.tools.routines.repair_proof; not a routing or
+    # synthesis module (the facts never import it).
+    "src.tools.data_movement.routine_test_gate",
+    # The repair loop's rounds on the test cluster (#2384): the script opens the cluster
+    # session through src.tools.routines.proof_run; not a routing or synthesis module.
+    "scripts.run_routine_repair",
 }
 
 

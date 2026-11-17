@@ -280,8 +280,12 @@ class StepRoutine(BaseModel):
     order: int | None = Field(
         None, ge=1, description="Its place in the deploy script, from 1; set only when carried"
     )
-    migration_status: Literal["as_is", "rewritten"] | None = Field(
-        None, description="The routine-migration status of a carried routine"
+    migration_status: Literal["as_is", "rewritten", "model_repaired"] | None = Field(
+        None,
+        description=(
+            "The routine-migration status of a carried routine; model_repaired: the repair "
+            "loop's repair, which step 1 rebuilds from the routines file (#2384)"
+        ),
     )
     enabled_as: RoutineEnabledAs | None = Field(
         None,
@@ -320,6 +324,16 @@ class StepRoutine(BaseModel):
             "MySQL trigger: its place among its table's triggers of one timing and event "
             "(information_schema ACTION_ORDER), the order the triggers-enable script creates "
             "them in"
+        ),
+    )
+
+    repaired: bool = Field(
+        False,
+        exclude_if=lambda value: value is False,
+        description=(
+            "Carried or left to the triggers-enable script as the repair loop's repair "
+            "(#2384): the step 1 writers create it only from the repair's text the deploy "
+            "gate rebuilt, never from the original"
         ),
     )
 

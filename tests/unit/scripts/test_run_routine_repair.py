@@ -121,3 +121,20 @@ def test_a_headless_round_writes_its_answer_where_the_ci_settings_allow(tmp_path
     (done,) = [json.loads(x) for x in out.getvalue().splitlines() if x.startswith("{")]
     assert done["status"] == "complete" and done["counts"]["no_answer"] == 1
     assert done["artifact"].startswith(f"artifacts/{fx.DB}/{fx.JOB}/")
+
+
+def test_auto_never_resolves_to_the_test_cluster(tmp_path, monkeypatch):
+    """#2384: one list of proof choices; ``auto`` is local or none, never the test cluster,
+    which only an attended /test-routines names."""
+    from src.agents.routine_repair.loop import PROOF_CHOICES, proof_for_run
+    from src.tools.database import disposable_engine as de
+    from src.tools.routines import repair_proof
+
+    assert PROOF_CHOICES is repair_proof.PROOF_CHOICES
+    assert set(PROOF_CHOICES) == {"auto", "local", "none", "test-cluster"}
+    assert "auto" not in repair_proof.PROOF_TARGETS
+    store = fx.job(tmp_path)
+    for here in (True, False):
+        monkeypatch.setattr(de, "available", lambda *_a, h=here: h)
+        assert proof_for_run(store, fx.DB, fx.JOB, "auto") == ("local" if here else "none")
+    assert proof_for_run(store, fx.DB, fx.JOB, "test-cluster") == "test-cluster"

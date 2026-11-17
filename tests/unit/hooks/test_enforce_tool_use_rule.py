@@ -215,3 +215,42 @@ def test_every_documented_run_dms_step_call_still_passes_the_hook(run_hook) -> N
     calls = [c for c in calls if c not in refused]
     for call in calls[:3]:  # and through the hook itself, end to end
         assert run_hook("enforce_tool_use_rule.py", bash(call)).code == 0, call
+
+
+TEST_CLUSTER_FORMS = [
+    "uv run python scripts/run_routine_repair.py --job-id j --db d --proof test-cluster --approve",
+    "uv run python scripts/run_routine_repair.py --job-id j --db d --proof=test-cluster",
+    'uv run python scripts/run_routine_repair.py --job-id j --db d --proof "test-cluster"',
+    "uv run python scripts/run_routine_repair.py --job-id j --db d --proof test\\-cluster",
+    "uv run python scripts/run_routine_repair.py --job-id j --db d --proof $'test-cluster'",
+    "uv run python scripts/run_routine_repair.py --job-id j --db d --proof test-clus?er",
+    "uv run python scripts/run_routine_repair.py --job-id j --db d --proof {test-cluster,}",
+]
+
+
+@pytest.mark.parametrize("command", TEST_CLUSTER_FORMS)
+def test_the_repair_loop_on_the_test_cluster_is_blocked_headless(command: str, run_hook) -> None:
+    """#2384: the repair rounds on the test cluster run only in an attended /test-routines;
+    quoted, escaped or expanded forms are refused like the proof-target-* commands."""
+    assert hook.is_test_cluster_repair_call(command)
+    res = run_hook("enforce_tool_use_rule.py", bash(command))
+    assert res.blocked and "test cluster" in res.stderr
+
+
+@pytest.mark.parametrize(
+    "command",
+    [
+        "uv run python scripts/run_routine_repair.py --job-id j --db d --llm-mode external --proof local",
+        "uv run python scripts/run_routine_repair.py --job-id j --db d --finalize --proof none",
+    ],
+)
+def test_the_other_repair_loop_calls_still_pass(command: str, run_hook) -> None:
+    assert not hook.is_test_cluster_repair_call(command)
+    assert run_hook("enforce_tool_use_rule.py", bash(command)).code == 0
+
+
+def test_the_ci_settings_deny_the_repair_loop_on_the_test_cluster() -> None:
+    import json
+
+    deny = json.loads((REPO_ROOT / ".claude/settings.ci.json").read_text())["permissions"]["deny"]
+    assert "Bash(uv run python scripts/run_routine_repair.py *test-cluster*)" in deny

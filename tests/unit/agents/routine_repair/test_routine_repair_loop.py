@@ -429,8 +429,8 @@ def test_the_proof_catches_a_swapped_literal_and_carries_a_faithful_repair(
     (item,) = facts["interventions"]
     assert item["state"] == "model_repaired"
     assert "Wrote the comparison with the constant first." in item["line"]
-    # Not counted as carried: step 1 does not deploy it yet.
-    assert facts["repaired_count"] == 0
+    # Carried, repaired (#2384); step 1 deploys it only once a test runs that repair.
+    assert facts["repaired_count"] == 1 and item["deploy_gate"] == "not_tested"
 
 
 # --------------------------------------------------------------------------- #2387 review

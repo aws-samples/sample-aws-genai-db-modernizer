@@ -297,12 +297,14 @@ class RoutineRepairContract(BaseModel):
     ignored_answers: int = Field(
         0, ge=0, description="Answers for a routine the request did not list, dropped"
     )
-    proof: Literal["none", "local"] | None = Field(
+    proof: Literal["none", "local", "test-cluster"] | None = Field(
         None,
         description=(
             "The repair loop's proof target (#1941): local (disposable engines of the "
-            "source's major), none (no proof: a candidate stays repaired_pending_proof); "
-            "None when the seam ran alone"
+            "source's major), test-cluster (the original on a disposable engine of the "
+            "source's major, the repair on the job's throwaway Aurora test cluster, #2384), "
+            "none (no proof: a candidate stays repaired_pending_proof); None when the seam "
+            "ran alone"
         ),
     )
     rounds: int = Field(0, ge=0, le=MAX_ATTEMPTS, description="Model rounds the loop ran")

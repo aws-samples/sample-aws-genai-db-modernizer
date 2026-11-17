@@ -140,6 +140,34 @@ def is_proof_target_call(command: str) -> bool:
     return False
 
 
+# The repair loop's rounds on the test cluster (#2384) never run headless either: the same
+# splitting refuses a run_routine_repair.py argument that names test-cluster or holds any
+# character outside PLAIN_ARGUMENT, so no quoted or expanded form can build one.
+REPAIR_SCRIPT = "run_routine_repair.py"
+TEST_CLUSTER_WORD = "test-cluster"
+TEST_CLUSTER_BLOCK = (
+    "Blocked: the routine repair loop's rounds on the test cluster (run_routine_repair.py "
+    "--proof test-cluster) never run in a headless session, and every run_routine_repair.py "
+    "argument must be plain (letters, digits and _ . / = : , @ + -) (#2384)."
+)
+
+
+def is_test_cluster_repair_call(command: str) -> bool:
+    """True when the command runs ``run_routine_repair.py`` with an argument that, split as
+    the shell splits it, holds ``test-cluster`` or a character outside ``PLAIN_ARGUMENT``.
+    Fails closed like :func:`is_proof_target_call`."""
+    try:
+        words = shlex.split(command, comments=False, posix=True)
+    except ValueError:
+        return REPAIR_SCRIPT in command
+    for i, word in enumerate(words):
+        if os.path.basename(word) == REPAIR_SCRIPT:
+            return any(
+                TEST_CLUSTER_WORD in w or not PLAIN_ARGUMENT.fullmatch(w) for w in words[i + 1 :]
+            )
+    return False
+
+
 def main() -> int:
     event = hook_common.read_event()
     if event.get("tool_name") not in (None, "Bash"):
@@ -153,6 +181,8 @@ def main() -> int:
         return 0  # no allowlist to enforce; the permission rules still apply
     if is_proof_target_call(command):
         return int(hook_common.block(PROOF_TARGET_BLOCK))
+    if is_test_cluster_repair_call(command):
+        return int(hook_common.block(TEST_CLUSTER_BLOCK))
     if is_documented_command(command, rules):
         return 0
     hint = EXPANSION_HINT if hook_common.has_shell_expansion(command) else ""

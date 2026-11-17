@@ -741,8 +741,8 @@ def test_move_never_tests_routines_and_deploys_only_what_test_routines_proved() 
     assert "Routine proof (optional)" not in _text()
     routines = _flat(_text().split("**Routines.**", 1)[1].split("**Triggers enable.**", 1)[0])
     for needed in ("`proof_line` verbatim", "`held_back_routines`", "`not_tested`, `not_proved`, "
-                   "`needs_attention`, `depends_on_held` for one that calls a held routine, "
-                   "or `repaired_not_deployed` for one a model repaired", "`/test-routines` (`test_with`)",
+                   "`needs_attention`, `depends_on_held`", "or `rebuild_differs` for a "
+                   "model-repaired routine", "`/test-routines` (`test_with`)",
                    "`/move` never tests routines itself"):  # fmt: skip
         assert needed in routines, needed
     gate = _flat(_text().split("**Gate.**", 1)[1].split("**Verify (optional).**", 1)[0])
