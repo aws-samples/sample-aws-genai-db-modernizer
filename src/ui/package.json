@@ -73,6 +73,9 @@
     "serve": "^14.2.6"
   },
   "jest": {
+    "transformIgnorePatterns": [
+      "node_modules/(?!(@cloudscape-design)/)"
+    ],
     "moduleNameMapper": {
       "^react-router/dom$": "<rootDir>/node_modules/react-router/dist/development/dom-export.js"
     }

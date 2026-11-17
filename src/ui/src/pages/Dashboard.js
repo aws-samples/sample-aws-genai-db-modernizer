@@ -83,6 +83,9 @@ const ComponentPage = memo(() => {
   // True while the last load of the assessments or the stats failed (#2306).
   const [loadFailed, setLoadFailed] = useState(false);
   const loadFailedRef = useRef(false);
+  // Which call failed: a failed call's old figures are hidden, not left beside the alert.
+  const [assessmentsFailed, setAssessmentsFailed] = useState(false);
+  const [statsFailed, setStatsFailed] = useState(false);
   const [loading, setLoading] = useState(true);
   const [initialLoad, setInitialLoad] = useState(true);
 
@@ -161,8 +164,13 @@ const ComponentPage = memo(() => {
             // Handle assessments response
             if (!results['get-assessments']?.success) {
               // One alert with a retry covers this (#2306); the request URL never reaches the reader.
-              failed = true
-            } else if (results['get-assessments']?.success) {
+              failed = true;
+              // The old rows would sit beside "did not load": show none, and no count.
+              setAssessments([]);
+              setSelectedItems([]);
+              setAssessmentsFailed(true);
+            } else {
+              setAssessmentsFailed(false);
               const newAssessments = results['get-assessments'].assessments || [];
               setAssessments(newAssessments);
 
@@ -193,8 +201,10 @@ const ComponentPage = memo(() => {
 
             // Handle dashboard stats response
             if (!results['get-dashboard-stats']?.success) {
-              failed = true
-            } else if (results['get-dashboard-stats']?.success) {
+              failed = true;
+              setStatsFailed(true);
+            } else {
+              setStatsFailed(false);
               const stats = results['get-dashboard-stats'];
               setDashboardStats({
                 total_assessments: stats.total_assessments ?? null,
@@ -530,13 +540,13 @@ const ComponentPage = memo(() => {
   //-- not loaded is a loading indicator or a dash, never 0; the values are
   //-- formatted by utils/format.js and computed by the API (ADR-032).
   const statValue = useCallback((format) => {
-    if (dashboardStats === null) {
+    if (dashboardStats === null || statsFailed) {
       return loading
         ? <StatusIndicator type="loading">{t("common.labels.loading")}</StatusIndicator>
         : NO_FIGURE;
     }
-    return format(dashboardStats);
-  }, [dashboardStats, loading, t]);
+    return <Box variant="awsui-value-large">{format(dashboardStats)}</Box>;
+  }, [dashboardStats, statsFailed, loading, t]);
 
   const statusItems = useMemo(() => [
         { label: t("dashboard.status.total-analyses"), value: statValue(s => formatCount(s.total_assessments)) },
@@ -577,7 +587,8 @@ const ComponentPage = memo(() => {
       visibleContent={visibleTableColumns}
       dataset={tableItems}
       loading={loading}
-      emptyState={loadFailed
+      showCount={!loading && !assessmentsFailed}
+      emptyState={assessmentsFailed
         ? <EmptyState title={t("dashboard.table.unavailable")} />
         : (
           <EmptyState
@@ -606,7 +617,7 @@ const ComponentPage = memo(() => {
         </ButtonDropdown>
       }
     />
-  ), [t, tableColumnsList, visibleTableColumns, tableItems, loading, loadFailed, handleSelectionChange, selectedItems, actionItems, handleActionsClick]);
+  ), [t, tableColumnsList, visibleTableColumns, tableItems, loading, assessmentsFailed, handleSelectionChange, selectedItems, actionItems, handleActionsClick]);
 
 
 
@@ -671,13 +682,16 @@ const ComponentPage = memo(() => {
 
 
                       {loadFailed && (
-                        <Alert
-                          type="error"
-                          header={t("dashboard.error.title")}
-                          action={<Button onClick={gatherDashboardData}>{t("common.actions.retry")}</Button>}
-                        >
-                          {t("dashboard.error.body")}
-                        </Alert>
+                        // Cloudscape's Alert has no live region; this wrapper makes screen readers announce it.
+                        <div role="alert">
+                          <Alert
+                            type="error"
+                            header={t("dashboard.error.title")}
+                            action={<Button loading={loading} onClick={gatherDashboardData}>{t("common.actions.retry")}</Button>}
+                          >
+                            {t("dashboard.error.body")}
+                          </Alert>
+                        </div>
                       )}
 
                     <Container
