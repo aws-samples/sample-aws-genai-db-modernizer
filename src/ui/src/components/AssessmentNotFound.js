@@ -5,6 +5,7 @@ import { useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { useNavigate } from 'react-router-dom';
 import AppLayoutToolbar from '@cloudscape-design/components/app-layout';
+import useLayoutAriaLabels from '../hooks/useLayoutAriaLabels';
 import BreadcrumbGroup from '@cloudscape-design/components/breadcrumb-group';
 import Box from '@cloudscape-design/components/box';
 import Button from '@cloudscape-design/components/button';
@@ -20,6 +21,7 @@ import { SideNavigationConfigurations } from '../config/GlobalConfigurations';
 // ends on the page the reader is on.
 export function JobRouteShell({ lastCrumb, children }) {
   const { t } = useTranslation();
+  const layoutAriaLabels = useLayoutAriaLabels();
   const [navigationOpen, setNavigationOpen] = useState(false);
   return (
     <>
@@ -27,6 +29,7 @@ export function JobRouteShell({ lastCrumb, children }) {
         <AppHeader />
       </div>
       <AppLayoutToolbar
+        ariaLabels={layoutAriaLabels}
         headerSelector="#top-nav"
         navigationOpen={navigationOpen}
         onNavigationChange={({ detail }) => setNavigationOpen(detail.open)}

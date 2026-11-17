@@ -48,9 +48,6 @@ code {
   --dbm-accent-blue: #0972D3;
   --dbm-accent-orange: #ec7211;
   --dbm-accent-green: #1d8102;
-  --dbm-signal-badge-color: #0972D3;
-  --dbm-signal-badge-bg: rgba(9, 114, 211, 0.1);
-  --dbm-signal-badge-muted-color: #5f6b7a;
   --dbm-signal-badge-muted-bg: rgba(0, 0, 0, 0.06);
   /* ProgressState pipeline arrows */
   --ps02-arrow-bg: #d5dbdb;
@@ -76,9 +73,6 @@ code {
   --dbm-accent-blue: #0972D3;
   --dbm-accent-orange: #ec7211;
   --dbm-accent-green: #1d8102;
-  --dbm-signal-badge-color: #89bcf0;
-  --dbm-signal-badge-bg: rgba(9, 114, 211, 0.12);
-  --dbm-signal-badge-muted-color: #879596;
   --dbm-signal-badge-muted-bg: rgba(255, 255, 255, 0.06);
   /* ProgressState pipeline arrows */
   --ps02-arrow-bg: #414d5c;

@@ -219,6 +219,10 @@ def _settled_sections(page: Page, tab: str) -> tuple[list[str], list[str]]:
     taken only after the page and the navigation have held the same sections for
     ``SETTLED_FRAMES`` animation frames and ``SETTLED_QUIET_MS``; a tab that never
     settles fails."""
+    # A section that loads its own data (the assumptions panel) joins the page only when its
+    # request returns, however long a loaded runner takes. A fixed quiet period cannot
+    # tell that wait from a settled page, so the page's data requests must be idle first.
+    page.wait_for_load_state("networkidle", timeout=READY_MS)
     settled = page.evaluate(
         _SETTLED_SECTIONS_JS,
         [TAB_SECTIONS[tab], sorted(UNLISTED_SECTIONS), SETTLED_FRAMES, SETTLED_QUIET_MS, READY_MS],
@@ -1597,6 +1601,28 @@ def test_results_page_on_this_page_lists_the_open_tabs_sections(
     assert listed_any, "no tab of any job lists two sections"
 
 
+def test_settled_sections_wait_for_a_slow_assumptions_request(
+    page: Page, ui: str, all_runs: list[PipelineResult]
+) -> None:
+    """#2394: the assumptions panel loads its own data, so on a loaded runner it joins the
+    Summary tab long after the page's other sections. The settle helper must wait for that
+    request, not for a quiet period: with the request held for 3 s, the panel is still in
+    the settled snapshot and in the On this page links."""
+    page.set_viewport_size({"width": 1440, "height": 900})
+
+    def slow(route: playwright.sync_api.Route) -> None:
+        page.wait_for_timeout(3000)
+        route.continue_()
+
+    page.route("**/assumptions", slow)
+    r = all_runs[0]
+    page.goto(f"{ui}/analysis/results/{r.job_id}")
+    _loaded(page, r)
+    present, listed = _settled_sections(page, "summary")
+    assert "assumptions-panel" in present, present
+    assert "assumptions-panel" in listed, listed
+
+
 def test_an_old_results_anchor_opens_its_sections_tab(
     page: Page, ui: str, all_runs: list[PipelineResult]
 ) -> None:
@@ -2040,6 +2066,92 @@ def test_results_page_has_no_moderate_or_worse_accessibility_violations(
                 if v.get("impact") in BLOCKING_IMPACTS
             }
             assert blocking == [], (r.job_id, r.db, tab, blocking, where)
+
+
+def _axe_blocking(page: Page) -> tuple[list[str], dict[str, list[tuple[str, str]]], list[str]]:
+    """Axe's blocking violation ids, the first targets of each, and the minor ids."""
+    from axe_playwright_python.sync_playwright import Axe
+
+    violations = Axe().run(page).response["violations"]
+    blocking = [v["id"] for v in violations if v.get("impact") in BLOCKING_IMPACTS]
+    minor = [v["id"] for v in violations if v.get("impact") not in BLOCKING_IMPACTS]
+    where = {
+        v["id"]: [
+            (n.get("html", "")[:160], ((n.get("any") or [{}])[0]).get("message", ""))
+            for n in v.get("nodes", [])
+        ][:5]
+        for v in violations
+        if v.get("impact") in BLOCKING_IMPACTS
+    }
+    return blocking, where, minor
+
+
+@pytest.mark.parametrize("width", [1440, 390])
+def test_job_pages_have_no_accessibility_violations(
+    page: Page, ui: str, all_runs: list[PipelineResult], width: int
+) -> None:
+    """#2312: the dashboard, the new-assessment form, the progress page and the per-query
+    assignment review (with its first row expanded) have named navigation toggles, a
+    labelled selection column, readable signal chips and no duplicate landmarks, at a
+    desktop and a phone width. The deterministic jobs' triage signals name no engine, so
+    the chips axe sees here are the neutral grey ones; the engine-coloured pairs are
+    checked on the rendered chips in src/ui/src/components/__tests__/SignalChips.test.js."""
+    page.set_viewport_size({"width": width, "height": 900})
+    # An alert fades in; axe must not read its text mid-fade.
+    page.emulate_media(reduced_motion="reduce")
+    r = all_runs[0]
+    page.goto(f"{ui}/dashboard")
+    expect(page.get_by_text(r.job_id).or_(page.get_by_text(r.db)).first).to_be_visible(
+        timeout=READY_MS
+    )
+    scans = {"dashboard": _axe_blocking(page)}
+
+    page.goto(f"{ui}/analysis/create")
+    expect(page.get_by_role("heading", name=re.compile("Create|New", re.I)).first).to_be_visible(
+        timeout=READY_MS
+    )
+    scans["create"] = _axe_blocking(page)
+
+    page.goto(f"{ui}/analysis/monitor/summary/{r.job_id}")
+    page.wait_for_load_state("networkidle")
+    scans["progress"] = _axe_blocking(page)
+
+    page.goto(f"{ui}/analysis/assignments/{r.job_id}")
+    expect(page.get_by_text(f"Your {r.db} workload").first).to_be_visible(timeout=READY_MS)
+    page.get_by_role("button", name=re.compile("Review in detail")).click()
+    rows = page.locator(".query-list-row__summary")
+    expect(rows.first).to_be_visible(timeout=READY_MS)
+    # Every row on the page, so each kind of detail (patterns, signals, optimization
+    # notes) is scanned, not only the first row's.
+    for i in range(rows.count()):
+        rows.nth(i).click()
+    expect(page.locator(".query-list-row__detail").first).to_be_visible(timeout=READY_MS)
+    # A row's panel fades in; axe reads a blended text colour mid-fade and reports a
+    # contrast failure that is not there once it settles. Wait for every animation.
+    page.evaluate("Promise.all(document.getAnimations().map((a) => a.finished))")
+    scans["assignments"] = _axe_blocking(page)
+    print(f"\naxe blocking at {width}px: " + str({k: v[0] for k, v in scans.items()}))
+    failures = {k: (v[0], v[1]) for k, v in scans.items() if v[0]}
+    assert failures == {}, (width, failures)
+    if width == 390:
+        # The list scrolls inside its own region; the page is never wider than the screen.
+        assert page.evaluate("document.documentElement.scrollWidth <= window.innerWidth + 1")
+        region = page.locator(".query-list-scroll")
+        assert region.evaluate("el => el.scrollWidth > el.clientWidth")
+
+    page.goto(f"{ui}/dashboard")
+    expect(page.locator("table").first).to_be_visible(timeout=READY_MS)
+    assert "empty-table-header" not in scans["dashboard"][2]
+    # Each row's radio says what it selects, and sort labels use the column's header.
+    radios = page.locator("table input[type=radio]")
+    expect(radios.first).to_be_attached(timeout=READY_MS)
+    for i in range(radios.count()):
+        assert (radios.nth(i).get_attribute("aria-label") or "").startswith("Select ")
+    sort_labels = page.locator("table th [aria-label$='sorted.']").evaluate_all(
+        "els => els.map(e => e.getAttribute('aria-label'))"
+    )
+    assert "Job ID, not sorted." in sort_labels, sort_labels
+    assert not [lbl for lbl in sort_labels if lbl.startswith(("jobId", "databaseName"))]
 
 
 def test_results_page_has_no_accessibility_violations_with_an_earlier_path_picked(

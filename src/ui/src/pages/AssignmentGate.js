@@ -8,6 +8,7 @@ import { useTranslation } from 'react-i18next';
 
 //##-- Cloudscape
 import AppLayoutToolbar from "@cloudscape-design/components/app-layout";
+import useLayoutAriaLabels from '../hooks/useLayoutAriaLabels';
 import ProseText from '../components/ProseText';
 import { CardBox } from '../components/StyledBlocks';
 import BreadcrumbGroup from "@cloudscape-design/components/breadcrumb-group";
@@ -32,7 +33,7 @@ import Tabs from "@cloudscape-design/components/tabs";
 import ExpandableSection from "@cloudscape-design/components/expandable-section";
 
 //##-- Custom
-import { SideNavigationConfigurations } from "../config/GlobalConfigurations";
+import { SideNavigationConfigurations, paginationLabels } from "../config/GlobalConfigurations";
 import AppHeader from "../components/AppHeader";
 import SummaryFallbackNotice from "../components/SummaryFallbackNotice";
 import PendingEngineChoices from "../components/PendingEngineChoices";
@@ -51,6 +52,7 @@ import {
 import { sourceEngineOf } from "../utils/sqlLocking";
 import { ENGINE_STYLES, engineHex } from "../utils/engineColors";
 import EngineBadge from "../components/EngineBadge";
+import SignalChips from "../components/SignalChips";
 import { resultsEngineHref, awaitsApproval, synthesisRan } from "../utils/resultsLinks";
 import { getCacheOverlay, ownerDistribution, getQueryCacheInfo, formatCacheLayerLine, formatCacheReadLine, formatCacheReadsMore, formatCachedByLine, isCacheEngine, buildOverrideList, addCacheOverlayNode } from "../utils/cacheLayer";
 import { summaryFallbackInfo } from "../utils/summaryFallback";
@@ -126,6 +128,7 @@ const AssignmentGatePage = memo(() => {
   const { jobId } = useParams();
   const navigate = useNavigate();
   const { t } = useTranslation();
+  const layoutAriaLabels = useLayoutAriaLabels();
 
   // ---- State ----
   const [navigationOpen, setNavigationOpen] = useState(false);
@@ -797,6 +800,7 @@ const AssignmentGatePage = memo(() => {
       <>
         <AppHeader />
         <AppLayoutToolbar
+          ariaLabels={layoutAriaLabels}
           navigationOpen={navigationOpen}
           onNavigationChange={({ detail }) => setNavigationOpen(detail.open)}
           breadcrumbs={<BreadcrumbGroup items={breadcrumbItems} />}
@@ -1089,6 +1093,7 @@ const AssignmentGatePage = memo(() => {
               <Pagination
                 currentPageIndex={currentPage}
                 pagesCount={Math.ceil(filteredQueries.length / PAGE_SIZE)}
+                ariaLabels={paginationLabels}
                 onChange={({ detail }) => setCurrentPage(detail.currentPageIndex)}
               />
             }
@@ -1139,6 +1144,14 @@ const AssignmentGatePage = memo(() => {
             }}
           />
 
+          {/* #2312: the list scrolls inside this region, so the page is never wider than the screen. */}
+          <div
+            className="query-list-scroll"
+            role="region"
+            tabIndex={0}
+            aria-label={t('assignment-gate.table.scroll-region')}
+          >
+          <div className="query-list">
           {/* Column headers */}
           <div className="query-list-header">
             <div className="query-list-col query-list-col--query">{t('assignment-gate.table.col-query')}</div>
@@ -1259,20 +1272,7 @@ const AssignmentGatePage = memo(() => {
                     </div>
                     <div className="query-list-col query-list-col--signals">
                       {signals.length > 0 ? (
-                        <span className="signal-badges">
-                          {signals.map((sig, i) => (
-                            <span
-                              key={i}
-                              className="signal-badge"
-                              style={sig.engine ? {
-                                color: engineHex(sig.engine),
-                                background: `${engineHex(sig.engine)}20`,
-                              } : undefined}
-                            >
-                              {sig.signal.replace(/_/g, ' ')}
-                            </span>
-                          ))}
-                        </span>
+                        <SignalChips signals={signals} />
                       ) : '-'}
                     </div>
                     <div className="query-list-col query-list-col--reason">
@@ -1357,6 +1357,8 @@ const AssignmentGatePage = memo(() => {
               );
             })
           )}
+          </div>
+          </div>
 
         </SpaceBetween>
       </Container>
@@ -1390,6 +1392,7 @@ const AssignmentGatePage = memo(() => {
     <>
       <AppHeader />
       <AppLayoutToolbar
+        ariaLabels={layoutAriaLabels}
         disableContentPaddings={false}
         navigationOpen={navigationOpen}
         onNavigationChange={({ detail }) => setNavigationOpen(detail.open)}
@@ -1408,6 +1411,7 @@ const AssignmentGatePage = memo(() => {
               <Flashbar
                 items={flashbarItems.map(item => ({
                   ...item,
+                  dismissLabel: t('common.actions.dismiss'),
                   onDismiss: () => dismissFlash(item.id)
                 }))}
               />
@@ -1418,7 +1422,7 @@ const AssignmentGatePage = memo(() => {
               description=""
               actions={
                 <SpaceBetween direction="horizontal" size="xs">
-                  <Button iconName="refresh" variant="normal" onClick={fetchData} />
+                  <Button iconName="refresh" variant="normal" ariaLabel={t('common.actions.refresh')} onClick={fetchData} />
                   {viewMode === 'summary' ? (
                     <Button variant="normal" onClick={() => setViewMode('advanced')}>
                       {t('assignment-gate.actions.advanced-review')}
