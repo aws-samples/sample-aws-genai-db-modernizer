@@ -7,6 +7,7 @@ import { useNavigate } from 'react-router-dom';
 import { useTranslation } from 'react-i18next';
 //##-- AWS UI Objects
 import AppLayoutToolbar from "@cloudscape-design/components/app-layout";
+import useLayoutAriaLabels from '../hooks/useLayoutAriaLabels';
 import BreadcrumbGroup from "@cloudscape-design/components/breadcrumb-group";
 import Wizard from "@cloudscape-design/components/wizard";
 import SpaceBetween from "@cloudscape-design/components/space-between";
@@ -545,6 +546,7 @@ function DatabaseAnalysisForm() {
 
   //##-- i18n
   const { t } = useTranslation();
+  const layoutAriaLabels = useLayoutAriaLabels();
 
   //##-- Navigation hook
   const navigate = useNavigate();
@@ -1124,6 +1126,7 @@ function DatabaseAnalysisForm() {
     <>
       <AppHeader />
       <AppLayoutToolbar
+        ariaLabels={layoutAriaLabels}
         breadcrumbs={
           <BreadcrumbGroup
             items={[

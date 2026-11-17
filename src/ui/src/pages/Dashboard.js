@@ -7,6 +7,7 @@ import { useTranslation } from 'react-i18next';
 
 //##-- AWS UI Objects
 import AppLayoutToolbar from "@cloudscape-design/components/app-layout";
+import useLayoutAriaLabels from '../hooks/useLayoutAriaLabels';
 import BreadcrumbGroup from "@cloudscape-design/components/breadcrumb-group";
 import SpaceBetween from "@cloudscape-design/components/space-between";
 import Header from "@cloudscape-design/components/header";
@@ -52,6 +53,7 @@ const ASSESSMENTS_SECTION_ID = 'assessments';
 const ComponentPage = memo(() => {
 
   const { t } = useTranslation();
+  const layoutAriaLabels = useLayoutAriaLabels();
 
   //--|#######################| Static Variables Section  |#######################
 
@@ -60,11 +62,11 @@ const ComponentPage = memo(() => {
 
   const tableColumnsList = useMemo(() => {
         return  [
-            {id: 'databaseName', header: t('dashboard.table.col-database'), cell: item => (<Link href={assessmentHref(item.jobId, item.status)} variant="primary">{databaseLabel(item.databaseName, item.jobId)}</Link>), ariaLabel: createLabelFunction('database'), sortingField: 'databaseName'},
-            {id: 'jobId', header: t('dashboard.table.col-job-id'), cell: item => (<SpaceBetween direction="horizontal" size="xxs" alignItems="center"><Box fontFamily="monospace" fontSize="body-s">{item.jobId}</Box><CopyToClipboard variant="icon" textToCopy={item.jobId} copyButtonAriaLabel={copyJobIdLabel(t, item.databaseName, item.jobId)} copySuccessText={t('common.success.copied')} copyErrorText={t('common.errors.copy-failed')} /></SpaceBetween>), ariaLabel: createLabelFunction('jobId'), sortingField: 'jobId'},
-            {id: 'status', header: t('dashboard.table.col-status'), cell: item => (<StatusIndicator type={getStatusType(item.status)}>{item.statusText}</StatusIndicator>), ariaLabel: createLabelFunction('Status'), sortingField: 'status'},
-            {id: 'created', header: t('dashboard.table.col-created'), cell: item => item.created, ariaLabel: createLabelFunction('created'), sortingField: 'created'},
-            {id: 'duration', header: t('dashboard.table.col-duration'), cell: item => item.duration, ariaLabel: createLabelFunction('duration'), sortingField: 'duration'},
+            {id: 'databaseName', header: t('dashboard.table.col-database'), cell: item => (<Link href={assessmentHref(item.jobId, item.status)} variant="primary">{databaseLabel(item.databaseName, item.jobId)}</Link>), ariaLabel: createLabelFunction(t('dashboard.table.col-database')), sortingField: 'databaseName'},
+            {id: 'jobId', header: t('dashboard.table.col-job-id'), cell: item => (<SpaceBetween direction="horizontal" size="xxs" alignItems="center"><Box fontFamily="monospace" fontSize="body-s">{item.jobId}</Box><CopyToClipboard variant="icon" textToCopy={item.jobId} copyButtonAriaLabel={copyJobIdLabel(t, item.databaseName, item.jobId)} copySuccessText={t('common.success.copied')} copyErrorText={t('common.errors.copy-failed')} /></SpaceBetween>), ariaLabel: createLabelFunction(t('dashboard.table.col-job-id')), sortingField: 'jobId'},
+            {id: 'status', header: t('dashboard.table.col-status'), cell: item => (<StatusIndicator type={getStatusType(item.status)}>{item.statusText}</StatusIndicator>), ariaLabel: createLabelFunction(t('dashboard.table.col-status')), sortingField: 'status'},
+            {id: 'created', header: t('dashboard.table.col-created'), cell: item => item.created, ariaLabel: createLabelFunction(t('dashboard.table.col-created')), sortingField: 'created'},
+            {id: 'duration', header: t('dashboard.table.col-duration'), cell: item => item.duration, ariaLabel: createLabelFunction(t('dashboard.table.col-duration')), sortingField: 'duration'},
         ];
 
     }, [t]);
@@ -618,6 +620,11 @@ const ComponentPage = memo(() => {
         variant: "embedded",
         loading: loading,
         wrapLines: true,
+        ariaLabels: {
+          tableLabel: t("dashboard.table.title"),
+          selectionGroupLabel: t("dashboard.table.selection-group"),
+          itemSelectionLabel: (_, item) => t("dashboard.table.select-item", { name: databaseLabel(item.databaseName, item.jobId) }),
+        },
       }}
       tableActions={
         <ButtonDropdown
@@ -642,6 +649,7 @@ const ComponentPage = memo(() => {
     <>
       <AppHeader />
       <AppLayoutToolbar
+        ariaLabels={layoutAriaLabels}
         disableContentPaddings={false}
         navigationOpen={navigationOpen}
         onNavigationChange={({ detail }) => setNavigationOpen(detail.open)}

@@ -18,6 +18,7 @@ import { Navigate, useParams } from 'react-router-dom';
 import { useTranslation } from 'react-i18next';
 
 import AppLayoutToolbar from '@cloudscape-design/components/app-layout';
+import useLayoutAriaLabels from '../hooks/useLayoutAriaLabels';
 import Alert from '@cloudscape-design/components/alert';
 import Box from '@cloudscape-design/components/box';
 import BreadcrumbGroup from '@cloudscape-design/components/breadcrumb-group';
@@ -109,6 +110,7 @@ function startChoices(kind, options, overlays, t) {
 export default function GraphExplorer() {
   const { jobId } = useParams();
   const { t } = useTranslation();
+  const layoutAriaLabels = useLayoutAriaLabels();
   const flag = useGraphExplorerFlag();
   const [navigationOpen, setNavigationOpen] = useState(false);
 
@@ -795,6 +797,7 @@ export default function GraphExplorer() {
         <AppHeader />
       </div>
       <AppLayoutToolbar
+        ariaLabels={layoutAriaLabels}
         // This page only: the explorer is a full-width workspace.
         headerSelector="#graph-explorer-top-nav"
         maxContentWidth={Number.MAX_VALUE}

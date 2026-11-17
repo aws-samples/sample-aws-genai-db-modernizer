@@ -8,6 +8,7 @@ import { useParams, useNavigate } from 'react-router-dom';
 
 //##-- AWS UI Objects
 import AppLayoutToolbar from "@cloudscape-design/components/app-layout";
+import useLayoutAriaLabels from '../hooks/useLayoutAriaLabels';
 import BreadcrumbGroup from "@cloudscape-design/components/breadcrumb-group";
 import SpaceBetween from "@cloudscape-design/components/space-between";
 import Header from "@cloudscape-design/components/header";
@@ -53,6 +54,7 @@ const JobMonitoringSummaryPage = memo(() => {
   const navigate = useNavigate();
 
   const { t } = useTranslation();
+  const layoutAriaLabels = useLayoutAriaLabels();
 
 
   //--|#######################| State Management Section  |#######################
@@ -611,6 +613,7 @@ const JobMonitoringSummaryPage = memo(() => {
     <>
       <AppHeader />
       <AppLayoutToolbar
+        ariaLabels={layoutAriaLabels}
         disableContentPaddings={false}
         navigationOpen={navigationOpen}
         onNavigationChange={({ detail }) => setNavigationOpen(detail.open)}
@@ -631,6 +634,7 @@ const JobMonitoringSummaryPage = memo(() => {
               <Flashbar
                 items={flashbarItems.map(item => ({
                   ...item,
+                  dismissLabel: t("common.actions.dismiss"),
                   onDismiss: () => handleFlashbarDismiss(item.id)
                 }))}
               />
@@ -683,6 +687,7 @@ const JobMonitoringSummaryPage = memo(() => {
                 type="success"
                 header={t("job-summary.alert.complete-header")}
                 dismissible
+                dismissAriaLabel={t("common.actions.dismiss")}
                 onDismiss={() => setCompleteDismissed(true)}
               >
                 {t("job-summary.alert.complete-body")}
@@ -693,7 +698,7 @@ const JobMonitoringSummaryPage = memo(() => {
               variant="h1"
               actions={
                 <SpaceBetween direction="horizontal" size="xs">
-                  <Button iconName="refresh" variant="normal" onClick={handleRefresh} loading={loading} />
+                  <Button iconName="refresh" variant="normal" ariaLabel={t("common.actions.refresh")} onClick={handleRefresh} loading={loading} />
                   {isJobComplete && (
                     <Button variant="primary" href={`/analysis/results/${jobId}`}>
                       {t("job-summary.actions.view-results")}

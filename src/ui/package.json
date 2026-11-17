@@ -5,8 +5,8 @@
   "dependencies": {
     "@aws-amplify/ui-react": "^6.1.0",
     "@cloudscape-design/code-view": "^3.0.142",
-    "@cloudscape-design/component-toolkit": "^1.0.0-beta.167",
-    "@cloudscape-design/components": "^3.0.1311",
+    "@cloudscape-design/component-toolkit": "^1.0.0-beta.194",
+    "@cloudscape-design/components": "^3.0.1417",
     "@cloudscape-design/global-styles": "^1.0.60",
     "aws-amplify": "^6.18.0",
     "cytoscape": "^3.34.4",

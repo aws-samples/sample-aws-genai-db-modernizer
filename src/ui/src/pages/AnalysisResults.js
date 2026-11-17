@@ -8,6 +8,7 @@ import { useTranslation } from 'react-i18next';
 
 //##-- AWS UI Objects
 import AppLayoutToolbar from "@cloudscape-design/components/app-layout";
+import useLayoutAriaLabels from "../hooks/useLayoutAriaLabels";
 import ProseText from '../components/ProseText';
 import { CardBox, CodeBlock } from '../components/StyledBlocks';
 import BreadcrumbGroup from "@cloudscape-design/components/breadcrumb-group";
@@ -574,14 +575,7 @@ const AnalysisResultsPage = memo(() => {
     }),
   }), [t]);
 
-  const layoutAriaLabels = useMemo(() => ({
-    navigation: t('analysis-results.layout.navigation'),
-    navigationToggle: t('analysis-results.layout.navigation-toggle'),
-    navigationClose: t('analysis-results.layout.navigation-close'),
-    tools: t('analysis-results.layout.tools'),
-    toolsToggle: t('analysis-results.layout.tools-toggle'),
-    toolsClose: t('analysis-results.layout.tools-close'),
-  }), [t]);
+  const layoutAriaLabels = useLayoutAriaLabels();
 
 
   // ============================================
