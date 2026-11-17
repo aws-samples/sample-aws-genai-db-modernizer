@@ -35,6 +35,14 @@ export function finalEngineCounts(synthesis) {
   return (synthesis && synthesis.reality_check && synthesis.reality_check.after_distribution) || {};
 }
 
+// #2363: the count a results tab shows in its label (facts.results_tab_counts, by tab id), or
+// null when the facts state none (a block saved before them, or a tab with nothing to count).
+export function resultsTabCountOf(synthesis, tabId) {
+  const counts = factsOf(synthesis) && factsOf(synthesis).results_tab_counts;
+  const n = counts && typeof counts === 'object' ? counts[tabId] : null;
+  return Number.isInteger(n) && n >= 0 ? n : null;
+}
+
 // "CRITICAL (3)": the open risks at one severity (facts.open_risks_by_severity
 // omits a severity with none).
 export function openRiskCountAt(synthesis, severity, shownAtSeverity) {

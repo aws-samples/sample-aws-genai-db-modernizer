@@ -5210,6 +5210,15 @@ class ReportFacts(BaseModel):
             "written before it"
         ),
     )
+    results_tab_counts: dict[str, int] | None = Field(
+        None,
+        description=(
+            "The count each results-page tab shows in its label (#2363), by tab id: "
+            "queries (every routed query), plan (the waves) and risks (open risks plus "
+            "trade-offs); a tab with "
+            "nothing to count is left out. None in a report written before it"
+        ),
+    )
     no_engine_in_scope_query_count: int = Field(
         0,
         ge=0,

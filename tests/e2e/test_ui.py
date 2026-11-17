@@ -138,9 +138,9 @@ UNLISTED_SECTIONS = {"unreviewed-moves-note", "engine-choices-note"}
 def _results_tab(page: Page, tab: str) -> Locator:
     """The results page's tab ``tab`` (#2313): a tab of the page's own tab list, not one of
     the tabs inside a section (the risk severities, the Table design's engines)."""
-    return page.get_by_role("tablist", name="Assessment results").get_by_role(
-        "tab", name=RESULTS_TABS[tab], exact=True
-    )
+    # #2363: a tab's label may carry its count, "Queries (107)".
+    label = re.compile(rf"^{re.escape(RESULTS_TABS[tab])}( \([\d,]+\))?$")
+    return page.get_by_role("tablist", name="Assessment results").get_by_role("tab", name=label)
 
 
 def _show_tab(page: Page, tab: str) -> None:
@@ -1470,7 +1470,15 @@ def test_results_page_shows_the_headline_first(
             " & Node.DOCUMENT_POSITION_FOLLOWING)"
         ), r.db
         tabs = page.get_by_role("tablist", name="Assessment results").get_by_role("tab")
-        assert tabs.all_inner_texts() == list(RESULTS_TABS.values()), r.db
+        facts = json.loads((r.artifact_root / r.report["report"]).read_text())["facts"]
+        counts = facts.get("results_tab_counts") or {}
+        # #2363: each label carries the count the facts state for it, and no other.
+        expected = [
+            f"{label} ({counts[tab]:,})" if tab in counts else label
+            for tab, label in RESULTS_TABS.items()
+        ]
+        assert tabs.all_inner_texts() == expected, r.db
+        assert {"queries", "risks"} <= set(counts), r.db
         present_anywhere: set[str] = set()
         for tab in _each_tab(page):
             present, _ = _settled_sections(page, tab)
