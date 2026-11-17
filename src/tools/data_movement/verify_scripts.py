@@ -70,6 +70,7 @@ from typing import Literal
 from src.contracts.lineage_ops import UnsupportedOp
 from src.contracts.transformation_contract import Rule, StepContract
 from src.shared.cutover_message import CUTOVER_DISCLAIMER
+from src.shared.sql_identifiers import quote_identifier
 from src.tools.data_movement.dms_step import contract_tables
 from src.tools.data_movement.source_retention import FAMILY, family_of
 
@@ -283,11 +284,11 @@ def _mysql_text(column: str, target_type: str) -> str:
 
 
 def _pg_ident(name: str) -> str:
-    return '"' + name.replace('"', '""') + '"'
+    return quote_identifier(name, '"')
 
 
 def _mysql_ident(name: str) -> str:
-    return "`" + name.replace("`", "``") + "`"
+    return quote_identifier(name, "`")
 
 
 def _pg_literal(text: str) -> str:

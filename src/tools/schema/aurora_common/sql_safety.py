@@ -15,11 +15,15 @@ model can act on.
 from __future__ import annotations
 
 import re
-import unicodedata
 from collections.abc import Iterable
 from dataclasses import dataclass, field
 
 from src.contracts.aurora_design_delta import IDENTIFIER
+from src.shared.sql_identifiers import (  # noqa: F401 -- re-exported for the DDL writers
+    SqlFragmentError,
+    UnsafeIdentifierError,
+    is_unprintable,
+)
 
 MAX_PREDICATE_LENGTH = 300
 MAX_STATEMENT_LENGTH = 1000
@@ -27,25 +31,16 @@ MAX_STATEMENT_LENGTH = 1000
 _FORBIDDEN_SEQUENCES = ("\n", "\r", "\\", "--", "/*", "*/", ";")
 
 
-class SqlFragmentError(ValueError):
-    """A delta fragment does not match its grammar."""
-
-
-#: Unicode categories no fragment may hold anywhere, literals included (#2381 review): a
-#: control character (NUL cuts a ``psql -f`` line short and leaves a literal open), a
-#: format character (zero-width, bidirectional overrides) or a line or paragraph separator.
-_UNPRINTABLE_CATEGORIES = frozenset({"Cc", "Cf", "Zl", "Zp"})
-
-
-def is_unprintable(character: str) -> bool:
-    """Whether ``character`` is one no fragment, and no SQL comment, may carry."""
-    return unicodedata.category(character) in _UNPRINTABLE_CATEGORIES
+# A fragment, like a quoted name, may hold no control (NUL cuts a ``psql -f`` line short and
+# leaves a literal open), format (zero-width, bidirectional overrides), surrogate, line or
+# paragraph separator character anywhere, literals included (#2381 reviews):
+# ``src.shared.sql_identifiers`` has the one list.
 
 
 def refuse_unprintable(text: str, what: str) -> None:
     """Raise ``SqlFragmentError`` when ``text`` holds a character ``is_unprintable`` names."""
     if any(is_unprintable(ch) for ch in text):
-        raise SqlFragmentError(f"{what}: a control, format or line separator character")
+        raise SqlFragmentError(f"{what}: a control, format, surrogate or line separator character")
 
 
 def resolve_column(columns: list[str], name: str) -> str | None:

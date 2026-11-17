@@ -71,15 +71,28 @@ def _creates_index(ddl: str, name: str) -> list[str]:
 def _unprintable(text: str) -> list[str]:
     """Every control, format or line separator character of ``text`` but its newlines."""
     return [
-        ch for ch in text if ch != "\n" and unicodedata.category(ch) in {"Cc", "Cf", "Zl", "Zp"}
+        ch
+        for ch in text
+        if ch != "\n" and unicodedata.category(ch) in {"Cc", "Cf", "Cs", "Zl", "Zp"}
     ]
 
 
 def _left_out_lines(text: str) -> list[str]:
-    head = text.split("Source indexes not created", 1)
+    head = text.split("Source objects not created", 1)
     if len(head) == 1:
         return []
-    return [ln for ln in head[1].splitlines()[1:] if ln.startswith("-- - ")]
+    """Each listed object's line, its wrapped continuation lines joined to it."""
+    entries: list[str] = []
+    for ln in head[1].splitlines()[1:]:
+        if ln.startswith("-- - "):
+            entries.append(ln)
+        elif not entries:
+            continue  # the heading's own wrapped line
+        elif ln.startswith("-- ") and not ln.startswith("-- - "):
+            entries[-1] += " " + ln[3:]
+        else:
+            break
+    return entries
 
 
 # ---------------------------------------------------------------------------
@@ -93,8 +106,8 @@ def test_an_expression_index_on_a_text_cast_column_is_created_again(tmp_path):
     assert _creates_index(inputs.ddl, "audit_log_lower_msg") == [
         'CREATE INDEX "audit_log_lower_msg" ON "audit_log" ((lower("msg")));'
     ]
-    assert inputs.left_out_indexes == ()
-    assert "Source indexes not created" not in render_ddl(inputs)
+    assert inputs.left_out_objects == ()
+    assert "Source objects not created" not in render_ddl(inputs)
 
 
 def test_a_unique_partial_expression_index_keeps_its_uniqueness_and_predicate(tmp_path):
@@ -146,7 +159,7 @@ def test_an_index_the_ddl_cannot_check_is_listed_not_created(tmp_path, expressio
 
     assert _creates_index(inputs.ddl, "orders_ix") == []
     [line] = _left_out_lines(render_ddl(inputs))
-    assert line.startswith(f"-- - public.orders.orders_ix: {reason}")
+    assert line.startswith(f"-- - index public.orders.orders_ix: {reason}")
 
 
 HOSTILE = [
@@ -178,7 +191,7 @@ def test_hostile_expression_text_is_refused_and_never_reaches_a_file(tmp_path, e
     assert _creates_index(inputs.ddl, "orders_ix") == []
     files = render_files(inputs)
     [line] = _left_out_lines(files["step-1.ddl.sql"])
-    assert line.startswith(f"-- - public.orders.orders_ix: {_OUTSIDE}")
+    assert line.startswith(f"-- - index public.orders.orders_ix: {_OUTSIDE}")
     for text in files.values():
         assert "DROP TABLE" not in text
         assert not _unprintable(text)
@@ -192,7 +205,7 @@ def test_a_hostile_index_name_stays_inside_its_comment_line(tmp_path):
 
     ddl = render_ddl(inputs)
     [line] = _left_out_lines(ddl)
-    assert line.startswith("-- - public.orders.ix DROP TABLE orders; --: ")
+    assert line.startswith("-- - index public.orders.ix DROP TABLE orders; --: ")
     assert not any(re.match(r"\s*DROP", ln) for ln in ddl.splitlines())
 
 
@@ -209,8 +222,10 @@ def test_the_ddl_file_says_which_indexes_it_leaves_and_why(tmp_path):
                                    _ix("orders_lower_note", "lower(note)")])  # fmt: skip
 
     ddl = render_ddl(inputs)
-    assert "The source indexes it cannot create are listed below." in ddl
-    assert [ln.split(":")[0] for ln in _left_out_lines(ddl)] == ["-- - public.orders.orders_flag"]
+    assert "The source objects it cannot create are listed below." in ddl
+    assert [ln.split(":")[0] for ln in _left_out_lines(ddl)] == [
+        "-- - index public.orders.orders_flag"
+    ]
     assert _creates_index(inputs.ddl, "orders_lower_note")
 
 
@@ -221,7 +236,7 @@ def test_a_mysql_functional_index_is_listed_not_created(tmp_path):
     assert "orders_lower_note" not in inputs.ddl
     [line] = _left_out_lines(render_ddl(inputs))
     assert line == (
-        "-- - shop.orders.orders_lower_note: this release recreates PostgreSQL expression "
+        "-- - index shop.orders.orders_lower_note: this release recreates PostgreSQL expression "
         "indexes only."
     )
 
@@ -230,15 +245,17 @@ def test_the_delivery_counts_the_indexes_it_does_not_create(tmp_path):
     store = write_pg_job(tmp_path, indexes={"orders": [_ix("orders_flag", "(note IS NULL)"),
                                                        _ix("orders_lower", "lower(note)")]})  # fmt: skip
 
-    assert write_step1_delivery(store, "shop", "job1")["indexes_not_created"] == 1
+    assert write_step1_delivery(store, "shop", "job1")["objects_not_created"] == 1
 
 
 def test_a_bundle_carries_the_indexes_its_ddl_does_not_create():
-    left_out = {"table_id": "public.orders", "index_name": "orders_flag", "reason": "a reason"}
+    left_out = {"table_id": "public.orders", "name": "orders_flag", "reason": "a reason"}
     bundle = make_bundle("aurora_postgresql").model_dump()
-    inputs = bundle_inputs(DmsStepBundle.model_validate({**bundle, "left_out_indexes": [left_out]}))
+    inputs = bundle_inputs(DmsStepBundle.model_validate({**bundle, "left_out_objects": [left_out]}))
 
-    assert _left_out_lines(render_ddl(inputs)) == ["-- - public.orders.orders_flag: a reason."]
+    assert _left_out_lines(render_ddl(inputs)) == [
+        "-- - index public.orders.orders_flag: a reason."
+    ]
 
 
 # ---------------------------------------------------------------------------
@@ -264,7 +281,7 @@ def test_an_index_whose_definition_says_more_is_listed_not_created(tmp_path, ext
 
     assert _creates_index(inputs.ddl, "orders_ix") == []
     [line] = _left_out_lines(render_ddl(inputs))
-    assert line.startswith(f"-- - public.orders.orders_ix: {_MORE}")
+    assert line.startswith(f"-- - index public.orders.orders_ix: {_MORE}")
 
 
 def test_an_index_with_no_collected_definition_is_listed_not_created(tmp_path):
@@ -272,7 +289,7 @@ def test_an_index_with_no_collected_definition_is_listed_not_created(tmp_path):
 
     assert _creates_index(inputs.ddl, "orders_ix") == []
     [line] = _left_out_lines(render_ddl(inputs))
-    assert line.startswith(f"-- - public.orders.orders_ix: {_MORE}")
+    assert line.startswith(f"-- - index public.orders.orders_ix: {_MORE}")
 
 
 def test_a_definition_whose_uniqueness_differs_is_listed_not_created(tmp_path):
@@ -281,7 +298,7 @@ def test_a_definition_whose_uniqueness_differs_is_listed_not_created(tmp_path):
 
     assert _creates_index(inputs.ddl, "orders_ix") == []
     [line] = _left_out_lines(render_ddl(inputs))
-    assert line.startswith(f"-- - public.orders.orders_ix: {_MORE}")
+    assert line.startswith(f"-- - index public.orders.orders_ix: {_MORE}")
 
 
 # ---------------------------------------------------------------------------
@@ -291,13 +308,15 @@ def test_a_definition_whose_uniqueness_differs_is_listed_not_created(tmp_path):
 
 @pytest.mark.parametrize("separator", ["\u2028", "\u2029", "\x85", "\u202e", "\x0b", "\x00"])
 def test_a_bundle_reason_with_a_line_separator_stays_on_its_comment_line(separator):
-    left_out = {"table_id": "public.orders", "index_name": "orders_flag",
+    left_out = {"table_id": "public.orders", "name": "orders_flag",
                 "reason": f"a reason{separator}DROP TABLE orders"}  # fmt: skip
     bundle = make_bundle("aurora_postgresql").model_dump()
-    inputs = bundle_inputs(DmsStepBundle.model_validate({**bundle, "left_out_indexes": [left_out]}))
+    inputs = bundle_inputs(DmsStepBundle.model_validate({**bundle, "left_out_objects": [left_out]}))
 
     ddl = render_ddl(inputs)
-    assert _left_out_lines(ddl) == ["-- - public.orders.orders_flag: a reason DROP TABLE orders."]
+    assert _left_out_lines(ddl) == [
+        "-- - index public.orders.orders_flag: a reason DROP TABLE orders."
+    ]
     assert not _unprintable(ddl)
 
 
@@ -325,3 +344,65 @@ def test_a_plain_partial_index_with_a_printable_predicate_keeps_it(tmp_path):
 
     [statement] = _creates_index(inputs.ddl, "orders_open")
     assert statement.endswith("WHERE ( \"note\" = 'caf\u00e9' );")
+
+
+# ---------------------------------------------------------------------------
+# A name no SQL file may carry (#2381 review 2)
+# ---------------------------------------------------------------------------
+
+_UNSAFE_NAME = "its name holds a control, format, surrogate or line separator character"
+
+
+@pytest.mark.parametrize("bad", ["\x00", "\u2028", "\u202e", "\ud800"])
+def test_a_recreated_index_with_an_unsafe_name_is_listed_not_created(tmp_path, bad):
+    inputs = _pg(
+        tmp_path, orders=[_ix(f"a{bad} tail", "lower(note)"), _ix("SELECT 1", "lower(note)")]
+    )
+
+    files = render_files(inputs)
+    assert not any(_unprintable(t) for t in files.values())
+    assert _creates_index(inputs.ddl, "SELECT 1")
+    [line] = _left_out_lines(files["step-1.ddl.sql"])
+    assert line.startswith(f"-- - index public.orders.a tail: {_UNSAFE_NAME}")
+
+
+@pytest.mark.parametrize("bad", ["\x00", "\u2028", "\u202e", "\ud800"])
+def test_a_plain_index_with_an_unsafe_name_is_listed_not_created(tmp_path, bad):
+    plain = [{"index_name": f"a{bad} tail", "columns": ["note"], "is_unique": False},
+             {"index_name": "SELECT 1", "columns": ["note"], "is_unique": False}]  # fmt: skip
+    inputs = _pg(tmp_path, orders=plain)
+
+    files = render_files(inputs)
+    assert not any(_unprintable(t) for t in files.values())
+    assert _creates_index(inputs.ddl, "SELECT 1")
+    [line] = _left_out_lines(files["step-1.ddl.sql"])
+    assert line.startswith(f"-- - index public.orders.a tail: {_UNSAFE_NAME}")
+
+
+@pytest.mark.parametrize("bad", ["\x00", "\u2028", "\u202e"])
+def test_a_column_with_an_unsafe_name_is_listed_not_created(tmp_path, bad):
+    extra = {"column_name": f"no{bad}te2", "data_type": "text", "nullable": True,
+             "ordinal_position": 4}  # fmt: skip
+    store = write_pg_job(tmp_path, columns={"orders": [extra]})
+    inputs = load_step1(store, "shop", "job1")
+
+    files = render_files(inputs)
+    assert not any(_unprintable(t) for t in files.values())
+    # The contract finds no target column for it and blocks its table, which is listed.
+    ddl = files["step-1.ddl.sql"]
+    assert 'CREATE TABLE "orders"' not in inputs.ddl
+    assert "-- - public.orders: " in ddl and "no te2 has no column in the Aurora DDL" in ddl
+
+
+@pytest.mark.parametrize(
+    "expressions, extra",
+    [("COALESCE(note, 'x\ud800')", {}), ("lower(note)", {"predicate": "(note = 'a\ud800')"})],
+    ids=["literal", "predicate"],
+)
+def test_a_lone_surrogate_is_refused_by_both_grammars(tmp_path, expressions, extra):
+    inputs = _pg(tmp_path, orders=[_ix("orders_ix", expressions, **extra)])
+
+    assert _creates_index(inputs.ddl, "orders_ix") == []
+    files = render_files(inputs)  # a surrogate in a file would not even encode
+    assert not any(_unprintable(t) for t in files.values())
+    assert _left_out_lines(files["step-1.ddl.sql"])

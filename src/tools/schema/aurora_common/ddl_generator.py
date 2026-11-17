@@ -27,6 +27,12 @@ from src.contracts.schema_design_input import (
     ForeignKeyAction,
 )
 from src.shared.engine_names import display_engine
+from src.shared.sql_identifiers import (
+    UNSAFE_NAME_REASON,
+    UnsafeIdentifierError,
+    has_unprintable,
+    quote_identifier,
+)
 from src.tools.schema.aurora_common.constraint_translator import (
     DefaultTranslation,
     fk_on_delete_clause,
@@ -61,8 +67,10 @@ class Dialect:
     backslash_escapes: bool = False  # MySQL string literals treat \ as an escape
 
     def q(self, identifier: str) -> str:
-        c = self.quote_char
-        return c + identifier.replace(c, c + c) + c
+        """``identifier`` quoted, or ``UnsafeIdentifierError`` for a name holding a control,
+        format, surrogate or line separator character (#2381 review 2): ``_generate`` then
+        leaves its object out with ``UNSAFE_NAME_REASON``."""
+        return quote_identifier(identifier, self.quote_char)
 
 
 POSTGRES = Dialect(
@@ -143,6 +151,10 @@ class DdlResult:
     # identity column, #156) or "time_zone" (a time-zone-aware type mapped to
     # one without, app-layer).
     column_notes: list[dict] = field(default_factory=list)
+    # Source objects the draft does not create because their name cannot be quoted into SQL
+    # (#2381 review 2, ``sql_identifiers``): {"table", "kind", "name", "reason"}, ``kind`` one
+    # of table, column, primary key, index, foreign key. Never written into the DDL.
+    left_out: list[dict] = field(default_factory=list)
 
 
 def excerpt(text: str, limit: int = 80) -> str:
@@ -936,7 +948,7 @@ def comment_name(table_name: str, index_name: str) -> str:
     separator replaced by a space, then the whitespace collapsed, so the comment is one
     line and nothing after it is part of it. A saved design's comment is checked against
     this (#2199)."""
-    return " ".join(_COMMENT_UNSAFE.sub(" ", f"{table_name}.{index_name}").split())
+    return comment_text(_COMMENT_UNSAFE.sub(" ", f"{table_name}.{index_name}"))
 
 
 def comment_text(text: str) -> str:
@@ -1090,8 +1102,8 @@ def _index_sql(
             if plan.defaulted or plan.shrunk:
                 notes.append(_key_prefix_note(table.table_name, idx.index_name, plan, unique))
                 unique = False  # a UNIQUE prefix index would reject rows the source accepts
-        statements.append(
-            render_index(
+        try:
+            statement = render_index(
                 dialect,
                 table.table_name,
                 idx.index_name,
@@ -1104,8 +1116,25 @@ def _index_sql(
                 where_sql=where_sql,
                 prefix_lengths=prefixes,
             )
-        )
+        except UnsafeIdentifierError:
+            # One statement per carried index still (``delta_merge`` zips them by name).
+            statement = _unsafe_index_comment(table.table_name, idx.index_name)
+            notes.append(
+                {"table": table.table_name, "index": idx.index_name,
+                 "kind": "unsafe_name", "reason": UNSAFE_NAME_REASON}
+            )  # fmt: skip
+        statements.append(statement)
     return statements
+
+
+def _unsafe(table: str, kind: str, name: str) -> dict:
+    """A left-out object's record: the names as collected (``DdlResult.left_out`` readers
+    clean them before writing a comment), the fixed reason."""
+    return {"table": table, "kind": kind, "name": name, "reason": UNSAFE_NAME_REASON}
+
+
+def _unsafe_index_comment(table_name: str, index_name: str) -> str:
+    return f"-- Index {comment_name(table_name, index_name)} not created: {UNSAFE_NAME_REASON}."
 
 
 def _prefix_suffix(prefix_lengths: list[int | None] | None, pos: int) -> str:
@@ -1175,6 +1204,8 @@ def recreated_expression_index(
     order, a collation, NULLS NOT DISTINCT or storage parameters, which the expression
     text does not carry (#2381 review).
     """
+    if has_unprintable(idx.index_name) or has_unprintable(table_name):
+        return None, UNSAFE_NAME_REASON
     if idx.columns or idx.included_columns:
         return None, "this release does not recreate indexes that mix columns and expressions"
     if index_method(idx) not in (None, "btree"):
@@ -1208,11 +1239,11 @@ def recreated_expression_index(
             "parameters), which this release does not recreate"
         )
     keys_sql = ", ".join(f"({k})" for k in keys)
-    return (
-        f"CREATE {'UNIQUE ' if unique else ''}INDEX {POSTGRES.q(idx.index_name)} ON "
-        f"{POSTGRES.q(table_name)} ({keys_sql}){where};",
-        None,
-    )
+    try:
+        name, table = POSTGRES.q(idx.index_name), POSTGRES.q(table_name)
+    except UnsafeIdentifierError:
+        return None, UNSAFE_NAME_REASON
+    return f"CREATE {'UNIQUE ' if unique else ''}INDEX {name} ON {table} ({keys_sql}){where};", None
 
 
 _INDEX_DEF_HEAD = re.compile(r"CREATE (?P<unique>UNIQUE )?INDEX ")
@@ -1244,20 +1275,24 @@ def _definition_is_only(idx: AgentIndex, unique: bool) -> bool:
     )
 
 
-def _fk_sql(table: AgentTable, dialect: Dialect) -> list[str]:
+def _fk_sql(table: AgentTable, dialect: Dialect, left_out: list[dict] | None = None) -> list[str]:
     statements: list[str] = []
     for fk in table.foreign_keys or []:
-        statements.append(
-            render_foreign_key(
-                dialect,
-                table.table_name,
-                fk.constraint_name,
-                fk.columns,
-                fk.referenced_table,
-                fk.referenced_columns,
-                fk.on_delete,
+        try:
+            statements.append(
+                render_foreign_key(
+                    dialect,
+                    table.table_name,
+                    fk.constraint_name,
+                    fk.columns,
+                    fk.referenced_table,
+                    fk.referenced_columns,
+                    fk.on_delete,
+                )
             )
-        )
+        except UnsafeIdentifierError:
+            if left_out is not None:
+                left_out.append(_unsafe(table.table_name, "foreign key", fk.constraint_name))
     return statements
 
 
@@ -1337,7 +1372,13 @@ def _generate(
     overrides = type_overrides or {}
     family = classify_type_family(source_engine)
 
-    for table in tables:
+    left_out: list[dict] = []
+    for source_table in tables:
+        if has_unprintable(source_table.table_name):
+            left_out.append(_unsafe(source_table.table_name, "table", source_table.table_name))
+            table_ddls.append(_unsafe_table(source_table, dialect))
+            continue
+        table = _without_unsafe_columns(source_table, left_out)
         keyed = (
             _constraint_columns(table)
             if family in _NATIVE_KEY_FAMILIES
@@ -1365,9 +1406,12 @@ def _generate(
                 columns=columns,
                 create_sql=_create_table_sql(table, columns, dialect, notes),
                 index_sql=_index_sql(table, dialect, notes, columns),
-                fk_sql=_fk_sql(table, dialect),
+                fk_sql=_fk_sql(table, dialect, left_out),
             )
         )
+    left_out += [
+        _unsafe(n["table"], "index", n["index"]) for n in notes if n.get("kind") == "unsafe_name"
+    ]
 
     return DdlResult(
         tables=table_ddls,
@@ -1375,7 +1419,83 @@ def _generate(
         residuals=residuals,
         index_notes=notes,
         column_notes=column_notes,
+        left_out=left_out,
     )
+
+
+def _unsafe_table(table: AgentTable, dialect: Dialect) -> TableDDL:
+    """A table whose name cannot be quoted: no CREATE TABLE, one comment in place of each
+    index the draft would carry (``delta_merge`` zips them by name), no foreign key."""
+    name = comment_text(_COMMENT_UNSAFE.sub(" ", table.table_name))
+    return TableDDL(
+        table_name=table.table_name,
+        columns=[],
+        create_sql=f"-- Table {name} not created: {UNSAFE_NAME_REASON}.",
+        index_sql=[
+            _unsafe_index_comment(table.table_name, i.index_name)
+            for i in carried_indexes(table, dialect)
+        ],
+    )
+
+
+def quotable_tables(tables: list[AgentTable]) -> tuple[list[AgentTable], list[dict]]:
+    """``tables`` with every object whose name cannot be quoted into SQL taken out (#2381
+    review 2, ``sql_identifiers``), and each one taken out as a ``DdlResult.left_out``
+    record: a table, a column (and a primary key that names one), an index whose name or
+    columns hold such a character, a foreign key whose name, columns or referenced names do.
+    ``AuroraDesignBase`` applies it once, so the draft, the merge, a saved design's check
+    and step 1 all read the same quotable tables."""
+    out: list[AgentTable] = []
+    left_out: list[dict] = []
+    for source in tables:
+        if has_unprintable(source.table_name):
+            left_out.append(_unsafe(source.table_name, "table", source.table_name))
+            continue
+        table = _without_unsafe_columns(source, left_out)
+        if source.columns and not table.columns:
+            # Every column left out: no CREATE TABLE has anything to declare.
+            left_out.append(
+                {**_unsafe(source.table_name, "table", source.table_name),
+                 "reason": "no column of it has a name SQL may quote: " + UNSAFE_NAME_REASON}
+            )  # fmt: skip
+            continue
+        indexes = []
+        for idx in table.indexes or []:
+            names = [idx.index_name, *idx.columns, *(idx.included_columns or [])]
+            if any(has_unprintable(n) for n in names):
+                left_out.append(_unsafe(table.table_name, "index", idx.index_name))
+            else:
+                indexes.append(idx)
+        fks = []
+        for fk in table.foreign_keys or []:
+            names = [fk.constraint_name, *fk.columns, fk.referenced_table, *fk.referenced_columns]
+            if any(has_unprintable(n) for n in names):
+                left_out.append(_unsafe(table.table_name, "foreign key", fk.constraint_name))
+            else:
+                fks.append(fk)
+        if len(indexes) != len(table.indexes or []) or len(fks) != len(table.foreign_keys or []):
+            table = table.model_copy(
+                update={"indexes": indexes if table.indexes is not None else None,
+                        "foreign_keys": fks or None}
+            )  # fmt: skip
+        out.append(table)
+    return out, left_out
+
+
+def _without_unsafe_columns(table: AgentTable, left_out: list[dict]) -> AgentTable:
+    """``table`` without the columns whose name cannot be quoted, each left out; its
+    primary key too when it names one of them. Its indexes and foreign keys are kept: the
+    one that names such a column is left out where it is rendered."""
+    unsafe = [c for c in table.columns if has_unprintable(c.column_name)]
+    if not unsafe:
+        return table
+    left_out += [_unsafe(table.table_name, "column", c.column_name) for c in unsafe]
+    names = {c.column_name for c in unsafe}
+    update: dict = {"columns": [c for c in table.columns if c.column_name not in names]}
+    if any(c in names for c in table.primary_key or []):
+        left_out.append(_unsafe(table.table_name, "primary key", "PRIMARY KEY"))
+        update["primary_key"] = []
+    return table.model_copy(update=update)
 
 
 def assemble_full_ddl(table_ddls: list[TableDDL]) -> str:

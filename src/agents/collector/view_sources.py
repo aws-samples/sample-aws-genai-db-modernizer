@@ -41,6 +41,8 @@ import json
 from collections.abc import Mapping
 from typing import Any
 
+from src.shared.sql_identifiers import quote_identifier
+
 __all__ = [
     "VIEW_ENGINES",
     "view_body_status",
@@ -100,11 +102,11 @@ def view_columns(row: Mapping[str, Any]) -> list[tuple[str, str | None]] | None:
 
 
 def _pg_ident(name: str) -> str:
-    return '"' + name.replace('"', '""') + '"'
+    return quote_identifier(name, '"')
 
 
 def _mysql_ident(name: str) -> str:
-    return "`" + name.replace("`", "``") + "`"
+    return quote_identifier(name, "`")
 
 
 def _check_clause(row: Mapping[str, Any]) -> str | None:

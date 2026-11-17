@@ -527,16 +527,22 @@ def test_a_skipped_index_comment_on_aurora_postgresql_is_refused(tmp_path: Path)
     _refused(tmp_path, "aurora_postgresql", design, "generated_ddl", "DROP")
 
 
-@pytest.mark.passes_on_main
-@pytest.mark.parametrize("name", ["ix\x7fwide", "ix\x01wide", "ix\x9bwide", "ix wide", "ixé​"])
-def test_a_skipped_index_with_a_control_character_in_its_name_loads(
+@pytest.mark.parametrize(
+    "name", ["ix\x7fwide", "ix\x01wide", "ix\x9bwide", "ix\u2028wide", "ix\u00e9\u200b"]
+)
+def test_an_index_with_a_control_character_in_its_name_is_left_out_and_the_design_loads(
     tmp_path: Path, name: str
 ) -> None:
-    """The generator and the check write the comment's name the same way, so a name with a
-    control character gives a design that loads (and its comment carries none)."""
+    """An index whose name holds a control, format or line separator character is no
+    longer skipped with a comment (#2381 review 2): no SQL file may quote its name, so the
+    draft leaves it out with an app-layer note, and the design still loads."""
     design = _forms(rename=name)
-    [line] = [x for x in design["generated_ddl"].split("\n") if x.startswith("-- Index ")]
-    assert not any(ord(c) < 0x20 or 0x7F <= ord(c) <= 0x9F or c in "  " for c in line)
+    assert not [x for x in design["generated_ddl"].split("\n") if x.startswith("-- Index ")]
+    assert not any(
+        ord(c) < 0x20 and c != "\n" or 0x7F <= ord(c) <= 0x9F for c in design["generated_ddl"]
+    )
+    [note] = [n for n in design["app_layer_notes"] if n["feature"] == "unsafe_name"]
+    assert note["recommendation"].startswith("Index not created: its name holds a control")
     store, key = _store(tmp_path, "aurora_mysql", design)
     assert store.read_json(key) == json.loads(json.dumps(design))
 

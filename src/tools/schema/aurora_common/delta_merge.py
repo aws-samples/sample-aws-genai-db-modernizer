@@ -59,10 +59,12 @@ from src.tools.schema.aurora_common.ddl_generator import (
     _not_created_reason,
     assemble_full_ddl,
     carried_indexes,
+    comment_text,
     generate_mysql_ddl,
     generate_pg_ddl,
     mysql_key_plan,
     pg_method_conflict,
+    quotable_tables,
     render_index,
     rendered_method,
     secondary_indexes,
@@ -115,6 +117,14 @@ class AuroraDesignBase:
     working: an empty log yields no access patterns, which is the same output
     those callers produce today.
     """
+    left_out: list[dict] = field(default_factory=list)
+    """The source objects taken out of ``tables`` because their name cannot be quoted into
+    SQL (#2381 review 2, ``ddl_generator.quotable_tables``), kept across
+    ``dataclasses.replace``. Never written into DDL; each becomes an app-layer note."""
+
+    def __post_init__(self) -> None:
+        self.tables, left_out = quotable_tables(self.tables)
+        self.left_out = [*self.left_out, *left_out]
 
     @property
     def migration_strategy(self) -> str:
@@ -496,6 +506,19 @@ def _drop_index_notes(notes: list[dict], table: str, index: str) -> None:
     ]
 
 
+def _left_out_notes(base: AuroraDesignBase) -> list[dict]:
+    """One app-layer note per source object the draft does not create because its name
+    cannot be quoted into SQL (#2381 review 2); the names cleaned like a comment's."""
+    return [
+        {
+            "feature": "unsafe_name",
+            "source_object": comment_text(f"{o['table']}.{o['name']}"),
+            "recommendation": f"{o['kind'].capitalize()} not created: {o['reason']}.",
+        }
+        for o in base.left_out
+    ]
+
+
 def _index_notes(ddl: DdlResult) -> list[dict]:
     """One deterministic app-layer note per index whose key prefix the draft added, cut or
     that lost its UNIQUE because of one (#1623), so the deliverables say so."""
@@ -768,7 +791,8 @@ def merge_design_delta(
         "app_layer_notes": [n.model_dump(mode="json") for n in contract.app_layer_notes]
         + _time_zone_notes(ddl)
         + _default_notes(ddl)
-        + _index_notes(ddl),
+        + _index_notes(ddl)
+        + _left_out_notes(base),
         "optimizations": [o.model_dump(mode="json") for o in contract.optimizations],
         "trade_offs": trade_offs,
         "validation_passed": not errors,

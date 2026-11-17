@@ -40,7 +40,7 @@ import hashlib
 import json
 import re
 from dataclasses import dataclass
-from typing import Any
+from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field
 
@@ -57,6 +57,7 @@ from src.shared.catalog.dms_sizing import EngineRules, dms_sizing
 from src.shared.contract_versioning import load_contract
 from src.shared.cutover_message import CUTOVER_DISCLAIMER
 from src.shared.engine_names import display_engine
+from src.shared.sql_identifiers import quote_identifier
 from src.tools.data_movement.collations import NOT_CARRIED as COLLATION_NOT_CARRIED
 from src.tools.data_movement.collations import SERVER_DEFAULTS as SERVER_DEFAULTS
 from src.tools.data_movement.collations import (
@@ -138,15 +139,17 @@ class SkippedRule:
     reason: str
 
 
-class LeftOutIndex(BaseModel):
-    """A source index step 1's DDL does not create (#2381), by table id: an expression
-    index it cannot recreate. ``reason`` is the DDL generator's fixed sentence, never
-    collector text."""
+class LeftOutObject(BaseModel):
+    """A source object step 1's DDL does not create (#2381), by table id: an expression
+    index it cannot recreate, or an index, column, primary key or foreign key whose name
+    cannot be quoted into SQL (``sql_identifiers``). ``reason`` is the DDL generator's fixed
+    sentence, never collector text; ``name`` is cleaned before it is written."""
 
     model_config = ConfigDict(extra="forbid", frozen=True)
 
     table_id: str
-    index_name: str
+    kind: Literal["table", "index", "column", "primary key", "foreign key"] = "index"
+    name: str
     reason: str
 
 
@@ -206,7 +209,7 @@ class Step1Inputs:
     # The PostgreSQL enum types the moved columns keep (#1834), by schema and name.
     enum_types: tuple[EnumType, ...] = ()
     # The source indexes the DDL does not create (#2381), sorted by table id and name.
-    left_out_indexes: tuple[LeftOutIndex, ...] = ()
+    left_out_objects: tuple[LeftOutObject, ...] = ()
 
     @property
     def unbounded_varchar(self) -> UnboundedVarchar:
@@ -248,7 +251,7 @@ class DmsStepBundle(BaseModel):
     # The collection's installed extensions, by name (None: not read).
     extensions: list[str] | None = None
     # The source indexes the DDL does not create (#2381).
-    left_out_indexes: list[LeftOutIndex] = Field(default_factory=list)
+    left_out_objects: list[LeftOutObject] = Field(default_factory=list)
 
 
 def _selected(contract: StepContract) -> list[Rule]:
@@ -409,7 +412,7 @@ def bundle_inputs(bundle: DmsStepBundle) -> Step1Inputs:
                     zero_date_defaults=tuple(sorted(set(bundle.zero_date_defaults))),
                     identity_columns=tuple(sorted(set(bundle.identity_columns))),
                     source_objects=bundle.source_objects, extensions=extensions,
-                    left_out_indexes=_sorted_left_out(bundle.left_out_indexes))
+                    left_out_objects=_sorted_left_out(bundle.left_out_objects))
     )  # fmt: skip
 
 
@@ -454,13 +457,13 @@ def _zero_date_defaults(job: Any, contract: StepContract) -> tuple[str, ...]:
     return tuple(sorted(out))
 
 
-def _sorted_left_out(indexes: Any) -> tuple[LeftOutIndex, ...]:
-    return tuple(sorted(indexes, key=lambda i: (i.table_id, i.index_name)))
+def _sorted_left_out(objects: Any) -> tuple[LeftOutObject, ...]:
+    return tuple(sorted(objects, key=lambda i: (i.table_id, i.kind, i.name)))
 
 
 def _expression_indexes(
     base: Any, generated: dict[str, Any], rules: dict[str, Rule], engine: str
-) -> tuple[dict[str, Any], tuple[LeftOutIndex, ...]]:
+) -> tuple[dict[str, Any], tuple[LeftOutObject, ...]]:
     """``generated`` with each moved table's expression indexes the DDL can recreate
     added to its index statements, and the ones it cannot (#2381).
 
@@ -476,7 +479,7 @@ def _expression_indexes(
 
     same_engine = engine == "aurora_postgresql" and base.source_engine == "postgresql"
     out = dict(generated)
-    left_out: list[LeftOutIndex] = []
+    left_out: list[LeftOutObject] = []
     for source in base.tables:
         table = out.get(source.table_name)
         if table is None or source.table_name not in rules:
@@ -490,8 +493,8 @@ def _expression_indexes(
             if statement is not None:
                 added.append(statement)
             else:
-                left_out.append(LeftOutIndex(table_id=rules[source.table_name].source_table,
-                                             index_name=idx.index_name, reason=str(why)))  # fmt: skip
+                left_out.append(LeftOutObject(table_id=rules[source.table_name].source_table,
+                                             name=idx.index_name, reason=str(why)))  # fmt: skip
         if added:
             out[source.table_name] = dataclasses.replace(
                 table, index_sql=[*table.index_sql, *added]
@@ -501,7 +504,7 @@ def _expression_indexes(
 
 def _step1_ddl(
     job: Any, plan: DataMovementPlan, contract: StepContract
-) -> tuple[str, tuple[tuple[str, str], ...], tuple[LeftOutIndex, ...]]:
+) -> tuple[str, tuple[tuple[str, str], ...], tuple[LeftOutObject, ...]]:
     """The DDL of every table step 1 moves: the Aurora DDL generator over the whole
     collector (``step1.design_base``), each column declared as the contract's
     ``target_type``, kept to the moved tables (and foreign keys between them), with the
@@ -530,6 +533,10 @@ def _step1_ddl(
     ]  # fmt: skip
     result = dataclasses.replace(base, tables=tables).generate(overrides)
     generated = {t.table_name: t for t in result.tables}
+    # The objects the generator leaves out for a name it cannot quote (#2381 review 2).
+    unsafe = [LeftOutObject(table_id=rules[o["table"]].source_table, kind=o["kind"],
+                            name=o["name"], reason=o["reason"])
+              for o in [*base.left_out, *result.left_out] if o["table"] in rules]  # fmt: skip
     for name, rule in sorted(rules.items()):
         table = generated.get(name)
         if table is None:
@@ -553,7 +560,11 @@ def _step1_ddl(
         for c in generated[name].columns
         if c.identity
     )
-    return assemble_full_ddl(ordered) + "\n", tuple(identity), left_out
+    return (
+        assemble_full_ddl(ordered) + "\n",
+        tuple(identity),
+        _sorted_left_out([*left_out, *unsafe]),
+    )
 
 
 def _with_collations(table: Any, rule: Rule, engine_line: str | None = None) -> Any:
@@ -644,7 +655,7 @@ def load_step1(store: Any, db: str, job_id: str, *, with_ddl: bool = True) -> St
     return _checked(dataclasses.replace(inputs, ddl=ddl, zero_date_defaults=defaults,
                                         identity_columns=identity, source_objects=objects,
                                         extensions=extensions, enum_types=enums,
-                                        left_out_indexes=left_out))  # fmt: skip
+                                        left_out_objects=left_out))  # fmt: skip
 
 
 def table_mappings(inputs: Step1Inputs) -> dict[str, Any]:
@@ -1601,7 +1612,7 @@ def _not_moved_lines(inputs: Step1Inputs) -> list[str]:
 
 
 def _pg_ident(name: str) -> str:
-    return '"' + name.replace('"', '""') + '"'
+    return quote_identifier(name, '"')
 
 
 def _pg_literal(text: str) -> str:
@@ -1834,8 +1845,8 @@ def render_ddl(inputs: Step1Inputs) -> str:
         "- The indexes of a saved schema design are not in this file: it creates the keys, the source's "
         "indexes and the foreign keys between moved tables only. Add the design's indexes when you choose."
         + (
-            " The source indexes it cannot create are listed below."
-            if inputs.left_out_indexes
+            " The source objects it cannot create are listed below."
+            if inputs.left_out_objects
             else ""
         ),
         f"- DMS keeps its control tables in {CONTROL_SCHEMA} (the task's ControlSchema): the apply "
@@ -1878,6 +1889,9 @@ def render_ddl(inputs: Step1Inputs) -> str:
         head.append("Unsupported fields: none.")
     head += _enum_header_lines(inputs)
     head += _left_out_index_lines(inputs)
+    # Every header line is one comment line, whatever collected text a reason quotes (a
+    # blocked rule's finding names its column, #2381 review 2).
+    head = [_comment_line(line) for line in head]
     out = with_header("", head, "--")
     if pg:
         out += (
@@ -1932,22 +1946,30 @@ def render_ddl(inputs: Step1Inputs) -> str:
     return out
 
 
+def _comment_line(line: str) -> str:
+    """``line`` with each control, format, surrogate and line separator character a space
+    (``sql_identifiers.is_unprintable``); a blank line stays blank."""
+    from src.shared.sql_identifiers import is_unprintable
+
+    return "".join(" " if is_unprintable(ch) else ch for ch in line)
+
+
 def _left_out_index_lines(inputs: Step1Inputs) -> list[str]:
-    """The source indexes this file does not create (#2381), one line each: the name as a
-    skipped-index comment writes it (``comment_name``) and the generator's fixed reason,
-    both cleaned of every control, format and line separator character (``comment_text``),
-    so each stays on its one comment line and no collector expression text reaches the
-    file."""
+    """The source objects this file does not create (#2381), one line each: the kind, the
+    name as a skipped-index comment writes it (``comment_name``) and the generator's fixed
+    reason, both cleaned of every control, format, surrogate and line separator character
+    (``comment_text``), so each stays on its one comment line and no collector expression
+    text reaches the file."""
     from src.tools.schema.aurora_common.ddl_generator import comment_name, comment_text
 
-    if not inputs.left_out_indexes:
+    if not inputs.left_out_objects:
         return []
     return [
-        "Source indexes not created (YOUR DECISION: create them on Aurora if the application needs "
+        "Source objects not created (YOUR DECISION: create them on Aurora if the application needs "
         "them; the source's own definition is in the collection):",
         *(
-            f"- {comment_text(comment_name(i.table_id, i.index_name))}: {comment_text(i.reason)}."
-            for i in inputs.left_out_indexes
+            f"- {o.kind} {comment_text(comment_name(o.table_id, o.name))}: {comment_text(o.reason)}."
+            for o in inputs.left_out_objects
         ),
     ]
 
@@ -2062,6 +2084,6 @@ def write_step1_delivery(store: Any, db: str, job_id: str) -> dict[str, Any]:
         "contract_sha256": inputs.contract_sha256,
         "replica_identity_recommended": len(contract_tables(inputs.contract)) if pg else 0,
         "sequences_to_set": len(moved_identity_columns(inputs)) if pg else 0,
-        "indexes_not_created": len(inputs.left_out_indexes),
+        "objects_not_created": len(inputs.left_out_objects),
         "extensions": [e.name for e in required_extensions(inputs)],
     }

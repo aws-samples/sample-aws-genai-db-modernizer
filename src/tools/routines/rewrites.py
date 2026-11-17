@@ -77,6 +77,7 @@ from src.shared.catalog.routine_rewrites import (
     RoutineRewriteRule,
     routine_rewrite_rules,
 )
+from src.shared.sql_identifiers import UNPRINTABLE_CATEGORIES, quote_identifier
 from src.tools.routines import mysql_checks, postgresql_checks
 from src.tools.routines.mysql_checks import MySqlRoutine
 from src.tools.routines.postgresql_checks import PostgresRoutine
@@ -114,7 +115,7 @@ _PATH_WORDS = frozenset(
 _ROLE_WORDS = frozenset({"role", "authorization"})
 # Characters no name may hold: control characters (C0, DEL, C1) and line or paragraph
 # separators, which would also split a recorded diff line.
-_BAD_CATEGORIES = frozenset({"Cc", "Zl", "Zp"})
+_BAD_CATEGORIES = UNPRINTABLE_CATEGORIES
 _PATH_LANGUAGES = frozenset({"plpgsql", "sql"})
 
 
@@ -307,7 +308,7 @@ def _bad_name(name: str) -> bool:
 
 
 def _backticked(name: str) -> str:
-    return "`" + name.replace("`", "``") + "`"
+    return quote_identifier(name, "`")
 
 
 def _mysql_target(target_user: str) -> tuple[str, str]:
@@ -413,7 +414,7 @@ def _mysql_diff(
 
 
 def _quoted_identifier(name: str) -> str:
-    return '"' + name.replace('"', '""') + '"'
+    return quote_identifier(name, '"')
 
 
 def _valid_name(name: str) -> bool:

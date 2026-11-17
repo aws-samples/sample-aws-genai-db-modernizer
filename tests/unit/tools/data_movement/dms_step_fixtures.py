@@ -203,13 +203,14 @@ def write_pg_job(
     procedures: list[dict[str, Any]] | None = None,
     triggers: list[dict[str, Any]] | None = None,
     indexes: dict[str, list[dict[str, Any]]] | None = None,
+    columns: dict[str, list[dict[str, Any]]] | None = None,
 ) -> LocalArtifactStore:
     """A finished PostgreSQL job ``shop/job1`` (assignment v2) with its step 1 contract and
     plan: ``public.orders`` has an identity column ``id`` (a ``nextval`` default) and a
     ``halfvec`` column, ``public.tags`` a quoted-name identity column, ``public.audit_log``
     no key and no identity, and one view. ``extensions`` are the collection's installed
     extensions; ``procedures`` and ``triggers`` its routines and triggers; ``indexes`` its
-    indexes by table name."""
+    indexes by table name; ``columns`` more columns by table name."""
     seq = "nextval('orders_id_seq'::regclass)"
     tables = [
         table("public", "audit_log", [col("msg", "varchar(200)", 1, max_length=200)]),
@@ -220,6 +221,8 @@ def write_pg_job(
                                  col("label", "citext", 2, nullable=True)], pk=['we"ird\'id']),  # fmt: skip
     ]
     tables = _with_indexes(tables, indexes)
+    for t in tables:
+        t["columns"] += (columns or {}).get(t["table_name"], [])
     views = [{"view_id": "public.v_orders", "view_name": "v_orders", "schema_name": "public",
               "definition": "select id from orders"}]  # fmt: skip
     coll = collector("postgresql", tables, views)

@@ -138,7 +138,7 @@ def main(argv: list[str] | None = None) -> int:
                 identity_columns=list(inputs.identity_columns),
                 source_objects=inputs.source_objects,
                 extensions=None if inputs.extensions is None else list(inputs.extensions),
-                left_out_indexes=list(inputs.left_out_indexes),
+                left_out_objects=list(inputs.left_out_objects),
             )
             args.bundle.write_text(bundle.model_dump_json(indent=2) + "\n")
             result: dict[str, object] = {"status": "complete", "bundle": str(args.bundle)}

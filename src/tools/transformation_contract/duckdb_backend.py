@@ -37,6 +37,7 @@ from typing import Literal
 
 import duckdb
 
+from src.shared.sql_identifiers import quote_identifier
 from src.tools.synthetic_data.generator import SyntheticTable
 from src.tools.transformation_contract.plan_ir import OutputColumn, RulePlan
 
@@ -204,7 +205,7 @@ def duckdb_type(target_type: str, engine: str) -> str:
 
 
 def quote_ident(name: str) -> str:
-    return '"' + name.replace('"', '""') + '"'
+    return quote_identifier(name, '"')
 
 
 def _checked_type(c: OutputColumn, engine: str) -> _Target | None:
