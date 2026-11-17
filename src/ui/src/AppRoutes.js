@@ -10,10 +10,11 @@ import CreateAnalysis from "./pages/CreateAnalysis";
 import JobMonitoringSummary from "./pages/JobMonitoringSummary";
 import AssignmentGate from "./pages/AssignmentGate";
 import AnalysisResults from "./pages/AnalysisResults";
+import NotFound from "./pages/NotFound";
 import JobRouteGuard from "./components/JobRouteGuard";
 import { resultsEngineHref } from "./utils/resultsLinks";
 // Experimental (#308): renders only when the server flag is on, otherwise it
-// redirects home like an unknown path. Loaded on demand, so its graph library
+// redirects home. Loaded on demand, so its graph library
 // (cytoscape, cola) stays out of the main bundle.
 const GraphExplorer = lazy(() => import("./pages/GraphExplorer"));
 
@@ -37,6 +38,10 @@ function LegacyPatternsRedirect() {
   return <Navigate to={resultsEngineHref(jobId, params.get("target"))} replace />;
 }
 
+// Unknown paths render the not-found page (#2393). The deliberate redirects stay:
+// "/" to the dashboard, the legacy results routes above, the removed pattern page,
+// and the explorer's own redirect home when its server flag is off.
+
 // The app's route table, kept separate from index.js (which renders into the
 // DOM on import) so tests can mount it inside a MemoryRouter.
 export default function AppRoutes() {
@@ -59,7 +64,7 @@ export default function AppRoutes() {
           </Suspense>
         }
       />
-      <Route path="*" element={<Navigate to="/" replace />} />
+      <Route path="*" element={<NotFound />} />
     </Routes>
   );
 }

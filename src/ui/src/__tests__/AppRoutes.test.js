@@ -30,6 +30,7 @@ jest.mock('../pages/JobMonitoringSummary', () => mockPage('JobMonitoringSummary'
 jest.mock('../pages/AssignmentGate', () => mockPage('AssignmentGate'));
 jest.mock('../pages/AnalysisResults', () => mockPage('AnalysisResults'));
 jest.mock('../pages/GraphExplorer', () => mockPage('GraphExplorer'));
+jest.mock('../pages/NotFound', () => mockPage('NotFound'));
 
 // The job routes look the assessment up before mounting their page (#2307).
 const mockExecute = jest.fn();
@@ -55,6 +56,8 @@ function LocationProbe() {
   location = useLocation();
   return null;
 }
+
+const nfPage = (pathname) => ({ page: 'NotFound', jobId: '', pathname });
 
 async function renderAt(path) {
   await act(async () => {
@@ -175,20 +178,20 @@ test('the version-suffixed results page module is gone', () => {
 
 test('the removed job-monitoring page and its /analysis/monitor/:jobId route are gone', async () => {
   expect(() => jest.requireActual('../pages/JobMonitoring')).toThrow();
-  expect(await renderAt('/analysis/monitor/job-42')).toEqual({ page: 'Dashboard', jobId: '', pathname: '/dashboard' });
+  expect(await renderAt('/analysis/monitor/job-42')).toEqual({ page: 'NotFound', jobId: '', pathname: '/analysis/monitor/job-42' });
 });
 
 test('the removed engine-analysis page and its route are gone', async () => {
   expect(() => jest.requireActual('../pages/EngineAnalysis')).toThrow();
   expect(() => jest.requireActual('../hooks/useEngineAnalysis')).toThrow();
-  expect(await renderAt('/analysis/engine-analysis/job-42')).toEqual({ page: 'Dashboard', jobId: '', pathname: '/dashboard' });
+  expect(await renderAt('/analysis/engine-analysis/job-42')).toEqual({ page: 'NotFound', jobId: '', pathname: '/analysis/engine-analysis/job-42' });
 });
 
 // #437: the Settings page never saved or tested anything, and its fields belonged to
 // the retired hosted deployment; the page, its route and its API are gone.
 test('the removed Settings page and its /settings route are gone (#437)', async () => {
   expect(() => jest.requireActual('../pages/Settings')).toThrow();
-  expect(await renderAt('/settings')).toEqual({ page: 'Dashboard', jobId: '', pathname: '/dashboard' });
+  expect(await renderAt('/settings')).toEqual({ page: 'NotFound', jobId: '', pathname: '/settings' });
 });
 
 test('the side nav no longer links to Settings (#437)', () => {
@@ -201,12 +204,12 @@ test('the retired ReportResults page module is gone (#356)', () => {
 
 test('the removed /debug page and route are gone (#357)', async () => {
   expect(() => jest.requireActual('../pages/Debug')).toThrow();
-  expect(await renderAt('/debug')).toEqual({ page: 'Dashboard', jobId: '', pathname: '/dashboard' });
+  expect(await renderAt('/debug')).toEqual({ page: 'NotFound', jobId: '', pathname: '/debug' });
 });
 
 test('the removed /analysis/local page and route are gone (#357)', async () => {
   expect(() => jest.requireActual('../pages/LocalAnalysis')).toThrow();
-  expect(await renderAt('/analysis/local')).toEqual({ page: 'Dashboard', jobId: '', pathname: '/dashboard' });
+  expect(await renderAt('/analysis/local')).toEqual({ page: 'NotFound', jobId: '', pathname: '/analysis/local' });
 });
 
 test('the unused, unrouted LandingPage module is gone (#357)', () => {
@@ -224,8 +227,38 @@ test.each(SideNavigationConfigurations.items.filter(item => item.type === 'link'
   },
 );
 
-test('unknown paths fall through * to / and then the dashboard', async () => {
-  expect(await renderAt('/no/such/route')).toEqual({ page: 'Dashboard', jobId: '', pathname: '/dashboard' });
+// #2393: an unknown path shows the not-found page at the address the reader asked
+// for. It used to fall through * to / and then the dashboard, so a stale or mistyped
+// link gave no hint the page did not exist.
+test.each([
+  '/no/such/route',
+  '/nope',
+  // Nested paths under a known prefix.
+  '/analysis',
+  '/analysis/nope',
+  '/analysis/results',
+  '/analysis/results/job-42/extra',
+  '/analysis/create/extra',
+  '/analysis/results-v2',
+  '/dashboard/extra',
+])('%s renders the not-found page and keeps the address (#2393)', async (path) => {
+  expect(await renderAt(path)).toEqual(nfPage(path));
+});
+
+// Every deliberate redirect still redirects (#2393 keeps them all).
+test.each([
+  ['/', '/dashboard', '', ''],
+  ['/analysis/results-v2/job-42', '/analysis/results/job-42', '', ''],
+  ['/analysis/report/job-42', '/analysis/results/job-42', '', ''],
+  ['/analysis/results-v2/job-42?tab=plan#close-calls-section', '/analysis/results/job-42', '?tab=plan', '#close-calls-section'],
+  ['/analysis/patterns/job-42?target=dynamodb', '/analysis/results/job-42', '?engine=dynamodb', '#access-patterns-section'],
+  ['/analysis/patterns/job-42', '/analysis/results/job-42', '', '#access-patterns-section'],
+])('kept redirect %s still redirects to %s (#2393)', async (from, pathname, search, hash) => {
+  const result = await renderAt(from);
+  expect(result.pathname).toBe(pathname);
+  expect(result.page).not.toBe('NotFound');
+  expect(location.search).toBe(search);
+  expect(location.hash).toBe(hash);
 });
 
 // #308: the experimental explorer has its own job route; the page itself

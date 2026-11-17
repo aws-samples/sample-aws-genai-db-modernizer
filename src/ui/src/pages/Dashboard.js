@@ -36,6 +36,9 @@ import { assessmentHref, copyJobIdLabel, databaseLabel } from "../utils/assessme
 import { formatDuration, UNKNOWN_DURATION } from "../utils/duration";
 import { formatCount, formatPercent, formatHours, NO_FIGURE } from "../utils/format";
 
+// The id of the assessments list, the target of /dashboard#assessments (#2393).
+const ASSESSMENTS_SECTION_ID = 'assessments';
+
 
 
 
@@ -580,6 +583,16 @@ const ComponentPage = memo(() => {
   );
 
 
+  //-- /dashboard#assessments (the not-found page's link, #2393) scrolls to the list
+  //-- and moves focus there once the page has rendered.
+  const assessmentsRef = useRef(null);
+  useEffect(() => {
+    if (window.location.hash === `#${ASSESSMENTS_SECTION_ID}` && assessmentsRef.current) {
+      assessmentsRef.current.scrollIntoView?.();
+      assessmentsRef.current.focus({ preventScroll: true });
+    }
+  }, [loading]);
+
   //-- Memoized table component to prevent unnecessary re-renders
   const tableComponent = useMemo(() => (
     <CustomTable
@@ -709,9 +722,11 @@ const ComponentPage = memo(() => {
                     </Container>
 
 
-                    <Container>
-                      {tableComponent}
-                    </Container>
+                    <div id={ASSESSMENTS_SECTION_ID} ref={assessmentsRef} tabIndex={-1} className="dashboard-assessments">
+                      <Container>
+                        {tableComponent}
+                      </Container>
+                    </div>
 
 
           </SpaceBetween>

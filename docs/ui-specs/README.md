@@ -24,7 +24,7 @@ Every kept route has a routing-table test in `src/ui/src/__tests__/AppRoutes.tes
 | `/settings` | `Settings.js` | **Removed** (#437) | Save and Test only logged to the console, and its fields (S3 bucket, DynamoDB table, IAM role, default analysis options) belonged to the retired hosted deployment; nothing in the local pipeline read them. The page, its side-nav link and `src/api/routes/settings.py` are gone. |
 | `/analysis/local` | `LocalAnalysis.js` | **Removed** | Fetched static files (`/data/collector-output.json`, `/data/analysis-*.json`) that no script or build step has ever produced; always rendered empty. Dead since the local API backend replaced this prototype. |
 | `/debug` | `Debug.js` | **Removed** | Dev-only raw API console, not part of the `/modernize` flow or any deliverable. |
-| `*` | — (redirect to `/`) | Keep | Fallback for unknown paths. |
+| `*` | `NotFound.js` | Keep | Unknown paths show a not-found page at the address asked for, with links to the dashboard and the assessments list (#2393). It was a silent redirect to `/`. The deliberate redirects stay: `/`, `/analysis/results-v2/:jobId`, `/analysis/report/:jobId`, `/analysis/patterns/:jobId`, and the explorer's own redirect home when its server flag is off. |
 | *(no route)* | `LandingPage.js` | **Removed** | Not imported by `AppRoutes.js` or anywhere else; unreachable. |
 
 Side navigation (`src/ui/src/config/GlobalConfigurations.js`,
