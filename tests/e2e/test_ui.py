@@ -169,6 +169,33 @@ def _each_tab(page: Page) -> Iterator[str]:
         yield tab
 
 
+_SETTLED_SECTIONS_JS = """
+([ids, unlisted]) => {
+  const present = ids.filter(id => document.getElementById(id));
+  const listed = present.filter(id => !unlisted.includes(id));
+  const nav = document.querySelector('nav[aria-labelledby="results-on-this-page-title"]');
+  const hrefs = nav ? [...nav.querySelectorAll('a')].map(a => a.getAttribute('href')) : [];
+  const want = listed.length < 2 ? [] : listed.map(id => '#' + id);
+  const same = hrefs.length === want.length && hrefs.every((h, i) => h === want[i]);
+  return same ? { present, listed } : false;
+}
+"""
+
+
+def _settled_sections(page: Page, tab: str) -> tuple[list[str], list[str]]:
+    """The open tab's sections on the page and the ones its On this page navigation
+    lists, once the two agree (#2376). A section that renders late reaches the page
+    first and the navigation a frame after, so one read of either can disagree with the
+    other on a slow runner. Both come from one DOM snapshot, retried in the page until
+    the navigation lists exactly the listed sections; a navigation that never does
+    times out."""
+    handle = page.wait_for_function(
+        _SETTLED_SECTIONS_JS, arg=[TAB_SECTIONS[tab], sorted(UNLISTED_SECTIONS)], timeout=READY_MS
+    )
+    settled = handle.json_value()
+    return settled["present"], settled["listed"]
+
+
 def _loaded(page: Page, r: PipelineResult) -> None:
     """Wait until the results page has rendered ``r``'s data (#1320), on the Summary tab it
     opens on (#2313).
@@ -1395,7 +1422,6 @@ def test_results_page_shows_the_headline_first(
     table owners and Sources of truth, collapsed, then the Table design; Risks and
     decisions), and no other tab's. The close-call banner names its first 3 queries by a
     5-character id, then "+N more"."""
-    find = "ids => ids.filter(id => document.getElementById(id))"
     in_order = (
         "ids => ids.map(id => document.getElementById(id))"
         "  .every((el, i, all) => i === 0 ||"
@@ -1415,7 +1441,7 @@ def test_results_page_shows_the_headline_first(
         assert tabs.all_inner_texts() == list(RESULTS_TABS.values()), r.db
         present_anywhere: set[str] = set()
         for tab in _each_tab(page):
-            present = page.evaluate(find, TAB_SECTIONS[tab])
+            present, _ = _settled_sections(page, tab)
             assert page.evaluate(in_order, present), (r.db, tab, present)
             for section_id in present:
                 expect(page.locator(f"#{section_id}")).to_be_visible()
@@ -1471,10 +1497,7 @@ def test_results_page_on_this_page_lists_the_open_tabs_sections(
         page.goto(f"{ui}/analysis/results/{r.job_id}")
         _loaded(page, r)
         for tab in _each_tab(page):
-            present = page.evaluate(
-                "ids => ids.filter(id => document.getElementById(id))", TAB_SECTIONS[tab]
-            )
-            listed = [i for i in present if i not in UNLISTED_SECTIONS]
+            _, listed = _settled_sections(page, tab)
             nav = page.get_by_role("navigation", name="On this page")
             if len(listed) < 2:
                 expect(nav).to_have_count(0)
