@@ -67,6 +67,7 @@ from src.contracts.design_metrics import DynamoDBPartitionLimits
 from src.shared.engine_names import canonical_engine_id
 from src.shared.row_counts import known_row_count
 from src.shared.table_keys import normalize_table_name
+from src.shared.unique_index_keys import unique_key_columns
 
 KeyBasis = Literal["single_key", "distinct_values", "not_measured"]
 SINGLE_KEY: KeyBasis = "single_key"
@@ -147,8 +148,7 @@ def key_distinct_values(table: Mapping[str, Any]) -> list[dict[str, Any]]:
         if table.get("primary_key"):
             unique.append(_lower(table.get("primary_key") or []))
         for index in table.get("indexes") or []:
-            if isinstance(index, Mapping) and (index.get("is_unique") or index.get("is_primary")):
-                unique.append(_lower(index.get("columns") or []))
+            unique.append(list(unique_key_columns(index)))
         for columns in unique:
             if columns:
                 key = tuple(sorted(set(columns)))

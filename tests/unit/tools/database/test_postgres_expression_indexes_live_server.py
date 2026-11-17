@@ -16,7 +16,9 @@ them. The server is stopped by its postmaster PID at the end. The tests skip whe
 from __future__ import annotations
 
 import os
+import re
 import signal
+import subprocess
 import time
 
 import pytest
@@ -38,9 +40,19 @@ CREATE UNIQUE INDEX audit_log_left_msg ON audit_log (left(msg, 20), md5(msg))
 CREATE INDEX audit_log_json ON audit_log ((msg::jsonb ->> 'a'));
 CREATE INDEX audit_log_mixed ON audit_log (msg, upper(msg));
 CREATE INDEX audit_log_plain ON audit_log (msg);
+CREATE INDEX audit_log_coalesce ON audit_log (COALESCE(msg, 'none'), upper(msg));
+-- what pg_get_expr(indexprs) does not carry: the review's four, then INCLUDE and WITH
+CREATE INDEX audit_log_opclass ON audit_log (lower(msg) text_pattern_ops);
+CREATE INDEX audit_log_desc ON audit_log (lower(msg) DESC NULLS LAST);
+CREATE UNIQUE INDEX audit_log_collate ON audit_log (lower(msg) COLLATE "C");
+CREATE UNIQUE INDEX audit_log_nnd ON audit_log (lower(msg)) NULLS NOT DISTINCT;
+CREATE INDEX audit_log_include ON audit_log (upper(msg)) INCLUDE (msg);
+CREATE INDEX audit_log_with ON audit_log (md5(msg)) WITH (fillfactor = 50);
 """
-_RECREATED = {"audit_log_lower_msg", "audit_log_left_msg"}
-_LISTED = {"audit_log_json", "audit_log_mixed"}
+_RECREATED = {"audit_log_lower_msg", "audit_log_left_msg", "audit_log_coalesce"}
+_SAYS_MORE = {"audit_log_opclass", "audit_log_desc", "audit_log_collate", "audit_log_nnd",
+              "audit_log_include", "audit_log_with"}  # fmt: skip
+_LISTED = {"audit_log_json", "audit_log_mixed"} | _SAYS_MORE
 _FIELDS = ("columns", "is_unique", "predicate", "has_expressions", "index_expressions")
 
 
@@ -109,6 +121,37 @@ def _expressions(server, schema: str) -> dict[str, tuple]:
 
 
 @pytest.mark.passes_on_main  # guards the harness: the server takes no TCP connection
+def _indexdefs(server, schema: str) -> dict[str, str]:
+    """Each index of ``<schema>.audit_log`` as ``pg_get_indexdef`` writes it, the schema
+    taken out, so a source and a recreated index compare whole."""
+    rows = _run(server, "SELECT i.relname AS name, pg_get_indexdef(x.indexrelid) AS d "
+                        "FROM pg_index x JOIN pg_class i ON i.oid = x.indexrelid "
+                        "JOIN pg_class t ON t.oid = x.indrelid "
+                        "JOIN pg_namespace n ON n.oid = t.relnamespace "
+                        f"WHERE n.nspname = '{schema}' AND t.relname = 'audit_log'", None)  # fmt: skip
+    return {r["name"]: r["d"].replace(f" ON {schema}.", " ON ") for r in rows}
+
+
+def _psql_file(server, path) -> subprocess.CompletedProcess:
+    """``psql -f`` on ``path``, stopping at the first error, as step-1.ddl.sql is run."""
+    psql = pgserver._commands.POSTGRES_BIN_PATH / "psql"
+    return subprocess.run(  # nosec B603 -- the bundled psql, a temp file, no shell
+        [str(psql), server.get_uri(), "-v", "ON_ERROR_STOP=1", "-q", "-f", str(path)],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+
+
+def _audit_log_statements(ddl: str) -> list[str]:
+    return [
+        s.strip()
+        for s in ddl.split(";\n")
+        if s.lstrip().startswith(('CREATE TABLE "audit_log"', "CREATE INDEX", "CREATE UNIQUE"))
+        and '"audit_log"' in s
+    ]
+
+
 def test_the_server_listens_on_no_tcp_address(server):
     assert _run(server, "SELECT current_setting('listen_addresses') AS a", None) == [{"a": ""}]
 
@@ -133,17 +176,62 @@ def test_step_1_creates_the_checked_indexes_again_with_the_sources_expressions(s
     ]
     inputs = load_step1(write_pg_job(tmp_path, indexes={"audit_log": collected}), "shop", "job1")
 
-    statements = [
-        s.strip()
-        for s in inputs.ddl.split(";\n")
-        if s.lstrip().startswith(('CREATE TABLE "audit_log"', "CREATE INDEX", "CREATE UNIQUE"))
-        and '"audit_log"' in s
-    ]
-    server.psql("\\set ON_ERROR_STOP on\nCREATE SCHEMA step1;\nSET search_path TO step1;\n"
-                + ";\n".join(statements) + ";\n")  # fmt: skip
+    script = tmp_path / "step1.sql"
+    script.write_text("CREATE SCHEMA step1;\nSET search_path TO step1;\n"
+                      + ";\n".join(_audit_log_statements(inputs.ddl)) + ";\n")  # fmt: skip
+    ran = _psql_file(server, script)
+    assert ran.returncode == 0, ran.stderr
 
     source, target = _expressions(server, "public"), _expressions(server, "step1")
     assert set(target) == _RECREATED | {"audit_log_plain"}
     for name in _RECREATED:
         assert target[name] == source[name], name
     assert {i.index_name for i in inputs.left_out_indexes} == _LISTED
+
+
+def test_every_recreated_index_has_the_sources_whole_definition(server, tmp_path):
+    """``pg_get_indexdef`` of each recreated index equals the source's, schema aside: a
+    property the recreated statement dropped (an operator class, a sort order, a
+    collation, NULLS NOT DISTINCT, INCLUDE, WITH) fails it."""
+    collected = [
+        {k: v for k, v in i.items() if k != "is_primary"} for i in _live_indexes(server).values()
+    ]
+    inputs = load_step1(write_pg_job(tmp_path, indexes={"audit_log": collected}), "shop", "job1")
+    script = tmp_path / "step1.sql"
+    script.write_text("CREATE SCHEMA step1_whole;\nSET search_path TO step1_whole;\n"
+                      + ";\n".join(_audit_log_statements(inputs.ddl)) + ";\n")  # fmt: skip
+    ran = _psql_file(server, script)
+    assert ran.returncode == 0, ran.stderr
+
+    source, target = _indexdefs(server, "public"), _indexdefs(server, "step1_whole")
+    recreated = set(target) - {"audit_log_plain"}
+    assert recreated == _RECREATED
+    for name in recreated:
+        assert target[name] == source[name], name
+    assert not recreated & _SAYS_MORE
+
+
+def test_psql_runs_no_collected_literal_as_sql_after_a_nul(server, tmp_path):
+    """The review's repro: a NUL in one index's literal cut the ``psql -f`` line short and
+    left the literal open, so the next index's literal (collector text) ran as SQL."""
+    hostile = [
+        {"index_name": "nul_ix", "columns": [], "is_unique": False, "index_type": "btree",
+         "has_expressions": True, "index_expressions": "COALESCE(msg, 'x\x00')",
+         "index_def": "CREATE INDEX nul_ix ON public.audit_log USING btree "
+                      "(COALESCE(msg, 'x\x00'))"},
+        {"index_name": "next_ix", "columns": [], "is_unique": False, "index_type": "btree",
+         "has_expressions": True, "index_expressions": "COALESCE(msg, 'y')",
+         "index_def": "CREATE INDEX next_ix ON public.audit_log USING btree "
+                      "(COALESCE(msg, 'y'))"},
+    ]  # fmt: skip
+    inputs = load_step1(write_pg_job(tmp_path, indexes={"audit_log": hostile}), "shop", "job1")
+    script = tmp_path / "step1.sql"
+    script.write_bytes(("CREATE SCHEMA step1_nul;\nSET search_path TO step1_nul;\n"
+                        + ";\n".join(_audit_log_statements(inputs.ddl)) + ";\n").encode())  # fmt: skip
+
+    ran = _psql_file(server, script)
+    assert ran.returncode == 0, ran.stderr
+    assert not re.search(r"syntax error", ran.stderr)
+    assert set(_expressions(server, "step1_nul")) == {"next_ix"}
+    assert [i.index_name for i in inputs.left_out_indexes] == ["nul_ix"]
+    assert b"\x00" not in script.read_bytes()
