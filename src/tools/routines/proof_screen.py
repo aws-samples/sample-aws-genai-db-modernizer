@@ -76,10 +76,12 @@ import re
 from collections import Counter
 from collections.abc import Collection, Iterator, Sequence
 
-from src.tools.routines.mysql_checks import MySqlRoutine, check_mysql_routine
+from src.tools.routines.mysql_checks import MySqlRoutine, check_mysql_routine, statement_kinds
 from src.tools.routines.postgresql_checks import (
+    RoutineParts,
     created_schemas,
     parse_routine,
+    routine_parts,
     trigger_references,
 )
 from src.tools.sql.facade import (
@@ -90,7 +92,10 @@ from src.tools.sql.facade import (
 )
 
 __all__ = [
+    "BUILT_IN_OPERATORS",
+    "CATALOG_TYPES",
     "NONDETERMINISTIC",
+    "ROUTINE_STATEMENTS",
     "SEEDED_RANDOM",
     "called_functions",
     "called_names",
@@ -103,7 +108,9 @@ __all__ = [
     "dynamic_sql",
     "named_schemas",
     "named_time_zones",
+    "operators_and_types",
     "privilege_clauses",
+    "run_statements",
     "trigger_shape",
     "written_statements",
     "nondeterministic_calls",
@@ -941,8 +948,8 @@ def created_objects(text: str, engine: str) -> Counter[tuple[str, ...]] | None:
 
 def written_statements(text: str, engine: str) -> Counter[tuple[str, ...]] | None:
     """Each statement ``text`` runs that writes or changes an object (``INSERT``,
-    ``UPDATE``, ``DELETE``, ``MERGE``, ``TRUNCATE``, ``ALTER``, ``DROP``, ...), with the two
-    tokens after it, counted, its body and strings included; None when it does not
+    ``UPDATE``, ``DELETE``, ``MERGE``, ``TRUNCATE``, ``ALTER``, ``DROP``, ..., and a MySQL
+    ``INTO OUTFILE`` or ``INTO DUMPFILE``), with the two tokens after it, counted, its body and strings included; None when it does not
     tokenize."""
     levels = _deep_levels(text, engine)
     if levels is None:
@@ -950,7 +957,14 @@ def written_statements(text: str, engine: str) -> Counter[tuple[str, ...]] | Non
     found: Counter[tuple[str, ...]] = Counter()
     for tokens in levels:
         for i, tok in enumerate(tokens):
-            if tok.text.upper() in _WRITES and tok.kind not in ("IDENTIFIER",):
+            word = tok.text.upper()
+            if word in ("OUTFILE", "DUMPFILE") and engine == "mysql":
+                # SELECT ... INTO OUTFILE writes a file (#2399 review), as COPY does.
+                before = tokens[i - 1].text.upper() if i else ""
+                if before == "INTO" and tok.kind != "IDENTIFIER":
+                    found[(word, *(_key(t, engine) for t in tokens[i + 1 : i + 3]))] += 1
+                continue
+            if word in _WRITES and tok.kind not in ("IDENTIFIER",):
                 found[(tok.text.upper(), *(_key(t, engine) for t in tokens[i + 1 : i + 3]))] += 1
     return found
 
@@ -1126,3 +1140,79 @@ def called_functions(text: str, engine: str) -> frozenset[str] | None:
                 name = f"{tokens[i - 2].text.casefold()}.{name}"
             found.add(name)
     return frozenset(found)
+
+
+#: The statement kinds every routine may run, as :func:`run_statements` names them: reads,
+#: and the procedural language's own control statements (#2373). ``EXECUTE`` and MySQL's
+#: ``PREPARE``, ``EXECUTE`` and ``DEALLOCATE`` are here because :func:`dynamic_executions`
+#: counts them.
+ROUTINE_STATEMENTS = {
+    "postgresql": frozenset({
+        "SelectStmt",
+        "PLpgSQL_stmt_block", "PLpgSQL_stmt_assign", "PLpgSQL_stmt_if", "PLpgSQL_stmt_case",
+        "PLpgSQL_stmt_loop", "PLpgSQL_stmt_while", "PLpgSQL_stmt_fori", "PLpgSQL_stmt_fors",
+        "PLpgSQL_stmt_forc", "PLpgSQL_stmt_foreach_a", "PLpgSQL_stmt_exit",
+        "PLpgSQL_stmt_return", "PLpgSQL_stmt_return_next", "PLpgSQL_stmt_return_query",
+        "PLpgSQL_stmt_raise", "PLpgSQL_stmt_assert", "PLpgSQL_stmt_perform",
+        "PLpgSQL_stmt_getdiag", "PLpgSQL_stmt_open", "PLpgSQL_stmt_fetch",
+        "PLpgSQL_stmt_close", "PLpgSQL_stmt_dynexecute", "PLpgSQL_stmt_dynfors",
+    }),
+    "mysql": frozenset({
+        "SELECT", "VALUES", "TABLE", "SET", "DO", "OPEN", "FETCH", "CLOSE", "SIGNAL",
+        "RESIGNAL", "GET", "PREPARE", "EXECUTE", "DEALLOCATE",
+    }),
+}  # fmt: skip
+#: PostgreSQL's built-in operator symbols: every ``oprname`` of ``pg_catalog`` on 14 and 17.
+BUILT_IN_OPERATORS = frozenset("""
+    !! !~ !~* !~~ !~~* # ## #- #> #>> % & && &< &<| &> * *< *<= *<> *= *> *>= + - -> ->>
+    -|- / < <-> << <<= <<| <= <> <@ <^ = > >= >> >>= >^ ? ?# ?& ?- ?-| ?| ?|| @ @-@ @> @?
+    @@ @@@ ^ ^@ | |&> |/ |>> || ||/ ~ ~* ~<=~ ~<~ ~= ~>=~ ~>~ ~~ ~~*
+""".split())
+#: The types of ``pg_catalog`` a routine may name unqualified: every base type on 14 and 17
+#: and ``record``, plus the serial column types the parser keeps as written. Pseudo types
+#: (``internal``, ``cstring``, ``any*``, the handlers, ``trigger``, ``void``) are left out:
+#: no cast a routine needs goes to one, and a header that names one is the routine's own.
+CATALOG_TYPES = frozenset("""
+    aclitem bit bool box bpchar bytea char cid cidr circle date datemultirange daterange
+    float4 float8 gtsvector inet int2 int2vector int4 int4multirange int4range int8
+    int8multirange int8range interval json jsonb jsonpath line lseg macaddr macaddr8 money
+    name numeric nummultirange numrange oid oidvector path pg_brin_bloom_summary
+    pg_brin_minmax_multi_summary pg_dependencies pg_lsn pg_mcv_list pg_ndistinct
+    pg_node_tree pg_snapshot point polygon record refcursor regclass regcollation regconfig
+    regdictionary regnamespace regoper regoperator regproc regprocedure regrole regtype text
+    tid time timestamp timestamptz timetz tsmultirange tsquery tsrange tstzmultirange
+    tstzrange tsvector txid_snapshot uuid varbit varchar xid xid8 xml serial serial2 serial4
+    serial8 smallserial bigserial
+""".split())
+
+
+def run_statements(
+    text: str, engine: str, kind: str, sql_mode: str | None = None
+) -> frozenset[str] | None:
+    """The kind of every statement ``text`` runs, read in ``engine``'s dialect (#2373): on
+    PostgreSQL by its parser, nested statements included (``routine_parts``), on MySQL by
+    the body reader (``mysql_checks.statement_kinds``). An empty set for a PostgreSQL body
+    in a language the parser does not read; None when the text does not read."""
+    if engine == "postgresql":
+        parts = routine_parts(text, kind)  # type: ignore[arg-type]
+        return None if parts is None else parts.statements
+    return statement_kinds(
+        MySqlRoutine(
+            routine_id="proof.routine",
+            kind=kind,  # type: ignore[arg-type]
+            create_sql=text,
+            sql_mode=sql_mode or "",
+        )
+    )
+
+
+def operators_and_types(text: str, engine: str, kind: str) -> RoutineParts | None:
+    """What ``text`` uses that can run a function without naming it (#2373), as
+    :class:`RoutineParts`: on PostgreSQL the operators it applies, the types it names and
+    the attributes it reads through a record (``o.name`` can call ``name(o)``), read from
+    the parse tree (``routine_parts``). MySQL has no user-defined operators or types, and
+    no function is reached through a column, so a MySQL text has none to read. None when
+    the text does not read."""
+    if engine != "postgresql":
+        return RoutineParts(frozenset(), frozenset(), frozenset())
+    return routine_parts(text, kind)  # type: ignore[arg-type]

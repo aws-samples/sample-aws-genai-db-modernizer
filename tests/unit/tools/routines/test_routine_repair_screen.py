@@ -486,3 +486,433 @@ def test_a_mysql_candidate_that_adds_dynamic_sql_is_refused(added):
     candidate = MYSQL_FIXED.replace("INTO r;\n", "INTO r;\n" + added)
     refusal = _screen().refusal_of(_my(MYSQL), candidate, "mysql")
     assert refusal is not None and refusal[0] == "adds_dynamic_sql", refusal
+
+
+# --------------------------------------------------------------------------- #2373
+# Statement kinds are an allowlist: a candidate may run the kinds of statement the routine
+# runs, plus the reads and control statements every routine uses. Any other kind is new.
+
+
+@pytest.mark.parametrize(
+    "statement",
+    [
+        "  CLUSTER public.orders;\n",
+        "  REINDEX TABLE public.orders;\n",
+        "  SECURITY LABEL ON TABLE public.orders IS NULL;\n",
+        "  VACUUM public.orders;\n",
+        "  ANALYZE public.orders;\n",
+        "  CHECKPOINT;\n",
+        "  LISTEN chan;\n",
+        "  DISCARD PLANS;\n",
+        "  SET LOCAL statement_timeout = 0;\n",
+        "  COMMIT;\n",
+    ],
+    ids=[
+        "cluster",
+        "reindex",
+        "security-label",
+        "vacuum",
+        "analyze",
+        "checkpoint",
+        "listen",
+        "discard",
+        "set-local",
+        "commit",
+    ],
+)
+def test_a_postgresql_statement_kind_the_routine_does_not_run_is_refused(statement):
+    candidate = PLPGSQL_FIXED.replace("BEGIN\n", "BEGIN\n" + statement)
+    refusal = _screen().refusal_of(_pg(PLPGSQL, "report"), candidate, "postgresql")
+    assert refusal is not None and refusal[0] == "adds_statements", refusal
+
+
+def test_a_statement_kind_in_a_sql_body_is_read_too():
+    candidate = PG_SQL_FIXED.replace("AS $function$", "AS $function$VACUUM public.orders; ")
+    refusal = _screen().refusal_of(_pg(PG_SQL), candidate, "postgresql")
+    assert refusal is not None and refusal[0] == "adds_statements", refusal
+
+
+@pytest.mark.parametrize(
+    "statement",
+    [
+        "  LOCK TABLES users WRITE;",
+        "  UNLOCK TABLES;",
+        "  HANDLER users OPEN;",
+        "  FLUSH TABLES;",
+        "  START TRANSACTION;",
+        "  COMMIT;",
+        "  SET autocommit = 0;",
+        "  SET SESSION foreign_key_checks = 0;",
+        "  SET @@foreign_key_checks = 0;",
+        "  SET NAMES utf8mb4;",
+    ],
+    ids=[
+        "lock-tables",
+        "unlock-tables",
+        "handler",
+        "flush",
+        "start-transaction",
+        "commit",
+        "system-variable",
+        "session-variable",
+        "session-parameter",
+        "names",
+    ],
+)
+def test_a_mysql_statement_kind_the_routine_does_not_run_is_refused(statement):
+    candidate = MYSQL_FIXED.replace("INTO r;", "INTO r;\n" + statement)
+    refusal = _screen().refusal_of(_my(MYSQL), candidate, "mysql")
+    assert refusal is not None and refusal[0] == "adds_statements", refusal
+
+
+@pytest.mark.passes_on_main
+@pytest.mark.parametrize(
+    "added",
+    [
+        "  IF p IS NULL THEN\n    RETURN NULL;\n  END IF;\n",
+        "  FOR i IN 1..p LOOP\n    NULL;\n  END LOOP;\n",
+        "  PERFORM 1;\n",
+    ],
+    ids=["if-return", "for-loop", "perform"],
+)
+def test_a_postgresql_read_or_control_statement_may_be_added(added):
+    candidate = PLPGSQL_FIXED.replace("BEGIN\n", "BEGIN\n" + added)
+    assert _screen().refusal_of(_pg(PLPGSQL, "report"), candidate, "postgresql") is None
+    assign = PLPGSQL_FIXED.replace(
+        "BEGIN\n", "DECLARE n integer;\nBEGIN\n  n := p + 1;\n  GET DIAGNOSTICS n = ROW_COUNT;\n"
+    )
+    assert _screen().refusal_of(_pg(PLPGSQL, "report"), assign, "postgresql") is None
+
+
+@pytest.mark.passes_on_main
+@pytest.mark.parametrize(
+    "added",
+    [
+        "  SET rnk = rnk + 1;",
+        "  SET r = CONCAT(p, rnk);",
+        "  SET @seen = 1;",
+        "  IF p IS NULL THEN\n    SET rnk = 0;\n  END IF;",
+        "  WITH q AS (SELECT 1 AS a) SELECT a INTO rnk FROM q;",
+    ],
+    ids=["local-variable", "parameter", "user-variable", "if", "with-select"],
+)
+def test_a_mysql_variable_assignment_or_control_statement_may_be_added(added):
+    candidate = MYSQL_FIXED.replace("INTO r;", "INTO r;\n" + added)
+    assert _screen().refusal_of(_my(MYSQL), candidate, "mysql") is None
+
+
+@pytest.mark.passes_on_main
+def test_a_statement_kind_the_routine_already_runs_is_not_held_against_it():
+    original = PLPGSQL.replace("BEGIN\n", "BEGIN\n  ANALYZE public.orders;\n")
+    candidate = PLPGSQL_FIXED.replace("BEGIN\n", "BEGIN\n  ANALYZE public.orders;\n")
+    assert _screen().refusal_of(_pg(original, "report"), candidate, "postgresql") is None
+    mysql = MYSQL.replace("INTO r;", "INTO r;\n  SET autocommit = 1;")
+    assert _screen().refusal_of(_my(mysql), mysql.replace("rank", "rnk"), "mysql") is None
+
+
+def test_a_setting_the_routine_does_not_set_is_a_new_kind():
+    original = PLPGSQL.replace("BEGIN\n", "BEGIN\n  SET LOCAL statement_timeout = 0;\n")
+    candidate = PLPGSQL_FIXED.replace(
+        "BEGIN\n", "BEGIN\n  SET LOCAL statement_timeout = 0;\n  SET LOCAL lock_timeout = 0;\n"
+    )
+    refusal = _screen().refusal_of(_pg(original, "report"), candidate, "postgresql")
+    assert refusal is not None and refusal[0] == "adds_statements", refusal
+    mysql = MYSQL.replace("INTO r;", "INTO r;\n  SET autocommit = 1;")
+    added = mysql.replace("rank", "rnk").replace(
+        "SET autocommit = 1;", "SET autocommit = 1;\n  SET foreign_key_checks = 0;"
+    )
+    refusal = _screen().refusal_of(_my(mysql), added, "mysql")
+    assert refusal is not None and refusal[0] == "adds_statements", refusal
+
+
+def test_a_nested_statement_is_read_by_its_own_kind():
+    from src.tools.routines.proof_screen import run_statements
+
+    cte = PLPGSQL.replace(
+        "BEGIN\n", "BEGIN\n  WITH d AS (DELETE FROM public.orders RETURNING 1) SELECT 1;\n"
+    )
+    assert {"DeleteStmt", "SelectStmt"} <= run_statements(cte, "postgresql", "function")
+    mysql = MYSQL.replace("INTO r;", "INTO r;\n  WITH q AS (SELECT 1) DELETE FROM users;")
+    assert "DELETE" in run_statements(mysql, "mysql", "procedure")
+
+
+def test_a_candidate_whose_body_the_parser_cannot_read_is_refused():
+    candidate = PG_SQL_FIXED.replace("LANGUAGE sql", "LANGUAGE plpython3u")
+    refusal = _screen().refusal_of(_pg(PG_SQL), candidate, "postgresql")
+    assert refusal is not None and refusal[0] == "not_one_statement", refusal
+    # An original in such a language runs nothing the screen reads: a rewrite in SQL may
+    # run reads only.
+    python = (
+        "CREATE OR REPLACE FUNCTION public.wal_pos(p integer)\n RETURNS text\n"
+        " LANGUAGE plpython3u\nAS $function$return p$function$\n"
+    )
+    rewrite = python.replace("plpython3u", "sql").replace("return p", "SELECT p::text")
+    assert _screen().refusal_of(_pg(python), rewrite, "postgresql") is None
+    vacuum = rewrite.replace("SELECT p::text", "VACUUM; SELECT p::text")
+    refusal = _screen().refusal_of(_pg(python), vacuum, "postgresql")
+    assert refusal is not None and refusal[0] == "adds_statements", refusal
+
+
+# Operators and casts: a function reached without its name. A candidate may use the
+# operators and types the routine uses, PostgreSQL's built-in operator symbols written
+# unqualified, and the types of pg_catalog.
+
+
+@pytest.mark.parametrize(
+    "expression",
+    [
+        "1 OPERATOR(public.===) 2",
+        "p OPERATOR(public.+) 1",
+        "p OPERATOR(pg_catalog.+) 1",
+        "p === 1",
+        "p @@@@ 1",
+        "p::public.evil_type",
+        "p::citext",
+    ],
+    ids=[
+        "qualified-operator",
+        "qualified-plus",
+        "qualified-catalog-plus",
+        "unknown-symbol",
+        "unknown-long-symbol",
+        "cast-to-user-type",
+        "cast-to-extension-type",
+    ],
+)
+def test_an_operator_or_cast_the_routine_does_not_use_is_refused(expression):
+    candidate = PG_SQL_FIXED.replace(
+        "SELECT pg_current_wal_lsn()", f"SELECT ({expression}), pg_current_wal_lsn()"
+    )
+    refusal = _screen().refusal_of(_pg(PG_SQL), candidate, "postgresql")
+    assert refusal is not None and refusal[0] == "adds_calls", refusal
+
+
+@pytest.mark.parametrize(
+    "added",
+    [
+        "  IF p === 0 THEN\n    RETURN NULL;\n  END IF;\n",
+        "  RETURN p::public.evil_type::text;\n",
+    ],
+    ids=["operator-in-a-condition", "cast-in-a-return"],
+)
+def test_an_operator_or_cast_in_a_plpgsql_expression_is_read(added):
+    candidate = PLPGSQL_FIXED.replace("BEGIN\n", "BEGIN\n" + added)
+    refusal = _screen().refusal_of(_pg(PLPGSQL, "report"), candidate, "postgresql")
+    assert refusal is not None and refusal[0] == "adds_calls", refusal
+
+
+def test_a_plpgsql_variable_of_a_type_the_routine_does_not_use_is_refused():
+    # Assigning to it runs the type's assignment cast.
+    candidate = PLPGSQL_FIXED.replace("BEGIN\n", "DECLARE v public.evil_type;\nBEGIN\n")
+    refusal = _screen().refusal_of(_pg(PLPGSQL, "report"), candidate, "postgresql")
+    assert refusal is not None and refusal[0] == "adds_calls", refusal
+
+
+@pytest.mark.passes_on_main
+@pytest.mark.parametrize(
+    "expression",
+    [
+        "p + 1",
+        "p <> 1 AND p >= 0",
+        "p BETWEEN 1 AND 2",
+        "p::text ~~ p::text",
+        "p::bigint",
+        "p::numeric(10, 2)",
+        "p::pg_catalog.int8",
+        "p::double precision",
+        "ARRAY[p]::integer[]",
+    ],
+    ids=[
+        "plus",
+        "comparisons",
+        "between",
+        "like-operator",
+        "cast-bigint",
+        "cast-numeric",
+        "cast-qualified-catalog",
+        "cast-sql-type-name",
+        "cast-array",
+    ],
+)
+def test_a_built_in_operator_or_catalog_cast_passes(expression):
+    candidate = PG_SQL_FIXED.replace(
+        "SELECT pg_current_wal_lsn()", f"SELECT ({expression}), pg_current_wal_lsn()"
+    )
+    assert _screen().refusal_of(_pg(PG_SQL), candidate, "postgresql") is None
+
+
+@pytest.mark.passes_on_main
+def test_the_operators_and_types_the_routine_uses_are_not_held_against_it():
+    uses = "SELECT (1 OPERATOR(public.===) 2), p::public.evil_type, pg_current_xlog_location()"
+    original = PG_SQL.replace("SELECT pg_current_xlog_location()", uses)
+    candidate = original.replace("pg_current_xlog_location()", "pg_current_wal_lsn()")
+    assert _screen().refusal_of(_pg(original), candidate, "postgresql") is None
+
+
+@pytest.mark.passes_on_main
+def test_mysql_operators_and_casts_are_read_in_mysql():
+    # MySQL has no user-defined operators or types: its own operators and cast types pass.
+    candidate = MYSQL_FIXED.replace("CONCAT(p, rnk, '?')", "CONCAT(p <=> rnk, rnk DIV 2, '?')")
+    assert _screen().refusal_of(_my(MYSQL), candidate, "mysql") is None
+
+
+@pytest.mark.passes_on_main
+def test_a_moved_placeholder_passes_the_screen_and_is_left_to_the_proof():
+    # The screen checks the placeholders' count and quote form, never their places (#1941
+    # rebuilds the exact text by position and the side-by-side proof tells them apart).
+    moved = PG_SQL_FIXED.replace(
+        "SELECT pg_current_wal_lsn()::text || '?'", "SELECT '?' || pg_current_wal_lsn()::text"
+    )
+    assert _screen().refusal_of(_pg(PG_SQL), moved, "postgresql") is None
+
+
+# --------------------------------------------------------------------------- #2399 review
+
+
+@pytest.mark.parametrize(
+    ("original", "clause"),
+    [
+        (PG_SQL, " SET statement_timeout = 0\n"),
+        (PG_SQL, " SET session_replication_role = replica\n"),
+        (PLPGSQL, " SET row_security = off\n"),
+        (PLPGSQL, " SET lock_timeout FROM CURRENT\n"),
+    ],
+    ids=["statement-timeout", "replication-role", "row-security", "from-current"],
+)
+def test_a_header_set_clause_is_a_statement_kind(original, clause):
+    # A function's own SET clause changes a setting for the call and restores it after.
+    fixed = PLPGSQL_FIXED if original is PLPGSQL else PG_SQL_FIXED
+    name = "report" if original is PLPGSQL else "wal_pos"
+    candidate = fixed.replace(" LANGUAGE ", clause + " LANGUAGE ", 1)
+    refusal = _screen().refusal_of(_pg(original, name), candidate, "postgresql")
+    assert refusal is not None and refusal[0] == "adds_statements", refusal
+
+
+@pytest.mark.passes_on_main
+def test_a_header_set_clause_the_routine_has_is_kept():
+    original = PG_SQL.replace(" LANGUAGE sql", " SET statement_timeout = 0\n LANGUAGE sql")
+    candidate = original.replace("pg_current_xlog_location()", "pg_current_wal_lsn()")
+    assert _screen().refusal_of(_pg(original), candidate, "postgresql") is None
+
+
+def test_set_local_and_set_are_different_kinds():
+    original = PLPGSQL.replace("BEGIN\n", "BEGIN\n  SET LOCAL statement_timeout = 0;\n")
+    candidate = PLPGSQL_FIXED.replace("BEGIN\n", "BEGIN\n  SET statement_timeout = 0;\n")
+    refusal = _screen().refusal_of(_pg(original, "report"), candidate, "postgresql")
+    assert refusal is not None and refusal[0] == "adds_statements", refusal
+
+
+@pytest.mark.parametrize(
+    "setting", ["foreign_key_checks", "unique_checks", "sql_log_bin", "max_execution_time"]
+)
+def test_a_mysql_set_sees_only_the_declarations_in_scope(setting):
+    # The inner block's variable is gone after its END: the SET there sets the server's.
+    added = f"  BEGIN\n    DECLARE {setting} INT;\n  END;\n  SET {setting} = 0;"
+    candidate = MYSQL_FIXED.replace("INTO r;", "INTO r;\n" + added)
+    refusal = _screen().refusal_of(_my(MYSQL), candidate, "mysql")
+    assert refusal is not None and refusal[0] == "adds_statements", refusal
+
+
+@pytest.mark.passes_on_main
+def test_a_mysql_set_of_a_variable_declared_in_its_own_block_passes():
+    added = "  BEGIN\n    DECLARE n INT;\n    SET n = 0;\n  END;"
+    candidate = MYSQL_FIXED.replace("INTO r;", "INTO r;\n" + added)
+    assert _screen().refusal_of(_my(MYSQL), candidate, "mysql") is None
+
+
+@pytest.mark.parametrize(
+    "read",
+    [
+        "(SELECT o.evil FROM public.orders o LIMIT 1)",
+        "(SELECT (o).evil FROM public.orders o LIMIT 1)",
+    ],
+    ids=["column-notation", "field-selection"],
+)
+def test_attribute_notation_the_routine_does_not_use_is_a_call(read):
+    # o.evil runs evil(o) when orders has no column evil; the screen cannot tell which.
+    candidate = PLPGSQL_FIXED.replace("(SELECT count(*)", f"{read} || (SELECT count(*)")
+    refusal = _screen().refusal_of(_pg(PLPGSQL, "report"), candidate, "postgresql")
+    assert refusal is not None and refusal[0] == "adds_calls", refusal
+
+
+@pytest.mark.passes_on_main
+def test_attribute_notation_of_a_column_the_routine_names_passes():
+    # x is a column the routine's own table defines.
+    candidate = PLPGSQL_FIXED.replace(
+        "(SELECT count(*)", "(SELECT s.x FROM scratch s LIMIT 1) || (SELECT count(*)"
+    )
+    assert _screen().refusal_of(_pg(PLPGSQL, "report"), candidate, "postgresql") is None
+
+
+@pytest.mark.parametrize("target", ["OUTFILE", "DUMPFILE"])
+def test_a_mysql_select_into_a_file_is_a_write(target):
+    # The '?' moved from the CONCAT: the rebuilt text writes a file the literal names.
+    candidate = MYSQL_FIXED.replace(
+        "SELECT CONCAT(p, rnk, '?') INTO r;",
+        f"SELECT CONCAT(p, rnk) INTO r;\n  SELECT rnk INTO {target} '?';",
+    )
+    refusal = _screen().refusal_of(_my(MYSQL), candidate, "mysql")
+    assert refusal is not None and refusal[0] == "adds_statements", refusal
+
+
+@pytest.mark.parametrize("cast", ["p::internal", "NULL::cstring", "p::anyelement"])
+def test_a_cast_to_a_pseudo_type_is_refused(cast):
+    candidate = PG_SQL_FIXED.replace(
+        "SELECT pg_current_wal_lsn()", f"SELECT ({cast}), pg_current_wal_lsn()"
+    )
+    refusal = _screen().refusal_of(_pg(PG_SQL), candidate, "postgresql")
+    assert refusal is not None and refusal[0] == "adds_calls", refusal
+
+
+# --------------------------------------------------------------------------- #2399 round 2
+# A MySQL SET of a name is a local assignment only where the body reader has that name in
+# scope: its compound statements, never keyword counts, say where a block ends.
+
+MYSQL_DROP = MYSQL.replace("INTO r;", "INTO r;\n  DROP TEMPORARY TABLE IF EXISTS tmp;")
+
+
+@pytest.mark.parametrize("setting", ["foreign_key_checks", "optimizer_trace_limit"])
+def test_an_if_exists_in_an_inner_block_does_not_keep_its_names_in_scope(setting):
+    candidate = MYSQL_DROP.replace("rank", "rnk").replace(
+        "  DROP TEMPORARY TABLE IF EXISTS tmp;",
+        f"  BEGIN\n    DECLARE {setting} INT;\n    DROP TEMPORARY TABLE IF EXISTS tmp;\n"
+        f"  END;\n  SET {setting} = 0;",
+    )
+    refusal = _screen().refusal_of(_my(MYSQL_DROP), candidate, "mysql")
+    assert refusal is not None and refusal[0] == "adds_statements", refusal
+
+
+@pytest.mark.parametrize("setting", ["unique_checks", "optimizer_trace_offset"])
+def test_a_begin_alias_does_not_open_a_block(setting):
+    added = (
+        f"  BEGIN\n    DECLARE {setting} INT;\n    SELECT 1 AS begin INTO {setting};\n"
+        f"  END;\n  SET {setting} = 0;"
+    )
+    candidate = MYSQL_FIXED.replace("INTO r;", "INTO r;\n" + added)
+    refusal = _screen().refusal_of(_my(MYSQL), candidate, "mysql")
+    assert refusal is not None and refusal[0] == "adds_statements", refusal
+
+
+def test_a_declared_variable_named_like_a_server_variable_is_refused():
+    added = "  BEGIN\n    DECLARE foreign_key_checks INT;\n    SET foreign_key_checks = 0;\n  END;"
+    candidate = MYSQL_FIXED.replace("INTO r;", "INTO r;\n" + added)
+    refusal = _screen().refusal_of(_my(MYSQL), candidate, "mysql")
+    assert refusal is not None and refusal[0] == "adds_statements", refusal
+
+
+@pytest.mark.passes_on_main
+@pytest.mark.parametrize(
+    "compound",
+    [
+        "  IF (p IS NULL) THEN\n    SET rank = 0;\n  END IF;",
+        "  CASE (p)\n    WHEN p THEN SET rank = 0;\n    ELSE SET rank = 2;\n  END CASE;",
+    ],
+    ids=["if-parenthesised", "case-parenthesised"],
+)
+def test_a_parenthesised_condition_keeps_the_blocks_variables_in_scope(compound):
+    # The routine has the compound statement; the repair sets its own variable after it.
+    original = MYSQL.replace("INTO r;", "INTO r;\n" + compound)
+    candidate = original.replace("rank", "rnk").replace("END ", "END ", 1)
+    end = "END IF;" if "IF" in compound else "END CASE;"
+    candidate = candidate.replace(end, end + "\n  SET rnk = 1;")
+    assert _screen().refusal_of(_my(original), candidate, "mysql") is None

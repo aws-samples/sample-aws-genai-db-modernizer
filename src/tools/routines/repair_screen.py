@@ -6,10 +6,18 @@
 The routine repair seam (``src.agents.routine_repair.handler``) refuses a candidate
 ``CREATE`` that is not exactly one statement of the routine's kind, renames the routine
 (its kind, schema, name, or a trigger's table), changes its signature (argument types
-or return type), creates an object the routine does not, builds and runs a statement at
-run time the routine does not (``EXECUTE``, ``PREPARE``, by count and kind, #1941), names
-a schema the routine does not, or changes nothing (:func:`refusal_of`). Each rule compares the candidate with the
-routine's own redacted text, so what the routine already does is never held against it.
+or return type), creates an object the routine does not, adds a write the routine does
+not run, runs a kind of statement the routine does not beyond reads and control
+statements (an allowlist, ``ROUTINE_STATEMENTS``, #2373), builds and runs a statement at
+run time the routine does not (``EXECUTE``, ``PREPARE``, by count and kind, #1941), calls
+a function the routine does not and the fix hints do not name, applies an operator,
+names a type or reads an attribute that can run a function the routine does not use
+(PostgreSQL, #2373), names a schema the routine does not, or changes nothing
+(:func:`refusal_of`). Each rule compares the candidate with the routine's own redacted
+text, so what the routine already does is never held against it. The literal rule checks
+the placeholders' count and quote form, never their places: the repair loop (#1941)
+rebuilds the exact text by position and the side-by-side proof tells a moved literal
+apart.
 
 Pure: no I/O, no model, and no reason holds routine text. Passing these rules accepts
 nothing: the proof (#1944, #1945) decides.
@@ -26,8 +34,11 @@ from typing import Any
 from src.contracts.routine_repair import RefusalCode
 from src.tools.routines.migration import routine_signature
 from src.tools.routines.mysql_checks import MySqlRoutine, check_mysql_routine
-from src.tools.routines.postgresql_checks import parse_routine
+from src.tools.routines.postgresql_checks import RoutineParts, parse_routine
 from src.tools.routines.proof_screen import (
+    BUILT_IN_OPERATORS,
+    CATALOG_TYPES,
+    ROUTINE_STATEMENTS,
     called_functions,
     create_refusal,
     created_identity,
@@ -35,7 +46,9 @@ from src.tools.routines.proof_screen import (
     dynamic_executions,
     literal_sequence,
     named_schemas,
+    operators_and_types,
     privilege_clauses,
+    run_statements,
     trigger_shape,
     written_statements,
 )
@@ -110,6 +123,27 @@ def _new_calls(new: frozenset[str], allowed: frozenset[str], engine: str) -> boo
     return False
 
 
+def _new_function_route(candidate: RoutineParts, original: RoutineParts) -> str | None:
+    """What in the candidate can run a function the routine does not use (#2373), or None:
+    an operator the routine does not apply, unless it is a built-in symbol written
+    unqualified (never ``OPERATOR(schema.op)``); a type the routine does not name, unless it
+    is in ``pg_catalog``; an attribute read through a record (``o.name``, ``(o).name``) whose
+    name the routine never reads or defines as a column. The screen has no catalog of the
+    tables' columns, so it cannot tell a column from a function there and refuses it."""
+    for op in candidate.operators - original.operators:
+        if len(op) != 1 or op[0] not in BUILT_IN_OPERATORS:
+            return "applies an operator"
+    for name in candidate.types - original.types:
+        if not (
+            (len(name) == 2 and name[0] == "pg_catalog")
+            or (len(name) == 1 and name[0] in CATALOG_TYPES)
+        ):
+            return "names a type"
+    if candidate.attributes - original.attributes - original.columns:
+        return "reads an attribute through a record"
+    return None
+
+
 def _same(text: str) -> str:
     return " ".join(text.split())
 
@@ -164,6 +198,23 @@ def refusal_of(c: RepairedRoutine, text: str, engine: str) -> tuple[RefusalCode,
         return "not_one_statement", "the candidate's text does not read"
     if _over(writes, writes_before):
         return "adds_statements", "the candidate writes or changes an object the routine does not"
+    parts, parts_before = operators_and_types(text, engine, c.kind), operators_and_types(
+        c.create_text, engine, c.kind
+    )
+    kinds = run_statements(text, engine, c.kind, c.sql_mode)
+    kinds_before = run_statements(c.create_text, engine, c.kind, c.sql_mode)
+    if parts is None or kinds is None or not parts.read:
+        return (
+            "not_one_statement",
+            "the candidate's body does not read (on PostgreSQL, SQL or PL/pgSQL only)",
+        )
+    if parts_before is None or kinds_before is None:
+        return "not_one_statement", "the routine's own text does not read"
+    if kinds - kinds_before - ROUTINE_STATEMENTS[engine]:
+        return "adds_statements", (
+            "the candidate runs a kind of statement the routine does not, beyond reads and "
+            "control statements"
+        )
     dynamic, dynamic_before = dynamic_executions(text, engine), dynamic_executions(
         c.create_text, engine
     )
@@ -181,6 +232,12 @@ def refusal_of(c: RepairedRoutine, text: str, engine: str) -> tuple[RefusalCode,
         return "adds_calls", (
             "the candidate calls a function the routine does not, and the failed rules' fix "
             "hints do not name it"
+        )
+    route = _new_function_route(parts, parts_before)
+    if route is not None:
+        return "adds_calls", (
+            f"the candidate {route} the routine does not use, which can run a function: only "
+            "built-in operators, pg_catalog types and the routine's own column names are new"
         )
     literals = literal_sequence(text, engine)
     if literals is None or literals != literal_sequence(c.create_text, engine):
