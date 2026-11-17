@@ -8,7 +8,7 @@ This directory contains the FastAPI REST API server.
 
 ## Endpoints
 
-- `GET /health` - Health check
+- `GET /health` - Health check; `local` is true when an uploaded file stays on this machine, under the artifact folder (the New assessment page then opens on the upload form, #2327)
 - `/api/v1/assessments/*` - The assessment lifecycle, uploads, per-phase artifacts, the assignment review and resume, schema revisions, deliverables, query journeys and the context graph (routers in `routes/`)
 - `GET /api/v1/dashboard/stats` - Dashboard statistics
 

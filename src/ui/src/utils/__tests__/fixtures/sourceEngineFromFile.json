@@ -1,0 +1,18 @@
+{
+  "_comment": "#2327: a collection's metadata and the engine it names (null: none). Read by collectorFile.test.js and tests/unit/tools/database/test_ui_source_engine_parity.py, so the form's prefill and the server's detector agree.",
+  "cases": [
+    {"metadata": {"engine": "sqlserver", "version": "8.0.36"}, "engine": "sqlserver"},
+    {"metadata": {"engine": "Postgres"}, "engine": "postgresql"},
+    {"metadata": {"engine": " MariaDB "}, "engine": "mariadb"},
+    {"metadata": {"engine": "db2"}, "engine": "db2"},
+    {"metadata": {"engine": "sybase", "version": "PostgreSQL 16.10 on x86_64"}, "engine": "postgresql"},
+    {"metadata": {"version": "PostgreSQL 16.10 on x86_64-pc-linux-gnu"}, "engine": "postgresql"},
+    {"metadata": {"version_full": "Microsoft SQL Server 2019 (RTM) - 15.0.2000.5"}, "engine": "sqlserver"},
+    {"metadata": {"product_version": "Oracle Database 19c"}, "engine": "oracle"},
+    {"metadata": {"version": "DB2 v11.5"}, "engine": "db2"},
+    {"metadata": {"version": "10.11.6-MariaDB"}, "engine": "mariadb"},
+    {"metadata": {"version": "8.0.45"}, "engine": null},
+    {"metadata": {}, "engine": null},
+    {"metadata": null, "engine": null}
+  ]
+}

@@ -4,7 +4,7 @@
 /**
  * #724: the target-database checkboxes come from the engine catalog's status. Active
  * engines (both Aurora engines among them) can be ticked; Neptune and Keyspaces are
- * future placeholders (ADR-031 Decision 9), shown disabled as "Coming soon", and
+ * future placeholders (ADR-031 Decision 9), not offered (#2327), and
  * "Select all" never turns them on, so the request never names them. The legacy
  * generic "aurora" id is not offered. The page and the English strings are real;
  * Cloudscape components are plain DOM stand-ins, as in CreateAnalysis.credentials.test.js.
@@ -24,6 +24,8 @@ jest.mock('react-i18next', () => {
 jest.mock('react-router-dom', () => ({ useNavigate: () => jest.fn() }));
 jest.mock('../classes/ApiManager', () => ({ __esModule: true, default: jest.fn() }));
 jest.mock('../components/AppHeader', () => ({ __esModule: true, default: () => null }));
+// #2327: an API that is not local, so the page offers the live-database Wizard too.
+jest.mock('../utils/apiRuntime', () => ({ readApiLocal: () => Promise.resolve(false) }));
 jest.mock('../config/GlobalConfigurations', () => ({
   SideNavigationConfigurations: {},
   ApiConfigurations: { baseUrl: 'http://localhost:8000/api/v1/' },
@@ -39,11 +41,12 @@ jest.mock('@cloudscape-design/components/wizard', () => ({
   __esModule: true,
   default: ({ steps, onSubmit }) => (
     <div>
-      {steps.map((step) => <section key={step.title}>{step.content}</section>)}
+      {steps.map((step) => <section key={step.title}>{step.content}<p className="step-error">{step.errorText}</p></section>)}
       <button type="button" data-testid="submit" onClick={onSubmit}>submit</button>
     </div>
   ),
 }));
+jest.mock('@cloudscape-design/components/form', () => ({ __esModule: true, default: ({ children }) => <div>{children}</div> }));
 jest.mock('@cloudscape-design/components/space-between', () => ({ __esModule: true, default: (p) => mockDiv(p) }));
 jest.mock('@cloudscape-design/components/button', () => ({
   __esModule: true,
@@ -140,7 +143,7 @@ let container;
 let root;
 let execute;
 
-beforeEach(() => {
+beforeEach(async () => {
   execute = jest.fn().mockResolvedValue({ 'create-assessment': { success: true, job_id: 'job-1' } });
   ApiManager.mockImplementation(() => ({ execute }));
   jest.spyOn(console, 'log').mockImplementation(() => {});
@@ -148,7 +151,7 @@ beforeEach(() => {
   container = document.createElement('div');
   document.body.appendChild(container);
   root = createRoot(container);
-  act(() => root.render(<CreateAnalysis />));
+  await act(async () => { root.render(<CreateAnalysis />); });
 });
 
 afterEach(() => {
@@ -200,13 +203,14 @@ test('every active catalog engine is offered and enabled, both Aurora engines in
   });
 });
 
-test('Neptune and Keyspaces are disabled, unticked and labelled Coming soon', () => {
+// #2327: a future placeholder is not offered at all, not even as a disabled box.
+test('Neptune and Keyspaces are not offered, and nothing says Coming soon', () => {
   expect(ids('future').sort()).toEqual(['keyspaces', 'neptune']);
   ids('future').forEach((id) => {
     expect(checkbox(ENGINE_LABELS[id])).toBeNull();
-    expect(box(comingSoon(id)).disabled).toBe(true);
-    expect(box(comingSoon(id)).checked).toBe(false);
+    expect(checkbox(comingSoon(id))).toBeNull();
   });
+  expect(container.textContent).not.toMatch(/coming soon/i);
 });
 
 test('Aurora is no longer described as Coming soon, and the legacy generic id is not offered', () => {
@@ -222,19 +226,26 @@ test('Select all ticks every active engine and never a placeholder', async () =>
   act(() => button(en['create-analysis.target-databases.select-all']).click());
 
   ids('active').forEach((id) => expect(box(ENGINE_LABELS[id]).checked).toBe(true));
-  ids('future').forEach((id) => expect(box(comingSoon(id)).checked).toBe(false));
+  ids('future').forEach((id) => expect(checkbox(comingSoon(id))).toBeNull());
   // #1328: every engine ticked is no scope at all (null), the same run as no setting.
   expect(await submitValidForm()).toBeNull();
 });
 
 // #1328: the selection is the scope the analysis applies, sent as target_databases.
-test('the default form, every engine ticked, sends no scope', async () => {
+// #2327: the form starts with every engine but ElastiCache, a cache the user opts in to.
+test('the default form sends every engine but ElastiCache', async () => {
+  expect(box('ElastiCache').checked).toBe(false);
+  expect(await submitValidForm()).toEqual(ids('active').filter((id) => id !== 'elasticache'));
+});
+
+test('ticking ElastiCache too, every engine ticked, sends no scope', async () => {
+  act(() => box('ElastiCache').click());
   expect(await submitValidForm()).toBeNull();
 });
 
 test('unticking one engine sends the scope of the rest', async () => {
-  act(() => box('ElastiCache').click());
-  expect(await submitValidForm()).toEqual(ids('active').filter((id) => id !== 'elasticache'));
+  act(() => box('DynamoDB').click());
+  expect(await submitValidForm()).toEqual(ids('active').filter((id) => id !== 'elasticache' && id !== 'dynamodb'));
 });
 
 test('the request names only the engines the user left ticked', async () => {
@@ -250,7 +261,7 @@ test('with every engine deselected the form refuses to submit', async () => {
   act(() => button(en['create-analysis.target-databases.deselect-all']).click());
   await submit();
   expect(execute).not.toHaveBeenCalled();
-  expect(targetField().querySelector('.error').textContent).toMatch(/at least one target database/);
+  expect(targetField().querySelector('.error').textContent).toMatch(/at least one target engine/);
 });
 
 // The same behaviour with literal ids, independent of the generated catalog module.

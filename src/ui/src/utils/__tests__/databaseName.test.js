@@ -60,12 +60,12 @@ test.each([
 test('CreateAnalysis.js sends every database name through normalizeDatabaseName', () => {
   const source = fs.readFileSync(path.join(__dirname, '../../pages/CreateAnalysis.js'), 'utf8');
   // Four request fields carry the name here: the online create body, and the
-  // offline prepare body, confirm query string and create body. The online
+  // upload form's prepare body, confirm query string and create body. The online
   // connection is built by buildConnection (checked below).
   const sends = source.match(/\b(?:database_name|database)(?::\s*|=\$\{encodeURIComponent\()[^,\n)]+/g);
   expect(sends).toHaveLength(4);
   for (const send of sends) {
-    expect(send).toMatch(/normalizeDatabaseName\((?:formData\.databaseName|offlineDatabaseName)$/);
+    expect(send).toMatch(/normalizeDatabaseName\((?:formData\.databaseName|databaseName)$/);
   }
 });
 

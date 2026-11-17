@@ -79,7 +79,6 @@ describe('toFixed is not spreading (#2309)', () => {
     'components/QueryDecisionTrace.js': 1,
     'pages/AnalysisResults.js': 5,
     'pages/AssignmentGate.js': 3,
-    'pages/CreateAnalysis.js': 1,
     'pages/JobMonitoringSummary.js': 2,
     'utils/cacheLayer.js': 4,
     'utils/collectorRowTotals.js': 2,

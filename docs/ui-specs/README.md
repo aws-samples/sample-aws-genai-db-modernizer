@@ -12,7 +12,7 @@ Every kept route has a routing-table test in `src/ui/src/__tests__/AppRoutes.tes
 |---|---|---|---|
 | `/` | — (redirect) | Keep | Entry redirect to `/dashboard`. |
 | `/dashboard` | `Dashboard.js` | Keep | Job list and hub; linked from the side nav and from every page's "back to dashboard" action. |
-| `/analysis/create` | `CreateAnalysis.js` | Keep | Starts a new analysis; linked from the side nav and the Dashboard's "New analysis" button. |
+| `/analysis/create` | `CreateAnalysis.js` | Keep | The New assessment page; linked from the side nav and the Dashboard's "New analysis" button. With the local API it is one upload form (#2327); a deployment that is not local also offers the live-database Wizard. |
 | `/analysis/monitor/:jobId` | `JobMonitoring.js` | **Removed** (#957) | No link reached it except the engine-analysis page's breadcrumb; its "Download logs" and "Download artifact" buttons only logged to the console. `JobMonitoringSummary.js` is the job page. |
 | `/analysis/monitor/summary/:jobId` | `JobMonitoringSummary.js` | Keep | Post-phase hub; linked from `CreateAnalysis`, `AssignmentGate`, `Dashboard`. |
 | `/analysis/assignments/:jobId` | `AssignmentGate.js` | Keep | Assignment approval gate; linked from `JobMonitoringSummary`; the intended UI for the `/assign` gate. |
