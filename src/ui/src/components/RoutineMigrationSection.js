@@ -18,7 +18,10 @@ import { routineKey, routinesOf, routineToDoText } from "../utils/reportFacts";
  * migrate yourself, that would behave differently, or with no code collected)
  * by id, kind and status with why in plain words and the routines it names,
  * and the carried routines to check rolled up once per note (maintainer
- * decision 2 on #1938). It only formats the facts (ADR-032): every count,
+ * decision 2 on #1938), then each intervention: what came of the model repair of
+ * each routine a model was asked to repair (#1941), in the facts' own words
+ * (`line`, and each attempt's line for one that still needs attention). It only
+ * formats the facts (ADR-032): every count,
  * list and sentence is stored. Never a routine's code: the facts hold none.
  *
  * The section's sub-headings are h3, under the expandable container's h2 header, so the
@@ -48,6 +51,7 @@ const RoutineMigrationSection = memo(({ synthesis, t }) => {
   const notes = (routines.check_notes || []).filter(n => n && typeof n === 'object');
   const toDo = routineToDoText(routines);
   const toDoRoutines = routines.to_do_routines || [];
+  const interventions = (routines.interventions || []).filter(i => i && typeof i === 'object' && i.line);
   const step = routines.migrate_yourself_step;
   const columns = [
     { id: 'routine', header: t('analysis-results.routines.column-routine'), cell: r => <Mono>{r.routine_id}</Mono> },
@@ -106,6 +110,24 @@ const RoutineMigrationSection = memo(({ synthesis, t }) => {
                   wrapLines
                   ariaLabels={{ tableLabel: t('analysis-results.routines.each') }}
                 />
+              </Box>
+            )}
+            {interventions.length > 0 && (
+              <Box data-figure="routines-interventions">
+                <Box variant="h3">{t('analysis-results.routines.interventions')}</Box>
+                <div>{t('analysis-results.routines.interventions-intro')}</div>
+                <ul>
+                  {interventions.map(i => (
+                    <li key={routineKey(i)} data-intervention={i.state}>
+                      {i.kind} <Mono>{i.routine_id}</Mono>{`: ${i.line}`}
+                      {(i.attempt_lines || []).length > 0 && (
+                        <ul>
+                          {i.attempt_lines.map(a => <li key={a}>{a}</li>)}
+                        </ul>
+                      )}
+                    </li>
+                  ))}
+                </ul>
               </Box>
             )}
             {notes.length > 0 && (

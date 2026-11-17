@@ -500,12 +500,20 @@ def _cap(text: str) -> str:
     return text[:1].upper() + text[1:]
 
 
-def _routine_detail(row: Mapping[str, Any]) -> str:
+def _routine_detail(row: Mapping[str, Any], repair: Mapping[str, Any] | None = None) -> str:
     head = f"{row['kind']} {row['routine_id']}"
     words = _CATEGORY_WORDS.get(str(row.get("category")))
     if words:
-        return f"{head}: {words} ({', '.join(row.get('reasons') or [])})"
-    return f"{head}: {', '.join(row.get('severity_basis') or [])}"
+        text = f"{head}: {words} ({', '.join(row.get('reasons') or [])})"
+    else:
+        text = f"{head}: {', '.join(row.get('severity_basis') or [])}"
+    if repair is not None and repair.get("line"):
+        # #1941: what came of the model repair, and each failed attempt with its error.
+        text += f". {repair['line']}"
+        attempts = [str(a) for a in repair.get("attempt_lines") or []]
+        if attempts:
+            text += " " + " ".join(a.rstrip(".") + "." for a in attempts)
+    return text
 
 
 def _listed_details(
@@ -514,7 +522,14 @@ def _listed_details(
     """Each routine (up to ``ROUTINE_DETAILS_LISTED``) and what set its class, then each
     rule's catalog reason and fix hint."""
     listed = rows[:ROUTINE_DETAILS_LISTED]
-    details = [_routine_detail(r) for r in listed]
+    repairs = {
+        (str(i.get("kind")), str(i.get("routine_id"))): i
+        for i in routines.get("interventions") or []
+        if isinstance(i, Mapping)
+    }
+    details = [
+        _routine_detail(r, repairs.get((str(r["kind"]), str(r["routine_id"])))) for r in listed
+    ]
     if len(rows) > len(listed):
         details.append(
             f"And {len(rows) - len(listed)} more: the engineering report lists every routine."

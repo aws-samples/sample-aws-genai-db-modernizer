@@ -3338,25 +3338,60 @@ class RoutineNoteFact(BaseModel):
     more_count: int = Field(0, ge=0, description="How many more than routines lists")
 
 
+class RoutineAttemptFact(BaseModel):
+    """One attempt of the routine repair loop (#1941): where it stopped and why, in
+    words; never the routine's text or a literal."""
+
+    attempt: int = Field(..., ge=1, description="1, 2 or 3")
+    stage: str = Field(..., description="answer, screen, rebuild, rescreen, recheck or proof")
+    outcome: str = Field(..., description="failed, no_answer, pending or proved")
+    code: str | None = Field(None, description="The stage's fixed code")
+    error: str | None = Field(None, description="Why, in words")
+
+
 class RoutineInterventionFact(BaseModel):
-    """A routine that needed an intervention (#1940): the routine repair seam has a model's
-    candidate for it, waiting for the proof. What changed is the model's change note
-    (untrusted text, escaped when rendered); never the routine's text or a diff of it."""
+    """A routine that needed an intervention (#1940, #1941): the routine repair loop
+    worked on it. ``line`` is what the deliverables print; the change note says what
+    changed only for a ``model_repaired`` routine. Never the routine's text or a diff."""
 
     kind: str = Field(..., description="function, procedure, trigger or event")
     routine_id: str = Field(..., min_length=1, description="The routine's routine_id")
-    state: Literal["repaired_pending_proof"] = Field(
+    state: Literal["repaired_pending_proof", "model_repaired", "needs_attention"] = Field(
         ...,
         description=(
+            "model_repaired: the side-by-side proof accepted the model's repair (#1941); "
             "repaired_pending_proof: not carried until the side-by-side proof accepts it; "
-            "never proved here"
+            "needs_attention: not rebuildable by position, or every attempt failed"
         ),
     )
     reasons: list[str] = Field(
         default_factory=list,
         description="Why it needed one: its failed rule ids and reasons, or target_error",
     )
-    change_note: str = Field(..., min_length=1, description="What changed, in plain words")
+    change_note: str = Field(
+        "",
+        description=(
+            "The model's change note (untrusted); what changed when repaired; empty for a "
+            "routine with no candidate"
+        ),
+    )
+    proof_source: str | None = Field(
+        None, description="model_repaired: where the side-by-side proof ran"
+    )
+    attention: str | None = Field(
+        None, description="needs_attention: not_rebuildable or attempts_used"
+    )
+    attention_detail: str | None = Field(None, description="needs_attention: why, in words")
+    attempts: list[RoutineAttemptFact] = Field(
+        default_factory=list, description="The loop's attempts, in order (#1941)"
+    )
+    line: str | None = Field(
+        None, description="What the deliverables print about it (#1941), in plain words"
+    )
+    attempt_lines: list[str] = Field(
+        default_factory=list,
+        description="needs_attention: each attempt in plain words, for the risk and report",
+    )
 
 
 class RoutineFacts(BaseModel):
@@ -3464,9 +3499,9 @@ class RoutineFacts(BaseModel):
     interventions: list[RoutineInterventionFact] = Field(
         default_factory=list,
         description=(
-            "The routines that needed an intervention and what changed (#1940): each "
-            "routine the repair seam holds a model's candidate for, in the artifact's "
-            "order; empty when no repair ran"
+            "The routines that needed an intervention and what came of it (#1940, #1941): "
+            "each routine the repair loop repaired, holds a candidate for, or could not "
+            "repair, in the artifact's order; empty when no repair ran"
         ),
     )
 

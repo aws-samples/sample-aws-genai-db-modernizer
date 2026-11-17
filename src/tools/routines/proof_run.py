@@ -83,6 +83,7 @@ __all__ = [
     "ProofPlan",
     "apply_proof",
     "plan_proof",
+    "proof_input",
     "prove_routines",
 ]
 
@@ -156,7 +157,7 @@ def _collected(collector: Mapping[str, Any], key: str) -> list[Mapping[str, Any]
     return [r for r in schema.get(key) or [] if isinstance(r, Mapping)]
 
 
-def _proof_input(row: RoutineMigration, dialect: str, collector: Mapping[str, Any],
+def proof_input(row: RoutineMigration, dialect: str, collector: Mapping[str, Any],
                  tables: list[str]) -> RoutineProofInput:  # fmt: skip
     qualified = (
         f"{row.schema_name}.{row.name}" if dialect == "postgresql" and row.schema_name else row.name
@@ -239,9 +240,9 @@ def plan_proof(migration: RoutineMigrationContract, sources: Iterable[RoutineSou
             continue
         tables = [d.name for d in row.dependencies if d.kind == "table"]
         original, text = texts[rid]
-        name = _proof_input(row, dialect, collector, tables).name
+        name = proof_input(row, dialect, collector, tables).name
         plan.routines.append(ComparedRoutine(
-            _proof_input(row, dialect, collector, tables),
+            proof_input(row, dialect, collector, tables),
             (de.SourceRoutine(name, row.kind, original),), (de.SourceRoutine(name, row.kind, text),),
             tuple(d for d in depends[rid] if d in texts),
         ))  # fmt: skip

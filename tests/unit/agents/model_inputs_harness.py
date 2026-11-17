@@ -85,18 +85,6 @@ NOT_RUN: dict[str, str] = {
         "needs a finished design delta; takes the delta and the input summary's counts"
     ),
     "src/tools/schema/base_schema_agent.py::numbers_correction_prompt": "takes error strings only",
-    # #1940: no pipeline step runs the routine repair yet (the repair loop, #1941, wires it).
-    # Its request takes the routine-migration artifact and the collection read here, and
-    # tests/unit/agents/routine_repair/test_routine_repair_seam.py checks it frames each
-    # routine and never carries a literal or an opted-out body.
-    "src/agents/routine_repair/handler.py::prepare_routine_repair_llm_input": (
-        "no pipeline step calls it yet (#1941); framed and redacted per routine "
-        "(test_routine_repair_seam.py)"
-    ),
-    "src/agents/routine_repair/handler.py::routine_repair_prompt": (
-        "no pipeline step calls it yet (#1941); the framed blocks of its request "
-        "(test_routine_repair_seam.py)"
-    ),
 }
 
 
@@ -180,6 +168,16 @@ def _job(
         edit_collector(collector)
         store.write_json(key, collector)
     return store, job_id, db
+
+
+def _routine_repair(artifacts: Path, llm_mode: str) -> None:
+    """The routine repair loop (#1941) on the repair tests' PostgreSQL job, whose routine
+    needs a repair, in ``artifacts``: its request file (external) or prompt (Bedrock)."""
+    from src.agents.routine_repair.handler import run_routine_repair
+    from tests.unit.agents.routine_repair import repair_fixtures as fx
+
+    store = fx.job(artifacts)
+    run_routine_repair(store, fx.DB, fx.JOB, llm_mode=llm_mode)
 
 
 def _quietly(step, *args, **kwargs) -> None:
@@ -304,6 +302,9 @@ def run_every_model_input(
         # A design the stand-in left unfinished gets a skip record (#2154).
         skip_undesigned_effective(ext_store, db, job)
         _quietly(run_assessment.phase_synthesis, ext_store, job, db, "external")
+        # The routine repair loop (#1941): this sample has no routine to carry, so it runs
+        # on the repair tests' PostgreSQL job, in a store of its own.
+        _quietly(_routine_repair, tmp / "external" / "routine-artifacts", "external")
 
         # The Bedrock calls, with a stand-in model.
         bed_store, bjob, bdb = _job(tmp / "bedrock", edit_raw, edit_collector, sample)
@@ -360,6 +361,7 @@ def run_every_model_input(
         # A design the stand-in left unfinished gets a skip record (#2154).
         skip_undesigned_effective(bed_store, bdb, bjob)
         _quietly(run_assessment.phase_synthesis, bed_store, bjob, bdb, "bedrock")
+        _quietly(_routine_repair, tmp / "bedrock" / "routine-artifacts", "bedrock")
         # The free-text answer check (boto3, refused by the recorder).
         question = AgentQuestion(
             question_id="q-free-text", category="design", question=free_text, options=None
@@ -384,6 +386,10 @@ def run_every_model_input(
                 files[str(path.relative_to(root))] = path.read_text(
                     encoding="utf-8", errors="replace"
                 )
+    # The routine repair job's request files (#1941); its collection is the tests' own.
+    for root in (tmp / "external" / "routine-artifacts", tmp / "bedrock" / "routine-artifacts"):
+        for path in sorted(root.rglob("llm_input.json")):
+            files[str(path.relative_to(root))] = path.read_text(encoding="utf-8")
     return {
         "files": files,
         "prompts": list(_ModelStandIn.prompts),

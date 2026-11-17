@@ -38,6 +38,9 @@ _IMPORTERS = {
     "src/tools/routines/proof_run.py",  # loads them on the throwaway test cluster only (#1945)
     # The routine repair seam (#1940): the collection-wide opt-out flag only, never a chunk.
     "src/agents/routine_repair/handler.py",
+    # The repair loop's checks (#1941): rebuilds a repair onto the exact text, checks it
+    # again and proves it side by side, in memory only.
+    "src/tools/routines/repair_proof.py",
 }
 _READERS = {"read_routine_sources", "RoutineSourcesChunk"}
 _PATHS = ("collector/routine_sources", "routine_sources.json", "routine_sources/part-")
@@ -99,6 +102,9 @@ def test_nothing_but_the_routine_sources_module_reads_a_chunk():
         # Loads the carried text on the throwaway test cluster through the Data API and
         # keeps only ids, counts and SQLSTATEs (#1945, ADR-034 Decision 5).
         "src/tools/routines/proof_run.py",
+        # Rebuilds a model's repair onto the exact text, checks it again and proves it on
+        # disposable engines; keeps ids, codes and words only (#1941, ADR-034 Decision 2).
+        "src/tools/routines/repair_proof.py",
     }
 
 

@@ -18,6 +18,7 @@ import { createInstance } from 'i18next';
 import en from '../../locales/en.json';
 import RoutineMigrationSection from '../RoutineMigrationSection';
 import routines from './fixtures/routineFacts.json';
+import withInterventions from './fixtures/routineInterventions.json';
 
 jest.mock('@cloudscape-design/components/expandable-section', () => ({
   __esModule: true,
@@ -213,4 +214,31 @@ test('the sub-headings follow the page heading order: h3 under the h2 section he
   expect(headings.length).toBeGreaterThan(0);
   expect(headings.every((v) => v === 'h3')).toBe(true);
   expect(section.querySelector('[data-figure="routines-to-do"] [data-box-variant="h3"]')).not.toBeNull();
+});
+
+// #1941: what came of each model repair, in the facts' own words
+// (fixtures/routineInterventions.json is checked against the Python facts by
+// tests/unit/report/test_routine_interventions_deliverables.py).
+test('lists each intervention with its line, and every attempt of one that needs attention', () => {
+  render({ facts: { routines: withInterventions } });
+  const box = container.querySelector('[data-figure="routines-interventions"]');
+  expect(box.querySelector('[data-box-variant="h3"]').textContent).toBe('Interventions');
+  const items = [...box.querySelectorAll(':scope > ul > li')];
+  expect(items.map(li => li.getAttribute('data-intervention'))).toEqual(
+    withInterventions.interventions.map(i => i.state),
+  );
+  withInterventions.interventions.forEach((item, n) => {
+    expect(items[n].textContent).toContain(`${item.kind} ${item.routine_id}: ${item.line}`);
+    const attempts = [...items[n].querySelectorAll('ul li')].map(li => li.textContent);
+    expect(attempts).toEqual(item.attempt_lines);
+  });
+  const repaired = withInterventions.interventions.find(i => i.state === 'model_repaired');
+  expect(box.textContent).toContain(`What changed: ${repaired.change_note}`);
+  const pending = withInterventions.interventions.find(i => i.state === 'repaired_pending_proof');
+  expect(box.textContent).not.toContain(pending.change_note);
+});
+
+test('no interventions section without one', () => {
+  render({ facts: { routines } });
+  expect(container.querySelector('[data-figure="routines-interventions"]')).toBeNull();
 });
