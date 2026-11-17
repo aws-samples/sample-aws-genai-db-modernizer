@@ -1158,7 +1158,8 @@ def test_the_postgresql_runner_role_takes_few_connections_and_expires_on_its_own
     import datetime as dt
 
     dat = _mod("data_api_target")
-    now = dt.datetime(2026, 11, 17, 12, 0, tzinfo=dt.UTC)
+    # The fake checks the sign-in against the real clock, so the run starts now (#2423).
+    now = dt.datetime.now(dt.UTC).replace(microsecond=0)
     client = FakeDataApi()
     from tests.unit.tools.routines.fake_data_api import FakeSecrets
 
@@ -1167,7 +1168,8 @@ def test_the_postgresql_runner_role_takes_few_connections_and_expires_on_its_own
                       tags=[], engine="postgresql", now=now)  # fmt: skip
     create = next(s.sql for s in client.sent if s.sql.startswith("CREATE ROLE"))
     assert " CONNECTION LIMIT 10 " in create
-    assert f" VALID UNTIL '2026-11-17 {12 + dat.RUNNER_VALID_HOURS:02d}:00:00+00' " in create
+    until = now + dt.timedelta(hours=dat.RUNNER_VALID_HOURS)
+    assert f" VALID UNTIL '{until:%Y-%m-%d %H:%M:%S}+00' " in create
 
 
 def test_a_postgresql_runner_past_its_valid_until_cannot_sign_in():
