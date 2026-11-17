@@ -16,9 +16,9 @@ import StatusIndicator from '@cloudscape-design/components/status-indicator';
 import AppHeader from './AppHeader';
 import { SideNavigationConfigurations } from '../config/GlobalConfigurations';
 
-// The page chrome both states share: header, navigation and a breadcrumb that
+// The page chrome these states share (also the not-found page, #2393): header, navigation and a breadcrumb that
 // ends on the page the reader is on.
-function JobRouteShell({ lastCrumb, children }) {
+export function JobRouteShell({ lastCrumb, children }) {
   const { t } = useTranslation();
   const [navigationOpen, setNavigationOpen] = useState(false);
   return (

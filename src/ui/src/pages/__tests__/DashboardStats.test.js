@@ -219,3 +219,22 @@ describe('API up', () => {
     expect(link.getAttribute('href')).toBe('/analysis/create');
   });
 });
+
+// #2393: the not-found page links to /dashboard#assessments.
+describe('assessments anchor', () => {
+  afterEach(() => window.history.replaceState(null, '', '/'));
+
+  test('the list section has the id the not-found link targets', async () => {
+    await renderDashboard(UP);
+    const section = container.querySelector('#assessments');
+    expect(section).not.toBeNull();
+    expect(section.textContent).toContain('Recent analyses');
+    expect(document.activeElement).not.toBe(section);
+  });
+
+  test('opening /dashboard#assessments moves focus to the list', async () => {
+    window.history.replaceState(null, '', '/dashboard#assessments');
+    await renderDashboard(UP);
+    expect(document.activeElement).toBe(container.querySelector('#assessments'));
+  });
+});

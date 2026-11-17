@@ -10,7 +10,7 @@ bookmarks keep working, each covered below: `/analysis/results-v2/:jobId` (the
 page's name until its version suffix was dropped, #957) and `/analysis/report/:jobId`
 (the earlier, orange-styled report, removed in #356). The job-monitoring page
 (`/analysis/monitor/:jobId`) and the engine-analysis page were removed (#957); their
-URLs fall through to the dashboard. The pattern-analysis page was removed (#2300);
+URLs show the not-found page (#2393). The pattern-analysis page was removed (#2300);
 `/analysis/patterns/:jobId?target=<engine>` redirects to that engine in the results
 page's explorer (covered below).
 """
@@ -471,23 +471,32 @@ def test_an_unknown_assessment_id_shows_one_not_found_state(
 
 
 @pytest.mark.parametrize("route", ["analysis/monitor", "analysis/engine-analysis"])
-def test_removed_job_pages_fall_through_to_the_dashboard(
+def test_removed_job_pages_show_the_not_found_page(
     page: Page, ui: str, all_runs: list[PipelineResult], route: str
 ) -> None:
-    """#957: the job-monitoring page (dead download buttons) and the engine-analysis
-    page (pre-assignment figures that contradicted the results page) are gone; their
-    URLs land on the dashboard instead of rendering either page."""
+    """#957 removed the job-monitoring page (dead download buttons) and the engine-analysis
+    page (pre-assignment figures that contradicted the results page). #2393: their URLs
+    used to fall through to the dashboard with no hint the page was gone. They now show
+    the not-found page at the address asked for, with links to the dashboard and the
+    assessments list, and a document title that says so."""
     r = all_runs[0]
     ev = _watch(page)
     page.goto(f"{ui}/{route}/{r.job_id}")
+    expect(page.get_by_role("heading", level=1, name="Page not found")).to_be_visible(
+        timeout=READY_MS
+    )
+    assert page.url.rstrip("/").endswith(f"/{route}/{r.job_id}"), (route, page.url)
+    expect(page).to_have_title(re.compile("Page not found"))
+    text = page.inner_text("body")
+    assert f"/{route}/{r.job_id}" in text, route
+    assert "Engine analysis:" not in text, route
+    assert "Download artifact" not in text and "Download logs" not in text, route
+    expect(page.get_by_role("link", name="Open the assessments list")).to_be_visible()
+    page.get_by_role("link", name="Go to the dashboard").click()
     expect(page).to_have_url(re.compile(r"/dashboard/?$"), timeout=READY_MS)
     expect(page.get_by_text(r.db).or_(page.get_by_text(r.job_id)).first).to_be_visible(
         timeout=READY_MS
     )
-    assert page.url.rstrip("/").endswith("/dashboard"), (route, page.url)
-    text = page.inner_text("body")
-    assert "Engine analysis:" not in text, route
-    assert "Download artifact" not in text and "Download logs" not in text, route
     assert ev == {"console": [], "pageerror": [], "failed": []}, (route, ev)
 
 
