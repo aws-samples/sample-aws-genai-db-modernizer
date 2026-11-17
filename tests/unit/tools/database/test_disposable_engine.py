@@ -776,6 +776,7 @@ _REPO = Path(__file__).resolve().parents[4]
 _HOLD_AN_ENGINE = """
 import sys, time
 from src.tools.database import disposable_engine as de
+de._start_watcher = lambda workdir: None  # these tests are about the sweep, the backstop
 kw = {"pg_bin_dir": sys.argv[1]} if sys.argv[1] else {}
 h = de.start("postgresql", sys.argv[2], **kw)
 print(h.workdir, h.pid, flush=True)
