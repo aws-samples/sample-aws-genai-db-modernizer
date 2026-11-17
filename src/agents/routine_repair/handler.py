@@ -549,3 +549,23 @@ def finalize_routine_repair(
         proof=proof,
         proof_options=proof_options,
     )
+
+
+def repairable_routines(store: Any, database_name: str, job_id: str) -> int:
+    """How many routines of the job's newest routine-migration artifact a model may repair
+    (:func:`run_routine_repair_deterministic`): what ``/test-routines`` offers the repair
+    rounds on the test cluster for before its test (#2384). 0 without an artifact."""
+    from src.storage.assignment_versioning import resolve_downstream_assignment_version
+    from src.storage.collector_for_models import read_collector_for_models
+    from src.storage.routine_migration_store import latest_routine_migration
+
+    found = latest_routine_migration(
+        store,
+        database_name,
+        job_id,
+        resolve_downstream_assignment_version(store, database_name, job_id),
+    )
+    if found is None:
+        return 0
+    collector = read_collector_for_models(store, database_name, job_id, missing_ok=True)
+    return len(run_routine_repair_deterministic(collector, found[1]).candidates)

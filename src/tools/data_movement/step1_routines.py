@@ -11,7 +11,10 @@ it written for the contract's version, by the same deterministic phase). Then, i
 artifact's deploy order:
 
 1. A routine that needs attention (or is anything but ``as_is`` or ``rewritten``) is
-   not carried, with the artifact's reasons.
+   not carried, with the artifact's reasons, unless the repair loop carried it
+   (``model_repaired`` in ``routine_repair.json`` for the same version, #2384): then it is
+   carried as ``model_repaired``, and the deploy gate decides whether its rebuilt text is
+   deployed (``routine_test_gate``), as for any carried routine.
 2. A routine that names a view step 1 does not create is not carried
    (``depends_on_view:<schema.view>``, one per view); a view the contract's views section
    carries (#2082) holds nothing back, since the views deploy script runs first. The
@@ -42,10 +45,12 @@ reads this module. Linear in the routines.
 
 from __future__ import annotations
 
+from collections.abc import Collection
 from typing import Any
 
 from src.contracts.routine_migration import RoutineMigration, RoutineMigrationContract
 from src.contracts.transformation_contract import StepContract, StepRoutine, StepRoutines
+from src.shared.routine_facts import repairable_row
 
 __all__ = [
     "DEFERRED_KINDS",
@@ -149,8 +154,10 @@ def build_step_routines(
     views: set[str] | None = None,
     triggers: dict[TriggerKey, dict[str, Any]] | None = None,
     carried_views: set[str] | None = None,
+    repaired: Collection[tuple[str, str]] = (),
 ) -> StepRoutines:
     """The routines section for ``contract`` from ``migration`` (module docstring);
+    ``repaired``: the routines the repair loop carried, by ``(kind, routine_id)``;
     ``source="none"`` when there is no artifact (no routine this pipeline carries).
     ``views`` are the collection's views as lower-case ``schema.name``; the contract's
     views count too. ``triggers`` are the collection's triggers by :func:`_trigger_key`.
@@ -168,9 +175,14 @@ def build_step_routines(
     for row in migration.routines:
         key = (row.kind, row.routine_id)
         reasons: list[str] = []
+        status = (
+            "model_repaired"
+            if key in repaired and repairable_row(row.model_dump(mode="json"))
+            else row.status
+        )
         if migration.target_engine != engine:
             reasons = [ENGINE_DIFFERS]
-        elif row.status not in ("as_is", "rewritten"):
+        elif status not in ("as_is", "rewritten", "model_repaired"):
             reasons = list(row.reasons) or [NOT_CARRIABLE]
         else:
             named = {d.name.lower() for d in row.dependencies if d.kind == "table"}
@@ -189,6 +201,8 @@ def build_step_routines(
             ):
                 reasons.append(NOT_CARRIED_DEPENDENCY)
         extra = _trigger_fields(row, engine, found)
+        if status == "model_repaired" and not reasons:
+            extra["repaired"] = True
         if reasons:
             carry_of[key] = "not_carried"
             others.append(_row(row, "not_carried", reasons=reasons, **extra))
@@ -199,7 +213,7 @@ def build_step_routines(
             carry_of[key] = "carried"
             disabled = engine == "aurora_postgresql" and row.kind == "trigger"
             carried.append(
-                _row(row, "carried", order=len(carried) + 1, migration_status=row.status,
+                _row(row, "carried", order=len(carried) + 1, migration_status=status,
                      enabled_as="disabled" if disabled else "enabled", **extra)  # fmt: skip
             )
     others.sort(key=lambda r: (r.kind, r.routine_id))
@@ -266,6 +280,13 @@ def attach_step_routines(
         )
         found = None if written is None else (contract.assignment_version, written)
     schema = _collection_schema(store, database_name, job_id)
+    repaired: set[tuple[str, str]] = set()
+    if found is not None:
+        from src.shared.routine_facts import repaired_routines
+        from src.storage.routine_repair_store import read_routine_repair
+
+        repair = read_routine_repair(store, database_name, job_id, found[0])
+        repaired = set(repaired_routines(repair, found[0]))
     section = build_step_routines(
         None if found is None else found[1],
         contract,
@@ -273,6 +294,7 @@ def attach_step_routines(
         views=_collection_views(schema),
         triggers=_collection_triggers(schema, contract.target.engine),
         carried_views=carried_view_names(contract),
+        repaired=repaired,
     )
     # The section is validated on its own; nothing else of the contract changes.
     return contract.model_copy(update={"routines": section})

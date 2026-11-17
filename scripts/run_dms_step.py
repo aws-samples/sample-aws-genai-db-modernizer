@@ -227,8 +227,11 @@ TRIGGERS_SCRIPTS, TRIGGERS_CHECK = "triggers-scripts", "triggers-check"  # no AW
 PROOF_PLAN, PROOF_DEPLOY = "proof-target-plan", "proof-target-deploy"
 PROOF_STATUS, PROOF_TEARDOWN = "proof-target-status", "proof-target-teardown"
 PROOF_RUN = "proof-target-run"  # the routine proof itself, on the test cluster (#1945)
+#: The repair loop's rounds on the test cluster (run_routine_repair.py --proof test-cluster,
+#: #2384): not a subcommand here; it goes through the same refusals (run_on_test_cluster).
+PROOF_REPAIR = "proof-target-repair"
 PROOF_TARGET = (PROOF_PLAN, PROOF_DEPLOY, PROOF_STATUS, PROOF_RUN, PROOF_TEARDOWN)
-PROOF_WRITES = (PROOF_DEPLOY, PROOF_RUN, PROOF_TEARDOWN)
+PROOF_WRITES = (PROOF_DEPLOY, PROOF_RUN, PROOF_TEARDOWN, PROOF_REPAIR)
 PROOF_TARGET_RESOURCES = _PROOF_RESOURCES  # the stack the ownership check accepts
 LOB_SIZES = (
     "lob-sizes"  # reads the customer's lob-sizes.tsv, or applies a skip; no AWS call (#2123)
@@ -2921,6 +2924,7 @@ def _proof_target(args: argparse.Namespace, sleep: Callable[[float], None]) -> d
         if writes and not args.approve:
             question = (pt.teardown_question(name, inputs.region) if command == PROOF_TEARDOWN
                         else pt.run_question(name, inputs.region) if command == PROOF_RUN
+                        else pt.repair_question(name, inputs.region) if command == PROOF_REPAIR
                         else f"Deploy the routine-proof test cluster stack {name} in {inputs.region}?")  # fmt: skip
             return {"status": "error", "message": f"{command} is an AWS write: pass --approve only "
                     f"after the customer approved it ({question})"}  # fmt: skip
@@ -2931,7 +2935,7 @@ def _proof_target(args: argparse.Namespace, sleep: Callable[[float], None]) -> d
         store = LocalArtifactStore(base_dir=args.artifact_root)
         target = (pt.planned_target(store, db, job_id) if command in (PROOF_PLAN, PROOF_DEPLOY)
                   else None)  # fmt: skip
-        if command == PROOF_RUN:
+        if command in (PROOF_RUN, PROOF_REPAIR):
             # Read before the status describe calls: a run whose planned target cannot be
             # read is refused before any AWS call.
             pt.planned_target(store, db, job_id)
@@ -2940,7 +2944,15 @@ def _proof_target(args: argparse.Namespace, sleep: Callable[[float], None]) -> d
         _use_profile(inputs.write_profile if writes else inputs.read_profile)
         cred = AWSCredentialManager(region=inputs.region)
         if command == PROOF_PLAN and target is not None:
-            return pt.plan(pt.ProofTargetClients(None, cred.client("rds")), inputs, target, job_id)
+            from src.agents.routine_repair.handler import repairable_routines
+
+            planned = pt.plan(
+                pt.ProofTargetClients(None, cred.client("rds")), inputs, target, job_id
+            )
+            # The repair rounds /test-routines may offer before the test (#2384).
+            return {**planned, "repairable": repairable_routines(store, db, job_id),
+                    "repair_question": pt.repair_question(pt.stack_name(inputs, job_id),
+                                                          inputs.region)}  # fmt: skip
         clients = pt.ProofTargetClients(cred.client("cloudformation"), cred.client("rds"))
         if command == PROOF_DEPLOY and target is not None:
             return pt.deploy(clients, inputs, target, job_id, wait, args.interval_seconds,
@@ -2949,6 +2961,8 @@ def _proof_target(args: argparse.Namespace, sleep: Callable[[float], None]) -> d
             return pt.status(clients, inputs, job_id, wait, args.interval_seconds, sleep=sleep)
         if command == PROOF_RUN:
             return _proof_run(store, db, job_id, clients, inputs, cred, sleep)
+        if command == PROOF_REPAIR:
+            return _proof_repair(clients, inputs, job_id, cred, sleep, args.on_cluster)
         done = pt.teardown(clients, inputs, job_id, wait, args.interval_seconds, sleep=sleep)
         if done.get("status") in ("deleted", "deleting"):
             # A run killed before its cleanup left its runner secret: none outlives the stack.
@@ -2995,6 +3009,38 @@ def _proof_run(store: Any, db: str, job_id: str, clients: Any, inputs: Any, cred
                     secrets_client=_secrets(cred))  # fmt: skip
     return {**out, "stack_name": state.get("stack_name"), "region": inputs.region,
             "teardown_question": state.get("teardown_question")}  # fmt: skip
+
+
+def _proof_repair(clients: Any, inputs: Any, job_id: str, cred: Any,
+                  sleep: Callable[[float], None],
+                  on_cluster: Callable[..., dict[str, Any]]) -> dict[str, Any]:  # fmt: skip
+    """The repair loop's rounds on this job's test cluster (#2384): the cluster is read with
+    ``proof-target-status``'s ownership checks first, as ``proof-target-run`` reads it, and
+    ``on_cluster`` runs the loop on it (``cluster``, ``data_api``, ``secrets_client``)."""
+    from src.tools.data_movement import proof_target as pt
+
+    state = pt.status(clients, inputs, job_id, 0, 10, sleep=sleep)
+    cluster = state.get("cluster") or {}
+    if state.get("status") != "deployed" or cluster.get("status") != "available":
+        return {"status": "error", "message": "--proof test-cluster needs this job's test cluster "
+                f"deployed and available (stack {state.get('stack_name')} is "
+                f"{state.get('stack_status') or state.get('status')}, cluster "
+                f"{cluster.get('status') or 'none'}): run /test-routines to deploy it first"}  # fmt: skip
+    return on_cluster(cluster=cluster, data_api=_data_api(cred), secrets_client=_secrets(cred))
+
+
+def run_on_test_cluster(*, artifact_root: str, db: str, job_id: str, approve: bool,
+                        on_cluster: Callable[..., dict[str, Any]], inputs: str | None = None,
+                        sleep: Callable[[float], None] = time.sleep) -> dict[str, Any]:  # fmt: skip
+    """Run ``on_cluster`` on this job's deployed test cluster with the refusals of every
+    ``proof-target-*`` write (#2384, for ``run_routine_repair.py --proof test-cluster``):
+    refused under the CI sandbox, without ``--approve`` (the customer's yes to the repair
+    question), without the inputs file, or with a cluster that is not this job's, deployed
+    and available; one status line, as JSON."""
+    args = argparse.Namespace(command=PROOF_REPAIR, auto=False, approve=approve,
+                              wait_seconds=None, interval_seconds=30, db=db, job_id=job_id,
+                              inputs=inputs, artifact_root=artifact_root, on_cluster=on_cluster)  # fmt: skip
+    return _proof_target(args, sleep)
 
 
 def main(argv: list[str] | None = None, *, clients: MoveClients | None = None,

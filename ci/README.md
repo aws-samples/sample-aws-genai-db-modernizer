@@ -691,6 +691,15 @@ obvious entries lives here instead:
   Edit/Write of its `loop_state.json` and `routine_repair.json` are denied.
 - `/modernize` Phase 6f (#2385) runs the same script, so it needs no new Bash rule: the request (`--llm-mode external --proof auto`) and one `--finalize` per round. `--proof auto` is `local` only when a disposable engine of the source's major is on the machine, else `none`. It reads which binaries are there and starts nothing until a candidate is proved. It never reaches a test cluster and deploys no routine.
 - `Skill(repair-routines)` (#2385): the round subagent `/modernize` Phase 6f dispatches, one per repair round. It follows `/repair-routines` to read the round's request and write its answer, and runs no script itself.
+  Edit/Write of its `loop_state.json` and `routine_repair.json` are denied. `deny` also holds
+  `--proof test-cluster` (#2384: the rounds on the throwaway Aurora test cluster run only in
+  a run the customer attends, from `/test-routines`), and the tool-use hook refuses any
+  argument of the script that names `test-cluster` or is not plain, so no quoted or
+  expanded form reaches it; the script also refuses it under `MODERNIZER_CI_SANDBOX=1`.
+- Edit/Write of `artifacts/**/routines/**/routine_migration.json` in `deny` (#2384): its
+  proof entries, with each tested repair's digest, are what step 1's deploy gate reads, so
+  only the routine-migration phase and the routine test write it; `block_baseline_edit.py`
+  refuses a hand edit of it too.
 - `Bash(uv run python scripts/run_schema_design.py *)` also covers
   `--mark-dispatched <id> ...` and `--mark-reported <id> ...` (#2215): the
   headless orchestrator's dispatch ledger. They write one file,

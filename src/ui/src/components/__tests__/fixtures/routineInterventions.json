@@ -4,21 +4,21 @@
   "target_engine": "aurora_postgresql",
   "wave": 1,
   "routine_count": 4,
-  "carried_count": 1,
+  "carried_count": 2,
   "as_is_count": 0,
   "rewritten_count": 1,
-  "repaired_count": 0,
-  "needs_repair_count": 3,
+  "repaired_count": 1,
+  "needs_repair_count": 2,
   "not_exact_count": 0,
   "not_checked_count": 0,
   "opted_out_count": 0,
   "not_readable_count": 0,
-  "unknown_checks_count": 1,
-  "rewritten_carried_count": 1,
-  "migrate_yourself_count": 3,
+  "unknown_checks_count": 2,
+  "rewritten_carried_count": 2,
+  "migrate_yourself_count": 2,
   "behaves_differently_count": 0,
-  "carried_review_count": 1,
-  "migrate_yourself_line": "we could not translate 3 routines automatically; migrate them yourself before wave 1",
+  "carried_review_count": 2,
+  "migrate_yourself_line": "we could not translate 2 routines automatically; migrate them yourself before wave 1",
   "migrate_yourself_step": "migrate these routines yourself before wave 1, then check them again",
   "counts_by_kind": {
     "function": 4
@@ -26,12 +26,12 @@
   "reason_counts": {
     "depends_on_table_not_collected": 1,
     "postgresql-routine-dependency-not-moved": 1,
-    "postgresql-routine-v10-renamed-functions": 2
+    "postgresql-routine-v10-renamed-functions": 1
   },
   "proof": "checked, not load-tested",
   "proof_counts": null,
-  "line": "1 of 4 routines carry over: 1 rewritten. 3 were not carried automatically: 3 need repair. For 1 carried routine not every check could run. The carried routine is not tested yet; test it on a test Aurora with /test-routines before it is deployed.",
-  "executive_line": "your routines can move to Aurora with the database: 1 of 4 for this database, 1 rewritten; 3 need work before wave 1. Before it is deployed, test it on a throwaway Aurora with the /test-routines command. A model repaired 1 of the routines that need work, compared on a local engine of the source: it is checked, not tested yet on a test Aurora, and step 1 does not deploy it yet.",
+  "line": "2 of 4 routines carry over: 1 rewritten, 1 repaired. 2 were not carried automatically: 2 need repair. For 2 carried routines not every check could run. The 2 carried routines are not tested yet; test them on a test Aurora with /test-routines before they are deployed.",
+  "executive_line": "your routines can move to Aurora with the database: 2 of 4 for this database, 1 rewritten and 1 repaired; 2 need work before wave 1. Before they are deployed, test them on a throwaway Aurora with the /test-routines command. 1 of the carried routines was repaired by a model and compared on a local engine of the source: it is checked, not tested yet on a test Aurora.",
   "routines": [
     {
       "routine_id": "public.hidden(integer)",
@@ -129,14 +129,16 @@
     {
       "routine_id": "public.wal_pos(integer)",
       "kind": "function",
-      "status": "needs_attention",
-      "category": "needs_repair",
+      "status": "model_repaired",
+      "category": "repaired",
       "risk_classes": [
-        "migrate_yourself"
+        "carried_review"
       ],
-      "severity": "HIGH",
+      "severity": "LOW",
       "severity_basis": [
-        "postgresql-routine-v10-renamed-functions"
+        "model_repaired",
+        "postgresql-routine-owner-to-target-user",
+        "postgresql-routine-dependency-not-moved"
       ],
       "reasons": [
         "postgresql-routine-v10-renamed-functions"
@@ -151,11 +153,9 @@
       "notes": [],
       "tables": [],
       "deploy_order": 4,
-      "status_text": "Not carried: needs repair",
-      "why": [
-        "A check failed: PostgreSQL 10 renamed the functions with xlog in their names to wal (and location to lsn), so on every Aurora PostgreSQL line the call fails with an unknown function when the routine runs. Fix: Call the new name: pg_current_wal_lsn() for pg_current_xlog_location(), pg_walfile_name() for pg_xlogfile_name(), pg_wal_lsn_diff() for pg_xlog_location_diff(), pg_last_wal_replay_lsn() for pg_last_xlog_replay_location(), and so on."
-      ],
-      "listed": true
+      "status_text": "Carried, repaired",
+      "why": [],
+      "listed": false
     }
   ],
   "rules": [
@@ -193,6 +193,7 @@
       "proof_source": "a disposable postgresql 16 engine",
       "attention": null,
       "attention_detail": null,
+      "deploy_gate": "not_tested",
       "attempts": [
         {
           "attempt": 1,
@@ -202,7 +203,7 @@
           "error": "no differences found"
         }
       ],
-      "line": "A model repaired it. Its repair was compared with the original on a disposable postgresql 16 engine, a local engine of the source, and gave the same results on the calls compared; it is checked, not tested yet on a test Aurora. What changed: Calls pg_current_wal_lsn, the name PostgreSQL 10 gave the function. Step 1 does not deploy a repaired routine yet, so it stays to migrate yourself.",
+      "line": "A model repaired it. Its repair was compared with the original on a disposable postgresql 16 engine, a local engine of the source, and gave the same results on the calls compared; it is checked, not tested yet on a test Aurora. What changed: Calls pg_current_wal_lsn, the name PostgreSQL 10 gave the function. Test it with /test-routines before it is deployed.",
       "attempt_lines": []
     },
     {
@@ -216,6 +217,7 @@
       "proof_source": null,
       "attention": null,
       "attention_detail": null,
+      "deploy_gate": null,
       "attempts": [
         {
           "attempt": 1,
@@ -239,6 +241,7 @@
       "proof_source": null,
       "attention": "attempts_used",
       "attention_detail": "every one of 3 attempts failed",
+      "deploy_gate": null,
       "attempts": [
         {
           "attempt": 1,
@@ -280,6 +283,7 @@
       "proof_source": null,
       "attention": "not_rebuildable",
       "attention_detail": "a literal of the routine reads '?' itself",
+      "deploy_gate": null,
       "attempts": [],
       "line": "It was not sent for a model repair: A literal of the routine reads '?' itself.",
       "attempt_lines": []
@@ -293,10 +297,6 @@
     {
       "kind": "function",
       "routine_id": "public.orphan(integer)"
-    },
-    {
-      "kind": "function",
-      "routine_id": "public.wal_pos(integer)"
     }
   ],
   "check_notes": [

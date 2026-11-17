@@ -12,7 +12,9 @@ three files into ``data-movement/step-1/``:
   :mod:`src.tools.data_movement.routine_test_gate`; every other is held back by id and reason), in its
   deploy order, each the exact ``CREATE`` from the job's routine sources with the
   routine-migration rewrites applied again for the user who runs it (a MySQL
-  ``DEFINER``). It first creates, ``IF NOT EXISTS``, each schema (on Aurora MySQL, each
+  ``DEFINER``). A model-repaired routine (#2384) is the repair's exact text, rebuilt in
+  memory from the routines file and ``routine_repair.json`` by the deploy gate (the text
+  the test ran), with the rewrites applied again the same way. It first creates, ``IF NOT EXISTS``, each schema (on Aurora MySQL, each
   database) its routines land in that step 1's own DDL does not create (#2148): never
   PostgreSQL's ``public`` nor the schema of a table the step moves. A MySQL database gets
   what ``step-1.ddl.sql`` gives the tables' database (the source's character set and
@@ -498,8 +500,8 @@ PROOF_LINES = {
     "current": (
         "Tested on a test Aurora: only the routines that showed no difference on the calls "
         "made are here; every other is held back (not_tested, not_proved, needs_attention, "
-        "depends_on_held when it calls a held routine, or repaired_not_deployed for a "
-        "model-repaired one)."
+        "depends_on_held when it calls a held routine, or rebuild_differs for a "
+        "model-repaired one whose repair is not the one tested)."
     ),
 }
 
@@ -912,6 +914,46 @@ def block_of(
     return block
 
 
+def repair_mismatch(gate: Any, row: StepRoutine) -> bool:
+    """Whether the step contract's row and the deploy gate disagree on a repair (#2384):
+    the row is a repair the gate has no rebuilt text for, or the gate repaired a routine
+    the row carries as it was. :func:`repaired_source` gives such a row no text."""
+    key = (row.kind, row.routine_id)
+    if row.repaired or row.migration_status == "model_repaired":
+        return key not in gate.texts
+    return key in gate.repaired
+
+
+def stale_holds(gate: Any, rows: Iterable[StepRoutine]) -> dict[tuple[str, str], str]:
+    """Each routine of ``rows`` the gate holds back, with the rows that disagree with it on
+    a repair held as ``rebuild_differs`` and what calls them as ``depends_on_held``."""
+    from src.tools.data_movement.routine_test_gate import REBUILD_DIFFERS
+
+    held: dict[tuple[str, str], str] = gate.held_with(
+        {
+            (r.kind, r.routine_id): REBUILD_DIFFERS
+            for r in rows
+            if (r.kind, r.routine_id) not in gate.held and repair_mismatch(gate, r)
+        }
+    )
+    return held
+
+
+def repaired_source(gate: Any, row: StepRoutine, source: RoutineSource) -> RoutineSource | None:
+    """``source`` as the deploy gate deploys it (#2384): for a row the contract carries as
+    the repair loop's repair (``repaired``, or ``model_repaired``), the rebuilt exact text of its repair in place of the original, in
+    memory; any other row as it is. None when the contract and the gate disagree: the row
+    says repaired and the gate has no rebuilt text for it (the repair is gone, needs
+    attention again or did not rebuild), or the gate repaired a routine the contract carries
+    as it was (a contract written before the repair). The writer then holds it back as
+    ``rebuild_differs``; it never writes the original in a repair's place."""
+    key = (row.kind, row.routine_id)
+    if row.repaired or row.migration_status == "model_repaired":
+        text = gate.texts.get(key)
+        return None if text is None else source.model_copy(update={"create_statement": text})
+    return None if key in gate.repaired else source
+
+
 def spool_blocks(
     store: Any,
     db: str,
@@ -1020,10 +1062,10 @@ def write_routine_scripts(
     from src.tools.data_movement.view_scripts import left_out, left_out_names
 
     held = left_out_names(contract, left_out(store, db, job_id, contract, target_database))
-    from src.tools.data_movement.routine_test_gate import HELD_REASONS, held_routines, proof_state
+    from src.tools.data_movement.routine_test_gate import HELD_REASONS, REBUILD_DIFFERS, deploy_gate
 
-    proof = proof_state(store, db, job_id, migration)
-    untested = held_routines(store, db, job_id, migration)
+    gate = deploy_gate(store, db, job_id, migration)
+    proof, untested = gate.proof, stale_holds(gate, section.routines)
     reads = {
         (r.kind, r.routine_id): {d.name.lower() for d in r.dependencies if d.kind == "table"}
         for r in migration.routines
@@ -1038,7 +1080,10 @@ def write_routine_scripts(
             return None, VIEW_LEFT_OUT
         if (row.kind, row.routine_id) in untested:  # the deploy gate (#2411)
             return None, untested[(row.kind, row.routine_id)]
-        return write_block(row, source, position, total)
+        carried = repaired_source(gate, row, source)
+        if carried is None:  # the contract and the deploy gate disagree on the repair (#2384)
+            return None, REBUILD_DIFFERS
+        return write_block(row, carried, position, total)
 
     with tempfile.TemporaryFile(dir=step_dir) as spool:
         spans, refused = spool_blocks(

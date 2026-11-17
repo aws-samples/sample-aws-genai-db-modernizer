@@ -284,6 +284,15 @@ def run_question(name: str, region: str) -> str:
             "and drops the database.")  # fmt: skip
 
 
+def repair_question(name: str, region: str) -> str:
+    """The question to ask before the routine repair loop's rounds run on the test cluster
+    (#2384, ``run_routine_repair.py --proof test-cluster``)."""
+    return (f"Run the routine repair rounds against the test cluster of stack {name} in {region}? "
+            "A model proposes a repair for each routine that needs one; each repair is checked "
+            "again, then compared side by side with the original, the repair in a scratch "
+            "database on the test cluster, which is dropped afterwards.")  # fmt: skip
+
+
 def teardown_question(name: str, region: str) -> str:
     return (f"Delete the routine-proof test cluster stack {name} in {region}, with its cluster, "
             "its master secret and every row in it (no final snapshot)?")  # fmt: skip

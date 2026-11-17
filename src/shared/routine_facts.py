@@ -11,8 +11,9 @@ once (:func:`routine_facts`); the routine risks
 
 **Headline counts.** Each routine is in one category, so they add up to the total:
 
-- carried: ``as_is``, ``rewritten`` and ``repaired`` (the artifact's ``model_repaired``,
-  never written yet);
+- carried: ``as_is``, ``rewritten`` and ``repaired`` (a routine the repair loop carried,
+  ``model_repaired`` in ``routine_repair.json`` for the same version, :func:`with_repairs`,
+  #2384);
 - not carried automatically: ``not_readable`` (the collection user could not read its
   body), ``opted_out`` (the customer turned body collection off), ``not_checked`` (no
   exact ``CREATE`` was collected otherwise), ``not_exact`` (checked on a MySQL ``CREATE``
@@ -77,19 +78,25 @@ loop worked on (``routines/v<N>/routine_repair.json``, the same version as the m
 artifact), so the deliverables say it needed an intervention and what came of it, in the
 words :func:`intervention_line` gives (``line``):
 
-- ``model_repaired``: the local side-by-side comparison on an engine of the source accepted
-  the model's repair; the line says so and that it is checked, not tested yet on a test
-  Aurora (:func:`repaired_not_tested_sentence`, #2385), and ``change_note`` says what
-  changed, in the model's own words (untrusted text a renderer escapes); the executive
-  line counts these (:func:`repaired_executive_clause`);
+- ``model_repaired``: the repair loop's side-by-side comparison accepted the model's
+  repair (on a local engine of the source, or with the repair on a test cluster); the
+  line says so, and what step 1's deploy gate does with it (``deploy_gate``, #2384):
+  before a test it is checked, not tested yet on a test Aurora
+  (:func:`repaired_not_tested_sentence`, #2385); ``change_note`` says what changed, in the
+  model's own words (untrusted text a renderer escapes); the executive line counts these
+  and what step 1 deploys of them (:func:`repaired_executive_clause`);
 - ``repaired_pending_proof``: a candidate passed every check, but no proof accepted it,
   so its change note is never printed as what changed;
 - ``needs_attention``: the routine could not be rebuilt by position, or every attempt
   failed; ``attempts`` holds each attempt's stage, code and error (words, never text).
 
-No figure counts an intervention as carried: step 1 does not deploy a repaired routine
-yet, so it stays in its headline category, and :func:`routine_holds` holds back any
-carried ``model_repaired`` routine (:data:`REPAIRED_NOT_DEPLOYED`) until it does (#2384).
+A ``model_repaired`` routine is carried, repaired (#2384): ``repaired_count`` counts it and
+the test gate decides whether step 1 deploys it, as for any carried routine; its line says
+so (``deploy_gate``: ``deployed``, or the reason it is held back). A test counts for it only
+when it ran the repair it has now (the proof entry's ``repair_sha256``, the digest of the
+redacted candidate, never of the exact text); one that ran another repair, or the original,
+holds it back (``rebuild_differs``, ``not_tested``). The other states stay in their
+headline category: no figure counts them as carried.
 
 **The words** (#1939). The deliverables print each row's ``status_text`` and ``why``
 (:func:`routine_status_text`, :func:`routine_why`: the catalog's reason and fix hint for
@@ -119,19 +126,14 @@ PROOF_RUN_LABEL = "load-tested on a test Aurora"
 PROOF_OUTCOMES = ("proved", "needs_attention", "not_proved")
 #: Why step 1's deploy gate holds a carried routine back (#2411): no current proof tested it,
 #: the proof could not prove it, or it found a difference or an error.
-HELD_REASONS = (
-    "not_tested",
-    "not_proved",
-    "needs_attention",
-    "depends_on_held",
-    "repaired_not_deployed",
-)
+HELD_REASONS = ("not_tested", "not_proved", "needs_attention", "depends_on_held", "rebuild_differs")
 #: The held-back reason of a routine the test cleared that calls a held one (#2411): its
 #: CREATE could fail without it, so the gate leaves it out too.
 DEPENDS_ON_HELD = "depends_on_held"
-#: The held-back reason of a model-repaired routine (#2385): step 1 does not deploy a
-#: repaired routine yet (#2384), whatever a test found, so the gate always holds it back.
-REPAIRED_NOT_DEPLOYED = "repaired_not_deployed"
+#: The held-back reason of a model-repaired routine whose text step 1 would deploy is not
+#: the one the test ran (#2384): the test ran another repair or the original, or the rebuild
+#: from the routines file and the repair no longer passes its checks.
+REBUILD_DIFFERS = "rebuild_differs"
 
 #: A routine risk class -> its severity, in the order the risks are raised.
 ROUTINE_RISK_SEVERITY: dict[str, str] = {
@@ -191,7 +193,7 @@ def _classes(
             return ["migrate_yourself"], blocking + codes
         return ["behaves_differently"], failed
     rewrites = [str(w["rule_id"]) for w in row.get("rewrites") or []]
-    basis = rewrites + _unknown(row)
+    basis = (["model_repaired"] if category == "repaired" else []) + rewrites + _unknown(row)
     return (["carried_review"], basis) if basis else ([], [])
 
 
@@ -294,19 +296,47 @@ def repaired_not_tested_sentence(where: str | None = None) -> str:
     )
 
 
-def repaired_executive_clause(repaired_by_model: int) -> str:
-    """The executive line's words for the routines a model repaired (#2385), counts only:
-    compared on a local engine of the source, :data:`NOT_TESTED_STATE` on a test Aurora,
-    and not deployed by step 1 yet (#2384). Nothing when a model repaired none."""
+def repaired_compared_sentence(where: str | None = None) -> str:
+    """Where the repair loop compared a model repair with the original (#2384), never more
+    than the calls compared: on a local engine of the source, or side by side with the
+    repair on a test cluster (``--proof test-cluster``)."""
+    engine = where or "a disposable engine of the source"
+    if "test cluster" in engine:
+        return (
+            f"Its repair was compared side by side with the original on {engine}, and gave "
+            "the same results on the calls compared."
+        )
+    return (
+        f"Its repair was compared with the original on {engine}, a local engine of the "
+        "source, and gave the same results on the calls compared."
+    )
+
+
+def repaired_executive_clause(repaired_by_model: int, deployed: int | None = None) -> str:
+    """The executive line's words for the routines a model repaired (#2385), counts only,
+    following step 1's deploy gate (#2384). A repair counts with the routines that can move,
+    so the clause names the carried routines, never the ones that need work: before a test
+    on the job's routines file (``deployed`` None) they are :data:`NOT_TESTED_STATE` on a
+    test Aurora; after one, how many of them step 1 deploys and how many it holds back.
+    Nothing when a model repaired none."""
     n = int(repaired_by_model)
     if n <= 0:
         return ""
-    them, are = ("it", "it is") if n == 1 else ("them", "they are")
-    return (
-        f"A model repaired {n} of the routines that need work, compared on a local "
-        f"engine of the source: {are} {NOT_TESTED_STATE} on a test Aurora, and step 1 does "
-        f"not deploy {them} yet."
-    )
+    one = n == 1
+    them, are = ("it", "it is") if one else ("them", "they are")
+    head = f"{n} of the carried routines {'was' if one else 'were'} repaired by a model"
+    if deployed is None:
+        return (
+            f"{head} and compared on a local engine of the source: {are} {NOT_TESTED_STATE} "
+            "on a test Aurora."
+        )
+    done = max(0, min(int(deployed), n))
+    held = n - done
+    if not held:
+        return f"{head}, and step 1 deploys {'it' if one else 'all ' + str(n)}."
+    if not done:
+        return f"{head}; step 1 holds {them} back until a test finds no difference on {them}."
+    return f"{head}; step 1 deploys {done} and holds back {held}."
 
 
 def not_tested_sentence(carried: int, *, checked: bool = True) -> str:
@@ -343,36 +373,56 @@ def proof_sentence(carried: int, unknown: int) -> str:
     return f"{head}{checked}. {not_tested_sentence(carried, checked=False)}"
 
 
-def proof_run_sentence(counts: Mapping[str, int], depends_held: int = 0) -> str:
+def proof_run_sentence(
+    counts: Mapping[str, int], depends_held: int = 0, *, changed: int = 0, untested: int = 0
+) -> str:
     """What the routine test on a test Aurora found (#1945), counts only: never more than
     no difference on the calls made, never a claim about every input; then what step 1's
     deploy gate deploys and holds back (#2411): ``depends_held`` of the routines with no
-    difference call a held one (:func:`routine_holds`), so the gate holds them back too."""
+    difference call a held one (:func:`routine_holds`), so the gate holds them back too;
+    ``changed`` of them are repairs the test ran another text of (:data:`REBUILD_DIFFERS`),
+    and ``untested`` carried routines had no part in the test (a repair made after it,
+    #2384)."""
     proved, attention, unproved = (int(counts.get(k, 0)) for k in PROOF_OUTCOMES)
-    total = proved + attention + unproved
-    if not total:
+    untested = max(0, int(untested))
+    total = proved + attention + unproved + untested
+    if not total or total == untested:
         return ""
     parts = [
         f"{proved} showed no difference on the calls made" if proved else "",
         f"{attention} {'needs' if attention == 1 else 'need'} attention" if attention else "",
         f"{unproved} could not be tested" if unproved else "",
+        f"{untested} {_was(untested)} not tested" if untested else "",
     ]
     head = f"On a test Aurora, of {_n(total, 'carried routine', 'carried routines')}"
-    depends_held = max(0, min(int(depends_held), proved))
-    deployed = proved - depends_held
+    changed = max(0, min(int(changed), proved))
+    depends_held = max(0, min(int(depends_held), proved - changed))
+    deployed = proved - depends_held - changed
     held = total - deployed
-    because = (
-        f", {depends_held} because a routine {'it calls' if depends_held == 1 else 'they call'} "
-        "is held back"
-        if depends_held
-        else ""
-    )
+    reasons = [
+        (
+            f"{depends_held} because a routine {'it calls' if depends_held == 1 else 'they call'} "
+            "is held back"
+            if depends_held
+            else ""
+        ),
+        (
+            f"{changed} because the repair it has now is not the one tested"
+            if changed == 1
+            else (
+                f"{changed} because the repairs they have now are not the ones tested"
+                if changed
+                else ""
+            )
+        ),
+    ]
+    because = "".join(f", {r}" for r in reasons if r)
     if not held:
         tail = ""
     elif deployed:
         rest = "the other one is" if held == 1 else f"the other {held} are"
         only = "that one" if deployed == 1 else f"those {deployed}"
-        if depends_held:
+        if depends_held or changed:
             only = f"{deployed} of them"
         tail = f" Step 1 deploys only {only}; {rest} held back{because}."
     else:
@@ -395,11 +445,12 @@ def executive_line(
     wave: int | None,
     deployed: tuple[int, int] | None = None,
     repaired_by_model: int = 0,
+    repaired_deployed: int | None = None,
 ) -> str:
     """The executive report's routines sentence (with
     :func:`repaired_executive_clause` for ``repaired_by_model``, #2385)."""
     text = _executive_text(counts, total, wave, deployed)
-    clause = repaired_executive_clause(repaired_by_model)
+    clause = repaired_executive_clause(repaired_by_model, repaired_deployed)
     return f"{text} {clause}" if clause else text
 
 
@@ -466,14 +517,15 @@ def proof_is_current(run: Any, sources_digest: str | None) -> bool:
 def proof_hold(row: Mapping[str, Any], current: bool) -> str | None:
     """Why step 1's deploy gate holds a carried routine back (:data:`HELD_REASONS`), or
     None when the current proof found no difference on the calls made (``proved``). With
-    no current proof, or no proof entry for the row, it is ``not_tested``. A model-repaired
-    routine is always :data:`REPAIRED_NOT_DEPLOYED` (#2385): step 1 does not deploy one yet
-    (#2384)."""
-    if row.get("status") == "model_repaired":
-        return REPAIRED_NOT_DEPLOYED
+    no current proof, or no proof entry for the row, it is ``not_tested``; a model-repaired
+    row (:func:`with_repairs`) counts only a proof of its own repair (``repair_sha256``):
+    one of the original is ``not_tested``, one of another repair :data:`REBUILD_DIFFERS`."""
     proof = row.get("proof")
     if not current or not isinstance(proof, Mapping):
         return "not_tested"
+    if proof.get("repair_sha256") != row.get("repair_sha256"):
+        # The test ran another text than the one step 1 would deploy (#2384).
+        return "not_tested" if proof.get("repair_sha256") is None else REBUILD_DIFFERS
     outcome = proof.get("outcome")
     if outcome == "proved":
         return None
@@ -494,15 +546,23 @@ def _calls(row: Mapping[str, Any]) -> set[tuple[str, str]]:
     } - {me}
 
 
-def routine_holds(rows: Iterable[Mapping[str, Any]], current: bool) -> dict[tuple[str, str], str]:
+def routine_holds(
+    rows: Iterable[Mapping[str, Any]],
+    current: bool,
+    forced: Mapping[tuple[str, str], str] | None = None,
+) -> dict[tuple[str, str], str]:
     """Every carried routine step 1's deploy gate holds back, by ``(kind, routine_id)``,
     with its reason (#2411): its own :func:`proof_hold`, else :data:`DEPENDS_ON_HELD` when it
     calls a held routine, directly or not. The one rule the gate (``routine_test_gate``)
-    and ``facts.routines`` both read; a carried routine not listed is deployed."""
+    and ``facts.routines`` both read; a carried routine not listed is deployed. ``rows``
+    are the artifact's rows with the repairs on them (:func:`with_repairs`); ``forced``
+    holds a routine back whatever its proof says (step 1's rebuild of a repair failed,
+    #2384)."""
     carried = [r for r in rows if isinstance(r, Mapping) and r.get("status") in _CARRIED]
     out: dict[tuple[str, str], str] = {}
     for r in carried:
-        reason = proof_hold(r, current)
+        reason = (forced or {}).get((str(r.get("kind")), str(r.get("routine_id"))))
+        reason = reason or proof_hold(r, current)
         if reason is not None:
             out[(str(r.get("kind")), str(r.get("routine_id")))] = reason
     calls = {(str(r.get("kind")), str(r.get("routine_id"))): _calls(r) for r in carried}
@@ -513,6 +573,67 @@ def routine_holds(rows: Iterable[Mapping[str, Any]], current: bool) -> dict[tupl
             if key not in out and named & out.keys():
                 out[key] = DEPENDS_ON_HELD
                 changed = True
+    return out
+
+
+def repair_sha256(candidate: str) -> str:
+    """The digest of a repair loop candidate (``routine_repair.json``'s ``repaired_create``:
+    redacted text, no literal, #2384), which a test of the repair records. Never a digest
+    of the exact text (ADR-034 Decision 4)."""
+    import hashlib
+
+    return hashlib.sha256(candidate.encode("utf-8")).hexdigest()
+
+
+def repaired_routines(
+    repair: RoutineRepairContract | Mapping[str, Any] | None, version: int
+) -> dict[tuple[str, str], str]:
+    """Each routine the repair loop carried for routine-migration ``version``
+    (``model_repaired``), by ``(kind, routine_id)``, with :func:`repair_sha256` of its
+    candidate; empty without a result, or with one for another version (#2384)."""
+    if repair is None:
+        return {}
+    data = repair.model_dump(mode="json") if isinstance(repair, RoutineRepairContract) else repair
+    if not isinstance(data, Mapping) or data.get("assignment_version") != version:
+        return {}
+    return {
+        (str(r.get("kind")), str(r.get("routine_id"))): repair_sha256(str(r["repaired_create"]))
+        for r in data.get("routines") or []
+        if isinstance(r, Mapping)
+        and r.get("state") == "model_repaired"
+        and r.get("repaired_create")
+    }
+
+
+def repairable_row(row: Mapping[str, Any]) -> bool:
+    """Whether a repair may stand in for ``row`` (#2384): it has exact text, and it needs
+    attention, or a test refused it (its proof needs attention), or a test already ran a
+    repair of it (its proof names one). The repair seam's own rule, plus the repair a test
+    ran."""
+    if row.get("source_text") != "exact":
+        return False
+    if row.get("status") == "needs_attention":
+        return True
+    proof = row.get("proof")
+    return isinstance(proof, Mapping) and (
+        proof.get("outcome") == "needs_attention" or proof.get("repair_sha256") is not None
+    )
+
+
+def with_repairs(
+    rows: Iterable[Mapping[str, Any]], repaired: Mapping[tuple[str, str], str]
+) -> list[dict[str, Any]]:
+    """The artifact's rows with each repaired routine (:func:`repaired_routines`) as step 1
+    and the test carry it (#2384): status ``model_repaired``, with its ``repair_sha256``. Only
+    a row the repair loop could have sent (:func:`repairable_row`) is replaced: a row with no
+    exact text, or one carried as it is or rewritten that no test refused, never is."""
+    out = []
+    for r in rows:
+        row = dict(r)
+        digest = repaired.get((str(row.get("kind")), str(row.get("routine_id"))))
+        if digest and repairable_row(row):
+            row.update(status="model_repaired", repair_sha256=digest)
+        out.append(row)
     return out
 
 
@@ -553,15 +674,48 @@ def attempt_line(attempt: Mapping[str, Any]) -> str:
     return f"Attempt {attempt.get('attempt')}: {stage}" + (f": {error}" if error else "")
 
 
+#: What a model-repaired routine's line says about step 1 (#2384), by its ``deploy_gate``;
+#: before a test, after :func:`repaired_not_tested_sentence`.
+_NOT_TESTED_WORDS = f"Test it with {TEST_COMMAND} before it is deployed."
+_DEPLOY_WORDS: dict[str, str] = {
+    "deployed": (
+        "On a test Aurora the repair showed no difference on the calls made, so step 1 "
+        "deploys it once it rebuilds the repair from the routines file and the repair passes "
+        "its checks again there."
+    ),
+    "not_tested": _NOT_TESTED_WORDS,
+    "not_proved": (
+        "Step 1 holds it back: the test on a test Aurora could not show it has no difference "
+        f"on the calls made ({TEST_COMMAND} names why)."
+    ),
+    "needs_attention": (
+        "Step 1 holds it back: the test on a test Aurora found a difference or an error "
+        f"({TEST_COMMAND} names why)."
+    ),
+    DEPENDS_ON_HELD: "Step 1 holds it back: it calls a routine that is held back.",
+    REBUILD_DIFFERS: (
+        "Step 1 holds it back: the repair it has now is not the one the test on a test "
+        f"Aurora ran; test it again with {TEST_COMMAND}."
+    ),
+}
+
+
 def intervention_line(item: Mapping[str, Any]) -> str:
     """What the deliverables say about one intervention (module docstring)."""
     state = item.get("state")
     if state == "model_repaired":
         note = _sentence(str(item.get("change_note") or ""))
+        where = item.get("proof_source")
+        gate = str(item.get("deploy_gate") or "not_tested")
+        # Before a test (or in a report written before #2384): #2385's not-tested words.
+        if gate == "not_tested":
+            return (
+                f"A model repaired it. {repaired_not_tested_sentence(where)} What changed: "
+                f"{note} {_NOT_TESTED_WORDS}"
+            )
         return (
-            f"A model repaired it. {repaired_not_tested_sentence(item.get('proof_source'))} "
-            f"What changed: {note} Step 1 does not deploy a repaired routine yet, so it "
-            "stays to migrate yourself."
+            f"A model repaired it. {repaired_compared_sentence(where)} What changed: {note} "
+            f"{_DEPLOY_WORDS.get(gate, _NOT_TESTED_WORDS)}"
         )
     if state == "repaired_pending_proof" and not item.get("attempts"):
         # A result of the seam alone (#1940): no check ran on the exact text.
@@ -585,12 +739,16 @@ def intervention_line(item: Mapping[str, Any]) -> str:
 
 
 def routine_interventions(
-    repair: RoutineRepairContract | Mapping[str, Any] | None, version: int
+    repair: RoutineRepairContract | Mapping[str, Any] | None,
+    version: int,
+    holds: Mapping[tuple[str, str], str] | None = None,
 ) -> list[dict[str, Any]]:
     """``facts.routines.interventions`` (#1940, #1941): each routine of the repair
     result for routine-migration ``version`` in :data:`INTERVENTION_STATES`, with its
     reasons, the model's change note, its attempts (words only) and the line the
-    deliverables print. Empty without a result, or with one for another version."""
+    deliverables print. Empty without a result, or with one for another version. A
+    ``model_repaired`` one also has its ``deploy_gate`` (#2384): ``deployed``, or its reason
+    in ``holds`` (:func:`routine_holds`)."""
     if repair is None:
         return []
     data = (
@@ -613,6 +771,11 @@ def routine_interventions(
             "proof_source": row.get("proof_source"),
             "attention": row.get("attention"),
             "attention_detail": row.get("attention_detail"),
+            "deploy_gate": (
+                (holds or {}).get((str(row["kind"]), str(row["routine_id"])), "deployed")
+                if row.get("state") == "model_repaired"
+                else None
+            ),
             "attempts": [
                 {k: a.get(k) for k in ("attempt", "stage", "outcome", "code", "error")}
                 for a in row.get("attempts") or []
@@ -641,12 +804,15 @@ def routine_facts(
     migration_waves: Iterable[Any] | None = None,
     repair: RoutineRepairContract | Mapping[str, Any] | None = None,
     sources_digest: str | None = None,
+    forced: Mapping[tuple[str, str], str] | None = None,
 ) -> dict[str, Any] | None:
     """``facts.routines`` for the routine-migration ``artifact`` read at ``version`` (the
     assignment version it was written for), in the roadmap ``migration_waves``, with the
     routine repair seam's ``repair`` result for that version when one ran (#1940); None
     without an artifact. ``sources_digest`` is the job's routines file's digest: a proof
-    counts only when it ran on that file (:func:`proof_is_current`, #2411)."""
+    counts only when it ran on that file (:func:`proof_is_current`, #2411). ``forced`` holds
+    routines back whatever their proof says (a caller that ran step 1's own rebuild, #2384);
+    synthesis passes none, so its facts reflect the test only."""
     if artifact is None:
         return None
     data = (
@@ -662,7 +828,10 @@ def routine_facts(
     classes_n: Counter[str] = Counter()
     rows: list[dict[str, Any]] = []
     unknown_carried = rewritten_carried = 0
-    for row in data.get("routines") or []:
+    # A routine the repair loop carried is carried, repaired (#2384): one overlay, read by the
+    # counts and the deploy gate's holds alike.
+    artifact_rows = with_repairs(data.get("routines") or [], repaired_routines(repair, version))
+    for row in artifact_rows:
         category = _category(row)
         counts[category] += 1
         kinds[str(row["kind"])] += 1
@@ -712,9 +881,18 @@ def routine_facts(
         else None
     )
     # What step 1's deploy gate holds back for calling a held routine (#2411): the same rule.
-    holds = routine_holds(data.get("routines") or [], current)
-    interventions = routine_interventions(repair, version)
+    holds = routine_holds(artifact_rows, current, forced)
+    interventions = routine_interventions(repair, version, holds)
     depends_held = sum(1 for reason in holds.values() if reason == DEPENDS_ON_HELD)
+    carried_rows = [r for r in artifact_rows if r.get("status") in _CARRIED]
+    changed = sum(
+        1
+        for r in carried_rows
+        if holds.get((str(r.get("kind")), str(r.get("routine_id")))) == REBUILD_DIFFERS
+        and isinstance(r.get("proof"), Mapping)
+        and r["proof"].get("outcome") == "proved"
+    )
+    untested = sum(1 for r in carried_rows if not isinstance(r.get("proof"), Mapping))
     total = int(data.get("total") or 0)
     text = _line(counts, total, classes_n["behaves_differently"])
     wave = target_wave(str(data["target_engine"]), migration_waves)
@@ -747,7 +925,9 @@ def routine_facts(
                         counts["as_is"] + counts["rewritten"] + counts["repaired"], unknown_carried
                     )
                     if proved is None
-                    else proof_run_sentence(proved, depends_held)
+                    else proof_run_sentence(
+                        proved, depends_held, changed=changed, untested=untested
+                    )
                 ),
             )
             if p
@@ -765,6 +945,11 @@ def routine_facts(
                 )
             ),
             repaired_by_model=sum(1 for i in interventions if i["state"] == "model_repaired"),
+            repaired_deployed=(
+                None
+                if proved is None
+                else sum(1 for i in interventions if i.get("deploy_gate") == "deployed")
+            ),
         ),
         "routines": rows,
         "rules": [
@@ -782,7 +967,7 @@ def routine_facts(
     }
     rewrite_kinds = {
         str(w["rule_id"]): str(w.get("rewrite"))
-        for row in data.get("routines") or []
+        for row in artifact_rows
         for w in row.get("rewrites") or []
     }
     return with_routine_words(out, rewrite_kinds)
@@ -1052,4 +1237,7 @@ def read_routine_facts(
 
     repair = read_routine_repair(store, database_name, job_id, version)
     digest = routine_sources_digest(store, database_name, job_id)
+    # The facts reflect the test (#2384): step 1's own rebuild of a repair, which runs the
+    # routine checks, never runs here, since synthesis never reaches them (ADR-034
+    # Decision 8); the deployed line says step 1 checks the repair again before it deploys.
     return routine_facts(artifact, version, migration_waves, repair, digest)

@@ -12,7 +12,10 @@ the models they come from. The released snapshot before contract 1.3 is never
 regenerated at all: it is the record of what shipped (#1641), and neither are the
 saved 1.3 ``assess()`` results every later release reads back (#1648).
 The routine repair loop's state and result (``routines/v<N>/repair/loop_state.json``,
-``routines/v<N>/routine_repair.json``, #1941) are written only by its script.
+``routines/v<N>/routine_repair.json``, #1941) are written only by its script, and the
+routine-migration artifact (``routines/v<N>/routine_migration.json``, which holds the test's
+results and each tested repair's digest, #2384) only by the routine-migration phase and the
+routine test.
 The message names the command. Stdin: the hook event JSON. Exit 0 allows,
 exit 2 blocks.
 """
@@ -98,6 +101,15 @@ SCRIPT_WRITTEN_COMMAND = (
 )
 
 
+#: The routine-migration artifact (#2384 review): its proof entries are what step 1's deploy
+#: gate reads, so a session that edits them could mark a repair tested that no test ran.
+TEST_WRITTEN = re.compile(r"(^|/)routines/v\d+/routine_migration\.json$")
+TEST_WRITTEN_COMMAND = (
+    "uv run python scripts/run_assessment.py (the routine-migration phase) and the routine test "
+    "(scripts/run_dms_step.py proof-target-run, from /test-routines)"
+)
+
+
 def regeneration_command(file_path: str, cwd: str = "") -> str | None:
     """The command that regenerates ``file_path``, or None when it is not a protected baseline."""
     # Backslash paths (native Windows) are normalised first so the "/" suffix match works.
@@ -112,6 +124,8 @@ def regeneration_command(file_path: str, cwd: str = "") -> str | None:
             return command
     if SCRIPT_WRITTEN.search(full):
         return SCRIPT_WRITTEN_COMMAND
+    if TEST_WRITTEN.search(full):
+        return TEST_WRITTEN_COMMAND
     return None
 
 
@@ -125,7 +139,7 @@ def main() -> int:
     if command is None:
         return 0
     name = os.path.basename(file_path)
-    if command == SCRIPT_WRITTEN_COMMAND:
+    if command in (SCRIPT_WRITTEN_COMMAND, TEST_WRITTEN_COMMAND):
         message = f"Blocked: {name} is written only by {command}; do not edit it by hand."
     elif command.startswith(NEVER_REGENERATE):
         message = f"Blocked: {name} is a historical record; do not edit it by hand, and {command}"

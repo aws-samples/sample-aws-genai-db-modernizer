@@ -15,6 +15,15 @@ cluster through the Data API (:mod:`src.tools.routines.data_api_target`):
   cluster and its generated calls run there (:func:`~src.tools.routines.comparison.run_routines`);
   no source engine runs.
 
+A ``model_repaired`` routine (#2384) is one the repair loop carried (``routine_repair.json``
+for the same version): the original runs on the disposable source engine, and on the test
+cluster its repair's exact text, rebuilt in memory from the routines file and the repair's
+redacted candidate (``repair_proof.rebuild_repairs``: rebuilt, screened again and checked
+again in this process), with the rewrites applied again for the cluster's user. Its proof
+entry records the digest of that candidate (``repair_sha256``), never of the text: step 1
+deploys the repair only when it is the one tested. A repair that no longer rebuilds is not
+tested, with its reason.
+
 A trigger function has no call of its own: it takes the outcome of the trigger that runs
 it. On PostgreSQL the strict check (``plpgsql_check``, when the cluster offers it) runs on
 every PL/pgSQL routine; an error it finds makes the routine ``needs_attention``.
@@ -46,7 +55,7 @@ from __future__ import annotations
 import contextlib
 import re
 import time
-from collections.abc import Callable, Iterable, Mapping, Sequence
+from collections.abc import Callable, Iterable, Iterator, Mapping, Sequence
 from dataclasses import dataclass, field, replace
 from datetime import UTC, datetime
 from typing import Any
@@ -82,6 +91,8 @@ __all__ = [
     "LOAD_AND_RUN_LIMIT",
     "ProofPlan",
     "apply_proof",
+    "cluster_refusal",
+    "cluster_session",
     "plan_proof",
     "proof_input",
     "prove_routines",
@@ -212,12 +223,19 @@ def _carried_text(row: RoutineMigration, source: RoutineSource, migration: Routi
 
 
 def plan_proof(migration: RoutineMigrationContract, sources: Iterable[RoutineSource],
-               collector: Mapping[str, Any], *, target_user: str) -> ProofPlan:  # fmt: skip
+               collector: Mapping[str, Any], *, target_user: str,
+               repaired: Mapping[tuple[str, str], str | None] | None = None) -> ProofPlan:  # fmt: skip
     """Which carried routines go side by side and which load and run, each with its
     original and carried text (in deploy order); the rest of the carried ones, with why
-    they are not tested."""
+    they are not tested. ``repaired`` gives each model-repaired routine's rebuilt exact
+    text (#2384), or None when it did not rebuild: carried as ``model_repaired``."""
     dialect = migration.source_engine
-    carried = [r for r in migration.routines if r.status in CARRIED]
+    fixed = dict(repaired or {})
+    carried = [
+        r.model_copy(update={"status": "model_repaired"}) if (r.kind, r.routine_id) in fixed else r
+        for r in migration.routines
+        if r.status in CARRIED or (r.kind, r.routine_id) in fixed
+    ]
     wanted: dict[tuple[str, str, str], RoutineMigration] = {
         (r.kind, r.schema_name or "", r.specific_name or ""): r for r in carried
     }
@@ -230,7 +248,18 @@ def plan_proof(migration: RoutineMigrationContract, sources: Iterable[RoutineSou
         if not source.exact:
             plan.not_tested[row.routine_id] = "its CREATE is not exact"
             continue
-        text = _carried_text(row, source, migration, target_user)
+        key = (row.kind, row.routine_id)
+        if key in fixed:
+            rebuilt = fixed[key]
+            if rebuilt is None:
+                plan.not_tested[row.routine_id] = (
+                    "its repair does not rebuild from the routines file and pass its checks again"
+                )
+                continue
+            carried_source = source.model_copy(update={"create_statement": rebuilt})
+            text = _carried_text(row, carried_source, migration, target_user)
+        else:
+            text = _carried_text(row, source, migration, target_user)
         if text is None:
             plan.not_tested[row.routine_id] = (
                 "its rewrites do not apply for the test cluster's user"
@@ -479,19 +508,24 @@ def prove_routines(
 
 def apply_proof(migration: RoutineMigrationContract, entries: Mapping[str, RoutineProofEntry], *,
                 target: str, source: str | None, strict_check: str, seconds: float,
-                error_fields: bool = False,
-                sources_digest: str | None = None) -> RoutineMigrationContract:  # fmt: skip
+                error_fields: bool = False, sources_digest: str | None = None,
+                repaired: Mapping[tuple[str, str], str] | None = None) -> RoutineMigrationContract:  # fmt: skip
     """``migration`` with each carried row's ``proof`` and the ``proof_run``, validated.
     ``sources_digest`` names the routines file the proof ran on (``routine_sources_digest``):
-    step 1's deploy gate counts the proof only on that file (#2411)."""
+    step 1's deploy gate counts the proof only on that file (#2411). ``repaired`` gives each
+    model-repaired routine's ``repair_sha256`` (#2384): its entry records the repair it ran."""
     rows = []
     counts: dict[Any, int] = {"proved": 0, "needs_attention": 0, "not_proved": 0}
+    fixed = dict(repaired or {})
     for row in migration.routines:
-        entry = entries.get(row.routine_id) if row.status in CARRIED else None
-        if row.status in CARRIED and entry is None:
+        key = (row.kind, row.routine_id)
+        tested = row.status in CARRIED or key in fixed
+        entry = entries.get(row.routine_id) if tested else None
+        if tested and entry is None:
             entry = RoutineProofEntry(mode="load_and_run", outcome="not_proved",
                                       reason="the proof gave it no result", reason_code="not_tested")  # fmt: skip
         if entry is not None:
+            entry = entry.model_copy(update={"repair_sha256": fixed.get(key)})
             counts[entry.outcome] += 1
         rows.append(row.model_copy(update={"proof": entry}))
     limits = [*COVERAGE_LIMITS, LOAD_AND_RUN_LIMIT]
@@ -501,7 +535,9 @@ def apply_proof(migration: RoutineMigrationContract, entries: Mapping[str, Routi
         target=target, source=source,
         strict_check=strict_check if migration.source_engine == "postgresql" else "not_applicable",  # type: ignore[arg-type]
         proved_at=datetime.now(UTC), seconds=round(seconds, 1),
-        counts=counts, not_carried=sum(r.status not in CARRIED for r in migration.routines),
+        counts=counts,
+        not_carried=sum(r.status not in CARRIED and (r.kind, r.routine_id) not in fixed
+                        for r in migration.routines),
         coverage_limits=limits, routine_sources_sha256=sources_digest,
     )  # fmt: skip
     fields = {**dict(migration), "routines": rows, "proof_run": run}
@@ -541,7 +577,18 @@ def run_proof(
     if found is None:
         return {"status": "nothing_to_prove", "reason": "the job has no routine-migration artifact"}
     version, migration = found
-    carried = [r for r in migration.routines if r.status in CARRIED]
+    from src.shared.routine_facts import repairable_row, repaired_routines
+    from src.storage.routine_repair_store import read_routine_repair
+
+    repair = read_routine_repair(store, db, job_id, version)
+    # The routines the repair loop carried (#2384), each by its candidate's digest.
+    rows: dict[tuple[str, str], RoutineMigration] = {
+        (r.kind, r.routine_id): r for r in migration.routines
+    }
+    digests: dict[tuple[str, str], str] = {ref: d for ref, d in repaired_routines(repair, version).items()
+               if ref in rows and repairable_row(rows[ref].model_dump(mode="json"))}  # fmt: skip
+    carried = [r for r in migration.routines
+               if r.status in CARRIED or (r.kind, r.routine_id) in digests]  # fmt: skip
     if not carried:
         return {
             "status": "nothing_to_prove",
@@ -549,22 +596,10 @@ def run_proof(
             "assignment_version": version,
         }
     engine = migration.source_engine
-    cluster_engine = str(cluster.get("engine") or "")
-    if cluster_engine != ("aurora-postgresql" if engine == "postgresql" else "aurora-mysql"):
-        return {"status": "error", "message": f"the test cluster runs {cluster_engine or 'no engine'}, "
-                f"and the routines move to {migration.target_engine}"}  # fmt: skip
-    if (
-        not cluster.get("data_api")
-        or not cluster.get("arn")
-        or not cluster.get("master_user_secret_arn")
-    ):
-        return {
-            "status": "error",
-            "message": "the test cluster has no Data API or no master secret ARN",
-        }
-    if secrets_client is None:
-        return {"status": "error", "message": "the proof needs Secrets Manager for its "
-                "restricted runner's secret"}  # fmt: skip
+    refused = cluster_refusal(migration, data_api=data_api, cluster=cluster,
+                              secrets_client=secrets_client)  # fmt: skip
+    if refused is not None:
+        return refused
     from src.tools.routines import data_api_target as dat
 
     arns = {
@@ -572,13 +607,6 @@ def run_proof(
         "secret_arn": str(cluster["master_user_secret_arn"]),
     }
     admin = str(cluster.get("database_name") or "") or None
-    if engine == "mysql":
-        scheduler = dat.mysql_event_scheduler(data_api, **arns, admin_database=admin)
-        if scheduler == "ON":
-            return {"status": "error", "message": "the test cluster's event_scheduler is ON, so a "
-                    "loaded event could fire outside every call's rollback and change rows "
-                    "between a call and its snapshot: refused. Deploy the stack again from "
-                    "routine-proof-target.yaml, whose parameter group sets it OFF"}  # fmt: skip
     left: list[str] = []
     dropped: list[str] = []
 
@@ -613,8 +641,10 @@ def run_proof(
         # The routines file this proof reads, named before it is read (#2411).
         digest = routine_sources_digest(store, db, job_id)
         user = runner.definer if engine == "mysql" else runner.username
+        rebuilt = _rebuilt_repairs(store, db, job_id, migration, repair, digests)
         plan = plan_proof(migration, read_routine_sources(store, db, job_id), collector,
-                          target_user=user)  # fmt: skip
+                          target_user=user, repaired=rebuilt)  # fmt: skip
+        del rebuilt
         strict: dict[str, list[tuple[str, str]]] = {}
         strict_check: list[str] = []
         ids = {r.routine_id: r.routine_id for r in plan.routines}
@@ -651,7 +681,8 @@ def run_proof(
     written = apply_proof(migration, entries, target=where,
                           source=f"a disposable {engine} {major} engine" if plan.side_by_side and major else None,
                           strict_check=(strict_check[0] if strict_check else "not_available"),
-                          seconds=time.monotonic() - started, sources_digest=digest)  # fmt: skip
+                          seconds=time.monotonic() - started, sources_digest=digest,
+                          repaired=digests)  # fmt: skip
     key = routine_migration_path(db, job_id, version)
     store.write_json(key, written.model_dump(mode="json"))
     run = written.proof_run
@@ -671,7 +702,9 @@ def run_proof(
         "left_on_cluster": left,
         "cluster_changes": changes,
         "routines": [
-            {"routine_id": r.routine_id, "kind": r.kind, "status": r.status, "mode": r.proof.mode,
+            {"routine_id": r.routine_id, "kind": r.kind,
+             "status": "model_repaired" if (r.kind, r.routine_id) in digests else r.status,
+             "mode": r.proof.mode,
              "outcome": r.proof.outcome, "reason": r.proof.reason, "calls_run": r.proof.calls_run,
              "calls_succeeded": r.proof.calls_succeeded, "mismatches": r.proof.mismatches,
              "strict_check": r.proof.strict_check,
@@ -679,6 +712,131 @@ def run_proof(
             for r in written.routines if r.proof is not None
         ],  # fmt: skip
     }
+
+
+def cluster_refusal(migration: RoutineMigrationContract, *, data_api: Any,
+                    cluster: Mapping[str, Any], secrets_client: Any) -> dict[str, Any] | None:  # fmt: skip
+    """Why the test cluster ``cluster`` cannot run this artifact's routines (an error line),
+    or None: the engine the routines move to, a Data API and a master secret, Secrets
+    Manager for the runner's secret, and on MySQL an event scheduler that is off."""
+    engine = migration.source_engine
+    cluster_engine = str(cluster.get("engine") or "")
+    if cluster_engine != ("aurora-postgresql" if engine == "postgresql" else "aurora-mysql"):
+        return {"status": "error", "message": f"the test cluster runs {cluster_engine or 'no engine'}, "
+                f"and the routines move to {migration.target_engine}"}  # fmt: skip
+    if (
+        not cluster.get("data_api")
+        or not cluster.get("arn")
+        or not cluster.get("master_user_secret_arn")
+    ):
+        return {
+            "status": "error",
+            "message": "the test cluster has no Data API or no master secret ARN",
+        }
+    if secrets_client is None:
+        return {"status": "error", "message": "the proof needs Secrets Manager for its "
+                "restricted runner's secret"}  # fmt: skip
+    if engine == "mysql":
+        from src.tools.routines import data_api_target as dat
+
+        scheduler = dat.mysql_event_scheduler(
+            data_api, cluster_arn=str(cluster["arn"]),
+            secret_arn=str(cluster["master_user_secret_arn"]),
+            admin_database=str(cluster.get("database_name") or "") or None,
+        )  # fmt: skip
+        if scheduler == "ON":
+            return {"status": "error", "message": "the test cluster's event_scheduler is ON, so a "
+                    "loaded event could fire outside every call's rollback and change rows "
+                    "between a call and its snapshot: refused. Deploy the stack again from "
+                    "routine-proof-target.yaml, whose parameter group sets it OFF"}  # fmt: skip
+    return None
+
+
+@contextlib.contextmanager
+def cluster_session(migration: RoutineMigrationContract, *, data_api: Any,
+                    cluster: Mapping[str, Any], secrets_client: Any,
+                    job_id: str) -> Iterator[dict[str, Any]]:  # fmt: skip
+    """The job's test cluster as the repaired side of the repair loop's proof
+    (``--proof test-cluster``, #2384), set up and cleaned up as :func:`run_proof` does: what
+    a killed run left is swept first, the routines run as a restricted runner made for the
+    session (never the master user), each comparison in a job-scoped scratch database, and
+    on exit every scratch database and the runner are dropped, also on failure. Yields
+    ``{"status": "open", "options": ...}`` (the verifier's ``target_factory``,
+    ``target_words`` and ``carried_text``, the rewrites for the runner) and ``left``, what
+    could not be dropped; or an error line (:func:`cluster_refusal`, a runner it could not
+    make), with nothing to run."""
+    from src.tools.routines import data_api_target as dat
+
+    refused = cluster_refusal(migration, data_api=data_api, cluster=cluster,
+                              secrets_client=secrets_client)  # fmt: skip
+    if refused is not None:
+        yield refused
+        return
+    engine = migration.source_engine
+    arns = {
+        "cluster_arn": str(cluster["arn"]),
+        "secret_arn": str(cluster["master_user_secret_arn"]),
+    }
+    admin = str(cluster.get("database_name") or "") or None
+    left: list[str] = []
+
+    def cleanup() -> None:
+        _done, missed = dat.drop_scratch(data_api, **arns, engine=engine, job_id=job_id,
+                                         admin_database=admin)  # fmt: skip
+        left.extend(missed)
+
+    if engine == "postgresql":
+        cleanup()  # a role that owns objects cannot be dropped: a killed run's databases first
+    _done, missed = dat.sweep_runners(data_api, secrets_client, **arns, job_id=job_id,
+                                      admin_database=admin, engine=engine)  # fmt: skip
+    left.extend(missed)
+    runner: Any = None
+    try:
+        try:
+            runner = dat.create_runner(data_api, secrets_client, cluster_arn=arns["cluster_arn"],
+                                       secret_arn=arns["secret_arn"], job_id=job_id,
+                                       admin_database=admin, tags=_tags(job_id), engine=engine)  # fmt: skip
+        except de.EngineError as exc:
+            left.extend(getattr(exc, "left", []))
+            tail = RUNNER_LEFT.format(left=", ".join(left)) if left else RUNNER_CLEANED
+            why = PG_RUNNER_REFUSED if engine == "postgresql" else RUNNER_REFUSED
+            yield {"status": "error", "sqlstate": exc.sqlstate, "message": why + tail,
+                   "left_on_cluster": left}  # fmt: skip
+            return
+        user = runner.definer if engine == "mysql" else runner.username
+        target = dat.data_api_target(
+            data_api, cluster_arn=arns["cluster_arn"], secret_arn=arns["secret_arn"], engine=engine,
+            version=str(cluster.get("engine_version") or ""), job_id=job_id, admin_database=admin,
+            runner=runner,
+        )  # fmt: skip
+        words = (f"an Aurora {'PostgreSQL' if engine == 'postgresql' else 'MySQL'} "
+                 f"{cluster.get('engine_version') or ''} test cluster").replace("  ", " ")  # fmt: skip
+
+        def carried_text(row: RoutineMigration, source: RoutineSource) -> str | None:
+            return _carried_text(row, source, migration, user)
+
+        yield {"status": "open", "left_on_cluster": left,
+               "options": {"target_factory": target, "target_words": words,
+                           "carried_text": carried_text}}  # fmt: skip
+    finally:
+        with contextlib.suppress(Exception):
+            cleanup()
+        if runner is not None:
+            left.extend(dat.drop_runner(data_api, secrets_client, **arns, admin_database=admin,
+                                        account=runner))  # fmt: skip
+
+
+def _rebuilt_repairs(store: Any, db: str, job_id: str, migration: RoutineMigrationContract,
+                     repair: Any, digests: Mapping[tuple[str, str], str]
+                     ) -> dict[tuple[str, str], str | None]:  # fmt: skip
+    """Each repaired routine's exact text rebuilt in this process (``rebuild_repairs``), or
+    None when it did not rebuild, screen and check again (#2384): memory only."""
+    from src.tools.routines.repair_proof import rebuild_repairs
+
+    candidates = {(r.kind, r.routine_id): str(r.repaired_create) for r in repair.routines
+                  if (r.kind, r.routine_id) in digests} if repair is not None else {}  # fmt: skip
+    texts, _failed = rebuild_repairs(store, db, job_id, migration, candidates)
+    return {ref: texts.get(ref) for ref in candidates}
 
 
 def _tags(job_id: str) -> list[dict[str, str]]:

@@ -104,7 +104,8 @@ def test_each_intervention_state_has_its_words() -> None:
     assert "it is checked, not tested yet on a test Aurora" in repaired
     assert "every call" not in repaired and "proof accepted" not in repaired
     assert f"What changed: {REPAIRED_NOTE}" in repaired
-    assert "Step 1 does not deploy a repaired routine yet" in repaired
+    assert "does not deploy a repaired routine yet" not in repaired  # #2384: it can now
+    assert "Test it with /test-routines before it is deployed." in repaired
     pending = items["public.ok(integer)"]["line"]
     assert "not carried" in pending and PENDING_NOTE not in pending
     assert "What changed" not in pending
@@ -117,11 +118,11 @@ def test_each_intervention_state_has_its_words() -> None:
     ]
     blocked = items["public.orphan(integer)"]["line"]
     assert blocked.startswith("It was not sent for a model repair: A literal of the routine")
-    # A carried repair is no carried routine yet: no figure moves.
+    # #2384: a carried repair is carried, repaired; the other states move no figure.
     without = routine_facts(fx.migration(), 1, [{"wave": 1, "engines": ["aurora_postgresql"]}])
     assert without is not None
-    for key in ("carried_count", "repaired_count", "needs_repair_count"):
-        assert FACTS[key] == without[key], key
+    for key, moved in (("carried_count", 1), ("repaired_count", 1), ("needs_repair_count", -1)):
+        assert FACTS[key] == without[key] + moved, key
 
 
 def test_the_engineering_report_prints_each_intervention_as_the_facts_say() -> None:
@@ -234,9 +235,9 @@ def test_the_executive_line_counts_model_repairs_as_checked_not_tested() -> None
 
     assert FACTS is not None
     clause = (
-        "A model repaired 1 of the routines that need work, compared on a local engine of "
-        "the source: it is checked, not tested yet on a test Aurora, and step 1 does not "
-        "deploy it yet."
+        "1 of the carried routines was repaired by a model and compared on a local engine "
+        "of the source: it is "
+        "checked, not tested yet on a test Aurora."
     )
     assert FACTS["executive_line"].endswith(clause)
     report = _plain_report("MEDIUM")
@@ -244,9 +245,9 @@ def test_the_executive_line_counts_model_repairs_as_checked_not_tested() -> None
     (label, text), *_ = routine_summary_lines(report, executive=True)
     assert label == "Routines" and text == FACTS["executive_line"]
     two = executive_line({"as_is": 1}, 3, 1, None, repaired_by_model=2)
-    assert "a model repaired 2 of the routines that need work" in two.lower()
+    assert "2 of the carried routines were repaired by a model" in two
     assert "they are checked, not tested yet on a test Aurora" in two
-    assert "does not deploy them yet" in two
+    assert "not deploy" not in two  # #2384: the deploy gate decides, after a test
     # No model repair: the line is #2411's, unchanged.
     assert executive_line({"as_is": 1}, 3, 1, None) == executive_line(
         {"as_is": 1}, 3, 1, None, repaired_by_model=0
@@ -275,5 +276,6 @@ def test_a_stored_block_without_an_executive_line_counts_its_model_repairs() -> 
     report = _plain_report("MEDIUM")
     report["facts"]["routines"] = stored
     assert (
-        "A model repaired 1 of the routines" in report_facts(report)["routines"]["executive_line"]
+        "1 of the carried routines was repaired by a model"
+        in report_facts(report)["routines"]["executive_line"]
     )
