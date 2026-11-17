@@ -4,7 +4,7 @@
 import fs from 'fs';
 import path from 'path';
 import { formatFigure } from '../reportFacts';
-import { formatCount, formatMoney, formatMonthlyMoney, formatPercent, formatRate, formatShortId } from '../format';
+import { formatCount, formatHours, formatMoney, formatMonthlyMoney, formatPercent, formatRate, formatShortId } from '../format';
 
 describe('formatMoney (#2309)', () => {
   it('prints dollars with a thousands separator and two decimals', () => {
@@ -80,7 +80,6 @@ describe('toFixed is not spreading (#2309)', () => {
     'pages/AnalysisResults.js': 5,
     'pages/AssignmentGate.js': 3,
     'pages/CreateAnalysis.js': 1,
-    'pages/Dashboard.js': 2,
     'pages/JobMonitoringSummary.js': 2,
     'utils/cacheLayer.js': 4,
     'utils/collectorRowTotals.js': 2,
@@ -136,5 +135,24 @@ describe('the audited spots use the formatter (#2309)', () => {
     expect(page).toMatch(/formatRate\(queryJourneyData\?\.source\?\.frequency_per_hour\)/);
     expect(page).toMatch(/formatRate\(queryJourneyData\?\.source\?\.calls_per_second\)/);
     expect(page).toMatch(/displayEngine\(queryJourneyData\.assignment\.assigned_engine\)/);
+  });
+});
+
+describe('formatHours (#2306)', () => {
+  it('prints one decimal and an h, and a dash for an absent value', () => {
+    expect(formatHours(1.5)).toBe('1.5h');
+    expect(formatHours(0)).toBe('0.0h');
+    expect(formatHours(null)).toBe('—');
+    expect(formatHours(undefined)).toBe('—');
+  });
+});
+
+describe('the dashboard prints its figures through the shared formatter (#2306)', () => {
+  it('Dashboard.js formats counts, percent and hours with format.js', () => {
+    const page = fs.readFileSync(path.join(__dirname, '../../pages/Dashboard.js'), 'utf8');
+    expect(page).toMatch(/formatCount\(s\.total_assessments\)/);
+    expect(page).toMatch(/formatPercent\(s\.success_rate_percent\)/);
+    expect(page).toMatch(/formatHours\(s\.average_duration_hours\)/);
+    expect(page).not.toMatch(/\.toFixed\(/);
   });
 });

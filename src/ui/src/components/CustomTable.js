@@ -14,7 +14,7 @@ import Header from "@cloudscape-design/components/header";
 import Button from "@cloudscape-design/components/button";
 
 
-const TableComponent = memo(({columnsTable,visibleContent, dataset, title, description = "", onSelectionItem = () => {}, pageSize = 10, extendedTableProperties = {}, tableActions = null, selectedListItems = [{ identifier: "" }], onPreferencesChange = () => {}  }) => {
+const TableComponent = memo(({columnsTable,visibleContent, dataset, title, description = "", onSelectionItem = () => {}, pageSize = 10, extendedTableProperties = {}, tableActions = null, emptyState = null, selectedListItems = [{ identifier: "" }], onPreferencesChange = () => {}  }) => {
 
     const { t } = useTranslation();
 
@@ -45,7 +45,7 @@ const TableComponent = memo(({columnsTable,visibleContent, dataset, title, descr
                 dataset,
                 {
                   filtering: {
-                    empty: <EmptyState title={t('common.labels.no-records')} />,
+                    empty: emptyState || <EmptyState title={t('common.labels.no-records')} />,
                     noMatch: (
                       <EmptyState
                         title={t('common.labels.no-matches')}
