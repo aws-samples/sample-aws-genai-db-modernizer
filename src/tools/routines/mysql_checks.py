@@ -82,7 +82,7 @@ the call names one. A routine with a ``PREPARE`` has an incomplete dependency li
 from __future__ import annotations
 
 import re
-from collections.abc import Iterable, Sequence
+from collections.abc import Collection, Iterable, Sequence
 from dataclasses import dataclass, field
 from typing import Literal
 
@@ -120,6 +120,7 @@ __all__ = [
     "mysql_header",
     "parse_account",
     "split_client_statements",
+    "statement_kinds",
 ]
 
 # The collector source engine these routines come from (the rules' source_engines).
@@ -662,6 +663,9 @@ class _Leaf:
     start: int  # token index
     end: int  # token index, exclusive
     expression: bool = False  # a condition, RETURN or DEFAULT value, read as ``SELECT <expr>``
+    #: The routine's variables in scope at the statement, lower case (#2399 review): its
+    #: parameters and the names the ``BEGIN ... END`` blocks around it declare.
+    variables: frozenset[str] = frozenset()
 
 
 @dataclass(frozen=True)
@@ -685,11 +689,17 @@ _NEEDS_ARGUMENTS |= {"PREPARE", "EXECUTE", "OPEN", "FETCH", "CLOSE", "WITH"}
 class _Body:
     """The body-structure reader (step 4): walks compound statements, collects leaves."""
 
-    def __init__(self, toks: list[Token], start: int) -> None:
+    def __init__(self, toks: list[Token], start: int, parameters: Iterable[str] = ()) -> None:
         self.cur = _Cursor(toks, start)
         self.toks = toks
         self.leaves: list[_Leaf] = []
         self.depth = 0
+        # The variables in scope where the reader is: a block's names join on DECLARE and
+        # leave at its END, as the compound statements the reader walks say.
+        self.scope: frozenset[str] = frozenset(n.lower() for n in parameters)
+
+    def _leaf(self, start: int, end: int, expression: bool = False) -> None:
+        self.leaves.append(_Leaf(start, end, expression, self.scope))
 
     # -- top level
 
@@ -738,7 +748,7 @@ class _Body:
             if depth == 0 and case == 0 and w in stops:
                 if self.cur.i == start:
                     raise _Unparseable("unexpected token")
-                self.leaves.append(_Leaf(start, self.cur.i, expression=True))
+                self._leaf(start, self.cur.i, expression=True)
                 return
             if kind == "L_PAREN":
                 depth += 1
@@ -783,7 +793,7 @@ class _Body:
             raise _Unparseable("incomplete statement")
         if first == "CALL":
             _call_target(self.toks[start : self.cur.i])
-        self.leaves.append(_Leaf(start, self.cur.i))
+        self._leaf(start, self.cur.i)
 
     def _enter(self) -> None:
         self.depth += 1
@@ -821,9 +831,11 @@ class _Body:
             self.cur.take()
             self.cur.accept("NOT", "ATOMIC")
             scope = _Block(labels=labels, conditions=set(block.conditions))
+            outer = self.scope
             self._declarations(scope)
             self._statements(scope, "END")
             self.cur.expect("END")
+            self.scope = outer
             self._end_label(label)
             return
         if w == "LOOP":
@@ -889,7 +901,7 @@ class _Body:
         if w == "RETURN":
             self.cur.take()
             start = self._to_semicolon(top)
-            self.leaves.append(_Leaf(start, self.cur.i, expression=True))
+            self._leaf(start, self.cur.i, expression=True)
             return
         if w in {"END", "ELSE", "ELSEIF", "UNTIL", "WHEN", "THEN", "DO"} or w == "":
             raise _Unparseable("unbalanced block")
@@ -941,12 +953,17 @@ class _Body:
                 self._semicolon()
                 continue
             # A variable list: DECLARE a, b <type> [DEFAULT <expr>]; its default is read.
+            names, k = {self.toks[self.cur.i - 1].text.lower()}, self.cur.i
+            while k + 1 < len(self.toks) and self.toks[k].kind == "COMMA":
+                names.add(self.toks[k + 1].text.lower())
+                k += 2
             start = self._to_semicolon(top=False)
             words = [_word(t) for t in self.toks[start : self.cur.i]]
             if "DEFAULT" in words:
                 at = start + words.index("DEFAULT") + 1
                 if at < self.cur.i:
-                    self.leaves.append(_Leaf(at, self.cur.i, expression=True))
+                    self._leaf(at, self.cur.i, expression=True)
+            self.scope |= names
             self._semicolon()
 
     def _sqlstate(self, tok: Token) -> None:
@@ -1196,6 +1213,7 @@ class _Statement:
 
     tokens: list[Token]
     expression: bool = False
+    variables: frozenset[str] = frozenset()
 
 
 def _prepared(
@@ -1632,6 +1650,10 @@ class _Read:
     # The parts the reserved-word check reads: the text after the routine's name, then
     # each PREPARE's literal text.
     identifier_parts: list[list[Token]] = field(default_factory=list)
+    # The CREATE's tokens, and how many of ``statements`` are the body's own (the rest are
+    # the PREPAREs' literal texts).
+    tokens: list[Token] = field(default_factory=list)
+    body_statements: int = 0
 
 
 def _read(routine: MySqlRoutine) -> _Read:
@@ -1649,7 +1671,7 @@ def _read(routine: MySqlRoutine) -> _Read:
         out.header = _header(toks)
         if out.header.kind != routine.kind:
             raise _Unparseable("kind")
-        body = _Body(toks, out.header.body_start)
+        body = _Body(toks, out.header.body_start, _parameters(toks, out.header))
         body.read()
     except _Unparseable as exc:
         out.failure = exc
@@ -1661,13 +1683,15 @@ def _read(routine: MySqlRoutine) -> _Read:
         out.reading.complete = False
         return out
     out.statements = [
-        _Statement(toks[leaf.start : leaf.end], leaf.expression) for leaf in body.leaves
+        _Statement(toks[leaf.start : leaf.end], leaf.expression, leaf.variables)
+        for leaf in body.leaves
     ]
     for stmt in out.statements:
         try:
             _read_leaf(create, stmt.tokens, stmt.expression, out.reading)
         except Exception:  # noqa: BLE001 -- a statement read for its names never fails a routine
             out.reading.complete = False
+    out.tokens, out.body_statements = toks, len(out.statements)
     prepared, out.from_variable = _prepared(out.statements)
     out.statements += prepared
     if out.header is not None:
@@ -1873,3 +1897,140 @@ def is_target_user(
     """Whether a ``DEFINER`` naming ``account`` is the target user, as the definer check
     decides it (a ``CURRENT_USER`` form always is; a target with no host matches any)."""
     return _is_target_user(account, target)
+
+
+# --------------------------------------------------------------------------- the repair screen (#2373)
+
+#: The words after ``SET`` that set something other than a variable of the routine.
+_SET_SCOPES = {
+    "GLOBAL", "PERSIST", "PERSIST_ONLY", "SESSION", "LOCAL", "NAMES", "CHARACTER", "CHARSET",
+    "TRANSACTION", "PASSWORD", "ROLE", "DEFAULT", "RESOURCE",
+}  # fmt: skip
+#: The statements a ``WITH`` can lead into.
+_WITH_MAIN = {"SELECT", "INSERT", "UPDATE", "DELETE", "REPLACE", "TABLE", "VALUES"}
+
+
+def _parameters(toks: Sequence[Token], header: _Header) -> set[str]:
+    """The routine's parameter names, lower case."""
+    names: set[str] = set()
+    i = header.name_end
+    if i < len(toks) and toks[i].kind == "L_PAREN":
+        depth, expect = 0, True
+        for tok in toks[i:]:
+            if tok.kind == "L_PAREN":
+                depth += 1
+                expect = depth == 1
+                continue
+            if tok.kind == "R_PAREN":
+                depth -= 1
+                if depth == 0:
+                    break
+                continue
+            if depth == 1 and tok.kind == "COMMA":
+                expect = True
+            elif depth == 1 and expect and _word(tok) not in {"IN", "OUT", "INOUT"}:
+                names.add(tok.text.lower())
+                expect = False
+    return names
+
+
+#: Server variables a routine's ``SET`` could change for the session: a ``SET`` of one is
+#: refused as new even when a variable of that name is declared, so no scope reading can
+#: turn it into a local assignment (#2399 review). Not every server variable: a name no
+#: open block declares is a server variable's ``SET`` anyway.
+_SERVER_VARIABLES = frozenset("""
+    autocommit auto_increment_increment auto_increment_offset big_tables
+    block_encryption_mode bulk_insert_buffer_size character_set_client
+    character_set_connection character_set_database character_set_filesystem
+    character_set_results character_set_server collation_connection collation_database
+    collation_server completion_type default_storage_engine default_tmp_storage_engine
+    default_week_format div_precision_increment end_markers_in_json eq_range_index_dive_limit
+    explicit_defaults_for_timestamp foreign_key_checks group_concat_max_len identity
+    innodb_lock_wait_timeout innodb_strict_mode insert_id interactive_timeout last_insert_id
+    lc_messages lc_time_names lock_wait_timeout long_query_time low_priority_updates
+    max_allowed_packet max_error_count max_execution_time max_heap_table_size
+    max_join_size max_sort_length max_sp_recursion_depth net_read_timeout net_write_timeout
+    optimizer_switch profiling pseudo_thread_id rand_seed1 rand_seed2 read_buffer_size
+    session_track_gtids sort_buffer_size sql_auto_is_null sql_big_selects sql_buffer_result
+    sql_log_bin sql_log_off sql_mode sql_notes sql_quote_show_create sql_require_primary_key
+    sql_safe_updates sql_select_limit sql_warnings time_zone timestamp tmp_table_size
+    transaction_isolation transaction_read_only tx_isolation tx_read_only unique_checks
+    updatable_views_with_limit wait_timeout
+""".split())
+
+
+def _set_kinds(part: Sequence[Token], variables: Collection[str]) -> Iterable[str]:
+    """What each assignment of a ``SET`` sets: ``SET`` for a variable of the routine in
+    scope there (``variables``) that is no listed server variable, a user variable (``@x``)
+    or a trigger's ``NEW``/``OLD`` column; else ``SET`` and what it names (``SET SESSION``,
+    ``SET @@``, ``SET AUTOCOMMIT``)."""
+    expect, depth = True, 0
+    for i, tok in enumerate(part[1:], start=1):
+        if tok.kind == "L_PAREN":
+            depth += 1
+        elif tok.kind == "R_PAREN":
+            depth -= 1
+        elif tok.kind == "COMMA" and depth == 0:
+            expect = True
+            continue
+        if not expect:
+            continue
+        expect = False
+        word = _word(tok)
+        after = part[i + 1] if i + 1 < len(part) else None
+        if tok.kind == "SESSION_PARAMETER":
+            yield "SET @@"
+        elif word in _SET_SCOPES:
+            yield f"SET {word}"
+        elif tok.kind == "PARAMETER" and tok.text == "@":
+            yield "SET"
+        elif word in {"NEW", "OLD"} and after is not None and after.kind == "DOT":
+            yield "SET"
+        elif tok.text.lower() in variables and tok.text.lower() not in _SERVER_VARIABLES:
+            yield "SET"
+        else:
+            yield f"SET {tok.text.upper()}"
+
+
+def _statement_kind(part: Sequence[Token]) -> str:
+    """A statement's kind: its first word (``LOCK`` for ``LOCK TABLES``), and for a
+    ``WITH`` the statement it leads into."""
+    first = part[0].text.split()[0].upper() if part[0].text.split() else ""
+    if part[0].kind in _QUOTED:
+        return part[0].kind
+    if first == "WITH":
+        depth = 0
+        for tok in part[1:]:
+            if tok.kind == "L_PAREN":
+                depth += 1
+            elif tok.kind == "R_PAREN":
+                depth -= 1
+            elif depth == 0 and _word(tok) in _WITH_MAIN:
+                return _word(tok)
+    return first
+
+
+def statement_kinds(routine: MySqlRoutine) -> frozenset[str] | None:
+    """The kind of every simple statement of ``routine``'s body, as the body reader finds
+    them (compound statements, ``DECLARE``, ``RETURN`` and conditions are not simple
+    statements; a ``PREPARE``'s text is not read): the statement's first word upper case,
+    a ``WITH``'s main statement, and for a ``SET`` what it sets (:func:`_set_kinds`), a
+    variable only when the body reader has it in scope there (a parameter, or declared by an
+    open ``BEGIN ... END`` block) and it is no listed server variable (``_SERVER_VARIABLES``). None
+    when the routine does not read. Never raises."""
+    try:
+        read = _read(routine)
+        if read.failure is not None or read.header is None:
+            return None
+        kinds: set[str] = set()
+        for stmt in read.statements[: read.body_statements]:
+            if stmt.expression or not stmt.tokens:
+                continue
+            kind = _statement_kind(stmt.tokens)
+            if kind == "SET":
+                kinds.update(_set_kinds(stmt.tokens, stmt.variables))
+            else:
+                kinds.add(kind)
+    except Exception:  # noqa: BLE001 -- a text the reader cannot read is no answer
+        return None
+    return frozenset(kinds)

@@ -57,14 +57,7 @@ from dataclasses import dataclass
 from typing import Any, Literal
 
 import pgparse
-from pydantic import (
-    BaseModel,
-    ConfigDict,
-    Field,
-    ValidationError,
-    field_validator,
-    model_validator,
-)
+from pydantic import BaseModel, ConfigDict, Field, ValidationError, field_validator, model_validator
 from pydantic_core import InitErrorDetails, PydanticCustomError
 
 from src.shared.catalog.gaps import AuroraExtensionLines, aurora_extension_lines
@@ -89,10 +82,12 @@ __all__ = [
     "ParseFailure",
     "PostgresRoutine",
     "RoutineCheckResult",
+    "RoutineParts",
     "RoutineVerdict",
     "check_postgresql_routine",
     "parse_routine",
     "postgresql_header",
+    "routine_parts",
     "routine_target_line",
     "trigger_references",
 ]
@@ -883,3 +878,165 @@ def trigger_references(create_sql: str) -> tuple[RoutineDependency, ...] | None:
             )
         )
     return tuple(sorted(out, key=lambda d: (d.kind, d.schema_name or "", d.name)))
+
+
+# --------------------------------------------------------------------------- the repair screen (#2373)
+
+#: A-expression kinds whose ``name`` is a keyword, not an operator.
+_NOT_OPERATORS = frozenset(
+    {"AEXPR_BETWEEN", "AEXPR_NOT_BETWEEN", "AEXPR_BETWEEN_SYM", "AEXPR_NOT_BETWEEN_SYM"}
+)
+
+
+@dataclass(frozen=True)
+class RoutineParts:
+    """What a routine's ``CREATE`` runs and uses, as PostgreSQL's parser reads it:
+
+    - ``statements``: the kind of every statement of its body, nested ones included (a
+      data-changing ``WITH``): a SQL statement's parse-node name (``SelectStmt``,
+      ``VacuumStmt``, ``VariableSetStmt statement_timeout``), a PL/pgSQL statement's
+      (``PLpgSQL_stmt_if``, ``PLpgSQL_stmt_commit``);
+    - ``operators``: every operator it applies, as the parser names it (``("+",)``,
+      ``("public", "===")`` for ``OPERATOR(public.===)``);
+    - ``types``: every type it names (a cast, a parameter, a column, a PL/pgSQL variable),
+      as the parser names it (``("pg_catalog", "int4")`` for ``integer``);
+    - ``read``: False when its body is in a language the parser does not read (C,
+      PL/Python), so nothing of the body is known.
+    """
+
+    statements: frozenset[str]
+    operators: frozenset[tuple[str, ...]]
+    types: frozenset[tuple[str, ...]]
+    read: bool = True
+    #: The attribute names it reads through a record or row (``o.name``, ``(o).name``),
+    #: which can call a function ``name(o)``, and every column name it reads or defines.
+    attributes: frozenset[str] = frozenset()
+    columns: frozenset[str] = frozenset()
+
+
+def _sval_names(items: Any) -> tuple[str, ...]:
+    return tuple(n for n in (_string(item) for item in items or ()) if n is not None)
+
+
+def _statement_kind(key: str, node: Mapping[str, Any], header: bool = False) -> str:
+    if key == "VariableSetStmt":
+        # A header's SET lasts the call; SET LOCAL the transaction; SET the session.
+        scope = "HEADER" if header else "LOCAL" if node.get("is_local") else "SESSION"
+        return f"{key} {scope} {node.get('name') or node.get('kind') or ''}".strip()
+    if key == "TransactionStmt":
+        return f"{key} {node.get('kind') or ''}".strip()
+    return key
+
+
+def _plpgsql_pieces(create_sql: str) -> tuple[list[str], list[str]] | None:
+    """The PL/pgSQL statement kinds of a body and the SQL text of each statement and
+    expression in it (an expression as ``SELECT <expression>``, a declared variable's type
+    as ``SELECT NULL::<type>``); None when the body or a piece does not read."""
+    try:
+        tree = pgparse.parse_pgsql(create_sql)
+    except Exception:  # noqa: BLE001 -- a body the parser cannot read is no answer
+        return None
+    kinds: list[str] = []
+    texts: list[str] = []
+    for key, node in _nodes(tree):
+        if not isinstance(node, Mapping):
+            continue
+        if key.startswith("PLpgSQL_stmt_") and key != "PLpgSQL_stmt_execsql":
+            kinds.append(key)
+        elif key == "PLpgSQL_type" and isinstance(node.get("typname"), str):
+            if "%" not in node["typname"]:  # %TYPE and %ROWTYPE name a table's own type
+                texts.append("SELECT NULL::" + node["typname"])
+        elif key == "PLpgSQL_expr":
+            query, mode = node.get("query"), node.get("parseMode")
+            if not isinstance(query, str):
+                return None
+            if mode == _STATEMENT_MODE:
+                texts.append(query)
+            elif mode == _EXPRESSION_MODE:
+                texts.append("SELECT " + query)
+            elif mode in _ASSIGN_MODES and (match := _ASSIGN.search(query)) is not None:
+                texts.append("SELECT " + query[match.end() :])
+            else:
+                return None
+    return kinds, texts
+
+
+def routine_parts(create_sql: str, kind: PostgresKind) -> RoutineParts | None:
+    """The :class:`RoutineParts` of ``create_sql``: its header (parameters, their
+    defaults, the return type, a trigger's ``WHEN``) and its body, a quoted SQL or
+    PL/pgSQL body or an SQL-standard one; the text an ``EXECUTE`` runs is not read. None
+    when the statement, or any piece of its body, does not parse. Never raises."""
+    if parse_routine(create_sql, kind) is not None:
+        return None
+    try:
+        header = pgparse.parse(create_sql)
+        stmt = _function_statement(create_sql, kind)
+    except Exception:  # noqa: BLE001 -- parse_routine read it; anything else is no answer
+        return None
+    if stmt is None:
+        return None
+    bodies: list[Any] = []
+    kinds: list[str] = []
+    read = True
+    if kind != "trigger":
+        language, body = _function_options(stmt)
+        texts: list[str] = []
+        if stmt.get("sql_body") is not None:
+            bodies.append(stmt["sql_body"])
+        elif language == "plpgsql":
+            pieces = _plpgsql_pieces(create_sql)
+            if pieces is None:
+                return None
+            kinds, texts = pieces
+        elif language == "sql":
+            texts = [body] if body is not None else []
+        else:
+            read = False
+        for text in texts:
+            try:
+                bodies.append(pgparse.parse(text))
+            except Exception:  # noqa: BLE001 -- a piece that does not read is no answer
+                return None
+    operators: set[tuple[str, ...]] = set()
+    types: set[tuple[str, ...]] = set()
+    attributes: set[str] = set()
+    columns: set[str] = set()
+    for tree in (header, *bodies):
+        for key, node in _nodes(tree):
+            if not isinstance(node, Mapping):
+                continue
+            if tree is not header and key.endswith("Stmt") and key[:1].isupper():
+                kinds.append(_statement_kind(key, node))
+            elif tree is header and key == "VariableSetStmt":
+                kinds.append(_statement_kind(key, node, header=True))
+            if key == "ColumnRef":
+                fields = node.get("fields") or ()
+                last = _string(fields[-1]) if fields else None
+                if last is not None:
+                    columns.add(last)
+                    if len(fields) > 1:
+                        attributes.add(last)
+            elif key == "A_Indirection":
+                attributes.update(
+                    n for n in (_string(item) for item in node.get("indirection") or ()) if n
+                )
+            elif key == "ColumnDef" and isinstance(node.get("colname"), str):
+                columns.add(node["colname"])
+            elif key == "ResTarget" and isinstance(node.get("name"), str):
+                columns.add(node["name"])
+            if key == "A_Expr" and node.get("kind") not in _NOT_OPERATORS:
+                operators.add(_sval_names(node.get("name")))
+            elif key == "SubLink" and node.get("operName"):
+                operators.add(_sval_names(node.get("operName")))
+            elif key == "SortBy" and node.get("useOp"):
+                operators.add(_sval_names(node.get("useOp")))
+            if key in _TYPE_KEYS and node.get("names"):
+                types.add(_sval_names(node.get("names")))
+    return RoutineParts(
+        frozenset(kinds),
+        frozenset(operators),
+        frozenset(types),
+        read,
+        frozenset(attributes),
+        frozenset(columns),
+    )
