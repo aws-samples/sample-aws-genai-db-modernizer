@@ -22,7 +22,7 @@ A routine is not rebuilt, and stays *needs attention* with the reason
   a statement inside a string redacted as SQL), or a literal's quote form differs;
 - ``literal_holds_sql``: a redacted literal starts with a statement word, or holds one
   that changes data, an object or a session anywhere (a whole word, any case:
-  ``';DROP TABLE t'``), or the routine builds a statement at run time while a literal is
+  ``';DROP TABLE t'``, and ``SET ROLE``, ``SET SESSION`` and ``RESET``), or the routine builds a statement at run time while a literal is
   redacted;
 - ``literal_count``: the exact text and the redacted one hold different numbers of
   literals;
@@ -203,7 +203,13 @@ _ANYWHERE_WORDS = frozenset(
         "DECLARE", "PERFORM", "VACUUM", "REFRESH", "NOTIFY", "DISCARD",
     }
 )  # fmt: skip
-_ANYWHERE = re.compile(r"\b(?:" + "|".join(sorted(_ANYWHERE_WORDS)) + r")\b", re.IGNORECASE)
+#: Two-word and session patterns looked for anywhere too (#2387 review): a role or session
+#: change, though ``set`` alone is a prose word.
+_ANYWHERE_PATTERNS = (r"SET\s+ROLE", r"SET\s+SESSION", r"RESET")
+_ANYWHERE = re.compile(
+    r"\b(?:" + "|".join([*sorted(_ANYWHERE_WORDS), *_ANYWHERE_PATTERNS]) + r")\b",
+    re.IGNORECASE,
+)
 
 
 def _holds_sql(content: str, engine: str) -> bool:
