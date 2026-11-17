@@ -105,3 +105,18 @@ def test_the_ui_s_one_step_pointer_is_the_engineering_report_s() -> None:
     assert EN[KEY + "one-step.link-architecture"] == one_step_pointer({})
     completed = one_step_pointer({"schema_designs": {"dynamodb": {"status": "completed"}}})
     assert completed.startswith(EN[KEY + "one-step.link-schemas"].removesuffix(" below"))
+
+
+def test_the_page_names_the_tab_where_the_report_says_above_or_below() -> None:
+    """#2362: the results page's pointer words differ from the report's only in the
+    location phrase, and never say "above" or "below" (the targets are on other tabs)."""
+    architecture = EN[KEY + "one-step.link-architecture-tab"]
+    schemas = EN[KEY + "one-step.link-schemas-tab"]
+    assert "{{tab}}" in architecture and "{{tab}}" in schemas
+    for words in (architecture, schemas):
+        assert " above" not in words and " below" not in words
+    assert (
+        architecture.replace("on the {{tab}} tab", "above")
+        == EN[KEY + "one-step.link-architecture"]
+    )
+    assert schemas.replace("on the {{tab}} tab", "below") == EN[KEY + "one-step.link-schemas"]

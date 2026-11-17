@@ -782,6 +782,8 @@
   "analysis-results.adoption.one-step.adopt-suffix": "directly.",
   "analysis-results.adoption.one-step.link-schemas": "the target schemas below",
   "analysis-results.adoption.one-step.link-architecture": "the target architecture in the Target engines table above",
+  "analysis-results.adoption.one-step.link-schemas-tab": "the target schemas on the {{tab}} tab",
+  "analysis-results.adoption.one-step.link-architecture-tab": "the target architecture in the Target engines table on the {{tab}} tab",
   "analysis-results.waves.wave-title": "Wave {{wave}}: {{title}}",
   "analysis-results.waves.gate": "Gate before the next wave: {{gate}}",
   "analysis-results.waves.readiness": "Readiness: {{line}}",

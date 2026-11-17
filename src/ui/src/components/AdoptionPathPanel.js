@@ -11,6 +11,7 @@ import ExpandableSection from "@cloudscape-design/components/expandable-section"
 import Link from "@cloudscape-design/components/link";
 import { displayEngine } from "../utils/engineNames";
 import { ResultsSectionNav } from "../hooks/useResultsTabs";
+import { RESULTS_TABS, tabOfAnchor } from "../utils/resultsTabs";
 import {
   costNote, costStated, defaultPathId, differenceStated, differenceText, formatCount, formatUsd,
   introText, notOfferedLines, oneStepChecks, oneStepOf, oneStepRuleText, pathLabel, TARGET_ENGINES_ID, relationalEngine, selectorIsCapped,
@@ -86,6 +87,12 @@ function OneStepOption({ adoption, pointer, schemaSectionId, t }) {
   // The report's pointer (oneStepPointerOf); the schemas' section is only where it lands.
   const toSchemas = pointer === 'schemas';
   const targetId = toSchemas ? (schemaSectionId || 'access-patterns-section') : TARGET_ENGINES_ID;
+  // #2362: the results page says which tab the target is on; the report's own words
+  // ("above", "below") stay in the locale for a target no tab holds.
+  const tab = RESULTS_TABS.find(x => x.id === tabOfAnchor(targetId));
+  const linkText = tab
+    ? t(`analysis-results.adoption.one-step.${toSchemas ? 'link-schemas' : 'link-architecture'}-tab`, { tab: t(tab.labelKey) })
+    : t(`analysis-results.adoption.one-step.${toSchemas ? 'link-schemas' : 'link-architecture'}`);
   const follow = (event) => {
     if (event && event.preventDefault) event.preventDefault();
     // #2313: on the results page the target is on another tab; the page opens it.
@@ -153,9 +160,7 @@ function OneStepOption({ adoption, pointer, schemaSectionId, t }) {
           <div data-figure="one-step-adopt">
             {t('analysis-results.adoption.one-step.adopt-prefix')}{' '}
             <Link href={`#${targetId}`} onFollow={follow}>
-              {toSchemas
-                ? t('analysis-results.adoption.one-step.link-schemas')
-                : t('analysis-results.adoption.one-step.link-architecture')}
+              {linkText}
             </Link>{' '}
             {t('analysis-results.adoption.one-step.adopt-suffix')}
           </div>

@@ -1107,12 +1107,16 @@ def test_results_page_shows_the_adoption_paths_stages_and_one_step_option(
         # The one-step link names what the engineering report names, and lands on it.
         adopt = option.locator("[data-figure=one-step-adopt]").inner_text().strip()
         adopt = " ".join(adopt.split())
-        if "the target schemas below" in adopt:
+        # #2362: the page names the tab where the report says "above" or "below".
+        if "the target schemas on the " in adopt:
             # A completed design: the report points at its "Target schemas by engine",
             # the page at its own design section; both say "the target schemas".
             assert "adopt the target schemas in " in md, (r.db, adopt)
         else:
-            assert f"{adopt}\n" in md, (r.db, adopt)
+            on_tab = " table on the Summary tab "
+            assert on_tab in adopt, (r.db, adopt)
+            assert f"{adopt.replace(on_tab, ' table above ')}\n" in md, (r.db, adopt)
+        assert " above" not in adopt and " below" not in adopt, (r.db, adopt)
         # #2313: what it lands on is on another tab (the target schemas on Queries or
         # Data model, the Target engines on Summary); following it opens that tab and
         # moves focus to it, and the URL names both.
