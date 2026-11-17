@@ -36,6 +36,8 @@ _IMPORTERS = {
     "src/tools/data_movement/triggers_check.py",  # reads an event's status only (#1948)
     "src/tools/data_movement/view_scripts.py",  # writes step 1's views deploy script (#2082)
     "src/tools/routines/proof_run.py",  # loads them on the throwaway test cluster only (#1945)
+    # Builds the bundled samples' synthetic sets into their demo install scripts (#1954).
+    "scripts/render_sample_routines.py",
     # The routine repair seam (#1940): the collection-wide opt-out flag only, never a chunk.
     "src/agents/routine_repair/handler.py",
     # The repair loop's checks (#1941): rebuilds a repair onto the exact text, checks it

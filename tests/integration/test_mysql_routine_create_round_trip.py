@@ -43,7 +43,7 @@ from src.agents.collector.routine_sources import (
     routine_sources_from_collection,
 )
 from src.tools.aws.ssm_executor import SSMExecutor
-from src.tools.database.collection_text import extract_json_object
+from src.tools.database.collection_text import extract_json_objects
 from src.tools.database.mysql_tools import MySQLRemoteCollector
 
 mysql_connector = pytest.importorskip("mysql.connector")
@@ -262,7 +262,9 @@ def _script_collection(
         input=SCRIPT.read_text(), capture_output=True, text=True, check=True, timeout=300,
         env={**os.environ, "MYSQL_PWD": password},
     ).stdout  # fmt: skip
-    collection: dict = json.loads(extract_json_object(out, source="mysql"))
+    # The script prints its LOB sizes as a second object after the collection (#2128).
+    first, _later = extract_json_objects(out, source="mysql")
+    collection: dict = json.loads(first)
     return collection
 
 
