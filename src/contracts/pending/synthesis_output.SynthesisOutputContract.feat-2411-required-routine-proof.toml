@@ -1,0 +1,6 @@
+# A pending contract version bump (ADR-008 Decision 8). The number is assigned by
+# uv run python scripts/resolve_contract_versions.py --release at release (a MAJOR: in its pull request).
+contract = "synthesis_output.SynthesisOutputContract"
+kind = "minor"
+reason = "Added optional ``facts.routines.executive_line``: the executive report's short routines sentence, naming /test-routines before a test and what step 1 deploys and holds back after one."
+issue = 2411

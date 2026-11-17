@@ -3472,6 +3472,15 @@ class RoutineFacts(BaseModel):
         ),
     )
     line: str = Field(..., description="The headline sentence, with no routine or table name")
+    executive_line: str | None = Field(
+        None,
+        description=(
+            "The executive report's short routines sentence (#2411): the counts, what needs "
+            "work, and before a test the step to test them with /test-routines, after one what "
+            "step 1 deploys and holds back; no routine or table name. None in a report "
+            "written before it (the facts layer fills it in)"
+        ),
+    )
     routines: list[RoutineFactRow] = Field(
         default_factory=list, description="Every routine with a risk class, in deploy order"
     )

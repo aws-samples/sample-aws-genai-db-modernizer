@@ -122,3 +122,81 @@ def test_the_gate_refuses_checks_out_of_order():
     assert DmsGate(**data, checks=[{**check, "id": i} for i in ids]).checks[-1].id == "routines"
     with pytest.raises(ValidationError, match="checks must be"):
         DmsGate(**data, checks=[{**check, "id": i} for i in ["routines", "load", "lag", "parity"]])
+
+
+_TWO = [*_CARRIED, row("shop.r", "procedure", schema="shop", status="as_is", signature="")]
+
+
+def test_a_held_routine_is_named_held_back_and_never_fails_the_gate():
+    """#2411: step 1 is about the data. A routine the deploy gate held back is missing on
+    Aurora by design: the check names it ``held back`` with the next step, and passes."""
+    inputs = _inputs(_TWO)
+    missing = RoutineMismatch(routine_id="shop.r", kind="procedure", problem="missing")
+    held = {("procedure", "shop.r"): "not_tested"}
+    check = routines_check(inputs, _result(inputs, [missing]), held)
+    assert check.status == "pass"
+    [line] = check.reasons
+    assert line.startswith("routines: procedure shop.r: held back: not_tested: ")
+    assert "/test-routines" in line and "missing" not in line
+    assert (
+        check.evidence["held_back"] == "1" and "1 held back until /test-routines" in check.summary
+    )
+    cred = StubbedCredMgr()
+    g.queue(cred, inputs.contract_sha256)
+    gate = run_gate(inputs, g.request(), g.clients(cred), now=g.NOW,
+                    routines=_result(inputs, [missing]), routines_held=held)  # fmt: skip
+    assert gate.status == "pass"
+
+
+def test_a_missing_routine_that_was_not_held_still_fails():
+    inputs = _inputs(_TWO)
+    missing = RoutineMismatch(routine_id="shop.p", kind="procedure", problem="missing")
+    check = routines_check(
+        inputs, _result(inputs, [missing]), {("procedure", "shop.r"): "not_tested"}
+    )
+    assert check.status == "fail"
+    assert "routines: procedure shop.p: missing" in check.reasons
+    assert any(r.startswith("routines: procedure shop.r: held back: ") for r in check.reasons)
+
+
+def test_with_every_routine_held_the_check_waits_for_no_output():
+    inputs = _inputs(_CARRIED)
+    check = routines_check(inputs, None, {("procedure", "shop.p"): "needs_attention"})
+    assert check.status == "pass"
+    assert check.reasons[0].startswith("routines: procedure shop.p: held back: needs_attention: ")
+
+
+def test_the_gate_reads_what_the_deploy_gate_held_back(tmp_path):
+    """write_gate reads the held routines from the job's artifact (#2411)."""
+    from src.tools.data_movement.dms_gate import _routines_held
+    from tests.unit.tools.data_movement import test_routine_scripts as rs
+
+    store, contract = rs._pg_case(tmp_path)
+    from tests.unit.tools.data_movement.routine_fixtures import mark_tested
+
+    mark_tested(store, {"public.later(integer)": "not_proved"})
+    held = _routines_held(store, "shop", "job1", dataclasses.replace(INPUTS, contract=contract))
+    assert held == {("function", "public.later(integer)"): "not_proved"}
+
+
+def test_write_gate_passes_what_the_deploy_gate_held_back(tmp_path, monkeypatch):
+    """The gate step 1 writes (write_gate) reads the held routines, so /move's gate never
+    fails a routine the scripts held back (#2411)."""
+    from src.tools.data_movement import dms_gate
+    from tests.unit.tools.data_movement import test_routine_scripts as rs
+    from tests.unit.tools.data_movement.routine_fixtures import mark_tested
+
+    store, contract = rs._pg_case(tmp_path)
+    mark_tested(store, {"public.later(integer)": "not_proved"})
+    inputs = dataclasses.replace(INPUTS, contract=contract)
+    seen: dict = {}
+    monkeypatch.setattr(dms_gate, "load_step1", lambda *a, **k: inputs)
+
+    def fake_run_gate(*args, **kwargs):
+        seen.update(kwargs)
+        raise RuntimeError("stop")
+
+    monkeypatch.setattr(dms_gate, "run_gate", fake_run_gate)
+    with pytest.raises(RuntimeError):
+        dms_gate.write_gate(store, "shop", "job1", g.request(), g.clients(StubbedCredMgr()))
+    assert seen["routines_held"] == {("function", "public.later(integer)"): "not_proved"}

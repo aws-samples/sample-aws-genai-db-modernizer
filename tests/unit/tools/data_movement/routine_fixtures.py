@@ -134,3 +134,50 @@ def mysql_source(
                                   collation_connection=collation,
                                   database_collation=database_collation),
     })  # fmt: skip
+
+
+def with_test_result(
+    artifact: RoutineMigrationContract,
+    digest: str | None,
+    outcomes: dict[str, str] | None = None,
+    *,
+    target: str = "an Aurora PostgreSQL 16 test cluster",
+) -> RoutineMigrationContract:
+    """``artifact`` as a routine test on a test Aurora leaves it (#1945, #2411), through the
+    real ``apply_proof``: every carried row ``proved`` unless ``outcomes`` names another
+    outcome for its id, the run naming the routines file by ``digest``."""
+    from src.contracts.routine_migration import RoutineProofEntry
+    from src.tools.routines.proof_run import CARRIED, apply_proof
+
+    entries = {}
+    for r in artifact.routines:
+        if r.status not in CARRIED:
+            continue
+        outcome = (outcomes or {}).get(r.routine_id, "proved")
+        code = "not_tested" if outcome == "not_tested" else None
+        entries[r.routine_id] = RoutineProofEntry(
+            mode="load_and_run", outcome="not_proved" if code else outcome,  # type: ignore[arg-type]
+            reason="the test's result", reason_code=code, calls_run=2, calls_succeeded=2,
+        )  # fmt: skip
+    return apply_proof(artifact, entries, target=target, source=None,
+                       strict_check="not_available", seconds=1.0, sources_digest=digest)  # fmt: skip
+
+
+def mark_tested(
+    store: Any,
+    outcomes: dict[str, str] | None = None,
+    *,
+    db: str = "shop",
+    job_id: str = "job1",
+    version: int = 2,
+) -> RoutineMigrationContract:
+    """The job's routine-migration artifact at ``version`` rewritten as a test on the job's
+    routines file as it is now leaves it (:func:`with_test_result`); returns it."""
+    from src.agents.collector.routine_sources import routine_sources_digest
+    from src.tools.routines.migration import read_routine_migration, routine_migration_path
+
+    artifact = read_routine_migration(store, db, job_id, version)
+    assert artifact is not None
+    done = with_test_result(artifact, routine_sources_digest(store, db, job_id), outcomes)
+    store.write_json(routine_migration_path(db, job_id, version), done.model_dump(mode="json"))
+    return done

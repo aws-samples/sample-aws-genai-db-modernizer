@@ -41,6 +41,10 @@ its triggers and events live in except those step 1's DDL creates (#2273); one
 moved table's only by case is never created, and what lives in it is left out
 (``database_case_differs``).
 
+Only a routine the latest test on a test Aurora proved on the current routines file is
+acted on (#2411, :mod:`src.tools.data_movement.routine_test_gate`), as in step 1's deploy script: every
+other is left out with its reason (``not_tested``, ``not_proved``, ``needs_attention``).
+
 A trigger or event the triggers-enable script cannot act on is left out and named, by id and reason code,
 in the script's header and on the printed line: one step 1 does not carry (its contract
 reasons); one whose source state (PostgreSQL, ``trigger_state_unknown``) or firing order
@@ -88,6 +92,7 @@ from src.tools.data_movement.routine_scripts import (
     block_of,
     case_clash,
     output_key,
+    proof_line,
     read_migration,
     render_check_script,
     require_section,
@@ -192,6 +197,8 @@ class TriggersScripts:
     # kind, id of each left out for a case-only database clash, or for calling one that was
     case_differs: list[tuple[str, str]] = field(default_factory=list)
     files: dict[str, str] = field(default_factory=dict)
+    proof: str = "not_run"  # the routine test: current, stale or not_run (#2411)
+    held: int = 0  # left out for the routine test (HELD_REASONS)
 
 
 def _candidates(section: StepRoutines, engine: str) -> list[StepRoutine]:
@@ -399,6 +406,7 @@ def _header(
             f"is ON: {scripts.events_enabled} of the events here are created enabled."
         )
     lines += [
+        f"-- {proof_line(scripts.proof, scripts.held)}",
         "-- No rollback: nothing here disables a trigger again or drops a routine.",
         f"-- Then run {TRIGGERS_CHECK_FILE} (read-only) as {TRIGGERS_INSTRUCTIONS} says.",
     ]
@@ -641,6 +649,10 @@ def write_triggers_scripts(
     deploy = block_of(engine, migration, user, target_database)
     tables_in = step_schemas(contract)
     states: dict[tuple[str, str], str | None] = {}
+    from src.tools.data_movement.routine_test_gate import HELD_REASONS, held_routines, proof_state
+
+    proof = proof_state(store, db, job_id, migration)
+    untested = held_routines(store, db, job_id, migration)
 
     def block(
         row: StepRoutine, source: RoutineSource, position: int, total: int
@@ -649,6 +661,8 @@ def write_triggers_scripts(
         # case is never created, and what lives in it is left out.
         if case_clash(_target_schema(row, engine, target_database), tables_in, engine):
             return None, CASE_DIFFERS
+        if (row.kind, row.routine_id) in untested:  # the deploy gate (#2411)
+            return None, untested[(row.kind, row.routine_id)]
         text, code = deploy(row, source, position, total)
         if text is not None and row.carry == "deferred_to_cutover" and row.kind == "event":
             states[(row.kind, row.routine_id)] = event_state(
@@ -700,6 +714,8 @@ def write_triggers_scripts(
             case_differs=sorted(
                 k for k in clashed if k in {(r.kind, r.routine_id) for r in ordered}
             ),
+            proof=proof,
+            held=sum(1 for r in ordered if refused.get((r.kind, r.routine_id)) in HELD_REASONS),
         )
 
         def chunks() -> Iterator[bytes]:

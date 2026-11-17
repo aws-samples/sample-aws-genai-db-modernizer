@@ -597,21 +597,40 @@ ROUTINES_NAMED = 50  # the routines check names this many, then counts the rest
 ROUTINES_CHECK_FILE = "routines-check.json"
 
 
-def routines_check(inputs: Step1Inputs, result: RoutineCheckResult | None) -> GateCheck | None:
+def routines_check(
+    inputs: Step1Inputs,
+    result: RoutineCheckResult | None,
+    held: Mapping[tuple[str, str], str] | None = None,
+) -> GateCheck | None:
     """The routines check (#1947), for a contract with a routines section (None without
     one: a contract written before it): ``fail`` for a routine step 1 does not carry or
     one the customer's check output does not confirm, each named; ``pending`` until that
     output was read for this contract; ``pass`` when every carried routine is confirmed,
-    or the collection has none. Checked, not load-tested (no load-and-run proof yet)."""
+    or the collection has none. Checked, not load-tested: the check confirms what exists.
+
+    ``held`` (#2411) is what the deploy gate held back from the scripts, by ``(kind,
+    routine_id)``, with its reason: step 1 is about the data, so a held routine never fails
+    this check. Each is named ``held back: <reason>`` with the next step (``/test-routines``),
+    apart from a routine that should be on Aurora and is ``missing``, which still fails."""
+    from src.tools.data_movement.routine_test_gate import HELD_WHY
+
     section = inputs.contract.routines
     if section is None:
         return None
+    held = dict(held or {})
     reasons: list[tuple[GateStatus, str]] = [
         ("fail", f"routines: {r.kind} {r.routine_id}: not carried: {', '.join(r.reasons)}")
         for r in section.routines
         if r.carry == "not_carried"
     ]
-    to_check = section.carried + section.deferred
+    rows = [r for r in section.routines if r.carry != "not_carried"]
+    reasons += [
+        ("pass", f"routines: {r.kind} {r.routine_id}: held back: {held[(r.kind, r.routine_id)]}: "
+                 f"{HELD_WHY.get(held[(r.kind, r.routine_id)], '')}")
+        for r in rows if (r.kind, r.routine_id) in held
+    ]  # fmt: skip
+    held_n = sum(1 for r in rows if (r.kind, r.routine_id) in held)
+    to_check = section.carried + section.deferred - held_n
     confirmed = 0
     if to_check and result is None:
         reasons.append(("pending", "routines: the check output has not been read yet: run "
@@ -622,7 +641,8 @@ def routines_check(inputs: Step1Inputs, result: RoutineCheckResult | None) -> Ga
     elif result is not None:
         confirmed = result.confirmed
         reasons += [("fail", f"routines: {m.kind} {m.routine_id}: {m.problem.replace('_', ' ')}")
-                    for m in result.mismatches]  # fmt: skip
+                    for m in result.mismatches
+                    if not (m.problem == "missing" and (m.kind, m.routine_id) in held)]  # fmt: skip
     if len(reasons) > ROUTINES_NAMED:
         worst = _worst([s for s, _ in reasons])
         rest = len(reasons) - ROUTINES_NAMED
@@ -633,11 +653,13 @@ def routines_check(inputs: Step1Inputs, result: RoutineCheckResult | None) -> Ga
         "routines: none in the collection" if section.total == 0
         else f"routines: {confirmed} of {section.carried} carried routines confirmed, "
         f"{section.not_carried} not carried, {section.deferred} left to the triggers-enable script; "
-        f"{STATIC_LABEL}"
+        + (f"{held_n} held back until /test-routines tests them; " if held_n else "")
+        + f"{STATIC_LABEL}"
     )  # fmt: skip
     return _check("routines", reasons, summary, {
         "carried": section.carried, "confirmed": confirmed, "not_carried": section.not_carried,
-        "deferred": section.deferred, "proof": "static", "label": STATIC_LABEL})  # fmt: skip
+        "deferred": section.deferred, "held_back": held_n, "proof": "static",
+        "label": STATIC_LABEL})  # fmt: skip
 
 
 def view_exceptions(
@@ -717,6 +739,7 @@ def run_gate(
     observed: dict[str, Any] | None = None,
     views: ViewCheckResult | None = None,
     views_left_out: Mapping[str, str] | None = None,
+    routines_held: Mapping[tuple[str, str], str] | None = None,
 ) -> DmsGate:
     """``observed``, when given, gets the task as DMS described it (``task``), for what the
     gate's line says beyond the gate contract (its control schema, #2133)."""
@@ -737,7 +760,7 @@ def run_gate(
                             + view_exceptions(inputs, views_left_out),
                             key=lambda e: (e.table, e.kind, e.column or ""))  # fmt: skip
     checks += [c for c in (views_check(inputs, views, views_left_out),
-                           routines_check(inputs, routines)) if c]  # fmt: skip
+                           routines_check(inputs, routines, routines_held)) if c]  # fmt: skip
     status = _worst([c.status for c in checks])
     return DmsGate(
         job_id=inputs.plan.job_id, database_name=inputs.plan.database_name, region=request.region,
@@ -761,6 +784,24 @@ def _views_left_out(store: Any, db: str, job_id: str, inputs: Step1Inputs) -> di
     return left_out(store, db, job_id, inputs.contract, target if isinstance(target, str) else None)
 
 
+def _routines_held(
+    store: Any, db: str, job_id: str, inputs: Step1Inputs
+) -> dict[tuple[str, str], str]:
+    """What the deploy gate held back from step 1's routine scripts (#2411), read from the
+    routine-migration artifact the contract's routines section names; empty without one."""
+    section = inputs.contract.routines
+    if section is None or not (section.carried or section.deferred):
+        return {}
+    from src.tools.data_movement.routine_scripts import RoutineScriptError, read_migration
+    from src.tools.data_movement.routine_test_gate import held_routines
+
+    try:
+        migration = read_migration(store, db, job_id, section)
+    except RoutineScriptError:
+        return {}
+    return held_routines(store, db, job_id, migration)
+
+
 def write_gate(store: Any, db: str, job_id: str, request: GateRequest, clients: GateClients, *,
                now: datetime | None = None,
                observed: dict[str, Any] | None = None) -> tuple[str, DmsGate]:  # fmt: skip
@@ -775,7 +816,8 @@ def write_gate(store: Any, db: str, job_id: str, request: GateRequest, clients: 
         views = load_contract(ViewCheckResult, store.read_json(views_key), artifact=views_key)
     gate = run_gate(inputs, request, clients, now=now or datetime.now(UTC), routines=routines,
                     seen=load_validated(store, db, job_id), observed=observed, views=views,
-                    views_left_out=_views_left_out(store, db, job_id, inputs))  # fmt: skip
+                    views_left_out=_views_left_out(store, db, job_id, inputs),
+                    routines_held=_routines_held(store, db, job_id, inputs))  # fmt: skip
     path = f"{db}/{job_id}/data-movement/step-1/gate.json"
     store.write_json(path, gate.model_dump(mode="json"))
     return path, gate

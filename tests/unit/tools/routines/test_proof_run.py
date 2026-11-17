@@ -18,6 +18,8 @@ from src.contracts.routine_migration import RoutineMigrationContract
 from src.contracts.routine_sources import RoutineSource
 from tests.unit.tools.routines.fake_data_api import FakeDataApi, runner_for
 
+DIGEST = "d" * 64  # the routines file a proof ran on (#2411)
+
 ARNS = {"cluster_arn": "arn:aws:rds:us-east-1:111122223333:cluster:c",
         "secret_arn": "arn:aws:secretsmanager:us-east-1:111122223333:secret:s"}  # fmt: skip  # pragma: allowlist secret
 TABLES = [{"table_id": "public.t", "table_name": "t", "row_count": 3, "primary_key": ["id"],
@@ -174,7 +176,7 @@ def test_the_proof_lands_in_the_artifact_and_the_routine_facts():
     }  # fmt: skip
     written = pr.apply_proof(migration, entries, target="an Aurora PostgreSQL 16.15 test cluster",
                              source="a disposable postgresql 16 engine", strict_check="not_available",
-                             seconds=12.0)  # fmt: skip
+                             seconds=12.0, sources_digest=DIGEST)  # fmt: skip
     again = RoutineMigrationContract.model_validate(written.model_dump(mode="json"))
     assert (
         again.proof_run is not None
@@ -187,10 +189,14 @@ def test_the_proof_lands_in_the_artifact_and_the_routine_facts():
         }
     )
     assert [r.proof is not None for r in again.routines] == [True, True, False]
-    facts = routine_facts(again, 2)
+    assert again.proof_run.routine_sources_sha256 == DIGEST
+    facts = routine_facts(again, 2, sources_digest=DIGEST)
     assert facts["proof"] == "load-tested on a test Aurora"
     assert facts["proof_counts"] == {"proved": 1, "needs_attention": 1, "not_proved": 0}
-    assert "On a test Aurora, of 2 carried routines: 1 loaded and ran" in facts["line"]
+    assert (
+        "On a test Aurora, of 2 carried routines: 1 showed no difference on the calls made"
+        in facts["line"]
+    )
     assert (
         "1 needs attention" in facts["line"]
         and "load-tested" not in facts["line"].split("On a test")[0]

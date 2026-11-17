@@ -43,6 +43,10 @@ _IMPORTERS = {
     # The repair loop's checks (#1941): rebuilds a repair onto the exact text, checks it
     # again and proves it side by side, in memory only.
     "src/tools/routines/repair_proof.py",
+    # The routine test's deploy gate (#2411): the index's digest only (routine_sources_digest),
+    # never a chunk, so a test on another routines file counts as not tested.
+    "src/tools/data_movement/routine_test_gate.py",
+    "src/shared/routine_facts.py",  # the same digest, for facts.routines' line (#2411)
 }
 _READERS = {"read_routine_sources", "RoutineSourcesChunk"}
 _PATHS = ("collector/routine_sources", "routine_sources.json", "routine_sources/part-")
@@ -133,3 +137,15 @@ def _is_docstring(tree: ast.AST, node: ast.Constant) -> bool:
             if body[0].value is node:
                 return True
     return False
+
+
+#: The importers that read the routines file's index digest only (#2411), never a chunk.
+_DIGEST_ONLY = {"src/tools/data_movement/routine_test_gate.py", "src/shared/routine_facts.py"}
+
+
+def test_the_digest_importers_import_only_the_digest():
+    root = Path(__file__).resolve().parents[3]
+    for rel in sorted(_DIGEST_ONLY):
+        tree = ast.parse((root / rel).read_text(encoding="utf-8"))
+        named = {n for m, names in _imports(tree) if m in _MODULES for n in names}
+        assert named == {"routine_sources_digest"}, (rel, named)

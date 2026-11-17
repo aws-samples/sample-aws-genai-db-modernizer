@@ -183,7 +183,7 @@ def _collation_job(tmp_path):
     from src.tools.data_movement.dms_step import load_step1, render_ddl
     from src.tools.data_movement.routine_scripts import write_routine_scripts
     from src.tools.routines.migration import routine_migration_path
-    from tests.unit.tools.data_movement.routine_fixtures import mysql_source
+    from tests.unit.tools.data_movement.routine_fixtures import mark_tested, mysql_source
     from tests.unit.tools.data_movement.test_dms_step_collations import _job as collation_job
 
     store = collation_job(tmp_path)
@@ -203,6 +203,7 @@ def _collation_job(tmp_path):
     write_routine_sources(store, "shop", "job1",
                           {"metadata": {"source_database": {"engine": "mysql", "version": "8.0.32"}}},
                           sources)  # fmt: skip
+    mark_tested(store)  # the deploy gate (#2411): tested on this routines file
     contract = StepContract.model_validate(
         store.read_json("shop/job1/transformation-contract/v2/step-1.json")
     )

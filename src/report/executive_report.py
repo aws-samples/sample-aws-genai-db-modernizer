@@ -1181,7 +1181,9 @@ def _numbers(report: dict[str, Any], st: dict[str, ParagraphStyle], names: Any) 
     # readiness line, or here when no wave brings in the routines' target.
     routine_lines = [
         f"{label}: {without_table_names(line, names)}"
-        for label, line in routine_summary_lines(report, to_do=routine_wave(report) is None)
+        for label, line in routine_summary_lines(
+            report, to_do=routine_wave(report) is None, executive=True
+        )
     ]
     if routine_lines and lists_routines(report):
         routine_lines[-1] += f" {L_ROUTINES_POINTER}"

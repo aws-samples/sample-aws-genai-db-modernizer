@@ -187,7 +187,8 @@ def test_an_id_with_markdown_in_it_stays_an_id() -> None:
 
 def test_the_executive_report_states_the_counts_once_and_names_nothing() -> None:
     pdf = _pdf(REPORT)
-    assert f"Routines: {FACTS['line']} The engineering report lists each routine." in pdf
+    # #2411: the executive report gives the short form (facts.routines.executive_line).
+    assert f"Routines: {FACTS['executive_line']} The engineering report lists each routine." in pdf
     # The to-do once: in its wave's readiness line, not again under the numbers.
     assert f"To do: {TO_DO}" not in pdf
     assert f"To do: {TO_DO[0].lower()}{TO_DO[1:]}" in pdf
@@ -225,7 +226,7 @@ def test_the_deliverables_agree_on_the_counts_and_the_to_do() -> None:
     chat = md_plain(_final(REPORT))
     for text in (md, chat):
         assert FACTS["line"] in text and TO_DO in text
-    assert FACTS["line"].lower() in pdf and TO_DO.lower() in pdf
+    assert FACTS["executive_line"].lower() in pdf and TO_DO.lower() in pdf
 
 
 def test_no_to_do_without_a_routine_to_migrate_yourself() -> None:
@@ -272,14 +273,19 @@ def test_with_no_routine_behind_a_risk_the_section_states_the_headline_only() ->
     report["facts"] = compute_report_facts(report, routines=routines)
     section = md_plain(_section(render_engineering_report_md(report)))
     assert section.strip().startswith(
-        "## Routines\n\n2 of 2 routines carry over: 2 as they are. Checked, not load-tested. "
-        "Each of the 2 routines is carried and every check on it passed."
+        "## Routines\n\n2 of 2 routines carry over: 2 as they are. The 2 carried routines are "
+        "checked, not tested yet; test them on a test Aurora with /test-routines before they "
+        "are deployed. Each of the 2 routines is carried and every check on it passed."
     )
     assert "### To do" not in section and "### Each routine" not in section
     pdf = _pdf(report)
     assert "To do:" not in pdf
     # Nothing listed, so no pointer to a list.
-    assert "Routines: 2 of 2 routines carry over: 2 as they are. Checked, not load-tested." in pdf
+    assert (
+        "Routines: your routines can move to Aurora with the database: 2 of 2 for this "
+        "database, 2 as they are. Before they are deployed, test them on a throwaway Aurora "
+        "with the /test-routines command." in " ".join(pdf.split())
+    )
     assert "The engineering report lists each routine." not in pdf
 
 

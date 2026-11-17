@@ -232,33 +232,6 @@ Both wait until the task runs, up to 540 seconds, and refuse any stack that is n
 
 On a no, with nothing to offer, or when the Poll after a resume or a retry ends at `task_stopped` again (never offer a second one: show its `hint`), end with `MOVE_RESULT: stopped stage=prove reason=task <task_status>: <last_failure or stop_reason>`. Under `--auto`, never run `resume` or `retry` and never ask: `--approve-deploy` does not cover them, so end with that same line.
 
-**Routine proof (optional).** Offer it on both targets, Aurora PostgreSQL and Aurora MySQL. When `phase` is `replicating`, before the routine scripts, offer once, in one line, to test the carried routines on a throwaway Aurora test cluster: synthetic rows and the carried routines only, never customer data, reached only through the RDS Data API, deleted afterwards; it bills while it runs. Never offer it under `--auto`: go on to Views. In the commands below, `{--auto}` stands for `--auto` in an `--auto` run and for nothing otherwise: a headless run never reaches them, and every `proof-target-*` command refuses `--auto`, so one that ever ran in a headless run would stop there. On a yes, the customer writes `data-movement/routine-proof/inputs.json` in the job folder (`region`, `vpc_id` and two or more private `subnet_ids`; the data-movement README's "Routine proof test cluster" section), then run (read-only):
-
-```bash
-uv run python scripts/run_dms_step.py proof-target-plan --job-id {job_id} --db {db} {--auto}
-```
-
-Show its `engine_version`, `min_capacity` and `cost`, then ask its `question` verbatim. Only on a yes, run the first; while its line says `deploying`, run the second, in the same turn, up to 4 times:
-
-```bash
-uv run python scripts/run_dms_step.py proof-target-deploy --job-id {job_id} --db {db} --approve {--auto}
-uv run python scripts/run_dms_step.py proof-target-status --job-id {job_id} --db {db} --wait-seconds 540 {--auto}
-```
-
-Then ask the plan's `run_question` verbatim. Only on a yes:
-
-```bash
-uv run python scripts/run_dms_step.py proof-target-run --job-id {job_id} --db {db} --approve {--auto}
-```
-
-Show its `counts`, `strict_check`, and every entry of `routines` with its `mode`, `outcome` and `reason`. An outcome of `proved` means no difference was found on the calls made (or, for `load_and_run`, that the routine loaded and its calls ran there); never say more than that. Then ask its `teardown_question` verbatim. Only on a yes, run, and while its line says `deleting` run it again, in the same turn, up to 4 times:
-
-```bash
-uv run python scripts/run_dms_step.py proof-target-teardown --job-id {job_id} --db {db} --approve {--auto}
-```
-
-On a no to any question, say what is left (a deployed test cluster bills until it is torn down) and go on to Views; an error line: quote its `message` and go on to Views. The proof never ends the run and never changes the gate.
-
 **Views.** When `phase` is `replicating`, before the routines and the gate, write step 1's view scripts (read-only in AWS; the modernizer never connects to a database):
 
 ```bash
@@ -279,7 +252,7 @@ Show its `status` (`pass` or `fail`), `confirmed` of `carried`, every entry of `
 uv run python scripts/run_dms_step.py routines --job-id {job_id} --db {db}
 ```
 
-`"status": "nothing_to_deploy"`: say so in one line (list `not_carried_routines`, each with its `reasons`, if any) and go to the Gate. `"status": "ready"`: show `carried`, `in_script`, `deferred` (Aurora MySQL triggers and events, left to the triggers-enable script), every entry of `not_carried_routines` and `refused_routines` with its reasons (and its `why` verbatim, when it has one), and the `label` verbatim; point the customer at `routines.md` in `files`. The customer runs `routines-deploy.sql`, then `routines-check.sql`, saving its output as `routines-check.tsv` next to them, as that file says. Ask them to say when the check output is there; under `--auto`, never wait: go to the Gate (its routines check stays `pending`). Then run (no AWS call):
+`"status": "nothing_to_deploy"`: say so in one line (list `not_carried_routines`, each with its `reasons`, if any) and go to the Gate. `"status": "ready"`: show `carried`, `in_script`, `deferred` (Aurora MySQL triggers and events, left to the triggers-enable script), every entry of `not_carried_routines` and `refused_routines` with its reasons (and its `why` verbatim, when it has one), and the `label` verbatim; point the customer at `routines.md` in `files`. The scripts carry a routine only when `/test-routines` tested it on a test Aurora with no difference found on the calls made, on the job's routines file as it is now: say the line's `proof_line` verbatim, then `held_back` and every entry of `held_back_routines` with its `reason` (`not_tested`, `not_proved`, `needs_attention`, or `depends_on_held` for one that calls a held routine) and its `why` verbatim. When `held_back` is above 0, tell the customer that `/test-routines` (`test_with`) tests them before any data moves, and that `run_dms_step.py routines` writes the scripts again after it; `/move` never tests routines itself. The customer runs `routines-deploy.sql`, then `routines-check.sql`, saving its output as `routines-check.tsv` next to them, as that file says. Ask them to say when the check output is there; under `--auto`, never wait: go to the Gate (its routines check stays `pending`). Then run (no AWS call):
 
 ```bash
 uv run python scripts/run_dms_step.py routines-check --job-id {job_id} --db {db}
@@ -295,7 +268,7 @@ uv run python scripts/run_dms_step.py triggers-check --job-id {job_id} --db {db}
 uv run python scripts/run_dms_step.py triggers-scripts --resume --job-id {job_id} --db {db}
 ```
 
-Run the first after the routines check: on `"status": "ready"`, show `expected`, `in_script` and every entry of `excluded_routines` with its `reason`, and point the customer at `triggers.md` in `files` (`triggers-enable.sql` enables the PostgreSQL triggers step 1 created disabled, or creates the Aurora MySQL triggers and events it left to that script; it has no rollback). Run the second only when the customer says they ran `triggers-enable-check.sql`, never under `--auto`: show its `status`, `confirmed` of `expected`, and every entry of `mismatches` and `not_carried_routines`; `"status": "no_output"`: the file is not at `expected_file` yet; an error line names what is wrong with the file. Run the third only when the customer says their Aurora MySQL triggers-enable script stopped part way and they ran the check again: point them at `triggers-enable-resume.sql` in `files`. Then go to the Gate.
+Run the first after the routines check: on `"status": "ready"`, show `expected`, `in_script` and every entry of `excluded_routines` with its `reason` (and its `why` verbatim, when it has one; `held_back` counts those `/test-routines` has not tested with no difference found), and point the customer at `triggers.md` in `files` (`triggers-enable.sql` enables the PostgreSQL triggers step 1 created disabled, or creates the Aurora MySQL triggers and events it left to that script; it has no rollback). Run the second only when the customer says they ran `triggers-enable-check.sql`, never under `--auto`: show its `status`, `confirmed` of `expected`, and every entry of `mismatches` and `not_carried_routines`; `"status": "no_output"`: the file is not at `expected_file` yet; an error line names what is wrong with the file. Run the third only when the customer says their Aurora MySQL triggers-enable script stopped part way and they ran the check again: point them at `triggers-enable-resume.sql` in `files`. Then go to the Gate.
 
 **Gate.** When `phase` is `replicating`, run the read-only gate (it runs `scripts/check_dms_step_gate.py` on the stack and prints that script's line):
 
@@ -303,7 +276,7 @@ Run the first after the routines check: on `"status": "ready"`, show `expected`,
 uv run python scripts/run_dms_step.py gate --job-id {job_id} --db {db}
 ```
 
-Show the evidence from that line only: its `status` (`pass`, `pending` or `fail`), every entry of `reasons` (prefixed `load:`, `lag:`, `parity:`, `views:` or `routines:`), every named entry of `exceptions` (each `table` with its `kind`: what the parity check left out; for a `view`, also its `reason` verbatim: a view whose reason starts `not carried:` does not exist on Aurora, and creating it is the customer's, as the reason says), and `gate` (the path of `gate.json`, with the full load, lag and parity evidence). `pending` usually means lag datapoints or a first validation are still arriving: run the gate again in a few minutes. On `pass`, say its `result` verbatim ("Full load complete. Replication is in progress.") and nothing more about the state of the move. When the line's `validation_failures` is not empty (records that did not validate), list each entry (`table` with its `validation_state`, `failed_records` and `suspended_records`; `validation_failures_not_shown` counts the rest), name its `validation_failures_check` `failures_table` (where DMS lists those records on Aurora), show every entry of `check_on_target` verbatim, each on its own (read-only SQL the customer runs on Aurora, never you; the first query names the table DMS made), and every entry of `hints`. A poll line's `validation_failures_check` has the same fields. When the gate's `status` is `fail` with such tables and the run has not used its one recovery (see One recovery per run), offer a revalidation: it asks DMS to validate those tables again and reloads no data, which clears records suspended or failed while rows were still changing; a real difference fails again. Ask: "Revalidate the tables with validation failures of stack {stack_name} now?" Only on a yes, run, on its own:
+Show the evidence from that line only: its `status` (`pass`, `pending` or `fail`), every entry of `reasons` (prefixed `load:`, `lag:`, `parity:`, `views:` or `routines:`); a `routines:` reason that says `held back: <reason>` is a routine the routine scripts held back until `/test-routines` tests it: it never fails the gate, so say its reason and that `/test-routines` is the next step, apart from a routine that is `missing`, which should be on Aurora and fails the gate, every named entry of `exceptions` (each `table` with its `kind`: what the parity check left out; for a `view`, also its `reason` verbatim: a view whose reason starts `not carried:` does not exist on Aurora, and creating it is the customer's, as the reason says), and `gate` (the path of `gate.json`, with the full load, lag and parity evidence). `pending` usually means lag datapoints or a first validation are still arriving: run the gate again in a few minutes. On `pass`, say its `result` verbatim ("Full load complete. Replication is in progress.") and nothing more about the state of the move. When the line's `validation_failures` is not empty (records that did not validate), list each entry (`table` with its `validation_state`, `failed_records` and `suspended_records`; `validation_failures_not_shown` counts the rest), name its `validation_failures_check` `failures_table` (where DMS lists those records on Aurora), show every entry of `check_on_target` verbatim, each on its own (read-only SQL the customer runs on Aurora, never you; the first query names the table DMS made), and every entry of `hints`. A poll line's `validation_failures_check` has the same fields. When the gate's `status` is `fail` with such tables and the run has not used its one recovery (see One recovery per run), offer a revalidation: it asks DMS to validate those tables again and reloads no data, which clears records suspended or failed while rows were still changing; a real difference fails again. Ask: "Revalidate the tables with validation failures of stack {stack_name} now?" Only on a yes, run, on its own:
 
 ```bash
 uv run python scripts/run_dms_step.py revalidate --job-id {job_id} --db {db} --approve
@@ -378,7 +351,7 @@ uv run python scripts/run_dms_step.py status --job-id {job_id} --db {db} --until
 - With `--inputs` and `--approve-deploy`: Move runs every step without its question, then Prove; `--approve-deploy` also stands for the customer's confirmation that every target table is empty (Move's step 5, `empty_target`).
 - `--auto` never stops the task or deletes the stack (Ending the step), never restarts the task when validation stalls, never resumes or retries a stopped or failed task, and never reloads or revalidates tables (Prove).
 - `--auto` writes the view and routine scripts (Prove) but never waits for the customer to run them: the gate's views and routines checks stay `pending`.
-- `--auto` never offers or runs the routine proof (Prove): every `proof-target-*` command refuses `--auto`, which the command passes to each of them in an `--auto` run (`{--auto}`).
+- `--auto` never deploys a test cluster and never tests routines (`/test-routines` refuses `--auto`, and every `proof-target-*` command refuses it), so a headless run ends with the routines held back as not tested: `routines-deploy.sql` and the triggers-enable script carry no routine that `/test-routines` did not test with no difference found on the job's current routines file in a run the customer attended.
 - The writes refuse to run under `MODERNIZER_CI_SANDBOX=1` (the CI headless runs), whatever the flags.
 
 ## Result line

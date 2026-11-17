@@ -62,6 +62,16 @@ artifact's ``findings``): the exact text stays in the routine sources (the two-f
 decision, ADR-034 Decision 4). Verdicts rest on the static checks, labelled
 :data:`PROOF_LABEL` until the load-and-run proof (#1945).
 
+**Tested before deployed** (#2411, the maintainer decision of 2026-11-17 on #1925). Step 1
+deploys a carried routine only once the latest proof on a test Aurora for the job found no
+difference on the calls made (:func:`proof_hold`). Until a proof has run on the job's
+routines file (:func:`proof_is_current`: the proof's ``routine_sources_sha256`` matches the
+file's digest), the line says the carried routines are checked but not tested yet and must
+be tested on a test Aurora before they are deployed (:func:`not_tested_sentence`); a proof
+on another routines file, or one written before the digest, counts as not run. After a
+proof, the line gives its counts (:func:`proof_run_sentence`), never more than no
+difference on the calls made, and how many step 1 holds back.
+
 **Interventions** (#1940, #1941). ``interventions`` lists each routine the routine repair
 loop worked on (``routines/v<N>/routine_repair.json``, the same version as the migration
 artifact), so the deliverables say it needed an intervention and what came of it, in the
@@ -103,6 +113,12 @@ PROOF_LABEL = "checked, not load-tested"
 #: What the verdicts rest on once the routine proof ran on a test cluster (#1945).
 PROOF_RUN_LABEL = "load-tested on a test Aurora"
 PROOF_OUTCOMES = ("proved", "needs_attention", "not_proved")
+#: Why step 1's deploy gate holds a carried routine back (#2411): no current proof tested it,
+#: the proof could not prove it, or it found a difference or an error.
+HELD_REASONS = ("not_tested", "not_proved", "needs_attention", "depends_on_held")
+#: The held-back reason of a routine the test cleared that calls a held one (#2411): its
+#: CREATE could fail without it, so the gate leaves it out too.
+DEPENDS_ON_HELD = "depends_on_held"
 
 #: A routine risk class -> its severity, in the order the risks are raised.
 ROUTINE_RISK_SEVERITY: dict[str, str] = {
@@ -246,39 +262,197 @@ def migrate_yourself_lines(count: int, wave: int | None) -> tuple[str | None, st
     )
 
 
+#: The command that tests the carried routines on a test Aurora (#2411).
+TEST_COMMAND = "/test-routines"
+
+
+def not_tested_sentence(carried: int, *, checked: bool = True) -> str:
+    """The one sentence every deliverable gives while no test has run on the job's routines
+    file (#2411): the carried routines are checked, not tested yet, and must be tested on a
+    test Aurora (:data:`TEST_COMMAND`) before they are deployed. ``checked`` False leaves out
+    "checked," (some carried routine had a check that could not run). Nothing when no
+    routine is carried."""
+    if carried <= 0:
+        return ""
+    state = "checked, not tested yet" if checked else "not tested yet"
+    if carried == 1:
+        return (
+            f"The carried routine is {state}; test it on a test Aurora with {TEST_COMMAND} "
+            "before it is deployed."
+        )
+    return (
+        f"The {carried} carried routines are {state}; test them on a test Aurora with "
+        f"{TEST_COMMAND} before they are deployed."
+    )
+
+
 def proof_sentence(carried: int, unknown: int) -> str:
-    """What the carried routines' verdicts rest on: "checked, not load-tested" only for
-    the routines whose checks all ran (a check that could not run is never checked);
-    nothing when no routine is carried."""
+    """What the carried routines' verdicts rest on before any test: which of them had every
+    check run (a check that could not run is never checked), then
+    :func:`not_tested_sentence`; nothing when no routine is carried."""
     if carried <= 0:
         return ""  # nothing carried: no routine's checks all ran (#1939)
     if not unknown:
-        return f"{PROOF_LABEL.capitalize()}."
+        return not_tested_sentence(carried)
     head = f"For {_n(unknown, 'carried routine', 'carried routines')} not every check could run"
     rest = carried - unknown
-    if rest <= 0:
-        return f"{head}."
-    return f"{head}; the other {rest} {'is' if rest == 1 else 'are'} {PROOF_LABEL}."
+    checked = f"; the other {rest} {'is' if rest == 1 else 'are'} checked" if rest > 0 else ""
+    return f"{head}{checked}. {not_tested_sentence(carried, checked=False)}"
 
 
-def proof_run_sentence(counts: Mapping[str, int]) -> str:
-    """What the routine proof on a throwaway Aurora test cluster found (#1945), counts
-    only: within the calls made, never a claim about every input."""
+def proof_run_sentence(counts: Mapping[str, int], depends_held: int = 0) -> str:
+    """What the routine test on a test Aurora found (#1945), counts only: never more than
+    no difference on the calls made, never a claim about every input; then what step 1's
+    deploy gate deploys and holds back (#2411): ``depends_held`` of the routines with no
+    difference call a held one (:func:`routine_holds`), so the gate holds them back too."""
     proved, attention, unproved = (int(counts.get(k, 0)) for k in PROOF_OUTCOMES)
     total = proved + attention + unproved
     if not total:
         return ""
     parts = [
-        (
-            f"{proved} loaded and ran, or showed no differences side by side, on the calls made"
-            if proved
-            else ""
-        ),
+        f"{proved} showed no difference on the calls made" if proved else "",
         f"{attention} {'needs' if attention == 1 else 'need'} attention" if attention else "",
         f"{unproved} could not be tested" if unproved else "",
     ]
     head = f"On a test Aurora, of {_n(total, 'carried routine', 'carried routines')}"
-    return f"{head}: " + "; ".join(p for p in parts if p) + "."
+    depends_held = max(0, min(int(depends_held), proved))
+    deployed = proved - depends_held
+    held = total - deployed
+    because = (
+        f", {depends_held} because a routine {'it calls' if depends_held == 1 else 'they call'} "
+        "is held back"
+        if depends_held
+        else ""
+    )
+    if not held:
+        tail = ""
+    elif deployed:
+        rest = "the other one is" if held == 1 else f"the other {held} are"
+        only = "that one" if deployed == 1 else f"those {deployed}"
+        if depends_held:
+            only = f"{deployed} of them"
+        tail = f" Step 1 deploys only {only}; {rest} held back{because}."
+    else:
+        tail = (
+            " Step 1 deploys none of them: "
+            + ("it is" if held == 1 else "they are")
+            + f" held back{because}."
+        )
+    return f"{head}: " + "; ".join(p for p in parts if p) + "." + tail
+
+
+def _and(parts: list[str]) -> str:
+    parts = [p for p in parts if p]
+    return ", ".join(parts[:-1]) + (" and " if len(parts) > 1 else "") + parts[-1] if parts else ""
+
+
+def executive_line(
+    counts: Mapping[str, int],
+    total: int,
+    wave: int | None,
+    deployed: tuple[int, int] | None = None,
+) -> str:
+    """The executive report's routines sentence (the maintainer's direction on #2420,
+    2026-11-17): high level, counts only, naming the command. ``counts`` holds the
+    headline categories (``as_is``, ``rewritten``, ``repaired``); ``deployed`` is what step
+    1's deploy gate deploys and holds back after a current test, ``(deployed, held)``, or
+    None before any test. No routine or table name, and no cutover advice."""
+    as_is, rewritten, repaired = (int(counts.get(k, 0)) for k in ("as_is", "rewritten", "repaired"))
+    carried = as_is + rewritten + repaired
+    left = max(0, total - carried)
+    when = f" before wave {wave}" if wave else ""
+    work = f"{left} {'needs' if left == 1 else 'need'} work{when}" if left else ""
+    if not carried:
+        head = f"none of your {_n(total, 'routine', 'routines')} can move to Aurora automatically"
+        return f"{head}; {work}." if work else f"{head}."
+    yours = "your routine" if total == 1 else "your routines"
+    kinds = _and([
+        f"{as_is} as {'it is' if as_is == 1 else 'they are'}" if as_is else "",
+        f"{rewritten} rewritten" if rewritten else "",
+        f"{repaired} repaired" if repaired else "",
+    ])  # fmt: skip
+    text = (
+        f"{yours} can move to Aurora with the database: {carried} of {total} for this "
+        f"database, {kinds}" + (f"; {work}" if work else "") + "."
+    )
+    if deployed is None:
+        them, are = ("it", "it is") if carried == 1 else ("them", "they are")
+        return (
+            f"{text} Before {are} deployed, test {them} on a throwaway Aurora with the "
+            f"{TEST_COMMAND} command."
+        )
+    done, held = deployed
+    if not held:
+        return f"{text} Tested on a throwaway Aurora: step 1 deploys all {done}."
+    if not done:
+        return (
+            f"{text} Tested on a throwaway Aurora: step 1 deploys none of them; "
+            f"{held} {'is' if held == 1 else 'are'} held back."
+        )
+    return (
+        f"{text} Tested on a throwaway Aurora: step 1 deploys {done}; "
+        f"{held} {'is' if held == 1 else 'are'} held back."
+    )
+
+
+def proof_is_current(run: Any, sources_digest: str | None) -> bool:
+    """Whether the artifact's ``proof_run`` ran on the job's routines file as it is now: its
+    ``routine_sources_sha256`` is set and equals ``sources_digest`` (#2411). A proof written
+    before the digest, or on another routines file, is not current."""
+    if not isinstance(run, Mapping):
+        run = run.model_dump(mode="json") if run is not None else None
+    if not isinstance(run, Mapping) or not sources_digest:
+        return False
+    return run.get("routine_sources_sha256") == sources_digest
+
+
+def proof_hold(row: Mapping[str, Any], current: bool) -> str | None:
+    """Why step 1's deploy gate holds a carried routine back (:data:`HELD_REASONS`), or
+    None when the current proof found no difference on the calls made (``proved``). With
+    no current proof, or no proof entry for the row, it is ``not_tested``."""
+    proof = row.get("proof")
+    if not current or not isinstance(proof, Mapping):
+        return "not_tested"
+    outcome = proof.get("outcome")
+    if outcome == "proved":
+        return None
+    if outcome == "needs_attention":
+        return "needs_attention"
+    return "not_tested" if proof.get("reason_code") == "not_tested" else "not_proved"
+
+
+def _calls(row: Mapping[str, Any]) -> set[tuple[str, str]]:
+    """The routines a row names, by ``(kind, routine_id)``, as the deploy script orders them."""
+    me = (str(row.get("kind")), str(row.get("routine_id")))
+    return {
+        (str(ref.get("kind")), str(ref.get("routine_id")))
+        for d in row.get("dependencies") or []
+        if isinstance(d, Mapping)
+        for ref in d.get("routines") or []
+        if isinstance(ref, Mapping)
+    } - {me}
+
+
+def routine_holds(rows: Iterable[Mapping[str, Any]], current: bool) -> dict[tuple[str, str], str]:
+    """Every carried routine step 1's deploy gate holds back, by ``(kind, routine_id)``,
+    with its reason (#2411): its own :func:`proof_hold`, else :data:`DEPENDS_ON_HELD` when it
+    calls a held routine, directly or not. The one rule the gate (``routine_test_gate``)
+    and ``facts.routines`` both read; a carried routine not listed is deployed."""
+    carried = [r for r in rows if isinstance(r, Mapping) and r.get("status") in _CARRIED]
+    out: dict[tuple[str, str], str] = {}
+    for r in carried:
+        reason = proof_hold(r, current)
+        if reason is not None:
+            out[(str(r.get("kind")), str(r.get("routine_id")))] = reason
+    calls = {(str(r.get("kind")), str(r.get("routine_id"))): _calls(r) for r in carried}
+    changed = True
+    while changed:
+        changed = False
+        for key, named in calls.items():
+            if key not in out and named & out.keys():
+                out[key] = DEPENDS_ON_HELD
+                changed = True
+    return out
 
 
 def target_wave(target_engine: str, migration_waves: Iterable[Any] | None) -> int | None:
@@ -407,11 +581,13 @@ def routine_facts(
     version: int,
     migration_waves: Iterable[Any] | None = None,
     repair: RoutineRepairContract | Mapping[str, Any] | None = None,
+    sources_digest: str | None = None,
 ) -> dict[str, Any] | None:
     """``facts.routines`` for the routine-migration ``artifact`` read at ``version`` (the
     assignment version it was written for), in the roadmap ``migration_waves``, with the
     routine repair seam's ``repair`` result for that version when one ran (#1940); None
-    without an artifact."""
+    without an artifact. ``sources_digest`` is the job's routines file's digest: a proof
+    counts only when it ran on that file (:func:`proof_is_current`, #2411)."""
     if artifact is None:
         return None
     data = (
@@ -470,11 +646,15 @@ def routine_facts(
         )
     named = {r for row in rows for r in (*row["reasons"], *row["rewrites"], *row["unknown_checks"])}
     run = data.get("proof_run")
+    current = isinstance(run, Mapping) and proof_is_current(run, sources_digest)
     proved = (
         {k: int((run.get("counts") or {}).get(k, 0)) for k in PROOF_OUTCOMES}
-        if isinstance(run, Mapping)
+        if isinstance(run, Mapping) and current
         else None
     )
+    # What step 1's deploy gate holds back for calling a held routine (#2411): the same rule.
+    holds = routine_holds(data.get("routines") or [], current)
+    depends_held = sum(1 for reason in holds.values() if reason == DEPENDS_ON_HELD)
     total = int(data.get("total") or 0)
     text = _line(counts, total, classes_n["behaves_differently"])
     wave = target_wave(str(data["target_engine"]), migration_waves)
@@ -507,10 +687,23 @@ def routine_facts(
                         counts["as_is"] + counts["rewritten"] + counts["repaired"], unknown_carried
                     )
                     if proved is None
-                    else proof_run_sentence(proved)
+                    else proof_run_sentence(proved, depends_held)
                 ),
             )
             if p
+        ),
+        "executive_line": executive_line(
+            counts,
+            total,
+            wave,
+            (
+                None
+                if proved is None
+                else (
+                    counts["as_is"] + counts["rewritten"] + counts["repaired"] - len(holds),
+                    len(holds),
+                )
+            ),
         ),
         "routines": rows,
         "rules": [
@@ -734,6 +927,13 @@ def with_routine_words(
     ]
     out["check_notes"] = check_notes(rows, rules, rewrite_kinds)
     out["others_line"] = others_line(int(facts.get("routine_count") or 0), len(rows))
+    if not out.get("executive_line") and "as_is_count" in facts:
+        # A block stored before #2411: no test was current then, so the before-test form.
+        out["executive_line"] = executive_line(
+            {k: int(facts.get(f"{k}_count") or 0) for k in ("as_is", "rewritten", "repaired")},
+            int(facts.get("routine_count") or 0),
+            facts.get("wave") if isinstance(facts.get("wave"), int) else None,
+        )
     out["interventions"] = [
         with_intervention_words(i)
         for i in facts.get("interventions") or []
@@ -758,6 +958,8 @@ def needs_routine_words(facts: Any) -> bool:
         return True
     if any(isinstance(i, Mapping) and not i.get("line") for i in facts.get("interventions") or []):
         return True
+    if not facts.get("executive_line") and "as_is_count" in facts:
+        return True
     return not facts.get("others_line") and int(facts.get("routine_count") or 0) > len(rows)
 
 
@@ -779,7 +981,9 @@ def read_routine_facts(
     if found is None:
         return None
     version, artifact = found
+    from src.agents.collector.routine_sources import routine_sources_digest
     from src.storage.routine_repair_store import read_routine_repair
 
     repair = read_routine_repair(store, database_name, job_id, version)
-    return routine_facts(artifact, version, migration_waves, repair)
+    digest = routine_sources_digest(store, database_name, job_id)
+    return routine_facts(artifact, version, migration_waves, repair, digest)

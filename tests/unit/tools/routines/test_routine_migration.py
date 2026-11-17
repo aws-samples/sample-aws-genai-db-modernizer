@@ -208,10 +208,44 @@ def _schema_fields(schema: dict[str, Any]) -> set[str]:
     return names
 
 
+#: The one digest field (#2411): it names the routines file a test ran on by a digest of
+#: that file's index, whose parts' SHA-256s the index already lists in the job folder. It
+#: is no hash of a routine's text: it changes when any part of the file changes.
+INDEX_DIGEST = "routine_sources_sha256"
+
+
+@pytest.mark.passes_on_main  # the guard main has, narrowed to allow the one index digest (#2411)
 def test_no_field_of_the_contract_can_hold_routine_text_or_its_hash():
-    fields = _schema_fields(RoutineMigrationContract.model_json_schema())
+    schema = RoutineMigrationContract.model_json_schema()
+    fields: list[tuple[str, str]] = [
+        (name, f) for name, d in [("", schema), *schema.get("$defs", {}).items()]
+        for f in d.get("properties", {})
+    ]  # fmt: skip
     for word in ("create", "statement", "body_text", "definition", "sha", "hash", "diff", "sql"):
-        assert not [f for f in fields if word in f], word
+        # The index digest is allowed on the test's run record only (RoutineProofRun).
+        assert not [
+            (m, f) for m, f in fields if word in f and (m, f) != ("RoutineProofRun", INDEX_DIGEST)
+        ], word
+    assert ("RoutineProofRun", INDEX_DIGEST) in fields
+
+
+def test_the_index_digest_is_a_digest_of_the_index_never_of_one_routine(tmp_path):
+    """Two routines files that differ in one routine's text get different digests, and the
+    digest is the one ``routine_sources_digest`` computes from the index's part list."""
+    import hashlib
+    import json
+
+    from src.agents.collector.routine_sources import routine_sources_digest, write_routine_sources
+
+    store = LocalArtifactStore(base_dir=str(tmp_path))
+    collector = {"metadata": {"source_database": {"engine": "postgresql"}}}
+    write_routine_sources(store, "shop", "j1", collector, _sources([_function(1)]))
+    first = routine_sources_digest(store, "shop", "j1")
+    index = store.read_json("shop/j1/collector/routine_sources.json")
+    parts = [[p["path"], p["count"], p["sha256"]] for p in index["parts"]]
+    assert first == hashlib.sha256(json.dumps(parts, separators=(",", ":")).encode()).hexdigest()
+    write_routine_sources(store, "shop", "j1", collector, _sources([_function(2)]))
+    assert routine_sources_digest(store, "shop", "j1") not in (None, first)
 
 
 def test_the_contract_refuses_rows_that_disagree():

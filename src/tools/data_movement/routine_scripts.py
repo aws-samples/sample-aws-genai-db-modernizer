@@ -7,8 +7,10 @@ The modernizer never connects to the customer's databases (the maintainer decisi
 2026-11-09 on #1947). After the full load, ``scripts/run_dms_step.py routines`` writes
 three files into ``data-movement/step-1/``:
 
-- ``routines-deploy.sql``: every routine the step contract's routines section carries,
-  in its deploy order, each the exact ``CREATE`` from the job's routine sources with the
+- ``routines-deploy.sql``: every routine the step contract's routines section carries
+  that the latest test on a test Aurora proved on the current routines file (#2411,
+  :mod:`src.tools.data_movement.routine_test_gate`; every other is held back by id and reason), in its
+  deploy order, each the exact ``CREATE`` from the job's routine sources with the
   routine-migration rewrites applied again for the user who runs it (a MySQL
   ``DEFINER``). It first creates, ``IF NOT EXISTS``, each schema (on Aurora MySQL, each
   database) its routines land in that step 1's own DDL does not create (#2148): never
@@ -70,6 +72,7 @@ __all__ = [
     "CHECK_OUTPUT",
     "DEPLOY_FILE",
     "INSTRUCTIONS_FILE",
+    "PROOF_LINES",
     "CHECK_MAGIC",
     "CHECK_END",
     "ROUTINES_CHECK",
@@ -79,6 +82,7 @@ __all__ = [
     "block_of",
     "case_differs_keys",
     "check_names",
+    "proof_line",
     "read_migration",
     "render_check_script",
     "require_section",
@@ -145,6 +149,8 @@ class RoutineScripts:
     deferred: int = 0
     refused: list[tuple[str, str, str]] = field(default_factory=list)  # kind, id, code
     files: dict[str, str] = field(default_factory=dict)
+    proof: str = "not_run"  # the routine test: current, stale or not_run (#2411)
+    held: int = 0  # carried routines held back for the test (HELD_REASONS)
 
 
 def _safe(text: str | None) -> bool:
@@ -477,6 +483,35 @@ def source_strings_pin(text: str, recorded: str | None) -> str:
     return text.replace(PIN_STRINGS, f"{why}\nSET standard_conforming_strings = {value};", 1)
 
 
+#: What the scripts say about the routine test, by its state (#2411).
+PROOF_LINES = {
+    "not_run": (
+        "Not tested yet: no test on a test Aurora has run on these routines, so every carried "
+        "routine is held back (not_tested). Test them with /test-routines, then generate the "
+        "routine scripts again."
+    ),
+    "stale": (
+        "Not tested yet: the last test on a test Aurora is not on these routines as they are "
+        "now, so every carried routine is held back (not_tested). Test them again with /test-routines, then "
+        "generate the routine scripts again."
+    ),
+    "current": (
+        "Tested on a test Aurora: only the routines that showed no difference on the calls "
+        "made are here; every other is held back (not_tested, not_proved, needs_attention, or "
+        "depends_on_held when it calls a held routine)."
+    ),
+}
+
+
+def proof_line(state: str, held: int) -> str:
+    """The scripts' sentence on the routine test (:data:`PROOF_LINES`) and how many it holds
+    back."""
+    text = PROOF_LINES.get(state, PROOF_LINES["not_run"])
+    if state == "current" and held:
+        text += f" Held back: {held} (run_dms_step.py routines names each one and why)."
+    return text
+
+
 def _deploy_header(
     engine: str,
     section: StepRoutines,
@@ -484,6 +519,8 @@ def _deploy_header(
     contract_sha: str,
     schemas: list[str] | None = None,
     target: TargetSpec | None = None,
+    proof: str = "not_run",
+    held: int = 0,
 ) -> str:
     made = schema_statements(engine, schemas or [], target)
     lines = [
@@ -494,8 +531,7 @@ def _deploy_header(
         f"-- {in_script} of the {section.carried} routines step 1 carries, in dependency order.",
         "-- Run it once, after the DMS full load is complete, as the user the routines "
         "should belong to.",
-        "-- Checked, not load-tested: the routines passed the static checks; no load-and-run "
-        "proof ran yet.",
+        f"-- {proof_line(proof, held)}",
         "-- Then run routines-check.sql (read-only) as routines.md says.",
     ]
     if engine == "aurora_postgresql":
@@ -756,8 +792,7 @@ def _instructions(
             "names each one and why)."
         )
     lines += [
-        "- Checked, not load-tested: the routines passed the static checks; no load-and-run "
-        "proof ran yet.",
+        f"- {proof_line(scripts.proof, scripts.held)}",
         *(
             [
                 "- Views: run views-deploy.sql (views.md) before this script. A routine that depends "
@@ -984,6 +1019,10 @@ def write_routine_scripts(
     from src.tools.data_movement.view_scripts import left_out, left_out_names
 
     held = left_out_names(contract, left_out(store, db, job_id, contract, target_database))
+    from src.tools.data_movement.routine_test_gate import HELD_REASONS, held_routines, proof_state
+
+    proof = proof_state(store, db, job_id, migration)
+    untested = held_routines(store, db, job_id, migration)
     reads = {
         (r.kind, r.routine_id): {d.name.lower() for d in r.dependencies if d.kind == "table"}
         for r in migration.routines
@@ -996,6 +1035,8 @@ def write_routine_scripts(
             return None, CASE_DIFFERS
         if reads.get((row.kind, row.routine_id), set()) & held:
             return None, VIEW_LEFT_OUT
+        if (row.kind, row.routine_id) in untested:  # the deploy gate (#2411)
+            return None, untested[(row.kind, row.routine_id)]
         return write_block(row, source, position, total)
 
     with tempfile.TemporaryFile(dir=step_dir) as spool:
@@ -1005,10 +1046,11 @@ def write_routine_scripts(
         in_script = len(spans)
         in_rows = [r for r in carried if (r.kind, r.routine_id) in spans]
         schemas = routine_schemas(in_rows, engine, target_database, tables_in)
+        held_n = sum(1 for code in refused.values() if code in HELD_REASONS)
 
         def deploy_chunks() -> Iterator[bytes]:
             header = _deploy_header(
-                engine, section, in_script, contract_sha, schemas, contract.target
+                engine, section, in_script, contract_sha, schemas, contract.target, proof, held_n
             )
             yield source_strings_pin(header, source_strings(store, db, job_id)).encode("utf-8")
             yield from spooled_chunks(spool, carried, spans)
@@ -1024,6 +1066,8 @@ def write_routine_scripts(
         in_script=in_script,
         deferred=section.deferred,
         refused=refusals,
+        proof=proof,
+        held=held_n,
     )
     output = str(step_dir / CHECK_OUTPUT)
     write_atomic(

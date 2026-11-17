@@ -81,8 +81,7 @@ def test_every_helper_example_parses_with_the_helpers_own_parser() -> None:
         args = run_dms_step._parser().parse_args(_helper_argv(command))
         used.add(args.command)
         assert "--artifact-root" not in command and "--inputs" not in command, command
-    assert used == (set(run_dms_step.LOCAL) | set(run_dms_step.READS) | set(run_dms_step.WRITES)
-                    | set(run_dms_step.PROOF_TARGET))  # fmt: skip
+    assert used == set(run_dms_step.LOCAL) | set(run_dms_step.READS) | set(run_dms_step.WRITES)
 
 
 @pytest.mark.passes_on_main  # main's /move has no proof-target write; #1945 adds them to Prove, each with --approve
@@ -106,9 +105,6 @@ def test_every_aws_write_passes_approve_and_only_in_the_move_stage() -> None:
         elif args.command in run_dms_step.WRITES:
             assert args.approve, command
             assert command in move, f"an AWS write outside Move: {command}"
-        elif args.command in run_dms_step.PROOF_WRITES:  # the routine proof's test cluster (#1945)
-            assert args.approve, command
-            assert command in prove, f"{args.command} outside Prove: {command}"
         else:
             assert not args.approve, command
 
@@ -737,47 +733,22 @@ def test_the_result_line_forms_are_unchanged() -> None:
     assert "`MOVE_RESULT: complete job_id={job_id} step=1 gate=<the gate line's status>`" in _text()
 
 
-def _proof_section() -> str:
-    return _text().split("**Routine proof (optional).**", 1)[1].split("**Routines.**", 1)[0]
-
-
-def test_every_proof_target_call_passes_auto_in_an_auto_run_and_is_refused_there(
-    tmp_path, capsys, monkeypatch
-) -> None:
-    """#1945 (the note from #1946): the scripts refuse ``--auto`` only when their caller passes
-    it, so the command passes it to every ``proof-target-*`` call of an ``--auto`` run. Each
-    call written with ``{--auto}`` set to ``--auto`` is refused before any AWS call."""
-    import json
-
-    calls = [c for c in _bash_commands() if "proof-target-" in c]
-    assert {shlex.split(c)[4] for c in calls} == set(run_dms_step.PROOF_TARGET)
-    assert calls and all(c in _proof_section() and c.endswith(" {--auto}") for c in calls), calls
-    flat = _flat(_proof_section())
-    assert "`{--auto}` stands for `--auto` in an `--auto` run and for nothing otherwise" in flat
-    assert "Never offer it under `--auto`" in flat
-    assert "`--auto` never offers or runs the routine proof" in _flat(
-        _section("Headless (`--auto`)")
-    )
-    asked: list[str] = []
-    monkeypatch.setattr("src.tools.aws.credentials.AWSCredentialManager",
-                        lambda *a, **k: asked.append("aws"))  # fmt: skip
-    for command in calls:
-        argv = [a.replace("job_id", "job1").replace("db", "shop") if a in ("job_id", "db") else a
-                for a in _helper_argv(command)]  # fmt: skip
-        assert "--auto" in argv, command
-        code = run_dms_step.main([*argv, "--artifact-root", str(tmp_path)])
-        out = json.loads(capsys.readouterr().out.splitlines()[-1])
-        assert code == 1 and "never runs under --auto" in out["message"], command
-    assert asked == []
-
-
-def test_the_routine_proof_is_offered_on_aurora_mysql_too() -> None:
-    """#2298: the MySQL runner user is created from a hash, so /move offers the proof on
-    both targets and no longer says it is unavailable on Aurora MySQL."""
-    flat = _flat(_proof_section())
-    assert "Offer it on both targets, Aurora PostgreSQL and Aurora MySQL" in flat
-    assert "not available yet" not in flat and "mysql_proof_not_available" not in flat
-    assert "Offer it only when the step's `target_engine` is Aurora PostgreSQL" not in flat
+def test_move_never_tests_routines_and_deploys_only_what_test_routines_proved() -> None:
+    """#2411: the routine test moved out of /move into /test-routines; /move's routine step
+    deploys only what a test on the current routines file proved, names every other with its
+    reason, and points to /test-routines; a headless run ends with them not tested."""
+    assert "proof-target-" not in " ".join(_bash_commands())
+    assert "Routine proof (optional)" not in _text()
+    routines = _flat(_text().split("**Routines.**", 1)[1].split("**Triggers enable.**", 1)[0])
+    for needed in ("`proof_line` verbatim", "`held_back_routines`", "`not_tested`, `not_proved`, "
+                   "`needs_attention`, or `depends_on_held`", "`/test-routines` (`test_with`)",
+                   "`/move` never tests routines itself"):  # fmt: skip
+        assert needed in routines, needed
+    gate = _flat(_text().split("**Gate.**", 1)[1].split("**Verify (optional).**", 1)[0])
+    assert "`held back: <reason>`" in gate and "it never fails the gate" in gate
+    headless = _flat(_section("Headless (`--auto`)"))
+    assert "`--auto` never deploys a test cluster and never tests routines" in headless
+    assert "a headless run ends with the routines held back as not tested" in headless
 
 
 def test_prove_writes_the_view_scripts_before_the_routine_scripts() -> None:

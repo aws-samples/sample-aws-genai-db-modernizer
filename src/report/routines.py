@@ -46,14 +46,18 @@ def to_do_text(routines: dict[str, Any]) -> str | None:
     return f"{_cap(str(line))}." if line else None
 
 
-def routine_summary_lines(report: dict[str, Any], *, to_do: bool = True) -> list[tuple[str, str]]:
+def routine_summary_lines(
+    report: dict[str, Any], *, to_do: bool = True, executive: bool = False
+) -> list[tuple[str, str]]:
     """``(label, text)`` for the executive report and the chat summary: the headline
     counts, then the to-do when ``to_do`` (a caller that already prints it in the wave's
-    line passes False). Counts only: no routine or table name."""
+    line passes False). Counts only: no routine or table name. ``executive``: the
+    executive report's short form, ``facts.routines.executive_line`` (#2411)."""
     routines = routine_facts_of(report)
     if routines is None or not routines.get("line"):
         return []
-    out = [("Routines", str(routines["line"]))]
+    text = routines.get("executive_line") if executive else None
+    out = [("Routines", str(text or routines["line"]))]
     sentence = to_do_text(routines)
     if sentence and to_do:
         out.append(("To do", sentence))

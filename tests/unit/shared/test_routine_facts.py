@@ -215,7 +215,8 @@ def test_the_headline_line_counts_and_names_no_routine_or_table() -> None:
         "3 of 10 routines carry over: 2 as they are, 1 rewritten. 7 were not carried "
         "automatically: 4 need repair (1 of them behaves differently), 1 was rebuilt around "
         "a literal, 1 has no code collected, 1 was not readable. For 2 carried routines not "
-        "every check could run; the other 1 is checked, not load-tested."
+        "every check could run; the other 1 is checked. The 3 carried routines are not tested "
+        "yet; test them on a test Aurora with /test-routines before they are deployed."
     )
     for row in MIXED.routines:
         assert row.name not in facts["line"]
@@ -386,7 +387,10 @@ def test_the_facts_read_the_newest_artifact_at_or_below_the_version(tmp_path) ->
 def test_an_empty_artifact_has_a_line_and_no_rows() -> None:
     facts = routine_facts(_artifact(_row("public.plain()")), 1) or {}
     assert facts["routines"] == [] and facts["carried_count"] == 1
-    assert facts["line"] == "1 of 1 routine carries over: 1 as it is. Checked, not load-tested."
+    assert facts["line"] == (
+        "1 of 1 routine carries over: 1 as it is. The carried routine is checked, not tested "
+        "yet; test it on a test Aurora with /test-routines before it is deployed."
+    )
 
 
 @pytest.mark.parametrize("module", ROUTING_MODULES)

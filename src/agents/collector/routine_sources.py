@@ -1136,3 +1136,18 @@ def read_routine_sources(store: Any, database_name: str, job_id: str) -> Iterato
             raise ValueError(f"{part.path} holds {len(chunk.sources)} routines, not {part.count}")
         yield from chunk.sources
         del chunk  # before the next chunk is read: one chunk is held at a time
+
+
+def routine_sources_digest(store: Any, database_name: str, job_id: str) -> str | None:
+    """A digest of the job's routines file as its index lists it (each part's path, count
+    and SHA-256, in order), or None when the job has none (#2411). It names the file a
+    routine proof ran on: a proof whose digest differs ran on another routines file. It is
+    a digest of the index's own hashes, so it holds nothing the index does not."""
+    from src.shared.contract_versioning import load_contract
+
+    key = f"{database_name}/{job_id}/{ROUTINE_SOURCES_FILE}"
+    if not store.exists(key):
+        return None
+    index = load_contract(RoutineSourcesContract, store.read_json(key), artifact=key)
+    listed = [[p.path, p.count, p.sha256] for p in index.parts]
+    return hashlib.sha256(json.dumps(listed, separators=(",", ":")).encode("utf-8")).hexdigest()
