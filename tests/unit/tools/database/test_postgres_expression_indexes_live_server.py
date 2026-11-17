@@ -120,7 +120,6 @@ def _expressions(server, schema: str) -> dict[str, tuple]:
     return {r["name"]: (r["e"], r["p"], r["u"]) for r in rows}
 
 
-@pytest.mark.passes_on_main  # guards the harness: the server takes no TCP connection
 def _indexdefs(server, schema: str) -> dict[str, str]:
     """Each index of ``<schema>.audit_log`` as ``pg_get_indexdef`` writes it, the schema
     taken out, so a source and a recreated index compare whole."""
@@ -152,6 +151,7 @@ def _audit_log_statements(ddl: str) -> list[str]:
     ]
 
 
+@pytest.mark.passes_on_main  # guards the harness: the server takes no TCP connection
 def test_the_server_listens_on_no_tcp_address(server):
     assert _run(server, "SELECT current_setting('listen_addresses') AS a", None) == [{"a": ""}]
 

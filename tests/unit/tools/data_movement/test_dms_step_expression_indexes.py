@@ -280,6 +280,8 @@ def test_a_definition_whose_uniqueness_differs_is_listed_not_created(tmp_path):
     inputs = _pg(tmp_path, orders=[ix])
 
     assert _creates_index(inputs.ddl, "orders_ix") == []
+    [line] = _left_out_lines(render_ddl(inputs))
+    assert line.startswith(f"-- - public.orders.orders_ix: {_MORE}")
 
 
 # ---------------------------------------------------------------------------
