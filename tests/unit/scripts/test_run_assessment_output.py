@@ -329,6 +329,8 @@ def test_all_status_lines_name_real_artifacts(monkeypatch, tmp_path, capsys):
         *ASSESSMENT_PHASES,
         "engine_choices",
         "schema_design",
+        # #2385: the repair loop's line (skipped with its reason without a model).
+        "routine_repair",
         "synthesis",
         "report",
     ]

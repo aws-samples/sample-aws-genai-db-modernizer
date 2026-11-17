@@ -21,11 +21,14 @@ With ``--proof none`` (the default) a candidate that passes every check is
 ``repaired_pending_proof``. A failed candidate is asked again, with its error, up to
 three attempts. ``external`` writes round 1's request ``routines/v<N>/repair/
 llm_input.json`` and prints ``awaiting_llm`` with ``round`` and the request and
-response paths; each ``--finalize`` applies the answer written to
+response paths (under the artifact root, ``artifacts/<db>/<job>/...`` by default: the
+paths to read and write as printed); each ``--finalize`` applies the answer written to
 ``routines/v<N>/repair/llm_response.json`` and prints ``awaiting_llm`` for the next
 round or ``complete``. Pass the same ``--proof`` to each ``--finalize``: the proof target
 is the lower of that and the first run's, and every repair the saved state carries is
-verified again before it is written.
+verified again before it is written. ``--proof auto`` (what ``/modernize`` passes, #2385)
+is ``local`` when a disposable engine of the source's major is on this machine, else
+``none``; the status line's ``proof`` says which.
 
 One JSON status line on stdout; nothing else.
 """
@@ -44,8 +47,23 @@ _PHASE = "routine_repair"
 _JOB: dict = {}
 
 
+#: The status keys that name an artifact: printed as paths under the artifact root
+#: (``artifacts/<db>/<job>/...`` by default), the way the PE review phase prints them,
+#: so a session reads and writes the file the line names (#2385 review).
+_PATH_KEYS = ("llm_request", "llm_response", "artifact")
+
+
 def _output(data: dict) -> None:
     print(json.dumps({"phase": _PHASE, **data}))
+
+
+def _paths_under_root(status: dict, artifact_root: str) -> dict:
+    from pathlib import Path
+
+    return {
+        k: (str(Path(artifact_root) / v) if k in _PATH_KEYS and isinstance(v, str) else v)
+        for k, v in status.items()
+    }
 
 
 def _error(message: str, code: int = 1) -> NoReturn:
@@ -77,10 +95,11 @@ def main() -> None:
     parser.add_argument(
         "--proof",
         default="none",
-        choices=["none", "local"],
+        choices=["none", "local", "auto"],
         help=(
             "Where the side-by-side proof runs: local (two disposable engines of the "
-            "source's major) or none (a candidate waits for the proof; default: none)"
+            "source's major), none (a candidate waits for the proof; default: none), or "
+            "auto (local when those engines are on this machine, else none)"
         ),
     )
     parser.add_argument(
@@ -123,12 +142,16 @@ def main() -> None:
         finalize_routine_repair,
         run_routine_repair,
     )
+    from src.agents.routine_repair.loop import proof_for_run
     from src.contracts.model_flag import validation_error_note
     from src.storage.local_store import LocalArtifactStore
 
     store = LocalArtifactStore(base_dir=args.artifact_root)
     _JOB.update(store=store, db=args.db, job_id=args.job_id)
     clear_failure_marker(store, args.db, args.job_id, _PHASE)
+    args.proof = proof_for_run(
+        store, args.db, args.job_id, args.proof, assignment_version=args.assignment_version
+    )
 
     if args.finalize:
         try:
@@ -152,7 +175,7 @@ def main() -> None:
             assignment_version=args.assignment_version,
             proof=args.proof,
         )
-    _output(status)
+    _output(_paths_under_root(status, args.artifact_root))
 
 
 def _job_ctx():

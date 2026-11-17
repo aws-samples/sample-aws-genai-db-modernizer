@@ -40,7 +40,8 @@
       "Skill(design-schema-dynamodb)",
       "Skill(design-schema-elasticache)",
       "Skill(design-schema-opensearch)",
-      "Skill(review-schema)"
+      "Skill(review-schema)",
+      "Skill(repair-routines)"
     ],
     "deny": [
       "WebFetch",

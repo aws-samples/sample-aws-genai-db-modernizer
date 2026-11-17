@@ -490,6 +490,7 @@ def test_the_real_phases_record_the_engines_they_processed(monkeypatch, tmp_path
         "routine_migration",  # #1934: timed like any phase, on the version it reads
         "engine_choices",
         "schema_design",
+        "routine_repair",  # #2385: the repair loop, before synthesis reads its result
         "synthesis",
         "report",
     ]

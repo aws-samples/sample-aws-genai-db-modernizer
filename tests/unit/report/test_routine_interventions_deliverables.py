@@ -98,7 +98,11 @@ def test_each_intervention_state_has_its_words() -> None:
     RoutineFacts.model_validate(FACTS)
     items = _by_id()
     repaired = items[fx.WAL]["line"]
-    assert "side by side on a disposable postgresql 16 engine" in repaired
+    # #2385: compared on a local engine of the source, never more than checked on Aurora.
+    assert "compared with the original on a disposable postgresql 16 engine" in repaired
+    assert "a local engine of the source" in repaired
+    assert "it is checked, not tested yet on a test Aurora" in repaired
+    assert "every call" not in repaired and "proof accepted" not in repaired
     assert f"What changed: {REPAIRED_NOTE}" in repaired
     assert "Step 1 does not deploy a repaired routine yet" in repaired
     pending = items["public.ok(integer)"]["line"]
@@ -179,3 +183,97 @@ def test_a_pending_row_from_the_seam_alone_does_not_claim_the_loops_checks() -> 
     assert "exact text" not in line and "not carried" in line and PENDING_NOTE not in line
     looped = {**seam_only, "attempts": [_attempt(1, "proof", "pending", "no_proof_target", "x")]}
     assert "passed every check again on the exact text" in intervention_line(looped)
+
+
+# --------------------------------------------------------------------------- #2385
+
+
+def _repaired_line(facts: dict[str, Any]) -> str:
+    return str(next(i for i in facts["interventions"] if i["state"] == "model_repaired")["line"])
+
+
+def test_a_model_repair_reads_as_compared_locally_and_not_tested_on_aurora() -> None:
+    """#2385, the #1925 decision of 2026-11-17: a repair the local comparison accepted is
+    compared on an engine of the source, never tested on Aurora, in #2411's words."""
+    from src.shared.routine_facts import NOT_TESTED_STATE, repaired_not_tested_sentence
+
+    assert FACTS is not None
+    line = _repaired_line(FACTS)
+    assert repaired_not_tested_sentence("a disposable postgresql 16 engine") in line
+    assert f"it is {NOT_TESTED_STATE} on a test Aurora" in line
+    assert NOT_TESTED_STATE == "checked, not tested yet"
+    for overclaim in ("tested on a test Aurora:", "proved", "every call", "ready to deploy"):
+        assert overclaim not in line, overclaim
+    # No proof source on the row: the words still name a local engine of the source.
+    bare = repaired_not_tested_sentence(None)
+    assert "a disposable engine of the source, a local engine of the source" in bare
+
+
+def test_the_engineering_report_prints_the_repair_as_not_tested_on_aurora() -> None:
+    from src.report.escaping import md_text
+
+    assert FACTS is not None
+    report = _plain_report("MEDIUM")
+    report["facts"]["routines"] = FACTS
+    text = "\n".join(routines_md(report))
+    assert md_text(_repaired_line(FACTS)) in text
+    assert "not tested yet on a test Aurora" in text
+
+
+def test_the_ui_fixture_shows_the_repair_as_not_tested_on_aurora() -> None:
+    """RoutineMigrationSection.test.js prints each intervention's ``line`` from this file."""
+    fixture = json.loads(UI_FIXTURE.read_text(encoding="utf-8"))
+    line = _repaired_line(fixture)
+    assert "a local engine of the source" in line
+    assert "it is checked, not tested yet on a test Aurora" in line
+
+
+def test_the_executive_line_counts_model_repairs_as_checked_not_tested() -> None:
+    from src.report.routines import routine_summary_lines
+    from src.shared.routine_facts import executive_line
+
+    assert FACTS is not None
+    clause = (
+        "A model repaired 1 of the routines that need work, compared on a local engine of "
+        "the source: it is checked, not tested yet on a test Aurora, and step 1 does not "
+        "deploy it yet."
+    )
+    assert FACTS["executive_line"].endswith(clause)
+    report = _plain_report("MEDIUM")
+    report["facts"]["routines"] = FACTS
+    (label, text), *_ = routine_summary_lines(report, executive=True)
+    assert label == "Routines" and text == FACTS["executive_line"]
+    two = executive_line({"as_is": 1}, 3, 1, None, repaired_by_model=2)
+    assert "a model repaired 2 of the routines that need work" in two.lower()
+    assert "they are checked, not tested yet on a test Aurora" in two
+    assert "does not deploy them yet" in two
+    # No model repair: the line is #2411's, unchanged.
+    assert executive_line({"as_is": 1}, 3, 1, None) == executive_line(
+        {"as_is": 1}, 3, 1, None, repaired_by_model=0
+    )
+    assert "model" not in executive_line({"as_is": 1}, 3, 1, None)
+    # A pending or failed repair is no model repair the comparison accepted.
+    pending_only = routine_facts(
+        fx.migration(),
+        1,
+        [{"wave": 1, "engines": ["aurora_postgresql"]}],
+        {
+            **repair(),
+            "routines": [r for r in repair()["routines"] if r["state"] != "model_repaired"],
+            "counts": {},
+        },
+    )
+    assert pending_only is not None and "model repaired" not in pending_only["executive_line"]
+
+
+def test_a_stored_block_without_an_executive_line_counts_its_model_repairs() -> None:
+    from src.report.facts import report_facts
+
+    assert FACTS is not None
+    stored = json.loads(json.dumps(FACTS))
+    stored.pop("executive_line")
+    report = _plain_report("MEDIUM")
+    report["facts"]["routines"] = stored
+    assert (
+        "A model repaired 1 of the routines" in report_facts(report)["routines"]["executive_line"]
+    )

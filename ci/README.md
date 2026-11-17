@@ -689,6 +689,8 @@ obvious entries lives here instead:
   memory and writes the next request or `routine_repair.json`; `--proof local` starts
   two disposable engines with no TCP listener and stops them. It writes no routine text.
   Edit/Write of its `loop_state.json` and `routine_repair.json` are denied.
+- `/modernize` Phase 6f (#2385) runs the same script, so it needs no new Bash rule: the request (`--llm-mode external --proof auto`) and one `--finalize` per round. `--proof auto` is `local` only when a disposable engine of the source's major is on the machine, else `none`. It reads which binaries are there and starts nothing until a candidate is proved. It never reaches a test cluster and deploys no routine.
+- `Skill(repair-routines)` (#2385): the round subagent `/modernize` Phase 6f dispatches, one per repair round. It follows `/repair-routines` to read the round's request and write its answer, and runs no script itself.
 - `Bash(uv run python scripts/run_schema_design.py *)` also covers
   `--mark-dispatched <id> ...` and `--mark-reported <id> ...` (#2215): the
   headless orchestrator's dispatch ledger. They write one file,

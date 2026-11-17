@@ -11,7 +11,8 @@ well, the phases a full run needs are there, and the report phase lists no error
 A phase ends well on ``complete`` or ``unchanged``. ``wave_redesign`` also ends well on
 each status its loop ends on when it ran as designed (``LOOP_ENDINGS`` in
 ``src/agents/schema_design/wave_redesign.py``: rounds can run out with a wave still held,
-the outcome the report states), and on ``skipped`` with a reason. Anything else, such as
+the outcome the report states), and on ``skipped`` with a reason, as does
+``routine_repair`` (#2385: a job with no routine-migration artifact). Anything else, such as
 ``failed`` or ``error``, fails the check, as does a missing phase or a report error.
 
 Usage: ``uv run python ci/bedrock_smoke.py smoke/status.jsonl``. Exit 0 on pass, 1 on
@@ -34,7 +35,10 @@ REQUIRED_PHASES = ("schema_design", "synthesis", "report")
 #: Per phase, the statuses it may end on besides ``PASSING``.
 PHASE_ENDINGS: Mapping[str, frozenset[str]] = {"wave_redesign": LOOP_ENDINGS}
 #: Per phase, the statuses it may end on only when the line gives a reason.
-PHASE_SKIPS: Mapping[str, frozenset[str]] = {"wave_redesign": frozenset({SKIPPED})}
+PHASE_SKIPS: Mapping[str, frozenset[str]] = {
+    "wave_redesign": frozenset({SKIPPED}),
+    "routine_repair": frozenset({"skipped"}),
+}
 
 
 def status_lines(lines: Iterable[str]) -> dict[str, dict[str, Any]]:

@@ -32,7 +32,9 @@ Modes: ``bedrock`` runs every round in one call; ``external`` writes round 1's r
 applies the session's answer, verifies it and either writes the next round's request
 (``awaiting_llm`` again, with ``round``) or the result. The loop's progress between
 rounds sits in ``routines/v<N>/repair/loop_state.json`` (ids, attempts and words only).
-``none`` runs no repair.
+``none`` runs no repair. A run that follows this machine passes ``auto`` for the proof
+(:func:`proof_for_run`, #2385): ``local`` when a disposable engine of the source's major is
+here, else ``none``.
 """
 
 from __future__ import annotations
@@ -58,9 +60,14 @@ from src.storage.routine_repair_store import (
 
 __all__ = [
     "MAX_ATTEMPTS",
+    "PROOF_CHOICES",
     "finalize_repair_loop",
+    "proof_for_run",
     "run_repair_loop",
 ]
+
+#: The proof targets a run may name; ``auto`` resolves to one of the other two.
+PROOF_CHOICES = ("auto", "local", "none")
 
 _NO_ANSWER_REASON = "the model gave no usable answer"
 Ref = tuple[str, str]
@@ -401,6 +408,40 @@ def _awaiting(store: Any, det: seam.RoutineRepairPlan, plan: seam.RoutineRepairP
 
 
 # --------------------------------------------------------------------------- runs
+
+
+def proof_for_run(
+    store: Any,
+    database_name: str,
+    job_id: str,
+    proof: str = "auto",
+    *,
+    assignment_version: int | None = None,
+) -> str:
+    """The proof target a run uses (#2385): ``local`` or ``none`` as given; ``auto`` is
+    ``local`` when a disposable engine of the source's engine and major is on this machine
+    (``disposable_engine.available``: no engine starts), else ``none``, and ``none`` for a
+    job with no routine-migration artifact or no source version."""
+    if proof not in PROOF_CHOICES:
+        raise ValueError(f"unknown proof {proof!r}")
+    if proof != "auto":
+        return proof
+    from src.storage.assignment_versioning import resolve_downstream_assignment_version
+    from src.storage.routine_migration_store import latest_routine_migration
+    from src.tools.database import disposable_engine as de
+
+    version = assignment_version or resolve_downstream_assignment_version(
+        store, database_name, job_id
+    )
+    found = latest_routine_migration(store, database_name, job_id, version)
+    version_text = found[1].source_version if found is not None else None
+    if found is None or not version_text:
+        return "none"
+    try:
+        here = de.available(found[1].source_engine, version_text)
+    except ValueError:  # a version with no major to read
+        return "none"
+    return "local" if here else "none"
 
 
 def run_repair_loop(
