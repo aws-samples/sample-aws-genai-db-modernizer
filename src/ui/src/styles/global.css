@@ -205,3 +205,45 @@ code {
 .dbm-fill {
   flex: 1;
 }
+
+/* Query id chips and mapping chip rows (#2323) */
+
+:root {
+  --dbm-id-chip-bg: #e9ebed;
+  --dbm-id-chip-text: #0f141a;
+  --dbm-id-chip-hover-bg: #0972d3;
+  --dbm-id-chip-hover-text: #ffffff;
+}
+
+.awsui-dark-mode {
+  --dbm-id-chip-bg: #2a3a4d;
+  --dbm-id-chip-text: #e9ebed;
+  --dbm-id-chip-hover-bg: #539fe5;
+  --dbm-id-chip-hover-text: #000716;
+}
+
+.dbm-id-chip {
+  display: inline-block;
+  padding: 1px 6px;
+  border: 0;
+  border-radius: 2px;
+  font-family: monospace;
+  font-size: 12px;
+  cursor: pointer;
+  background-color: var(--dbm-id-chip-bg);
+  color: var(--dbm-id-chip-text);
+}
+
+.dbm-id-chip:hover,
+.dbm-id-chip:focus-visible {
+  background-color: var(--dbm-id-chip-hover-bg);
+  color: var(--dbm-id-chip-hover-text);
+}
+
+.dbm-chip-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  align-items: center;
+  margin-top: 2px;
+}

@@ -2427,7 +2427,8 @@ _ENGINE_COLOURS_JS = """() => {
   const nodes = [...document.querySelectorAll('svg g[data-sankey-node]')].map((g) => ({
     engine: g.dataset.sankeyNode, colour: rgb(g.querySelector('rect'), 'fill')}));
   const chips = [...document.querySelectorAll('[data-mapping]')].map((el) => ({
-    kind: el.dataset.mapping, engine: el.dataset.engine || null, colour: rgb(el, 'backgroundColor')}));
+    kind: el.dataset.mapping, engine: el.dataset.engine || null,
+    colour: rgb(el.querySelector('[class*="awsui_badge_"]'), 'backgroundColor')}));
   return {badges, nodes, chips};
 }"""
 

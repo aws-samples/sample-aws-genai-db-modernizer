@@ -12,13 +12,19 @@ import SpaceBetween from "@cloudscape-design/components/space-between";
  * same labels. It only formats the facts (ADR-032); `renderTradeOff` draws one
  * trade-off (the page's own card).
  *
+ * `showCounts` false drops the count from a heading (a filtered list). The key passed to
+ * `renderTradeOff` is a position in the shown list: a caller whose list can be filtered keys
+ * each trade-off by a stable id of its own (TradeOffDecisions does).
+ *
+ * `titled` overrides that rule for a caller that shows a filtered part of the groups.
+ *
  * Callers pass `t` (the page's own `useTranslation` function), like
  * CloseCallCallout.
  */
-export default function TradeOffTopicGroups({ groups, renderTradeOff, t }) {
+export default function TradeOffTopicGroups({ groups, renderTradeOff, showCounts = true, titled: titledProp, t }) {
   // A design saved before the topics has every trade-off under "other": no heading,
   // as in the engineering report.
-  const titled = !(groups.length === 1 && groups[0].topic === 'other');
+  const titled = titledProp ?? !(groups.length === 1 && groups[0].topic === 'other');
   return (
     <SpaceBetween size="m">
       {groups.map(g => (
@@ -26,7 +32,7 @@ export default function TradeOffTopicGroups({ groups, renderTradeOff, t }) {
           <SpaceBetween size="xs">
             {titled && (
               <Box variant="h3">
-                {t('analysis-results.tradeoffs.topic-heading', { label: g.label, count: g.count })}
+                {showCounts ? t('analysis-results.tradeoffs.topic-heading', { label: g.label, count: g.count }) : g.label}
               </Box>
             )}
             {g.tradeOffs.map((tradeOff, idx) => renderTradeOff(tradeOff, `${g.topic}-${idx}`))}
