@@ -2968,7 +2968,7 @@ def _proof_run(store: Any, db: str, job_id: str, clients: Any, inputs: Any, cred
                 f"{state.get('stack_status') or state.get('status')}, cluster "
                 f"{cluster.get('status') or 'none'}): run proof-target-deploy first"}  # fmt: skip
     out = run_proof(store, db, job_id, data_api=_data_api(cred), cluster=cluster,
-                    secrets_client=_secrets(cred) if cluster.get("engine") == "aurora-mysql" else None)  # fmt: skip
+                    secrets_client=_secrets(cred))  # fmt: skip
     return {**out, "stack_name": state.get("stack_name"), "region": inputs.region,
             "teardown_question": state.get("teardown_question")}  # fmt: skip
 

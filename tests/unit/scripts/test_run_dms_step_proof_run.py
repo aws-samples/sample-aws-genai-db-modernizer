@@ -98,12 +98,14 @@ def test_proof_target_run_proves_the_routines_and_writes_them_into_the_artifact(
     _stack(cred)
     _resources(cred)
     _pg_cluster(cred)
-    client = FakeDataApi(calls={'"public"."f"': [1]})
+    secrets = FakeSecrets()
+    client = FakeDataApi(calls={'"public"."f"': [1]}, secrets=secrets)
     monkeypatch.setattr(script, "_data_api", lambda _cred: client, raising=False)
-    monkeypatch.setattr(script, "_secrets", lambda _cred: FakeSecrets(), raising=False)
+    monkeypatch.setattr(script, "_secrets", lambda _cred: secrets, raising=False)
     code, out = _run(tmp_path, "proof-target-run", "--approve", capsys=capsys)
     assert code == 0, out
     assert out["cluster_changes"] == {} and out["left_on_cluster"] == []
+    assert out["runner"] == "a login role made for the run, granted the scratch database only"
     assert out["counts"] == {"proved": 1, "needs_attention": 0, "not_proved": 0}
     assert (
         out["routines"][0]["mode"] == "load_and_run" and out["routines"][0]["outcome"] == "proved"
@@ -322,3 +324,104 @@ def test_a_killed_runs_secret_the_sweep_cannot_delete_is_named(tmp_path, capsys,
     code, out = _run(tmp_path, "proof-target-run", "--approve", capsys=capsys)
     assert code == 1
     assert f"secret {dat.runner_secret_name('job1', stale)}" in out["left_on_cluster"]
+
+
+def _postgresql(tmp_path, cred, monkeypatch, secrets: FakeSecrets | None = None,
+                **fake: Any) -> tuple[FakeDataApi, FakeSecrets]:  # fmt: skip
+    """A PostgreSQL job. The fake Data API signs in with a runner's secret only when the
+    role exists with LOGIN and its SCRAM verifier matches the secret's password."""
+    _job(tmp_path, "postgresql")
+    _with_routine(tmp_path)
+    _stack(cred)
+    _resources(cred)
+    _pg_cluster(cred)
+    secrets = secrets or FakeSecrets()
+    client = FakeDataApi(secrets=secrets, **fake)
+    monkeypatch.setattr(script, "_data_api", lambda _cred: client, raising=False)
+    monkeypatch.setattr(script, "_secrets", lambda _cred: secrets, raising=False)
+    return client, secrets
+
+
+def test_the_postgresql_proof_runs_as_a_login_role_and_removes_it_and_its_secret(
+    tmp_path, capsys, cred, monkeypatch
+):
+    """#2352: the PostgreSQL routines load and run as a login role made for the run, signed
+    in through its own secret (never the master user under SET LOCAL ROLE); the role is
+    dropped and the secret force-deleted in the same cleanup as the scratch databases, and
+    the cluster holds no role or database it did not hold before."""
+    client, secrets = _postgresql(tmp_path, cred, monkeypatch, calls={'"public"."f"': [1]})
+    code, out = _run(tmp_path, "proof-target-run", "--approve", capsys=capsys)
+    assert code == 0, out
+    assert out["runner"] == "a login role made for the run, granted the scratch database only"
+    assert out["counts"]["proved"] == 1 and out["left_on_cluster"] == []
+    assert out["cluster_changes"] == {}
+    assert not client.roles and not client.databases and not secrets.secrets
+    assert len(secrets.deleted) == 1 and secrets.deleted[0][1] is True
+    created = next(
+        s for s in client.sent if s.sql.startswith("CREATE OR REPLACE FUNCTION public.f")
+    )
+    call = next(s for s in client.sent if '"public"."f"(' in s.sql)
+    assert "/modernizer/routine-proof/job1/mdzr_" in "/" + created.secret.split(":secret:")[1]
+    assert call.secret == created.secret
+    assert not [s for s in client.sent if "SET LOCAL ROLE" in s.sql]
+    drop_db = max(i for i, s in enumerate(client.sent) if s.sql.startswith("DROP DATABASE"))
+    drop_role = max(i for i, s in enumerate(client.sent) if s.sql.startswith("DROP ROLE"))
+    assert drop_db < drop_role
+
+
+def test_the_postgresql_proof_stops_when_its_login_role_cannot_be_signed_in_as(
+    tmp_path, capsys, cred, monkeypatch
+):
+    """#2352: no fallback to the master user. When the Data API cannot sign in as the new
+    role, the proof stops before any scratch database or routine, and the role and its
+    secret are removed."""
+    client, secrets = _postgresql(tmp_path, cred, monkeypatch, sign_in_fails=True)
+    code, out = _run(tmp_path, "proof-target-run", "--approve", capsys=capsys)
+    assert code == 1 and "could not create that role or sign in as it" in out["message"]
+    assert "PostgreSQL proof runs its routines only as a login role" in out["message"]
+    assert "its secret was deleted" in out["message"] and out["left_on_cluster"] == []
+    assert out["sqlstate"] == "28P01" and not client.roles and not secrets.secrets
+    assert not [
+        s for s in client.sent if s.sql.startswith(("CREATE DATABASE", "CREATE OR REPLACE"))
+    ]
+
+
+def test_a_killed_postgresql_runs_role_and_secret_are_swept(tmp_path, capsys, cred, monkeypatch):
+    """A run killed before its cleanup leaves its scratch database, its role and the role's
+    secret; the next run drops the database first (a role that owns objects cannot be
+    dropped), then the role and the secret, and nothing of another job."""
+    from src.tools.routines import data_api_target as dat
+
+    stale = dat.runner_prefix("job1") + "0f0f0f0f"
+    other_job = dat.runner_prefix("job2") + "0f0f0f0f"
+    old_db = dat.scratch_name("job1")
+    secrets = FakeSecrets()
+    secrets.create_secret(Name=dat.runner_secret_name("job1", stale), SecretString="{}")
+    secrets.create_secret(Name=dat.runner_secret_name("job2", other_job), SecretString="{}")
+    client, _ = _postgresql(
+        tmp_path, cred, monkeypatch, secrets=secrets, calls={'"public"."f"': [1]}
+    )
+    client.roles |= {stale, other_job}
+    client.databases.add(old_db)
+    client.granted[old_db] = stale
+    code, out = _run(tmp_path, "proof-target-run", "--approve", capsys=capsys)
+    assert code == 0, out
+    assert client.roles == {other_job} and not client.databases
+    assert [kw["Name"] for kw in secrets.secrets.values()] == [
+        dat.runner_secret_name("job2", other_job)]  # fmt: skip
+    assert out["left_on_cluster"] == [] and out["leftover_scratch_dropped"] >= 1
+
+
+def test_run_proof_needs_secrets_manager_on_postgresql_too(tmp_path):
+    """#2352: the PostgreSQL proof keeps its runner's password in a secret of its own, so
+    with no Secrets Manager client it sends nothing."""
+    from src.tools.routines.proof_run import run_proof
+
+    _job(tmp_path, "postgresql")
+    _with_routine(tmp_path)
+    client = FakeDataApi()
+    cluster = {"engine": "aurora-postgresql", "data_api": True, "arn": "arn:c",
+               "master_user_secret_arn": "arn:s", "engine_version": "16.15"}  # fmt: skip  # pragma: allowlist secret
+    out = run_proof(LocalArtifactStore(base_dir=str(tmp_path)), "shop", "job1", data_api=client,
+                    cluster=cluster, secrets_client=None)  # fmt: skip
+    assert out["status"] == "error" and "Secrets Manager" in out["message"] and client.sent == []

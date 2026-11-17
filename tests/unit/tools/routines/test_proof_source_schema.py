@@ -280,7 +280,7 @@ def test_a_postgresql_scratch_database_gets_each_source_schema_owned_by_the_runn
     target = _factory(client)()
     name = target.database
     target.load_setup(_sales_setup())
-    role = f'"{name}_runner"'
+    role = f'"{target._runner.username}"'
     scratch = client.statements(name)
     made = scratch.index(f'CREATE SCHEMA "sales" AUTHORIZATION {role}')
     assert scratch.index('REVOKE ALL ON SCHEMA "sales" FROM PUBLIC') > made
@@ -290,7 +290,12 @@ def test_a_postgresql_scratch_database_gets_each_source_schema_owned_by_the_runn
     assert all(s.database == name for s in client.sent
                if "sales" in s.sql and s.op in ("execute", "batch"))  # fmt: skip
     # the search path puts public first, then the schema, so an unqualified body still resolves
-    path = [s for s in client.sent if s.sql.startswith("SET LOCAL search_path")]
+    path = [
+        s
+        for s in client.sent
+        if s.sql.startswith("SET LOCAL search_path")
+        and s.sql != "SET LOCAL search_path = pg_catalog"
+    ]  # the master user's pin
     assert path and path[0].sql == 'SET LOCAL search_path = "public", "sales"'
     target.close()
 
