@@ -9,6 +9,7 @@ import { useTranslation } from 'react-i18next';
 //##-- AWS UI Objects
 import AppLayoutToolbar from "@cloudscape-design/components/app-layout";
 import ProseText from '../components/ProseText';
+import { CardBox, CodeBlock } from '../components/StyledBlocks';
 import BreadcrumbGroup from "@cloudscape-design/components/breadcrumb-group";
 import SpaceBetween from "@cloudscape-design/components/space-between";
 import Header from "@cloudscape-design/components/header";
@@ -111,17 +112,6 @@ const SOURCE_TABLE_CHIP = '#5f6b7a';
 const QUERY_CHIP_BG = '#e9ebed';
 const QUERY_CHIP_TEXT = '#0f141a';
 const QUERY_CHIP_ACTIVE_BG = '#0972d3';
-
-// #373: the severity colours the retired HTML decision report used -- red for the
-// error-level severities (CRITICAL and HIGH, kept equally severe, #270),
-// amber for MEDIUM, green for LOW. `stopped` is an unrated severity (#270
-// round-1 review) -- grey, matching the deck's muted UNRATED accent.
-const RISK_BORDER_COLOR = {
-  error: '#d13212',
-  warning: '#ffc107',
-  success: '#1d8102',
-  stopped: '#9ba7b6',
-};
 
 const OP_CATEGORY = {
   GetItem: 'read', Query: 'read', Scan: 'read', BatchGetItem: 'read',
@@ -1430,23 +1420,9 @@ const AnalysisResultsPage = memo(() => {
                   cell: (item) => {
                     if (!item.query_text) return '—';
                     return (
-                      <Box
-                        fontSize="body-s"
-                        fontFamily="monospace"
-                        padding="s"
-                        style={{
-                          backgroundColor: '#232f3e',
-                          color: '#d4d4d4',
-                          borderRadius: '4px',
-                          whiteSpace: 'pre-wrap',
-                          wordBreak: 'break-word',
-                          overflowX: 'auto',
-                          maxHeight: '150px',
-                          overflow: 'auto'
-                        }}
-                      >
+                      <CodeBlock capped label={t('analysis-results.pattern-detail.query-text')}>
                         {item.query_text}
-                      </Box>
+                      </CodeBlock>
                     );
                   },
                   minWidth: 400
@@ -1470,43 +1446,19 @@ const AnalysisResultsPage = memo(() => {
         {/* OpenSearch source query */}
         {sourceQueries.length === 0 && ap.sourceQuery && (
           <Container header={<Header variant="h3">{t('analysis-results.pattern-detail.source-sql')}</Header>}>
-            <Box
-              fontSize="body-s"
-              fontFamily="monospace"
-              padding="s"
-              style={{
-                backgroundColor: '#232f3e',
-                color: '#d4d4d4',
-                borderRadius: '4px',
-                whiteSpace: 'pre-wrap',
-                wordBreak: 'break-word',
-                overflowX: 'auto'
-              }}
-            >
+            <CodeBlock>
               {ap.sourceQuery}
-            </Box>
+            </CodeBlock>
           </Container>
         )}
 
         {/* Target design: key condition or DSL */}
         {(ap.keyCondition || ap.opensearchDsl) && (
           <Container header={<Header variant="h3">{t('analysis-results.pattern-detail.target-access-pattern')}</Header>}>
-            <Box
-              fontSize="body-s"
-              fontFamily="monospace"
-              padding="s"
-              style={{
-                backgroundColor: '#232f3e',
-                color: '#d4d4d4',
-                borderRadius: '4px',
-                whiteSpace: 'pre-wrap',
-                wordBreak: 'break-word',
-                overflowX: 'auto'
-              }}
-            >
+            <CodeBlock>
               {ap.keyCondition && ap.keyCondition}
               {ap.opensearchDsl && (typeof ap.opensearchDsl === 'string' ? ap.opensearchDsl : JSON.stringify(ap.opensearchDsl, null, 2))}
-            </Box>
+            </CodeBlock>
           </Container>
         )}
 
@@ -2695,8 +2647,7 @@ const AnalysisResultsPage = memo(() => {
                         >
                           <SpaceBetween size="xs">
                             {design.optimizations.map((opt, idx) => (
-                              <Box key={idx} padding={{ vertical: 'xs', horizontal: 's' }}
-                                style={{ borderLeft: '3px solid #0972d3', backgroundColor: '#f2f8fd', borderRadius: '4px' }}>
+                              <CardBox key={idx} tone="info">
                                 <SpaceBetween size="xxs">
                                   <Box fontSize="body-s" fontWeight="bold">
                                     {opt.target ? `${opt.category ? `${optimizationLabel(opt.category)}: ` : ''}${opt.target}` : optimizationLabel(opt.category)}
@@ -2706,7 +2657,7 @@ const AnalysisResultsPage = memo(() => {
                                     <Box fontSize="body-s" color="text-body-secondary"><ProseText text={opt.rationale} /></Box>
                                   )}
                                 </SpaceBetween>
-                              </Box>
+                              </CardBox>
                             ))}
                           </SpaceBetween>
                         </ExpandableSection>
@@ -2855,11 +2806,7 @@ const AnalysisResultsPage = memo(() => {
                             const affectedTables = Array.isArray(risk.affected_tables) ? risk.affected_tables : [];
                             const copySync = derivedCopySyncOf(synthesis, risk.risk_id);
                             return (
-                              <Box
-                                key={risk.risk_id || idx}
-                                padding={{ vertical: 'xs', horizontal: 's' }}
-                                style={{ borderLeft: `4px solid ${RISK_BORDER_COLOR[status]}`, backgroundColor: '#fff', borderRadius: '4px' }}
-                              >
+                              <CardBox key={risk.risk_id || idx} tone={status}>
                                 <SpaceBetween size="xxs">
                                   <SpaceBetween direction="horizontal" size="xs" alignItems="center">
                                     <StatusIndicator type={status}>{severity}</StatusIndicator>
@@ -2904,7 +2851,7 @@ const AnalysisResultsPage = memo(() => {
                                     </ul>
                                   )}
                                 </SpaceBetween>
-                              </Box>
+                              </CardBox>
                             );
                           })}
                         </SpaceBetween>
@@ -2998,8 +2945,7 @@ const AnalysisResultsPage = memo(() => {
                     ? t('analysis-results.tradeoffs.topic-heading', { label: topicGroups.reviewNoteLabel, count: peNoteCount })
                     : t('analysis-results.trade-offs.pe-notes-header', { count: peNoteCount });
                   const renderDecision = (tradeOff, idx) => (
-                    <Box key={idx} padding={{ vertical: 'xs', horizontal: 's' }}
-                      style={{ borderLeft: '3px solid #0972d3', backgroundColor: '#f2f8fd', borderRadius: '4px' }}>
+                    <CardBox key={idx} tone="info">
                       <SpaceBetween size="xxs">
                         <SpaceBetween direction="horizontal" size="xs" alignItems="center">
                           <Icon name="status-positive" />
@@ -3095,7 +3041,7 @@ const AnalysisResultsPage = memo(() => {
                           </Box>
                         )}
                       </SpaceBetween>
-                    </Box>
+                    </CardBox>
                   );
 
                   return {
@@ -3121,18 +3067,17 @@ const AnalysisResultsPage = memo(() => {
                           >
                             <SpaceBetween size="xs">
                               {shownPeNotes.map((tradeOff, idx) => (
-                                <Box key={idx} padding={{ vertical: 'xs', horizontal: 's' }}
-                                  style={{ borderLeft: '3px solid #ff9900', backgroundColor: '#fff8e6', borderRadius: '4px' }}>
+                                <CardBox key={idx} tone="note">
                                   <SpaceBetween size="xxs">
                                     <div style={{ display: 'flex', alignItems: 'flex-start', gap: '8px' }}>
                                       <Badge color="blue">{idx + 1}</Badge>
-                                      <Box fontSize="body-s" style={{ flex: 1 }}><ProseText text={tradeOff.description.replace(/^\[PE note\]\s*/, '')} /></Box>
+                                      <Box fontSize="body-s" className="dbm-fill"><ProseText text={tradeOff.description.replace(/^\[PE note\]\s*/, '')} /></Box>
                                     </div>
                                     {tradeOff.impact && (
                                       <Box fontSize="body-s" color="text-body-secondary" padding={{ left: 'xl' }}><ProseText text={tradeOff.impact} /></Box>
                                     )}
                                   </SpaceBetween>
-                                </Box>
+                                </CardBox>
                               ))}
                             </SpaceBetween>
                           </ExpandableSection>
@@ -3324,14 +3269,9 @@ const AnalysisResultsPage = memo(() => {
                     />
                     {queryJourneyData?.source?.query_text && (
                       <Container header={<Header variant="h3">{t('analysis-results.pattern-detail.query-text')}</Header>}>
-                        <Box fontSize="body-s" fontFamily="monospace" padding="s" style={{
-                          backgroundColor: '#f2f3f3',
-                          borderRadius: '4px',
-                          whiteSpace: 'pre-wrap',
-                          wordBreak: 'break-word'
-                        }}>
+                        <CodeBlock>
                           {queryJourneyData.source.query_text}
-                        </Box>
+                        </CodeBlock>
                       </Container>
                     )}
                   </SpaceBetween>

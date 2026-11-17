@@ -124,3 +124,90 @@ code {
   outline: 2px solid #ff9900;
   outline-offset: -2px;
 }
+
+/* ============================================ */
+/* Cards and code blocks (#2310)                */
+/* ============================================ */
+
+:root {
+  --dbm-card-info-border: #0972d3;
+  --dbm-card-info-bg: #f2f8fd;
+  --dbm-card-note-border: #ec7211;
+  --dbm-card-note-bg: #fff8e6;
+  --dbm-card-danger-border: #d91515;
+  --dbm-card-danger-bg: #fef2f2;
+  --dbm-card-error-border: #d13212;
+  --dbm-card-warning-border: #b7791f;
+  --dbm-card-success-border: #1d8102;
+  --dbm-card-stopped-border: #6b7785;
+  --dbm-card-neutral-bg: #ffffff;
+  --dbm-code-bg: #f2f3f3;
+  --dbm-code-text: #0f1b2a;
+}
+
+.awsui-dark-mode {
+  --dbm-card-info-border: #539fe5;
+  --dbm-card-info-bg: rgba(83, 159, 229, 0.12);
+  --dbm-card-note-border: #ec7211;
+  --dbm-card-note-bg: rgba(236, 114, 17, 0.14);
+  --dbm-card-danger-border: #ff7a7a;
+  --dbm-card-danger-bg: rgba(255, 122, 122, 0.12);
+  --dbm-card-error-border: #ff7a7a;
+  --dbm-card-warning-border: #ffc107;
+  --dbm-card-success-border: #2ea44f;
+  --dbm-card-stopped-border: #879596;
+  --dbm-card-neutral-bg: rgba(255, 255, 255, 0.04);
+  --dbm-code-bg: #232f3e;
+  --dbm-code-text: #d4d4d4;
+}
+
+.dbm-card {
+  border-left: 3px solid var(--dbm-card-info-border);
+  background-color: var(--dbm-card-info-bg);
+  border-radius: 4px;
+}
+
+.dbm-card--note {
+  border-left-color: var(--dbm-card-note-border);
+  background-color: var(--dbm-card-note-bg);
+}
+
+.dbm-card--danger {
+  border-left-color: var(--dbm-card-danger-border);
+  background-color: var(--dbm-card-danger-bg);
+}
+
+/* Risk severities: red for CRITICAL and HIGH, amber for MEDIUM, green for LOW, grey for unrated. */
+.dbm-card--error,
+.dbm-card--warning,
+.dbm-card--success,
+.dbm-card--stopped {
+  border-left-width: 4px;
+  background-color: var(--dbm-card-neutral-bg);
+}
+
+.dbm-card--error { border-left-color: var(--dbm-card-error-border); }
+.dbm-card--warning { border-left-color: var(--dbm-card-warning-border); }
+.dbm-card--success { border-left-color: var(--dbm-card-success-border); }
+.dbm-card--stopped { border-left-color: var(--dbm-card-stopped-border); }
+
+.dbm-code-block {
+  background-color: var(--dbm-code-bg);
+  color: var(--dbm-code-text);
+  border-radius: 4px;
+  white-space: pre-wrap;
+  word-break: break-word;
+  overflow: auto;
+}
+
+.dbm-code-block > * {
+  color: inherit;
+}
+
+.dbm-code-block--capped {
+  max-height: 150px;
+}
+
+.dbm-fill {
+  flex: 1;
+}
