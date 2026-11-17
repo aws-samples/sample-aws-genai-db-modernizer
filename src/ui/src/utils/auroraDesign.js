@@ -178,6 +178,8 @@ export function buildAuroraDesign(engine, design, queryGroups) {
   return {
     engine,
     displayName: displayEngine(engine),
+    // #2308: whether the design files for this engine were loaded at all.
+    hasDesign: Boolean(design?.content),
     migrationStrategy: content.migration_strategy || null,
     ddl: content.generated_ddl || '',
     optimizations: content.optimizations || [],

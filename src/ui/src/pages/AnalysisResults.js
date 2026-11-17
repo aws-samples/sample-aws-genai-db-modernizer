@@ -21,6 +21,7 @@ import ColumnLayout from "@cloudscape-design/components/column-layout";
 import SideNavigation from "@cloudscape-design/components/side-navigation";
 import Flashbar from "@cloudscape-design/components/flashbar";
 import ExpandableSection from "@cloudscape-design/components/expandable-section";
+import Alert from "@cloudscape-design/components/alert";
 import Spinner from "@cloudscape-design/components/spinner";
 import SegmentedControl from "@cloudscape-design/components/segmented-control";
 import Pagination from "@cloudscape-design/components/pagination";
@@ -65,6 +66,7 @@ import { engineFromSearch, linkedEngineTarget, linkedSectionId, activeDesignEngi
 import useResultsTabs, { ResultsSectionNav, useSectionsOnPage } from "../hooks/useResultsTabs";
 import { RESULTS_TABS, hashId, onThisPageAnchors, tabLabel } from "../utils/resultsTabs";
 import ResultsOnThisPage from "../components/ResultsOnThisPage";
+import { designBodyState, explorerAvailability, loadErrorKind } from "../utils/sectionStates";
 import { schemaDesignsRefusal } from "../utils/schemaDesignsLoad";
 import RoutineMigrationSection from "../components/RoutineMigrationSection";
 import ExecutiveSummaryStats from "../components/ExecutiveSummaryStats";
@@ -91,7 +93,7 @@ import EngineBadge from "../components/EngineBadge";
 import { WORKLOAD_FIT_DEFINITION } from "../utils/workloadFitLabels";
 import { optimizationLabel } from "../utils/optimizationLabels";
 import { displayTables } from "../utils/tableNames";
-import { accessPatternTotals, assumptionLinesOf, cacheLayerFactsOf, costAssumptionsOf, rateWindowRiskNoteOf, rateWindowScenarioOf, rateWindowStatementOf, rowCountStatementOf, derivedCopySyncOf, costCaveatOf, costScopeLabelOf, costSizingOf, costSizingText, defaultRiskSeverity, designTableCountOf, finalEngineCounts, noEngineInScopeOf, openRiskCountAt, procedureInternalQueryCountOf, procedureInternalRoutineCountOn, procedureInternalRoutineCountsOf, queryPatternCountsOf, resolvedRiskCountOf, resolvedRisksBySeverityText, routingHistoryRecorded, routingKindsById, tradeOffsByTab, tradeOffTabLabel, tradeOffTopicGroupsOf } from "../utils/reportFacts";
+import { accessPatternTotals, assumptionLinesOf, cacheLayerFactsOf, costAssumptionsOf, rateWindowRiskNoteOf, rateWindowScenarioOf, rateWindowStatementOf, rowCountStatementOf, derivedCopySyncOf, costCaveatOf, costScopeLabelOf, costSizingOf, costSizingText, defaultRiskSeverity, finalEngineCounts, noEngineInScopeOf, openRiskCountAt, procedureInternalQueryCountOf, procedureInternalRoutineCountOn, procedureInternalRoutineCountsOf, queryPatternCountsOf, resolvedRiskCountOf, resolvedRisksBySeverityText, routingHistoryRecorded, routingKindsById, tradeOffsByTab, tradeOffTabLabel, tradeOffTopicGroupsOf } from "../utils/reportFacts";
 
 
 // ============================================
@@ -236,6 +238,8 @@ const AnalysisResultsPage = memo(() => {
   const graphExplorer = useGraphExplorerFlag();
   const [resultsData, setResultsData] = useState(null);
   const [schemaDesigns, setSchemaDesigns] = useState([]);
+  // #2308: the design files could not be read, so an empty design is "not available", not "none".
+  const [designsLoadFailed, setDesignsLoadFailed] = useState(false);
   const [collectorData, setCollectorData] = useState(null);
   const [loading, setLoading] = useState(true);
   const [flashbarItems, setFlashbarItems] = useState([]);
@@ -316,6 +320,7 @@ const AnalysisResultsPage = memo(() => {
       if (results['schemas']?.success) {
         setSchemaDesigns(results['schemas'].schema_designs || []);
       }
+      setDesignsLoadFailed(!results['schemas']?.success);
       const designsRefused = schemaDesignsRefusal(results['schemas']);
       if (designsRefused) {
         addFlashbarMessage({ type: 'error', header: t('analysis-results.error.schema-designs-refused'), content: designsRefused, dismissible: true, id: `error-schemas-${Date.now()}` });
@@ -351,7 +356,7 @@ const AnalysisResultsPage = memo(() => {
       try {
         const apiManager = new ApiManager();
         const first = (await apiManager.execute([{ id: 'p1', path: listPath(1), method: 'GET', params: {} }]))['p1'];
-        if (!first?.success) throw new Error(first?.error?.message || t('analysis-results.query-routing.empty'));
+        if (!first?.success) throw Object.assign(new Error('query-journeys'), { kind: loadErrorKind(first?.status) });
         let items = first.items || [];
         const totalPages = Number(first.total_pages) || 1;
         const pages = Math.min(totalPages, JOURNEY_MAX_PAGES);
@@ -362,13 +367,13 @@ const AnalysisResultsPage = memo(() => {
           }
           const rest = await apiManager.execute(calls);
           calls.forEach(({ id }) => {
-            if (!rest[id]?.success) throw new Error(rest[id]?.error?.message || t('analysis-results.query-routing.empty'));
+            if (!rest[id]?.success) throw Object.assign(new Error('query-journeys'), { kind: loadErrorKind(rest[id]?.status) });
             items = items.concat(rest[id].items || []);
           });
         }
         if (!cancelled) setQueryJourneyList({ items, loading: false, error: null, truncated: totalPages > pages });
       } catch (error) {
-        if (!cancelled) setQueryJourneyList({ items: [], loading: false, error: error.message, truncated: false });
+        if (!cancelled) setQueryJourneyList({ items: [], loading: false, error: error.kind || 'other', truncated: false });
       }
     };
     load();
@@ -786,6 +791,11 @@ const AnalysisResultsPage = memo(() => {
   // kept separate from totalAccessPatterns, which must stay owner-only (the
   // "Access patterns" stat above compares against it).
   const explorerTotal = patternTotals.listed;
+  // #2308: the report counts patterns the page holds no row for: say so, do not show an empty table.
+  const explorerState = explorerAvailability({
+    expectedCount: explorerTotal,
+    shownCount: explorerPatterns.length,
+  });
 
 
   // ============================================
@@ -2221,7 +2231,17 @@ const AnalysisResultsPage = memo(() => {
               </Header>
             }
           >
+            {explorerState === 'unavailable' ? (
+              <Alert type="warning" header={t('analysis-results.explorer.unavailable-title')}>
+                {t('analysis-results.explorer.unavailable-body', { count: explorerTotal })}
+              </Alert>
+            ) : (
             <SpaceBetween size="m">
+              {explorerState === 'partial' && (
+                <Alert type="info" header={t('analysis-results.explorer.partial-title')}>
+                  {t('analysis-results.explorer.partial-body', { count: explorerTotal, shown: explorerPatterns.length })}
+                </Alert>
+              )}
 
               {/* Visual navigators: engine bar + operation donut */}
               <ColumnLayout columns={2}>
@@ -2490,6 +2510,7 @@ const AnalysisResultsPage = memo(() => {
                 </Box>
               )}
             </SpaceBetween>
+            )}
           </Container>
         )}
       </SpaceBetween>
@@ -2530,12 +2551,27 @@ const AnalysisResultsPage = memo(() => {
               onChange={({ detail }) => setDesignTab(detail.activeTabId)}
               tabs={auroraDesigns.map(design => {
                 const queryCount = design.queryGroups.reduce((sum, g) => sum + g.queries.length, 0);
+                // #2308: the tab and the body read one count, and say why a design is empty.
+                const designState = designBodyState({
+                  hasDesign: design.hasDesign,
+                  loadedCount: design.tables.length,
+                  synthesis,
+                  engine: design.engine,
+                  designsLoadFailed,
+                });
+                const hasTableCount = designState.state === 'ok' || designState.state === 'partial';
                 return {
                   id: design.engine,
-                  label: t('analysis-results.aurora-design.tab-label', {
-                    name: design.displayName,
-                    count: designTableCountOf(synthesis, design.engine, design.tables),
-                  }),
+                  label: hasTableCount
+                    ? t('analysis-results.aurora-design.tab-label', { name: design.displayName, count: designState.count })
+                    : t(
+                      designState.state === 'empty'
+                        ? 'analysis-results.aurora-design.tab-label'
+                        : `analysis-results.aurora-design.tab-label-${designState.state}`,
+                      designState.state === 'empty'
+                        ? { name: design.displayName, count: 0 }
+                        : { name: design.displayName },
+                    ),
                   content: (
                     <SpaceBetween size="l">
                       {design.migrationStrategy && (
@@ -2547,8 +2583,33 @@ const AnalysisResultsPage = memo(() => {
                         </Box>
                       )}
 
+                      {designState.longer && (
+                        <Alert type="info" header={t('analysis-results.aurora-design.longer-title')}>
+                          {t('analysis-results.aurora-design.longer-body', { count: designState.count, loaded: designState.loaded })}
+                        </Alert>
+                      )}
+                      {designState.state === 'partial' && (
+                        <Alert type="info" header={t('analysis-results.aurora-design.partial-title')}>
+                          {t('analysis-results.aurora-design.partial-body', { loaded: designState.loaded, count: designState.count })}
+                        </Alert>
+                      )}
+                      {(designState.state === 'none' || designState.state === 'unavailable') && (
+                        <Alert
+                          type={designState.state === 'none' ? 'info' : 'warning'}
+                          header={t(`analysis-results.aurora-design.${designState.state}-title`)}
+                        >
+                          {t(
+                            designState.state === 'unavailable' && !designState.count
+                              ? 'analysis-results.aurora-design.unavailable-body-nocount'
+                              : `analysis-results.aurora-design.${designState.state}-body`,
+                            { count: designState.count },
+                          )}
+                        </Alert>
+                      )}
+
+                      {designState.state !== 'none' && designState.state !== 'unavailable' && (
                       <ExpandableSection
-                        headerText={t('analysis-results.aurora-design.tables-header', { count: design.tables.length })}
+                        headerText={t('analysis-results.aurora-design.tables-header', { count: designState.count })}
                         defaultExpanded={false}
                       >
                         {design.tables.length === 0 ? (
@@ -2612,6 +2673,7 @@ const AnalysisResultsPage = memo(() => {
                           </SpaceBetween>
                         )}
                       </ExpandableSection>
+                      )}
 
                       {design.ddl && (
                         <ExpandableSection

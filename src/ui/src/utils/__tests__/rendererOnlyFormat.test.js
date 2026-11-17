@@ -116,6 +116,7 @@ const GUARDED_UI_FILES = [
   'utils/workloadFitLabels.js',
   'utils/optimizationLabels.js',
   'utils/auroraDesign.js',
+  'utils/sectionStates.js',
   'utils/summaryFallback.js',
   'components/ChartSankey.js',
   'components/SummaryFallbackNotice.js',
@@ -1126,6 +1127,8 @@ function render(synthesis, loaded) {
       ['src/ui/src/pages/JobMonitoringSummary.js', 'queryCount: s.query_count ?? 0,', 'queryCount: s.query_ids?.length || 0,'],
       ['src/ui/src/pages/JobMonitoringSummary.js', 'signalCount: triageFacts.signal_count ?? 0,', 'signalCount: (res.triage.signals || []).length,'],
       ['src/ui/src/utils/cacheLayer.js', 'finite(facts?.projected_monthly_cost_usd);', 'finite(facts?.projected_monthly_cost_usd) ?? items.reduce((s, cb) => s + cb.monthly_cost_usd, 0);'],
+      // #2308: the design tab shows the report's table count, not one the page picks.
+      ['src/ui/src/utils/sectionStates.js', 'const count = reported ?? loaded;', 'const count = Math.max(reported || 0, loaded);'],
       // #1801: the gate's table count and its findings beyond those listed are stored.
       ['src/ui/src/components/StepGateEvidence.js', '{ count: gate.table_count }', '{ count: tables.length }'],
       ['src/ui/src/components/StepGateEvidence.js', '{ count: gate.gate_findings_not_shown }', '{ count: gate.gate_findings.length - findings.length }'],
