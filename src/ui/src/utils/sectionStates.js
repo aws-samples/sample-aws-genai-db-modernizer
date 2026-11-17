@@ -50,13 +50,3 @@ export function explorerAvailability({ expectedCount, shownCount }) {
   if (expected > 0 && shown === 0) return 'unavailable';
   return expected > shown ? 'partial' : 'available';
 }
-
-/**
- * The short kind of a failed list request, for a section alert: no URL, no status code,
- * no server text. A 404 reads differently from a 5xx or an unreachable API.
- */
-export function loadErrorKind(status) {
-  if (typeof status !== 'number') return 'unreachable';
-  if (status === 404) return 'not-found';
-  return status >= 500 ? 'server' : 'other';
-}

@@ -6,6 +6,7 @@ import Box from "@cloudscape-design/components/box";
 import SpaceBetween from "@cloudscape-design/components/space-between";
 import StatusIndicator from "@cloudscape-design/components/status-indicator";
 import Button from "@cloudscape-design/components/button";
+import RequestError from "./RequestError";
 
 // A file size for display: "512 B", "20 KB", "1.2 MB".
 export function formatBytes(n) {
@@ -48,14 +49,14 @@ function buttonLabel(id, t) {
   return t('analysis-results.deliverables.button.assessment-detail');
 }
 
-const DeliverablesPanel = memo(({ files, loading, error, baseUrl, t }) => {
+const DeliverablesPanel = memo(({ files, loading, error, onRetry, baseUrl, t }) => {
   const byName = new Map((files || []).map(f => [f.filename, f]));
   const buttons = DELIVERABLE_BUTTONS.filter(b => byName.has(b.filename));
   let body;
   if (loading) {
     body = <StatusIndicator type="loading">{t('analysis-results.deliverables.loading')}</StatusIndicator>;
   } else if (error) {
-    body = <StatusIndicator type="error">{t('analysis-results.deliverables.error', { error })}</StatusIndicator>;
+    body = <RequestError inline failure={error} lead={t('analysis-results.deliverables.error')} onRetry={onRetry} t={t} />;
   } else if (buttons.length === 0) {
     body = <Box color="text-body-secondary">{t('analysis-results.deliverables.empty')}</Box>;
   } else {

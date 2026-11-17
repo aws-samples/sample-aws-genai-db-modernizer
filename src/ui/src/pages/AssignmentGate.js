@@ -39,6 +39,7 @@ import SummaryFallbackNotice from "../components/SummaryFallbackNotice";
 import PendingEngineChoices from "../components/PendingEngineChoices";
 import UnservableAssignmentNotice from "../components/UnservableAssignmentNotice";
 import ApiManager from "../classes/ApiManager";
+import { failureFlash, upsertFlash } from "../utils/requestFailure";
 import ChartSankey from "../components/ChartSankey";
 import {
   buildAssignmentSummary,
@@ -169,6 +170,10 @@ const AssignmentGatePage = memo(() => {
     setFlashbarItems(prev => [...prev, { type, header, content, dismissible: true, id }]);
   }, []);
 
+  const addFailure = useCallback((header, source, options = {}) => {
+    setFlashbarItems(prev => upsertFlash(prev, failureFlash(t, source, { header, variant: 'form', ...options })));
+  }, [t]);
+
   const dismissFlash = useCallback((itemId) => {
     setFlashbarItems(prev => prev.filter(i => i.id !== itemId));
   }, []);
@@ -229,11 +234,11 @@ const AssignmentGatePage = memo(() => {
 
     } catch (error) {
       console.error('Error loading gate data:', error);
-      addFlash('error', t('assignment-gate.flash.failed-to-load'), error.message);
+      addFailure(t('assignment-gate.flash.failed-to-load'), error, { id: 'gate-load-failed', onRetry: () => fetchData() });
     } finally {
       setLoading(false);
     }
-  }, [jobId, addFlash, t]);
+  }, [jobId, addFlash, addFailure, t]);
 
 
   useEffect(() => {
@@ -261,15 +266,14 @@ const AssignmentGatePage = memo(() => {
         // Navigate back to monitoring after a short delay
         setTimeout(() => navigate(`/analysis/monitor/summary/${jobId}`), 1500);
       } else {
-        const msg = results['resume']?.error?.message || t('assignment-gate.flash.resume-failed-detail');
-        addFlash('error', t('assignment-gate.flash.resume-failed'), msg);
+        addFailure(t('assignment-gate.flash.resume-failed'), results['resume'], { variant: 'action' });
       }
     } catch (error) {
-      addFlash('error', t('assignment-gate.flash.resume-failed'), error.message);
+      addFailure(t('assignment-gate.flash.resume-failed'), error, { variant: 'action' });
     } finally {
       setResuming(false);
     }
-  }, [jobId, addFlash, navigate, t]);
+  }, [jobId, addFlash, addFailure, navigate, t]);
 
 
   // ---- Save overrides ----
@@ -301,15 +305,15 @@ const AssignmentGatePage = memo(() => {
         // Refresh data
         fetchData();
       } else {
-        const msg = results['save']?.error?.message || t('assignment-gate.flash.save-failed-detail');
-        addFlash('error', t('assignment-gate.flash.save-failed'), msg);
+        // A rejected override: the API's own reason (#2346 opt-in).
+        addFailure(t('assignment-gate.flash.save-failed'), results['save'], { allowReason: true });
       }
     } catch (error) {
-      addFlash('error', t('assignment-gate.flash.save-failed'), error.message);
+      addFailure(t('assignment-gate.flash.save-failed'), error);
     } finally {
       setSavingOverrides(false);
     }
-  }, [jobId, overrides, cacheOverrides, addFlash, fetchData, t, assignmentData]);
+  }, [jobId, overrides, cacheOverrides, addFlash, addFailure, fetchData, t, assignmentData]);
 
   // ---- Save per-table engine choices (#1003) ----
   const handleSaveChoices = useCallback(async (body) => {
@@ -328,15 +332,14 @@ const AssignmentGatePage = memo(() => {
         addFlash('success', t('assignment-gate.flash.overrides-saved'), t('assignment-gate.flash.overrides-saved-detail', { count: (body.table_choices || []).length + (body.overrides || []).length }));
         fetchData();
       } else {
-        const msg = results['choices']?.error?.message || t('assignment-gate.flash.save-failed-detail');
-        addFlash('error', t('assignment-gate.flash.save-failed'), msg);
+        addFailure(t('assignment-gate.flash.save-failed'), results['choices'], { allowReason: true });
       }
     } catch (error) {
-      addFlash('error', t('assignment-gate.flash.save-failed'), error.message);
+      addFailure(t('assignment-gate.flash.save-failed'), error);
     } finally {
       setSavingOverrides(false);
     }
-  }, [jobId, databaseName, assignmentData, addFlash, fetchData, t]);
+  }, [jobId, databaseName, assignmentData, addFlash, addFailure, fetchData, t]);
 
   // ---- Handle Sankey node click ----
   const handleSankeyNodeClick = useCallback((nodeId) => {

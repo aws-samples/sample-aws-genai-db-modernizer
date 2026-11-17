@@ -27,9 +27,10 @@ import Modal from "@cloudscape-design/components/modal";
 
 
 //##-- Custom Objects
-import { SideNavigationConfigurations, createLabelFunction, ApiConfigurations, EmptyState } from "../config/GlobalConfigurations";
+import { SideNavigationConfigurations, createLabelFunction, EmptyState } from "../config/GlobalConfigurations";
 import AppHeader from "../components/AppHeader";
 import ApiManager from "../classes/ApiManager";
+import { failureFlash } from "../utils/requestFailure";
 import CustomTable from "../components/CustomTable";
 import { getStatusType as sharedGetStatusType, getStatusText as sharedGetStatusText, isAlreadyFinishedMessage } from "../utils/jobStatus";
 import { buildDashboardActionItems } from "../utils/dashboardActions";
@@ -324,18 +325,7 @@ const ComponentPage = memo(() => {
       console.log('Cancel job result:', results);
 
       if (results['cancel-assessment']?.error) {
-        const result = results['cancel-assessment'];
-        const errorMessage = result.error?.message || 'Failed to cancel analysis';
-        const statusCode = result.status || 'Unknown';
-        const apiUrl = `${ApiConfigurations.baseUrl}assessments/${jobToCancel.jobId}`;
-
-        addFlashbarMessage({
-          type: 'error',
-          header: t('dashboard.cancel-modal.api-error-header', { statusCode }),
-          content: t('dashboard.cancel-modal.api-error-content', { apiUrl, errorMessage }),
-          dismissible: true,
-          id: `error-${Date.now()}`
-        });
+        addFlashbarMessage(failureFlash(t, results['cancel-assessment'], { header: t('dashboard.cancel-modal.failed-header'), context: 'cancel-assessment', variant: 'action' }));
       } else if (results['cancel-assessment']?.success) {
         // The backend returns 200 for both an actual cancellation and a
         // no-op on a job that was already finished -- the response's
@@ -367,15 +357,7 @@ const ComponentPage = memo(() => {
 
     } catch (error) {
       console.error('Error cancelling analysis:', error);
-      const errorDetails = error.message || 'Failed to cancel analysis';
-
-      addFlashbarMessage({
-        type: 'error',
-        header: t('dashboard.cancel-modal.unexpected-error-header'),
-        content: t('dashboard.cancel-modal.unexpected-error-content', { errorDetails }),
-        dismissible: true,
-        id: `error-${Date.now()}`
-      });
+      addFlashbarMessage(failureFlash(t, error, { header: t('dashboard.cancel-modal.failed-header'), context: 'cancel-assessment', variant: 'action' }));
     } finally {
       setCancellingJob(false);
       setShowCancelModal(false);
@@ -413,18 +395,7 @@ const ComponentPage = memo(() => {
       console.log('Delete artifacts result:', results);
 
       if (results['delete-artifacts']?.error) {
-        const result = results['delete-artifacts'];
-        const errorMessage = result.error?.message || 'Failed to delete artifacts';
-        const statusCode = result.status || 'Unknown';
-        const apiUrl = `${ApiConfigurations.baseUrl}${apiPath}`;
-
-        addFlashbarMessage({
-          type: 'error',
-          header: t('dashboard.delete-artifacts-modal.api-error-header', { statusCode }),
-          content: t('dashboard.delete-artifacts-modal.api-error-content', { apiUrl, errorMessage }),
-          dismissible: true,
-          id: `error-${Date.now()}`
-        });
+        addFlashbarMessage(failureFlash(t, results['delete-artifacts'], { header: t('dashboard.delete-artifacts-modal.failed-header'), context: 'delete-artifacts', variant: 'action' }));
       } else if (results['delete-artifacts']?.success) {
         const removedCount = (results['delete-artifacts'].removed || []).length;
 
@@ -447,15 +418,7 @@ const ComponentPage = memo(() => {
 
     } catch (error) {
       console.error('Error deleting artifacts:', error);
-      const errorDetails = error.message || 'Failed to delete artifacts';
-
-      addFlashbarMessage({
-        type: 'error',
-        header: t('dashboard.delete-artifacts-modal.unexpected-error-header'),
-        content: t('dashboard.delete-artifacts-modal.unexpected-error-content', { errorDetails }),
-        dismissible: true,
-        id: `error-${Date.now()}`
-      });
+      addFlashbarMessage(failureFlash(t, error, { header: t('dashboard.delete-artifacts-modal.failed-header'), context: 'delete-artifacts', variant: 'action' }));
     } finally {
       setDeletingArtifacts(false);
       setShowDeleteArtifactsModal(false);

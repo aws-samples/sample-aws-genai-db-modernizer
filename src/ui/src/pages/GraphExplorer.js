@@ -41,6 +41,7 @@ import GraphExplorerToolbar from '../components/GraphExplorerToolbar';
 import GraphExplorerViewBar from '../components/GraphExplorerViewBar';
 import { StepBar, WalkthroughPanel } from '../components/GraphExplorerWalkthroughs';
 import ApiManager from '../classes/ApiManager';
+import { failureMessageKey, reportFailure } from '../utils/requestFailure';
 import useGraphExplorerFlag from '../hooks/useGraphExplorerFlag';
 import { SideNavigationConfigurations } from '../config/GlobalConfigurations';
 import { displayEngine } from '../utils/engineNames';
@@ -81,10 +82,6 @@ import {
   truncatedPickerLimit,
   walkthroughsPath,
 } from '../utils/graphExplorer';
-
-function errorText(result) {
-  return (result && result.error && result.error.message) || '';
-}
 
 async function get(id, path) {
   const results = await new ApiManager().execute([{ id, path, method: 'GET', params: {} }]);
@@ -235,7 +232,7 @@ export default function GraphExplorer() {
         if (results.overlays && results.overlays.success) setOverlays(results.overlays);
         const result = results.options;
         if (result && result.success) setOptions(result);
-        else setOptionsError(errorText(result) || 'default');
+        else { reportFailure(result, 'graph-options'); setOptionsError('default'); }
       });
     return () => {
       live = false;
@@ -286,7 +283,7 @@ export default function GraphExplorer() {
       // The loading state is the latest read's: a newer one clears it when done.
       if (mine === startSeq.current) setLoading(false);
       if (!result || !result.success) {
-        setProblem(errorText(result) || 'expand');
+        setProblem(reportFailure(result, 'graph-links'));
         return;
       }
       setView((current) => (start ? startFrom(current, result, MAX_VIEW_ELEMENTS) : mergeLinks(current, result, MAX_VIEW_ELEMENTS)));
@@ -321,7 +318,7 @@ export default function GraphExplorer() {
     const result = await get('links', linksPath(jobId, step.start_kind, step.start_id, LINK_LIMIT));
     setWalkLoading(false);
     if (!result || !result.success) {
-      setProblem('expand');
+      setProblem('other');
       return;
     }
     // Every step starts collapsed; a step about one query draws that query's
@@ -948,9 +945,7 @@ export default function GraphExplorer() {
                         <Alert type={problem === 'room' ? 'info' : 'error'} dismissible onDismiss={() => setProblem('')}>
                           {problem === 'room'
                             ? t('graph-explorer.graph.no-room', { max: MAX_VIEW_ELEMENTS })
-                            : problem === 'expand'
-                              ? t('graph-explorer.errors.expand')
-                              : problem}
+                            : `${t('graph-explorer.errors.expand')} ${t(failureMessageKey(problem))}`}
                         </Alert>
                       )}
                       {stayed > 0 && (

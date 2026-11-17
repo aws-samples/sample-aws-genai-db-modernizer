@@ -67,13 +67,15 @@ import { engineFromSearch, linkedEngineTarget, linkedSectionId, activeDesignEngi
 import useResultsTabs, { ResultsSectionNav, useSectionsOnPage } from "../hooks/useResultsTabs";
 import { RESULTS_TABS, hashId, onThisPageAnchors, tabLabel } from "../utils/resultsTabs";
 import ResultsOnThisPage from "../components/ResultsOnThisPage";
-import { designBodyState, explorerAvailability, loadErrorKind } from "../utils/sectionStates";
-import { schemaDesignsRefusal } from "../utils/schemaDesignsLoad";
+import { designBodyState, explorerAvailability } from "../utils/sectionStates";
+import { failureError, failureFlash, failureKind, failureReason, reportFailure, upsertFlash } from "../utils/requestFailure";
+import { schemaDesignsRefused } from "../utils/schemaDesignsLoad";
 import RoutineMigrationSection from "../components/RoutineMigrationSection";
 import ExecutiveSummaryStats from "../components/ExecutiveSummaryStats";
 import SourcesOfTruthCallout from "../components/SourcesOfTruthCallout";
 import TableOwnersCallout from "../components/TableOwnersCallout";
 import DeliverablesPanel from "../components/DeliverablesPanel";
+import RequestError from "../components/RequestError";
 import AssumptionsPanel from "../components/AssumptionsPanel";
 import TradeOffTopicGroups from "../components/TradeOffTopicGroups";
 import { buildQueryRoutingRows, journeyWorkloadFit } from "../utils/queryRouting";
@@ -302,7 +304,7 @@ const AnalysisResultsPage = memo(() => {
   const [aceLoading, setAceLoading] = useState(true);
 
   const addFlashbarMessage = useCallback((message) => {
-    setFlashbarItems(prevItems => [...prevItems, message]);
+    setFlashbarItems(prevItems => upsertFlash(prevItems, message));
   }, []);
 
   const handleFlashbarDismiss = useCallback((itemId) => {
@@ -328,23 +330,23 @@ const AnalysisResultsPage = memo(() => {
         setResultsData(results['results']);
         setFlashbarItems([]);
       } else if (results['results']?.error) {
-        addFlashbarMessage({ type: 'error', header: t('analysis-results.error.failed-to-load'), content: results['results'].error?.message || 'Unknown error', dismissible: true, id: `error-${Date.now()}` });
+        addFlashbarMessage(failureFlash(t, results['results'], { header: t('analysis-results.error.failed-to-load'), context: 'results', id: 'results-load-failed', onRetry: () => fetchData() }));
       }
 
       if (results['schemas']?.success) {
         setSchemaDesigns(results['schemas'].schema_designs || []);
       }
       setDesignsLoadFailed(!results['schemas']?.success);
-      const designsRefused = schemaDesignsRefusal(results['schemas']);
-      if (designsRefused) {
-        addFlashbarMessage({ type: 'error', header: t('analysis-results.error.schema-designs-refused'), content: designsRefused, dismissible: true, id: `error-schemas-${Date.now()}` });
+      if (schemaDesignsRefused(results['schemas'])) {
+        reportFailure(results['schemas'], 'schema-designs');
+        addFlashbarMessage({ type: 'error', header: t('analysis-results.error.schema-designs-refused'), content: failureReason(results['schemas'], t) || t('analysis-results.error.schema-designs-refused-detail'), dismissible: true, id: `error-schemas-${Date.now()}` });
       }
 
       if (results['collector']?.success) {
         setCollectorData(results['collector']);
       }
     } catch (error) {
-      addFlashbarMessage({ type: 'error', header: t('common.labels.error'), content: error.message, dismissible: true, id: `error-${Date.now()}` });
+      addFlashbarMessage(failureFlash(t, error, { header: t('analysis-results.error.failed-to-load'), context: 'results', id: 'results-load-failed', onRetry: () => fetchData() }));
     } finally {
       setLoading(false);
     }
@@ -370,7 +372,7 @@ const AnalysisResultsPage = memo(() => {
       try {
         const apiManager = new ApiManager();
         const first = (await apiManager.execute([{ id: 'p1', path: listPath(1), method: 'GET', params: {} }]))['p1'];
-        if (!first?.success) throw Object.assign(new Error('query-journeys'), { kind: loadErrorKind(first?.status) });
+        if (!first?.success) throw failureError(first, 'query-journeys');
         let items = first.items || [];
         const totalPages = Number(first.total_pages) || 1;
         const pages = Math.min(totalPages, JOURNEY_MAX_PAGES);
@@ -381,13 +383,13 @@ const AnalysisResultsPage = memo(() => {
           }
           const rest = await apiManager.execute(calls);
           calls.forEach(({ id }) => {
-            if (!rest[id]?.success) throw Object.assign(new Error('query-journeys'), { kind: loadErrorKind(rest[id]?.status) });
+            if (!rest[id]?.success) throw failureError(rest[id], 'query-journeys');
             items = items.concat(rest[id].items || []);
           });
         }
         if (!cancelled) setQueryJourneyList({ items, loading: false, error: null, truncated: totalPages > pages });
       } catch (error) {
-        if (!cancelled) setQueryJourneyList({ items: [], loading: false, error: error.kind || 'other', truncated: false });
+        if (!cancelled) setQueryJourneyList({ items: [], loading: false, error: failureKind(error), truncated: false });
       }
     };
     load();
@@ -405,10 +407,10 @@ const AnalysisResultsPage = memo(() => {
         const res = (await apiManager.execute([
           { id: 'deliverables', path: `assessments/${jobId}/deliverables`, method: 'GET', params: {} },
         ]))['deliverables'];
-        if (!res?.success) throw new Error(res?.error?.message || 'Unknown error');
+        if (!res?.success) throw failureError(res, 'deliverables');
         if (!cancelled) setDeliverables({ files: res.files || [], loading: false, error: null });
       } catch (error) {
-        if (!cancelled) setDeliverables({ files: [], loading: false, error: error.message });
+        if (!cancelled) setDeliverables({ files: [], loading: false, error: failureKind(error) });
       }
     };
     load();
@@ -1162,19 +1164,19 @@ const AnalysisResultsPage = memo(() => {
       if (trace?.success) {
         setQueryTrace({ data: trace, error: null });
       } else {
-        setQueryTrace({ data: null, error: trace?.error?.message || t('analysis-results.query-trace.empty') });
+        setQueryTrace({ data: null, error: reportFailure(trace, 'query-trace') });
       }
 
       if (result['query-journey']?.success) {
         setQueryJourneyData(result['query-journey']);
       } else if (result['query-journey']?.error) {
-        setQueryJourneyData({ error: result['query-journey'].error.message || 'Failed to load query history' });
+        setQueryJourneyData({ error: reportFailure(result['query-journey'], 'query-journey') });
       } else {
-        setQueryJourneyData({ error: 'No data available' });
+        setQueryJourneyData({ error: 'not-found' });
       }
     } catch (error) {
       console.error('Error fetching query journey:', error);
-      setQueryJourneyData({ error: error.message || 'Failed to load query history' });
+      setQueryJourneyData({ error: reportFailure(error, 'query-journey') });
     } finally {
       setQueryJourneyLoading(false);
     }
@@ -3213,6 +3215,7 @@ const AnalysisResultsPage = memo(() => {
                 files={deliverables.files}
                 loading={deliverables.loading}
                 error={deliverables.error}
+                onRetry={() => setDeliverablesRound(n => n + 1)}
                 baseUrl={ApiConfigurations.baseUrl}
                 t={t}
               />
@@ -3272,7 +3275,7 @@ const AnalysisResultsPage = memo(() => {
           </Box>
         ) : queryJourneyData?.error ? (
           <Box textAlign="center" padding="l">
-            <StatusIndicator type="error">{queryJourneyData.error}</StatusIndicator>
+            <RequestError inline failure={queryJourneyData.error} lead={t('analysis-results.query-journey.error')} t={t} />
           </Box>
         ) : (
           <Tabs

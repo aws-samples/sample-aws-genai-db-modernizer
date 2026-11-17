@@ -213,10 +213,18 @@ test('a job written before the move ledger shows only the final engine', () => {
 test('loading, error and empty states', () => {
   render({ loading: true });
   expect(container.querySelector('[data-status="loading"]').textContent).toBe('Loading the decision trace...');
-  render({ error: 'Query not found' });
-  expect(text('query-trace-error')).toBe('The decision trace could not be loaded: Query not found');
+  render({ error: 'not-found' });
+  expect(text('query-trace-error')).toBe('The decision trace could not be loaded. The service has no data for this request.');
   render({ trace: null });
   expect(container.textContent).toBe('No decision trace is available for this query.');
+});
+
+test('a failed trace request shows a fixed message, never the server text, URL or status (#2346)', () => {
+  render({ error: 'Query q1 not found at http://10.0.0.5:8000/api/v1/x: <script>alert(1)</script> (502)' });
+  expect(text('query-trace-error')).toBe('The decision trace could not be loaded. The request failed.');
+  expect(container.querySelector('script')).toBeNull();
+  render({ error: 'server' });
+  expect(text('query-trace-error')).toBe('The decision trace could not be loaded. The service returned an error.');
 });
 
 test('trace text is rendered as text, never as markup', () => {

@@ -26,10 +26,11 @@ import Alert from "@cloudscape-design/components/alert";
 
 
 //##-- Custom Objects
-import { SideNavigationConfigurations, ApiConfigurations } from "../config/GlobalConfigurations";
+import { SideNavigationConfigurations } from "../config/GlobalConfigurations";
 import UnservableAssignmentNotice from "../components/UnservableAssignmentNotice";
 import AppHeader from "../components/AppHeader";
 import ApiManager from "../classes/ApiManager";
+import { failureFlash, upsertFlash } from "../utils/requestFailure";
 import ProgressState from "../components/ProgressState";
 import ChartSankey from "../components/ChartSankey";
 import { getCacheOverlay, addCacheOverlayNode } from "../utils/cacheLayer";
@@ -101,7 +102,7 @@ const JobMonitoringSummaryPage = memo(() => {
 
   //##-- Flashbar message handler
   const addFlashbarMessage = useCallback((message) => {
-    setFlashbarItems(prevItems => [...prevItems, message]);
+    setFlashbarItems(prevItems => upsertFlash(prevItems, message));
   }, []);
 
   const handleFlashbarDismiss = useCallback((itemId) => {
@@ -166,18 +167,7 @@ const JobMonitoringSummaryPage = memo(() => {
 
       // Handle job details response
       if (results['get-job-details']?.error) {
-        const result = results['get-job-details'];
-        const errorMessage = result.error?.message || 'Failed to load job details';
-        const statusCode = result.status || 'Unknown';
-        const apiUrl = `${ApiConfigurations.baseUrl}assessments/${jobId}`;
-
-        addFlashbarMessage({
-          type: 'error',
-          header: `API Error (Status: ${statusCode})`,
-          content: `Failed to fetch '${apiUrl}': ${errorMessage}`,
-          dismissible: true,
-          id: `error-${Date.now()}`
-        });
+        addFlashbarMessage(failureFlash(t, results['get-job-details'], { header: t('job-summary.error.job-details'), context: 'get-job-details', id: 'job-details-failed' }));
       } else if (results['get-job-details']?.success) {
         // Merge synthesis data from results into jobData
         const jobDetails = results['get-job-details'];
@@ -189,18 +179,7 @@ const JobMonitoringSummaryPage = memo(() => {
 
       // Handle agent details response
       if (results['get-agent-details']?.error) {
-        const result = results['get-agent-details'];
-        const errorMessage = result.error?.message || 'Failed to load agent details';
-        const statusCode = result.status || 'Unknown';
-        const apiUrl = `${ApiConfigurations.baseUrl}assessments/${jobId}/agents`;
-
-        addFlashbarMessage({
-          type: 'error',
-          header: `API Error (Status: ${statusCode})`,
-          content: `Failed to fetch '${apiUrl}': ${errorMessage}`,
-          dismissible: true,
-          id: `error-${Date.now()}`
-        });
+        addFlashbarMessage(failureFlash(t, results['get-agent-details'], { header: t('job-summary.error.agent-details'), context: 'get-agent-details', id: 'agent-details-failed' }));
       } else if (results['get-agent-details']?.success) {
         setAgentData(results['get-agent-details']);
       }
@@ -219,20 +198,12 @@ const JobMonitoringSummaryPage = memo(() => {
 
     } catch (error) {
       console.error('Error loading job details:', error);
-      const errorDetails = error.message || 'Failed to load job details';
-
-      addFlashbarMessage({
-        type: 'error',
-        header: 'Unexpected Error',
-        content: `An unexpected error occurred: ${errorDetails}. Please check your network connection and try again.`,
-        dismissible: true,
-        id: `error-${Date.now()}`
-      });
+      addFlashbarMessage(failureFlash(t, error, { header: t('job-summary.error.job-details'), context: 'job-summary', id: 'job-summary-failed' }));
     } finally {
       setLoading(false);
       setInitialLoad(false);
     }
-  }, [jobId, addFlashbarMessage, initialLoad]);
+  }, [jobId, addFlashbarMessage, initialLoad, t]);
 
 
   //##-- Fetch progressive insights when stages complete

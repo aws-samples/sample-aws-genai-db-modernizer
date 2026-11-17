@@ -111,11 +111,11 @@ class ApiManager {
                     };
 
                     xhr.onerror = function() {
-                        resolve({ id: apiCall.id, error: new Error('Network error'), success: false });
+                        resolve({ id: apiCall.id, error: Object.assign(new Error('Network error'), { kind: 'unreachable' }), kind: 'unreachable', success: false });
                     };
 
                     xhr.ontimeout = function() {
-                        resolve({ id: apiCall.id, error: new Error('Request timeout'), success: false });
+                        resolve({ id: apiCall.id, error: Object.assign(new Error('Request timeout'), { kind: 'timeout' }), kind: 'timeout', success: false });
                     };
 
                     // Send request with params (if any)

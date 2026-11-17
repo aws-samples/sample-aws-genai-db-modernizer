@@ -9,6 +9,7 @@ import Header from "@cloudscape-design/components/header";
 import Input from "@cloudscape-design/components/input";
 import SpaceBetween from "@cloudscape-design/components/space-between";
 import ApiManager from '../classes/ApiManager';
+import { failureMessageKey, failureReason, reportFailure } from '../utils/requestFailure';
 
 /**
  * #1991: the results page's assumptions panel. Each assumption a customer can set
@@ -64,7 +65,7 @@ const AssumptionsPanel = memo(({ jobId, t, onChanged }) => {
         await load();
         if (onChanged) onChanged();
       } else {
-        setMessage({ type: 'error', text: res?.error?.message || t('analysis-results.assumptions-panel.failed'), notes: [] });
+        setMessage({ type: 'error', text: failureReason(res, t) || `${t('analysis-results.assumptions-panel.failed')} ${t(failureMessageKey(reportFailure(res, 'assumptions'), 'form'))}`, notes: [] });
       }
     } finally {
       setSaving(null);

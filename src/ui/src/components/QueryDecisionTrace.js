@@ -6,6 +6,7 @@ import Box from "@cloudscape-design/components/box";
 import SpaceBetween from "@cloudscape-design/components/space-between";
 import StatusIndicator from "@cloudscape-design/components/status-indicator";
 import Badge from "@cloudscape-design/components/badge";
+import RequestError from "./RequestError";
 import { pinnedFitLabel } from "../utils/queryRouting";
 
 /**
@@ -124,7 +125,7 @@ const QueryDecisionTrace = memo(({ trace, loading, error, t }) => {
   if (error) {
     return (
       <Box padding="s" data-testid="query-trace-error">
-        <StatusIndicator type="error">{t('analysis-results.query-trace.error', { message: error })}</StatusIndicator>
+        <RequestError inline failure={error} lead={t('analysis-results.query-trace.error')} t={t} />
       </Box>
     );
   }

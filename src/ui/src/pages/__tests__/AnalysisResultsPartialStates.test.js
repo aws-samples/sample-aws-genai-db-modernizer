@@ -159,15 +159,15 @@ test('query routing that could not be read is an alert with no count, not "(0)"'
   await renderWith({ results: report({ facts: FACTS_20 }), journeys: { success: false, status: 404, error: { message: 'Not Found' } } });
   expect(alerts().some((a) => a.includes('analysis-results.query-routing.unavailable-title'))).toBe(true);
   expect(alerts().some((a) => a.includes('Not Found'))).toBe(false);
-  expect(alerts().some((a) => a.includes('query-routing.error-not-found'))).toBe(true);
+  expect(alerts().some((a) => a.includes('errors.request.not-found'))).toBe(true);
   expect(counters()).not.toContain('(0)');
   expect(has('analysis-results.query-routing.empty')).toBe(false);
 });
 
 test('a server error on the query list reads differently from not found', async () => {
   await renderWith({ results: report({ facts: FACTS_20 }), journeys: { success: false, status: 500 } });
-  expect(alerts().some((a) => a.includes('query-routing.error-server'))).toBe(true);
-  expect(alerts().some((a) => a.includes('query-routing.error-not-found'))).toBe(false);
+  expect(alerts().some((a) => a.includes('errors.request.server'))).toBe(true);
+  expect(alerts().some((a) => a.includes('errors.request.not-found'))).toBe(false);
 });
 
 test('an explorer the design files cannot fill is an alert, not an empty table', async () => {
@@ -226,8 +226,8 @@ test('a complete design has no longer-list note', async () => {
 test('a script error reading the query list reads as a generic error, not unreachable', async () => {
   // page 1's items is not a list: joining page 2 throws after two good responses
   await renderWith({ results: report({ facts: FACTS_20 }), journeys: { success: true, status: 200, items: 5, total_pages: 2 }, page2: { success: true, status: 200, items: [] } });
-  expect(alerts().some((a) => a.includes('query-routing.error-unreachable'))).toBe(false);
-  expect(alerts().some((a) => a.includes('query-routing.error-other'))).toBe(true);
+  expect(alerts().some((a) => a.includes('errors.request.unreachable'))).toBe(false);
+  expect(alerts().some((a) => a.includes('errors.request.other'))).toBe(true);
 });
 
 test('an explorer with fewer rows than the report counts says it is partial', async () => {
