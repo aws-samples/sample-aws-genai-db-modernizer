@@ -72,7 +72,6 @@ FIELDS = [
         ("trade_offs", 0, "description"),
         "DynamoDB design trade-off for public.users.",
     ),
-    ("dynamodb", {"trade_offs": [ADVICE]}, ("trade_offs", 0, None), "DynamoDB design trade-off."),
     (
         "opensearch",
         {
@@ -131,6 +130,13 @@ def test_every_model_written_field_is_checked(
     assert value == fallback
     path = f"{key}[{i}]" + (f".{field}" if field else "")
     assert rejections == [f'{engine} {path}: cutover advice ("cutover timing")']
+
+
+def test_a_rejected_string_trade_off_with_nothing_left_is_dropped() -> None:
+    """#2324: its fallback names no table, so it would read as a placeholder decision."""
+    out, rejections = clean_schema_design_prose("dynamodb", {"trade_offs": [ADVICE]})
+    assert out is not None and out["trade_offs"] == []
+    assert rejections == ['dynamodb trade_offs[0]: cutover advice ("cutover timing")']
 
 
 @pytest.mark.parametrize(

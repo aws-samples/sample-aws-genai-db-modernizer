@@ -3567,6 +3567,21 @@ class BriefExposure(BaseModel):
     rule: str | None = Field(None, description="The migration-risk rule that raised it, if any")
     engine: str | None = Field(None, description="The engine it is raised for")
     wave: int | None = Field(None, ge=0, description="The wave to act before; None if none")
+    count: int = Field(
+        1,
+        ge=1,
+        description=(
+            "How many open risks of this severity, type, rule and engine it stands for "
+            "(#2324); the summary names them once"
+        ),
+    )
+    risk_ids: list[str] = Field(
+        default_factory=list, description="Every risk register entry it stands for (#2324)"
+    )
+    waves: list[int] = Field(
+        default_factory=list,
+        description="Every wave its risks act before, in order (#2324); empty if none",
+    )
 
 
 class BriefWave(BaseModel):
@@ -3656,7 +3671,8 @@ class ExecutiveBriefFacts(BaseModel):
         "LOW", description="The highest open severity (CRITICAL, HIGH, MEDIUM, LOW)"
     )
     exposures: list[BriefExposure] = Field(
-        default_factory=list, description="The one or two open risks driving the level"
+        default_factory=list,
+        description="The one or two exposures driving the level, identical open risks counted once",
     )
     decision_wave: int | None = Field(
         None,

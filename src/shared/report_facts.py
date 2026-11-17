@@ -56,6 +56,7 @@ from src.shared.engine_names import (
     SOURCE_ENGINE_DISPLAY_NAMES,
     display_engine,
 )
+from src.shared.exposure_wording import group_exposures
 from src.shared.migration_wave_engines import NON_OWNER_ENGINES, primary_owner_engine
 from src.shared.overlap_risk import overlap_risk_ids
 
@@ -3579,8 +3580,10 @@ def executive_brief_facts(
     ``engines``); this block adds what it needs on top: the source engine, whether a
     current cost was collected (and its saving), what each wave does, the overall risk
     level (the highest open severity, ``risk_severity.overall_risk_level``), the one or
-    two open risks at that level that drive it (first in register order), each with the
-    wave to act before, and the wave the reader is asked to approve next.
+    two exposures at that level that drive it (first in register order), each with the
+    wave to act before, and the wave the reader is asked to approve next. Open risks the
+    summary would name the same way are one exposure with their ``count``, ``risk_ids``
+    and ``waves`` (#2324).
 
     ``saving_counted`` is true only when a deliverable states a saving: a known
     current cost, or an engine the customer runs today that the plan retires with a
@@ -3599,12 +3602,15 @@ def executive_brief_facts(
     ranked = sorted(range(len(risks)), key=lambda i: (-severity_rank(severity_of(risks[i])), i))
     # The risks at the overall level are the ones driving it: the most severe, in order.
     top = [i for i in ranked if severity_of(risks[i]) == level] or ranked
-    exposures = []
-    for i in top[:BRIEF_EXPOSURE_LIMIT]:
+    # #2324: risks the summary would name the same way (one rule phrase, or one
+    # severity, type and engine) are one exposure, counted, so the summary never names
+    # one twice. The limit counts exposures, in the order their first risk comes.
+    per_risk = []
+    for i in top:
         r = risks[i]
         engine, _ = risk_engine_and_body(r.get("description"))
         eng = None if engine == "(general)" else engine
-        exposures.append(
+        per_risk.append(
             {
                 "risk_id": r.get("risk_id"),
                 "severity": severity_of(r),
@@ -3614,6 +3620,7 @@ def executive_brief_facts(
                 "wave": _exposure_wave(r, eng, waves),
             }
         )
+    exposures = group_exposures(per_risk, BRIEF_EXPOSURE_LIMIT)
     readiness = {
         int(r.get("wave") or 0): r.get("readiness")
         for r in wave_rows or []

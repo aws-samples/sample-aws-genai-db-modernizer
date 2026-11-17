@@ -287,6 +287,16 @@ def _collector_output(store: Any, report_key: str) -> dict[str, Any] | None:
     return None
 
 
+def deliverable_report(raw: dict[str, Any]) -> dict[str, Any]:
+    """A stored report.json as every deliverable renders it.
+
+    #1148: a report synthesized before a report-only risk rule existed shows the same
+    risk a new synthesis writes (the same function, ADR-032). #1574, #2324: its design
+    prose reads as synthesis now writes it (each long sentence once, no placeholder
+    trade-off, the trade-off risk worded for the list left)."""
+    return design_prose_report(backfill_report_risks(raw))
+
+
 def render_deliverables(
     store: Any,
     job_id: str,
@@ -308,12 +318,7 @@ def render_deliverables(
     """
     if not store.exists(report_key):
         raise FileNotFoundError(f"synthesis report not found: {report_key}")
-    # #1148: a report synthesized before a report-only risk rule existed shows
-    # the same risk a new synthesis writes (the same function, ADR-032).
-    report = backfill_report_risks(store.read_json(report_key))
-    # #1574: a long sentence two design trade-offs share is stated once (the same
-    # function synthesis applies), so a report written before it reads the same.
-    report = design_prose_report(report)
+    report = deliverable_report(store.read_json(report_key))
     # #1801: step 1's gate evidence, from the gate file /move saved after synthesis, so
     # every deliverable rendered after a gate read states it (absent: nothing changes).
     report = with_step_gate(report, step_gate_of(store, database_name, job_id))

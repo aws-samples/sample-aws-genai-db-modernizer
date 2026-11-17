@@ -151,6 +151,8 @@ from src.shared.design_text import (
     carried_write_detail,
     close_call_description,
     design_text_item,
+    trade_off_risk_text,
+    trade_offs_by_engine_title,
     unsupported_pattern_detail,
 )
 from src.shared.engine_names import canonical_engine_id, display_engine
@@ -1240,15 +1242,8 @@ def _trade_off_risks(
     stale data). Its engine id is normalised first: a designer can write
     ``aurora-mysql`` and ``aurora_mysql`` in one design.
     """
-    by_engine: dict[str, dict[str, Mapping[str, Any]]] = {}
-    for t in trade_offs or []:
-        if not isinstance(t, dict):
-            continue
-        engine = canonical_engine_id(str(t.get("engine") or ""))
-        title = _item(str(t.get("description") or ""))
-        if not engine or engine == "reality-check" or not title:
-            continue
-        by_engine.setdefault(engine, {}).setdefault(title, t)
+    # #2324: the same titles the saved-report reader counts after a placeholder leaves.
+    by_engine = trade_offs_by_engine_title(trade_offs)
     out: list[dict[str, Any]] = []
     for engine in sorted(by_engine):
         unique = by_engine[engine]
@@ -1257,16 +1252,14 @@ def _trade_off_risks(
         qids = {str(q) for m in unique.values() for q in m.get("query_ids") or [] if q}
         tables = normalise(s for m in unique.values() for s in m.get("source_tables") or [])
         tables |= {tb for q in qids for tb in ctx.tables_of.get(q, ())}
+        # #2324: one wording with the saved-report reader, which rewords a stored count.
+        description, mitigation = trade_off_risk_text(engine, n, wave)
         out.append(
             _risk(
                 "design.trade_offs",
                 engine,
-                f"The {display_engine(engine)} schema design records "
-                f"{_n(n, 'trade-off', 'trade-offs')} to review, listed under Migration "
-                "trade-offs in the engineering report.",
-                f"Review {_these(n, 'trade-off', 'trade-offs')} with the team that builds "
-                f"{display_engine(engine)} before {_start(wave)}, and test each one the "
-                "application depends on.",
+                description,
+                mitigation,
                 tables,
                 qids,
                 wave,

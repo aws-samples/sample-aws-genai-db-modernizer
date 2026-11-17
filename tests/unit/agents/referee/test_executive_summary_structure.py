@@ -190,16 +190,17 @@ class TestTheFacts:
         # No wave of its own: the first wave of its engine.
         assert brief["exposures"][0]["wave"] == 3
 
+    @pytest.mark.passes_on_main  # #2324: distinct engines, so grouping leaves two
     def test_at_most_two_exposures_in_register_order(self) -> None:
         risks = [
             {
                 "severity": "MEDIUM",
-                "description": f"[dynamodb] r{i}",
+                "description": f"[{engine}] r{i}",
                 "risk_id": f"R{i}",
                 "wave": 3,
-                "rule": "sync.wave",
+                "risk_type": "PERFORMANCE_DEGRADATION",
             }
-            for i in range(4)
+            for i, engine in enumerate(("dynamodb", "documentdb", "opensearch", "elasticache"))
         ]
         brief = executive_brief_facts(self._report(risks), self._waves(), [])
         assert [e["risk_id"] for e in brief["exposures"]] == ["R0", "R1"]

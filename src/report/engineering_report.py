@@ -199,11 +199,14 @@ def _paragraphs(summary: Any) -> list[str]:
 
 def brief_summary(report: dict[str, Any]) -> str | None:
     """The deterministic executive summary (#1403), worded from the stored
-    ``facts.executive_brief``; None for a report written before it."""
+    ``facts.executive_brief``; None for a report written before it. Read through the
+    facts reader, so a block saved before exposures were counted reads grouped (#2324)."""
+    from .facts import report_facts
+
     facts = report.get("facts")
     if not isinstance(facts, dict):
         return None
-    return executive_brief_text(facts, str(report.get("database_name") or ""))
+    return executive_brief_text(report_facts(report), str(report.get("database_name") or ""))
 
 
 def _summary_md(report: dict[str, Any], trust: bool) -> list[str]:

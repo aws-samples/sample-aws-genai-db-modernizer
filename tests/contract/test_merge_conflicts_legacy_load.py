@@ -29,6 +29,7 @@ from src.contracts.synthesis_output import SynthesisOutputContract
 from src.report.facts import report_facts
 from src.shared.adoption_facts import adoption_facts, slice_plan_facts
 from src.shared.cutover_message import CUTOVER_MESSAGE
+from src.shared.exposure_wording import group_exposures
 from src.shared.report_facts import engine_query_count_facts, trade_off_topic_facts
 from tests.unit.agents.schema_design.valid_designs import ddb_design, ddb_pattern, ddb_table
 from tests.unit.report.cache_role import as_read_back
@@ -104,5 +105,17 @@ def test_a_report_written_before_1_72_validates_and_reads_back_unchanged() -> No
     # #2358: and each engine's final query count, from the ranking.
     assert facts["engine_query_counts"] == engine_query_count_facts(old, facts["engines"])
     assert facts["engine_query_counts"]
-    filled = ("trade_off_topics", SAID, "slice_plan", "adoption", "engine_query_counts")
-    assert {k: v for k, v in facts.items() if k not in filled} == (as_read_back(stored))
+    # #2324: and the executive summary's exposures, grouped and counted.
+    brief = stored["executive_brief"]
+    assert facts["executive_brief"] == {**brief, "exposures": group_exposures(brief["exposures"])}
+    filled = (
+        "trade_off_topics",
+        SAID,
+        "slice_plan",
+        "adoption",
+        "engine_query_counts",
+        "executive_brief",
+    )
+    assert {k: v for k, v in facts.items() if k not in filled} == {
+        k: v for k, v in as_read_back(stored).items() if k not in filled
+    }

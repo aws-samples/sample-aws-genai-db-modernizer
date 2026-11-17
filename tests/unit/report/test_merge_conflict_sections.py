@@ -35,6 +35,7 @@ from src.report.merge_conflicts import (
 )
 from src.report.renderers import render_engineering_report_md
 from src.shared.cutover_message import CUTOVER_MESSAGE
+from src.shared.exposure_wording import group_exposures
 from src.shared.report_facts import (
     compute_report_facts,
     dynamodb_merge_conflict_facts,
@@ -42,11 +43,7 @@ from src.shared.report_facts import (
     trade_off_topic_facts,
 )
 from tests.executive_pdf import executive_text
-from tests.unit.agents.schema_design.valid_designs import (
-    ddb_design,
-    ddb_pattern,
-    ddb_table,
-)
+from tests.unit.agents.schema_design.valid_designs import ddb_design, ddb_pattern, ddb_table
 from tests.unit.report.cache_role import as_read_back
 
 ROOT = Path(__file__).resolve().parents[3]
@@ -313,12 +310,27 @@ def test_an_old_job_loads_and_renders_without_the_section() -> None:
     # #2107: and the cutover sentence, which a block written before it reads back with.
     assert facts["cutover_responsibility"] == CUTOVER_MESSAGE
     # The reader fills these for an older report (ADR-032 Decision 4; #1221, #2107, #1128).
-    READ_TIME_FILLED = ("trade_off_topics", SAID, "slice_plan", "adoption", "engine_query_counts")
+    # #2324: and the executive summary's exposures, grouped and counted.
+    READ_TIME_FILLED = (
+        "trade_off_topics",
+        SAID,
+        "slice_plan",
+        "adoption",
+        "engine_query_counts",
+        "executive_brief",
+    )
+    brief = old["facts"]["executive_brief"]
+    assert facts["executive_brief"] == {
+        **brief,
+        "exposures": group_exposures(brief["exposures"]),
+    }
     # #2358: and each engine's final query count, from the ranking.
     assert facts["engine_query_counts"] == engine_query_count_facts(old, facts["engines"])
     assert facts["engine_query_counts"]
     rest = {k: v for k, v in facts.items() if k not in READ_TIME_FILLED}
-    assert rest == as_read_back(old["facts"])
+    assert rest == {
+        k: v for k, v in as_read_back(old["facts"]).items() if k not in READ_TIME_FILLED
+    }
     assert facts["trade_off_topics"] == trade_off_topic_facts(
         old, old["facts"]["reality_check_trade_offs"]
     )

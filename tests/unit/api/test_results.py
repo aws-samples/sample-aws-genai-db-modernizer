@@ -593,3 +593,23 @@ def test_results_routes_never_block_the_event_loop() -> None:
         if isinstance(route, APIRoute) and inspect.iscoroutinefunction(route.endpoint)
     ]
     assert blocking == []
+
+
+def test_results_drops_a_stored_placeholder_trade_off(mock_services):
+    """#2324: /results reads the report the way every deliverable does
+    (``deliverable_report``): the saved wordpress run's placeholder trade-off is gone and
+    its Aurora MySQL risk counts the nine left."""
+    fixture = Path(__file__).resolve().parents[2] / "fixtures/real_runs/wordpress-both/report.json"
+    mock_services["s3"].read_synthesis.return_value = json.loads(fixture.read_text())
+    mock_services["s3"].read_triage.return_value = {"selected_agents": [], "confidence": 0.9}
+    mock_services["s3"].read_step_gate.return_value = None
+    response = client.get("/api/v1/assessments/job-1/results")
+    assert response.status_code == 200
+    synthesis = response.json()["synthesis"]
+    assert "Aurora MySQL design trade-off." not in json.dumps(synthesis["trade_offs"])
+    (risk,) = [
+        r
+        for r in synthesis["risk_assessment"]["risks"]
+        if r.get("rule") == "design.trade_offs" and r["description"].startswith("[aurora_mysql]")
+    ]
+    assert "records 9 trade-offs" in risk["description"]

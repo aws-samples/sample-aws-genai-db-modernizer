@@ -427,6 +427,7 @@
   "analysis-results.trade-offs.filter-by-query-title": "Filter access patterns by {{qid}}",
   "analysis-results.trade-offs.pe-notes-header": "Design review notes ({{count}})",
   "analysis-results.tradeoffs.title": "Trade-offs and design decisions",
+  "analysis-results.tradeoffs.empty": "No design trade-offs recorded for {{engine}}",
   "analysis-results.tradeoffs.mapping": "Mapping",
   "analysis-results.tradeoffs.reality-check": "Reality check",
   "analysis-results.tradeoffs.sql-ids": "SQL IDs",

@@ -147,6 +147,30 @@ describe('results page Reality check tab (ADR-032 Decision 7)', () => {
     expect(tabs.opensearch.map(d => d.description)).toEqual(['Own list']);
   });
 
+  // #2324: synthesis drops a placeholder trade-off, so a design the report covers can
+  // have none left; its tab is empty, never the design's own raw list.
+  test("an engine the report covers with no trade-off left gets an empty tab", () => {
+    const raw = { aurora_mysql: [{ description: 'A robust merge.' }], dynamodb: [{ description: 'Raw' }] };
+    const synthesis = {
+      schema_designs: { aurora_mysql: {}, dynamodb: {} },
+      trade_offs: [{ description: 'Single table.', engine: 'dynamodb' }],
+    };
+    const tabs = tradeOffsByTab(raw, synthesis);
+    expect(tabs.aurora_mysql).toEqual([]);
+    expect(tabs.dynamodb.map(d => d.description)).toEqual(['Single table.']);
+  });
+
+  test('a design the report does not cover keeps its own list', () => {
+    const raw = { opensearch: [{ description: 'Own list' }] };
+    const synthesis = { schema_designs: { dynamodb: {} }, trade_offs: [] };
+    expect(tradeOffsByTab(raw, synthesis).opensearch.map(d => d.description)).toEqual(['Own list']);
+  });
+
+  test('the empty tab names the engine', () => {
+    expect(t('analysis-results.tradeoffs.empty').replace('{{engine}}', 'Aurora MySQL'))
+      .toBe('No design trade-offs recorded for Aurora MySQL');
+  });
+
   test('adds no tab when the reality check decided nothing', () => {
     expect(Object.keys(tradeOffsByTab(designs, { facts: { reality_check_decisions: [] } }))).toEqual(['dynamodb']);
     expect(Object.keys(tradeOffsByTab(designs, undefined))).toEqual(['dynamodb']);
