@@ -307,6 +307,33 @@ def test_dashboard_lists_both_jobs(page: Page, ui: str, all_runs: list[PipelineR
     assert ev == {"console": [], "pageerror": [], "failed": []}
 
 
+def test_dashboard_stats_are_plain_values_with_real_figures(
+    page: Page, ui: str, all_runs: list[PipelineResult]
+) -> None:
+    """#2306: the status figures are one container of plain values, none a link
+    without a target, and "Active jobs" appears once, not in a second container."""
+    page.goto(f"{ui}/dashboard")
+    expect(page.get_by_text("Total analyses")).to_be_visible(timeout=READY_MS)
+    expect(page.locator("dd").first).to_contain_text(re.compile(r"\d"))
+    assert page.get_by_text("Active jobs", exact=True).count() == 1
+    assert page.get_by_text("Recent activity").count() == 0
+    # A link without an href is focusable and does nothing.
+    assert page.locator("dl a").count() == 0, page.locator("dl a").all_inner_texts()
+
+
+def test_dashboard_with_the_api_down_shows_an_error_and_no_zeros(page: Page, ui: str) -> None:
+    """#2306: unreachable API -> one error alert with a retry, dashes for the
+    figures, no request URL and never 0 / 0.0% / 0.0h."""
+    page.route(re.compile(r"/api/v1/"), lambda route: route.abort())
+    page.goto(f"{ui}/dashboard")
+    expect(page.get_by_text("The dashboard could not load")).to_be_visible(timeout=READY_MS)
+    expect(page.get_by_role("button", name="Retry")).to_be_visible()
+    text = page.inner_text("body")
+    assert "0.0%" not in text and "0.0h" not in text, text
+    assert "/api/v1" not in text and "No records" not in text, text
+    assert "Assessments unavailable" in text, text
+
+
 def test_results_page_shows_the_ranked_engines(
     loaded_results: OpenResults, all_runs: list[PipelineResult]
 ) -> None:

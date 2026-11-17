@@ -20,12 +20,13 @@ import StatusIndicator from "@cloudscape-design/components/status-indicator";
 import ButtonDropdown from "@cloudscape-design/components/button-dropdown";
 import SideNavigation from "@cloudscape-design/components/side-navigation";
 import Flashbar from "@cloudscape-design/components/flashbar";
+import Alert from "@cloudscape-design/components/alert";
 import Modal from "@cloudscape-design/components/modal";
 
 
 
 //##-- Custom Objects
-import { SideNavigationConfigurations, createLabelFunction, ApiConfigurations } from "../config/GlobalConfigurations";
+import { SideNavigationConfigurations, createLabelFunction, ApiConfigurations, EmptyState } from "../config/GlobalConfigurations";
 import AppHeader from "../components/AppHeader";
 import ApiManager from "../classes/ApiManager";
 import CustomTable from "../components/CustomTable";
@@ -33,6 +34,7 @@ import { getStatusType as sharedGetStatusType, getStatusText as sharedGetStatusT
 import { buildDashboardActionItems } from "../utils/dashboardActions";
 import { assessmentHref, copyJobIdLabel, databaseLabel } from "../utils/assessmentRows";
 import { formatDuration, UNKNOWN_DURATION } from "../utils/duration";
+import { formatCount, formatPercent, formatHours, NO_FIGURE } from "../utils/format";
 
 
 
@@ -76,14 +78,11 @@ const ComponentPage = memo(() => {
   //--######## Data State
 
   const [assessments, setAssessments] = useState([]);
-  const [dashboardStats, setDashboardStats] = useState({
-    total_assessments: 0,
-    active_jobs: 0,
-    success_rate_percent: 0,
-    average_duration_hours: null,
-    completed_today: 0,
-    last_analysis_at: null
-  });
+  // null until the stats call succeeds: an unloaded figure is never shown as 0 (#2306).
+  const [dashboardStats, setDashboardStats] = useState(null);
+  // True while the last load of the assessments or the stats failed (#2306).
+  const [loadFailed, setLoadFailed] = useState(false);
+  const loadFailedRef = useRef(false);
   const [loading, setLoading] = useState(true);
   const [initialLoad, setInitialLoad] = useState(true);
 
@@ -130,9 +129,10 @@ const ComponentPage = memo(() => {
   //##-- Gather dashboard data
   const gatherDashboardData = useCallback(async () => {
           // Only show loading spinner on initial load, not on background refreshes
-          if (initialLoad) {
+          if (initialLoad || loadFailedRef.current) {
             setLoading(true);
           }
+          let failed = false;
 
           // Save currently selected job IDs before refresh
           const selectedJobIds = selectedItems.map(item => item.jobId);
@@ -159,19 +159,9 @@ const ComponentPage = memo(() => {
             console.log(results);
 
             // Handle assessments response
-            if (results['get-assessments']?.error) {
-              const result = results['get-assessments'];
-              const errorMessage = result.error?.message || 'Failed to load assessments';
-              const statusCode = result.status || 'Unknown';
-              const apiUrl = `${ApiConfigurations.baseUrl}assessments`;
-
-              addFlashbarMessage({
-                type: 'error',
-                header: `API Error (Status: ${statusCode})`,
-                content: `Failed to fetch '${apiUrl}': ${errorMessage}`,
-                dismissible: true,
-                id: `error-${Date.now()}`
-              });
+            if (!results['get-assessments']?.success) {
+              // One alert with a retry covers this (#2306); the request URL never reaches the reader.
+              failed = true
             } else if (results['get-assessments']?.success) {
               const newAssessments = results['get-assessments'].assessments || [];
               setAssessments(newAssessments);
@@ -202,27 +192,16 @@ const ComponentPage = memo(() => {
             }
 
             // Handle dashboard stats response
-            if (results['get-dashboard-stats']?.error) {
-              const result = results['get-dashboard-stats'];
-              const errorMessage = result.error?.message || 'Failed to load dashboard stats';
-              const statusCode = result.status || 'Unknown';
-              const apiUrl = `${ApiConfigurations.baseUrl}dashboard/stats`;
-
-              addFlashbarMessage({
-                type: 'error',
-                header: `API Error (Status: ${statusCode})`,
-                content: `Failed to fetch '${apiUrl}': ${errorMessage}`,
-                dismissible: true,
-                id: `error-${Date.now()}`
-              });
+            if (!results['get-dashboard-stats']?.success) {
+              failed = true
             } else if (results['get-dashboard-stats']?.success) {
               const stats = results['get-dashboard-stats'];
               setDashboardStats({
-                total_assessments: stats.total_assessments || 0,
-                active_jobs: stats.active_jobs || 0,
-                success_rate_percent: stats.success_rate_percent || 0,
+                total_assessments: stats.total_assessments ?? null,
+                active_jobs: stats.active_jobs ?? null,
+                success_rate_percent: stats.success_rate_percent ?? null,
                 average_duration_hours: stats.average_duration_hours ?? null,
-                completed_today: stats.completed_today || 0,
+                completed_today: stats.completed_today ?? null,
                 last_analysis_at: stats.last_analysis_at || null
               });
             }
@@ -236,20 +215,12 @@ const ComponentPage = memo(() => {
 
           } catch (error) {
             console.error('Error loading dashboard data:', error);
-            const errorDetails = error.message || 'Failed to load dashboard data';
-
-            addFlashbarMessage({
-              type: 'error',
-              header: 'Unexpected Error',
-              content: `An unexpected error occurred: ${errorDetails}. Please check your network connection and try again.`,
-              dismissible: true,
-              id: `error-${Date.now()}`
-            });
+            failed = true;
           } finally {
-            if (initialLoad) {
-              setLoading(false);
-              setInitialLoad(false);
-            }
+            loadFailedRef.current = failed;
+            setLoadFailed(failed);
+            setLoading(false);
+            setInitialLoad(false);
     }
   }, [addFlashbarMessage, selectedItems, initialLoad]);
 
@@ -555,12 +526,26 @@ const ComponentPage = memo(() => {
 
 
 
-  //--##  Recent activity items configuration
-  const recentActivityItems = useMemo(() => [
-        { label: t("dashboard.activity.last-analysis"), value: dashboardStats.last_analysis_at ? formatTimeAgo(dashboardStats.last_analysis_at) : 'N/A' },
-        { label: t("dashboard.activity.active-jobs"), value: String(dashboardStats.active_jobs) },
-        { label: t("dashboard.activity.completed-today"), value: String(dashboardStats.completed_today) },
-  ], [t, dashboardStats, formatTimeAgo]);
+  //--##  Status figures: one container, plain values (#2306). A figure that has
+  //-- not loaded is a loading indicator or a dash, never 0; the values are
+  //-- formatted by utils/format.js and computed by the API (ADR-032).
+  const statValue = useCallback((format) => {
+    if (dashboardStats === null) {
+      return loading
+        ? <StatusIndicator type="loading">{t("common.labels.loading")}</StatusIndicator>
+        : NO_FIGURE;
+    }
+    return format(dashboardStats);
+  }, [dashboardStats, loading, t]);
+
+  const statusItems = useMemo(() => [
+        { label: t("dashboard.status.total-analyses"), value: statValue(s => formatCount(s.total_assessments)) },
+        { label: t("dashboard.status.active-jobs"), value: statValue(s => formatCount(s.active_jobs)) },
+        { label: t("dashboard.status.success-rate"), value: statValue(s => formatPercent(s.success_rate_percent)) },
+        { label: t("dashboard.status.average-time"), value: statValue(s => (s.average_duration_hours === null ? UNKNOWN_DURATION : formatHours(s.average_duration_hours))) },
+        { label: t("dashboard.activity.last-analysis"), value: statValue(s => (s.last_analysis_at ? formatTimeAgo(s.last_analysis_at) : NO_FIGURE)) },
+        { label: t("dashboard.activity.completed-today"), value: statValue(s => formatCount(s.completed_today)) },
+  ], [t, statValue, formatTimeAgo]);
 
 
 
@@ -592,6 +577,15 @@ const ComponentPage = memo(() => {
       visibleContent={visibleTableColumns}
       dataset={tableItems}
       loading={loading}
+      emptyState={loadFailed
+        ? <EmptyState title={t("dashboard.table.unavailable")} />
+        : (
+          <EmptyState
+            title={t("dashboard.table.empty-title")}
+            subtitle={t("dashboard.table.empty-body")}
+            action={<Button variant="primary" href="/analysis/create">{t("dashboard.header.new-analysis")}</Button>}
+          />
+        )}
       title={t("dashboard.table.title")}
       description={t("dashboard.table.description")}
       onSelectionItem={handleSelectionChange}
@@ -612,7 +606,7 @@ const ComponentPage = memo(() => {
         </ButtonDropdown>
       }
     />
-  ), [t, tableColumnsList, visibleTableColumns, tableItems, loading, handleSelectionChange, selectedItems, actionItems, handleActionsClick]);
+  ), [t, tableColumnsList, visibleTableColumns, tableItems, loading, loadFailed, handleSelectionChange, selectedItems, actionItems, handleActionsClick]);
 
 
 
@@ -676,6 +670,16 @@ const ComponentPage = memo(() => {
 
 
 
+                      {loadFailed && (
+                        <Alert
+                          type="error"
+                          header={t("dashboard.error.title")}
+                          action={<Button onClick={gatherDashboardData}>{t("common.actions.retry")}</Button>}
+                        >
+                          {t("dashboard.error.body")}
+                        </Alert>
+                      )}
+
                     <Container
                       header={
                         <Header
@@ -687,22 +691,9 @@ const ComponentPage = memo(() => {
                       }
 
                     >
-                      <KeyValuePairs columns={4} items={[
-                        { label: t("dashboard.status.total-analyses"), type: "pair", value: (<Link fontSize="display-l" variant="awsui-value-large">{dashboardStats.total_assessments}</Link>)},
-                        { label: t("dashboard.status.active-jobs"), type: "pair", value: (<Link fontSize="display-l" variant="awsui-value-large">{dashboardStats.active_jobs}</Link>) },
-                        { label: t("dashboard.status.success-rate"), type: "pair", value: (<Box fontSize="display-l" fontWeight="light">{dashboardStats.success_rate_percent.toFixed(1)}%</Box>) },
-                        { label: t("dashboard.status.average-time"), type: "pair", value: (<Box fontSize="display-l" fontWeight="light">{dashboardStats.average_duration_hours === null ? UNKNOWN_DURATION : `${dashboardStats.average_duration_hours.toFixed(1)}h`}</Box>) },
-                      ]} />
+                      <KeyValuePairs columns={3} items={statusItems} />
                     </Container>
 
-
-                    <Container
-                        fitHeight
-                        header={<Header variant="h2">{t("dashboard.activity.title")}</Header>}
-
-                    >
-                          <KeyValuePairs columns={3} items={recentActivityItems} />
-                    </Container>
 
                     <Container>
                       {tableComponent}

@@ -58,3 +58,9 @@ export function formatCount(value) {
 export function formatShortId(id) {
   return id ? String(id).slice(0, 8) : NO_FIGURE;
 }
+
+/** "3.2h": an average duration in hours, one decimal. */
+export function formatHours(value) {
+  const n = numberOrNull(value);
+  return n === null ? NO_FIGURE : `${new Intl.NumberFormat('en-US', { minimumFractionDigits: 1, maximumFractionDigits: 1 }).format(n)}h`;
+}
