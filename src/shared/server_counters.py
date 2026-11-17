@@ -12,6 +12,13 @@ window the statement counts cover with what the server reports about itself:
   window far shorter than the uptime means the counters were reset, or the statements
   evicted, well after the server started.
 - ``stats_reset_seconds``: the time since PostgreSQL's ``pg_stat_statements`` was reset.
+- ``oldest_entry_age_seconds`` (#2389): on PostgreSQL 17, the age of the database's
+  oldest ``pg_stat_statements`` entry (``stats_since``). A reset scoped to one database
+  does not move ``stats_reset``, and no count covers more time than its entry.
+- ``scoped_reset_calls`` (#2389): PostgreSQL's calls of ``pg_stat_statements_reset`` with
+  arguments among the server's statements, every database's: a full reset removes every
+  entry, so each one ran since the last full reset, and before PostgreSQL 17 it is the
+  one trace a reset scoped to a database, user or statement leaves.
 - ``read_at``: when the counters were read (an offline script's ``collected_at``, a live
   collector's clock), which dates a window that has no first and last seen of its own.
 - ``statements_since_start``: the server's own count of client statements since it
@@ -68,6 +75,8 @@ def server_counters(
     stats_reset_seconds: object = None,
     read_at: object = None,
     statements_since_start: object = None,
+    oldest_entry_age_seconds: object = None,
+    scoped_reset_calls: object = None,
 ) -> dict[str, Any] | None:
     """The ``metadata.server_counters`` record, or None when nothing was read."""
     out = {
@@ -76,6 +85,14 @@ def server_counters(
         "read_at": read_at if isinstance(read_at, (str, datetime)) and read_at else None,
         "statements_since_start": _count(statements_since_start),
     }
+    # #2389: PostgreSQL's reset scope figures, recorded only when read, so every other
+    # engine's record keeps its four keys.
+    for key, value in (
+        ("oldest_entry_age_seconds", _positive(oldest_entry_age_seconds)),
+        ("scoped_reset_calls", _count(scoped_reset_calls)),
+    ):
+        if value is not None:
+            out[key] = value
     return out if any(v is not None for v in out.values()) else None
 
 
@@ -96,13 +113,19 @@ def offline_server_counters(data: Mapping[str, Any], source_engine: str) -> dict
         statements_since_start=(
             stats.get("questions") if source_engine in QUESTIONS_ENGINES else None
         ),
+        oldest_entry_age_seconds=(
+            stats.get("oldest_entry_age_seconds") if source_engine == "postgresql" else None
+        ),
+        scoped_reset_calls=(
+            stats.get("scoped_reset_calls") if source_engine == "postgresql" else None
+        ),
     )
 
 
 def live_server_counters(db: Any, *, read_at: object = None) -> dict[str, Any] | None:
     """The server counters a live collector reads: its server window (``stats_window``,
-    the uptime or PostgreSQL's reset age), PostgreSQL's uptime (``server_uptime``) and, on
-    MySQL and MariaDB, ``Questions``.
+    the uptime or PostgreSQL's reset age), PostgreSQL's uptime (``server_uptime``) and
+    reset scope (``reset_scope``, #2389) and, on MySQL and MariaDB, ``Questions``.
     ``read_at`` defaults to now (UTC). A read that fails is left out."""
     window = None
     try:
@@ -116,6 +139,13 @@ def live_server_counters(db: Any, *, read_at: object = None) -> dict[str, Any] |
             uptime = db.server_uptime()
         except Exception:  # noqa: BLE001 -- no uptime: the check says so
             logger.warning("Failed to read the server's uptime")
+    # #2389: PostgreSQL's reset scope figures, each a read of its own.
+    scope: dict[str, Any] = {}
+    if hasattr(db, "reset_scope"):
+        try:
+            scope = db.reset_scope()
+        except Exception:  # noqa: BLE001 -- no reset scope: the check says so
+            logger.warning("Failed to read the statement statistics' reset scope")
     questions = None
     if hasattr(db, "statements_since_start"):
         try:
@@ -124,11 +154,16 @@ def live_server_counters(db: Any, *, read_at: object = None) -> dict[str, Any] |
             logger.warning("Failed to read the server's statement count")
     return server_counters(
         uptime_seconds=uptime,
+        # The reset age as the server records it (the window may be bounded below it).
         stats_reset_seconds=(
-            window.seconds if window is not None and window.basis == STATS_RESET else None
+            scope["stats_reset_seconds"]
+            if scope.get("stats_reset_seconds") is not None
+            else window.seconds if window is not None and window.basis == STATS_RESET else None
         ),
         read_at=read_at or datetime.now(UTC).isoformat(),
         statements_since_start=questions,
+        oldest_entry_age_seconds=scope.get("oldest_entry_age_seconds"),
+        scoped_reset_calls=scope.get("scoped_reset_calls"),
     )
 
 
