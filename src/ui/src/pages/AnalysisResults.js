@@ -90,6 +90,8 @@ import { ENGINE_LABELS, displayEngine } from "../utils/engineNames";
 import { formatMoney, formatRate } from "../utils/format";
 import { badgeTextColor, engineHex } from "../utils/engineColors";
 import EngineBadge from "../components/EngineBadge";
+import DestinationTables from "../components/DestinationTables";
+import { destinationOf, destinationKey } from "../utils/destinations";
 import { WORKLOAD_FIT_DEFINITION } from "../utils/workloadFitLabels";
 import { optimizationLabel } from "../utils/optimizationLabels";
 import { displayTables } from "../utils/tableNames";
@@ -186,13 +188,20 @@ const groupPatternsBySourceTable = (patterns) => {
         groups[table] = {
           table,
           engines: new Set(),
-          destTables: new Set(),
+          destinations: new Map(),
+          destKeys: new Set(),
           patterns: [],
           convergesFrom: new Set(),
         };
       }
       groups[table].engines.add(ap.engine);
-      if (ap.destTable !== '—') groups[table].destTables.add(ap.destTable);
+      // #2320: one entry per destination of one engine, in first-seen order. The cell lists
+      // them and the convergence check below reads the same keys.
+      if (ap.destNamed) groups[table].destKeys.add(destinationKey(ap.engine, ap.destTable));
+      (ap.destNames || []).forEach(name => {
+        const key = destinationKey(ap.engine, name);
+        if (!groups[table].destinations.has(key)) groups[table].destinations.set(key, { engine: ap.engine, name });
+      });
       groups[table].patterns.push(ap);
     });
   });
@@ -200,15 +209,19 @@ const groupPatternsBySourceTable = (patterns) => {
   // Detect convergence: if a dest table has multiple source tables
   const destToSources = {};
   patterns.forEach(ap => {
-    if (ap.destTable !== '—') {
-      if (!destToSources[ap.destTable]) destToSources[ap.destTable] = new Set();
-      ap.sourceTables.forEach(t => destToSources[ap.destTable].add(t));
+    // A destination is an engine and a name: the same name on two engines does not converge.
+    // A pattern that names no destination table (Aurora carries each source table over 1:1)
+    // is left out: a join that reads two tables does not merge them into one destination.
+    if (ap.destNamed) {
+      const key = destinationKey(ap.engine, ap.destTable);
+      if (!destToSources[key]) destToSources[key] = new Set();
+      ap.sourceTables.forEach(t => destToSources[key].add(t));
     }
   });
 
   Object.values(groups).forEach(g => {
-    g.destTables.forEach(dt => {
-      const sources = destToSources[dt];
+    g.destKeys.forEach(key => {
+      const sources = destToSources[key];
       if (sources && sources.size > 1) {
         sources.forEach(s => {
           if (s !== g.table) g.convergesFrom.add(s);
@@ -622,8 +635,7 @@ const AnalysisResultsPage = memo(() => {
         // Aurora (#157/#429 part 1) has no table_name/key_pattern/etc. of its
         // own -- its destination IS its source table(s), carried over 1:1 --
         // so the fallback chain ends on source_tables rather than '—'.
-        const auroraDest = (ap.source_tables || []).map(shortTable).join(', ');
-        const destName = ap.table_name || ap.key_pattern || ap.index_or_stream || ap.index || ap.collection || auroraDest || '—';
+        const { destName, destNames, named } = destinationOf(ap, shortTable);
         const destDef = tableLookup[destName] || null;
 
         patterns.push({
@@ -634,6 +646,8 @@ const AnalysisResultsPage = memo(() => {
           sourceTables: (ap.source_tables || []).map(shortTable),
           sourceTablesRaw: ap.source_tables || [],
           destTable: destName,
+          destNames,
+          destNamed: named,
           destDef,
           gsiName: ap.gsi_name || null,
           keyCondition: ap.key_condition || null,
@@ -1290,7 +1304,7 @@ const AnalysisResultsPage = memo(() => {
       id: 'dest_tables',
       header: t('analysis-results.explorer.col-destination-tables'),
       cell: item => (
-        <Box fontSize="body-s">{[...item.destTables].join(', ')}</Box>
+        <DestinationTables destinations={[...item.destinations.values()]} />
       ),
       width: 250
     },
@@ -2427,6 +2441,7 @@ const AnalysisResultsPage = memo(() => {
               {browseMode === 'source' && (
                 <Table
                   columnDefinitions={sourceTableColumnDefinitions}
+                  wrapLines
                   items={paginatedItems}
                   loading={loading}
                   variant="embedded"
@@ -2500,6 +2515,7 @@ const AnalysisResultsPage = memo(() => {
                   </Header>
                   <Table
                     columnDefinitions={sourceTableColumnDefinitions}
+                    wrapLines
                     items={cacheSourceTableGroups}
                     variant="embedded"
                     selectionType="single"

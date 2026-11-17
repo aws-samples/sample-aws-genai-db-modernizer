@@ -26,6 +26,7 @@
  */
 
 import { CACHE_ENGINE_IDS } from './engineCatalog.generated';
+import { destinationOf } from './destinations';
 
 // The same set as src/shared/cache_engines.py (#398): both come from the engine
 // catalog's role = "cache" (src/catalog/engines, #492).
@@ -245,6 +246,8 @@ export function cacheLayerAccessPatterns(designs, cacheOverlay) {
   return (content.access_patterns || []).map((ap, idx) => {
     const keyPattern = ap.key_pattern || null;
     const keyDesign = keyPattern ? keyDesignByPattern[keyPattern] : null;
+    // The cache layer's destination is its key design (#429 part 2).
+    const { destName, destNames, named } = destinationOf({ key_pattern: keyPattern });
     return {
       id: ap.pattern_id || ap.name || `${cacheEngine}-${idx}`,
       engine: cacheEngine,
@@ -252,7 +255,9 @@ export function cacheLayerAccessPatterns(designs, cacheOverlay) {
       operation: ap.operation || ap.http_method || '—',
       sourceTables: (ap.source_tables || []).map((t) => t.split('.').pop()),
       sourceTablesRaw: ap.source_tables || [],
-      destTable: keyPattern || '—',
+      destTable: destName,
+      destNames,
+      destNamed: named,
       keyPattern,
       ttlSeconds: typeof keyDesign?.ttl_seconds === 'number' ? keyDesign.ttl_seconds : null,
       keyDataType: keyDesign?.data_type || null,
