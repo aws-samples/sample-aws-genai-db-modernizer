@@ -12,6 +12,7 @@ SQL error, for one of ``internal_on``'s)."""
 
 from __future__ import annotations
 
+import datetime as dt
 import json
 import re
 from dataclasses import dataclass, field
@@ -63,7 +64,9 @@ class FakeDataApi:
                  drop_fails: tuple[str, ...] = (), role_reset_on: tuple[str, ...] = (),
                  session_reset_on: tuple[str, ...] = (),
                  secrets: FakeSecrets | None = None,
-                 sign_in_fails: bool = False, reports_user: str | None = None) -> None:  # fmt: skip
+                 sign_in_fails: bool = False, reports_user: str | None = None,
+                 reports_session: str | None = None,
+                 list_ignores_prefix: bool = False) -> None:  # fmt: skip
         self.engine = engine
         self.sent: list[Sent] = []
         self.databases: set[str] = set()
@@ -82,16 +85,27 @@ class FakeDataApi:
         #: goes back to the master user) or changes session_user, in its transaction.
         self.role_reset_on = role_reset_on
         self.session_reset_on = session_reset_on
-        #: Each user's ``(plugin, authentication string)``, from its ``CREATE USER``.
+        #: Each user's ``(plugin, authentication string)``, from its ``CREATE USER``; each
+        #: login role's ``("scram-sha-256", verifier)``, from its ``CREATE ROLE ... PASSWORD``.
         self.auth: dict[str, tuple[str, str]] = {}
+        #: The roles created with LOGIN, and the role each scratch database granted CONNECT.
+        self.logins: set[str] = set()
+        self.granted: dict[str, str] = {}
         #: Linked, a statement sent with one of these secrets signs in as the secret's user,
-        #: as the real Data API does: the user must exist and the secret's password must match
-        #: its authentication string, or the statement is refused (1045). ``sign_in_fails``
-        #: refuses every such sign-in (a server that cannot check the plugin, say).
+        #: as the real Data API does: the user (MySQL) or login role (PostgreSQL) must exist
+        #: and the secret's password must match its authentication string or SCRAM verifier,
+        #: or the statement is refused (1045; 28P01). ``sign_in_fails`` refuses every such
+        #: sign-in (a server that cannot check the plugin, say).
         self.secrets_store = secrets
         self.sign_in_fails = sign_in_fails
         #: What ``SELECT CURRENT_USER()`` answers instead of the signed-in user, when set.
         self.reports_user = reports_user
+        #: What ``session_user`` answers instead of the signed-in role, when set.
+        self.reports_session = reports_session
+        #: A runner listing that returns every user or role, whatever its prefix filter.
+        self.list_ignores_prefix = list_ignores_prefix
+        #: Each login role's VALID UNTIL, from its ``CREATE ROLE``.
+        self.valid_until: dict[str, Any] = {}
         self._tx_role: dict[str, str] = {}
         self._tx_session: dict[str, str] = {}
         self._strict_tx: set[str] = set()
@@ -154,11 +168,19 @@ class FakeDataApi:
         user = self._signed_in_as(secret_arn)
         if user is None:
             return
-        from src.tools.routines.mysql_auth import matches
-
         stored = self.secrets_store.secrets[secret_arn]  # type: ignore[union-attr]
         password = str(json.loads(stored["SecretString"])["password"])
         plugin, auth = self.auth.get(user, ("", ""))
+        if self.engine == "postgresql":
+            from src.tools.routines.postgresql_auth import matches as scram_matches
+
+            expired = user in self.valid_until and self.valid_until[user] < dt.datetime.now(dt.UTC)
+            if (self.sign_in_fails or user not in self.roles or user not in self.logins or expired
+                    or plugin != "scram-sha-256" or not scram_matches(password, auth)):  # fmt: skip
+                raise db_error("28P01", f'FATAL: password authentication failed for user "{user}"')
+            return
+        from src.tools.routines.mysql_auth import matches
+
         if (self.sign_in_fails or user not in self.users or plugin != "caching_sha2_password"
                 or not matches(password, auth)):  # fmt: skip
             raise db_error("28000", f"Database error code: 1045. Message: Access denied for "
@@ -199,13 +221,20 @@ class FakeDataApi:
             return {"records": records, "columnMetadata": meta}
 
         if sql.startswith("SELECT current_user::text, session_user::text"):
-            current = self._tx_role.get(tx or "", MASTER)
-            return rows([current, self._tx_session.get(tx or "", MASTER)], types=("text", "text"))
+            login = self.reports_user or self._signed_in_as(kw_secret) or MASTER
+            current = self._tx_role.get(tx or "", login)
+            session = self._tx_session.get(tx or "", self.reports_session or login)
+            return rows([current, session], types=("text", "text"))
+        if sql.startswith(("CREATE ROLE", "ALTER ROLE")) and re.search(r"(?<!:):[A-Za-z_]", sql):
+            # Conservative: a ``:name`` in the text is taken as a parameter mark, as the Data
+            # API takes one, so no test can pass on a verifier whose colons are left as they are.
+            raise ClientError({"Error": {"Code": "BadRequestException",
+                                         "Message": "missing parameter"}}, "ExecuteStatement")  # fmt: skip
         if sql.startswith("CREATE USER") and ":p" in sql:
             raise db_error("42000", "Database error code: 1064. Message: You have an error in "
                            "your SQL syntax; check the manual near '?' at line 1")  # fmt: skip
         if "FROM mysql.user WHERE" in sql:
-            prefix = params[-1]["value"]["stringValue"]
+            prefix = "" if self.list_ignores_prefix else params[-1]["value"]["stringValue"]
             return rows(*[[u] for u in sorted(self.users) if u.startswith(prefix)])
         if any(name in sql for name in self.drop_fails) and sql.startswith("DROP"):
             raise db_error("55006", "ERROR: database is being accessed by other users")
@@ -232,7 +261,7 @@ class FakeDataApi:
         if "information_schema.EVENTS ORDER BY" in sql:
             return rows()
         if "FROM pg_roles WHERE" in sql:
-            prefix = params[-1]["value"]["stringValue"]
+            prefix = "" if self.list_ignores_prefix else params[-1]["value"]["stringValue"]
             return rows(*[[r] for r in sorted(self.roles) if r.startswith(prefix)])
         created = re.match(r'CREATE DATABASE [`"](\w+)[`"]', sql)
         if created:
@@ -244,7 +273,28 @@ class FakeDataApi:
             return {}
         role = re.match(r'(CREATE|DROP) ROLE (?:IF EXISTS )?"(\w+)"', sql)
         if role:
-            (self.roles.add if role.group(1) == "CREATE" else self.roles.discard)(role.group(2))
+            name = role.group(2)
+            if role.group(1) == "DROP" and any(self.granted.get(d) == name for d in self.databases):
+                raise db_error("2BP01", f'ERROR: role "{name}" cannot be dropped because some '
+                               "objects depend on it")  # fmt: skip
+            (self.roles.add if role.group(1) == "CREATE" else self.roles.discard)(name)
+            password = re.search(r" PASSWORD E'([^']*)'$", sql)
+            if role.group(1) == "CREATE":
+                if re.search(r"\bLOGIN\b", sql) and "NOLOGIN" not in sql:
+                    self.logins.add(name)
+                if password:
+                    self.auth[name] = ("scram-sha-256", password.group(1).replace("\\x3a", ":"))
+                until = re.search(r" VALID UNTIL '([^']*)'", sql)
+                if until:
+                    self.valid_until[name] = dt.datetime.strptime(
+                        until.group(1), "%Y-%m-%d %H:%M:%S+00").replace(tzinfo=dt.UTC)  # fmt: skip
+            else:
+                self.logins.discard(name)
+                self.auth.pop(name, None)
+            return {}
+        granted = re.match(r'GRANT CONNECT, TEMPORARY ON DATABASE "(\w+)" TO "(\w+)"$', sql)
+        if granted:
+            self.granted[granted.group(1)] = granted.group(2)
             return {}
         table = re.match(r'CREATE TABLE (?:IF NOT EXISTS )?[`"]?(\w+)[`"]?', sql)
         if table:
@@ -338,3 +388,16 @@ class FakeSecrets:
         self.deleted.append((kw["SecretId"], bool(kw.get("ForceDeleteWithoutRecovery"))))
         self.secrets.pop(kw["SecretId"], None)
         return {}
+
+
+def runner_for(client: FakeDataApi, *, cluster_arn: str, secret_arn: str, job_id: str = "job1",
+               admin_database: str | None = "routine_proof") -> Any:  # fmt: skip
+    """A runner made the way the proof makes one (:func:`create_runner`), its secret linked
+    to ``client``, so every statement sent with it signs in only when its password matches."""
+    from src.tools.routines import data_api_target as dat
+
+    if client.secrets_store is None:
+        client.secrets_store = FakeSecrets()
+    return dat.create_runner(client, client.secrets_store, cluster_arn=cluster_arn,
+                             secret_arn=secret_arn, job_id=job_id, admin_database=admin_database,
+                             tags=[], engine=client.engine)  # fmt: skip

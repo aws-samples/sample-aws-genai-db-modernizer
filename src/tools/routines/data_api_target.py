@@ -24,21 +24,28 @@ comparison's screen refuses a ``CREATE`` that names any schema but the target's,
 carried text runs as written in the scratch database's own ``public`` schema, as it does on
 the disposable engine of the source.
 
-Role (PostgreSQL). The master user creates a ``NOLOGIN NOSUPERUSER`` role per scratch
-database that owns its ``public`` schema and the schemas the setup made for the source tables (#1970), and every load, ``CREATE`` and call runs under
-``SET LOCAL ROLE`` to it, so a routine runs without the master user's privileges, as it runs
-as a plain role on the disposable engine; the screen refuses a text that changes its role.
-The role is dropped with the database.
-
-User (MySQL). The run makes one restricted user (:func:`create_runner`): a generated
-password kept only in a Secrets Manager secret of its own, tagged with the job id; the user is
-created from the password's ``caching_sha2_password`` hash, computed here, since the Data API
-takes no bound password in ``CREATE USER`` (#2298), and the Data API signs in as it once
-before it is used. Each scratch database grants it that database and nothing else, and
-the setup, the routines (which name it as their ``DEFINER``) and the calls run as it,
-through the Data API with its secret's ARN; the master user only creates, grants and drops
-the scratch database. :func:`drop_runner` drops the user and deletes its secret with no
-recovery window.
+Runner. The run makes one restricted account (:func:`create_runner`) and signs in as it:
+a generated password kept only in a Secrets Manager secret of its own, tagged with the job
+id. The Data API takes no bound password in ``CREATE USER`` (#2298), so the account is
+created from a hash of the password computed here, never from the password itself: on Aurora
+MySQL a user ``IDENTIFIED WITH caching_sha2_password AS '<hash>'``
+(:mod:`~src.tools.routines.mysql_auth`), on Aurora PostgreSQL a ``LOGIN NOSUPERUSER`` role
+with a SCRAM-SHA-256 verifier (:mod:`~src.tools.routines.postgresql_auth`, #2352). The Data
+API signs in as it once before it is used. On MySQL each scratch database grants it that
+database and nothing else. On PostgreSQL each scratch database is closed to ``PUBLIC`` and
+grants the role ``CONNECT`` and ``TEMPORARY`` on it and the ownership of its ``public`` schema
+and of the schemas the setup made for the source tables (#1970); the role keeps what
+``PUBLIC`` has elsewhere, such as ``CONNECT`` on the cluster's own database, where its
+sign-in is checked. The setup, the routines (on MySQL they name it as their ``DEFINER``) and
+the calls run as it, through the Data API with its secret's ARN. The master user only
+creates the scratch database, grants it and drops it; on PostgreSQL it also creates the
+strict check's extension and hands the schemas over, all before the runner owns anything
+there and each in a transaction that pins ``search_path`` to ``pg_catalog``
+(:meth:`DataApiTarget._as_owner`), so it never calls a function the runner made. The
+role takes at most 10 connections and its password stops working ``RUNNER_VALID_HOURS``
+after the run starts. The screen still refuses a text that changes its role, and every
+PostgreSQL call reads its role back. :func:`drop_runner` drops the account and deletes its
+secret with no recovery window, once the scratch databases are gone.
 
 Statements. Every statement is a module constant or built from checked, quoted identifiers
 (``disposable_engine``'s helpers); every value is bound as a Data API parameter. The Data API
@@ -139,6 +146,8 @@ def _resumed(call: Any, sleep: Any = None, /, **kwargs: Any) -> Any:
 
 
 _PLPGSQL_CHECK = "plpgsql_check"
+#: The first statement of every master transaction in a scratch database (review of #2417).
+_PIN = "SET LOCAL search_path = pg_catalog"
 #: The strict check where the cluster does not offer plpgsql_check (Aurora PostgreSQL does
 #: not, checked on 16.15): each PL/pgSQL routine is compiled again with every extra check of
 #: PL/pgSQL itself turned into an error, in a transaction that is rolled back.
@@ -520,8 +529,6 @@ class _DataApiBackend(de._Backend):
         got = _resumed(self._client.begin_transaction, **self._arn, database=self.database)
         self._tx = str(got["transactionId"])
         if self.engine == "postgresql":
-            if self.role:
-                self._call(f"SET LOCAL ROLE {de._quote(self.role, self._mark)}")
             if self._namespaces:  # public first, then the source schemas (#1970)
                 paths = ", ".join(de._quote(n, '"') for n in ["public", *self._namespaces])
                 self._call(f"SET LOCAL search_path = {paths}")
@@ -879,22 +886,24 @@ class DataApiTarget(DisposableEngineTarget):
         self._routine_ids = dict(routine_ids or {})
         self._admin = _DataApiBackend(client, cluster_arn, secret_arn, engine, admin_database or "",
                                       None, call_timeout_s)  # fmt: skip
-        role = self.database + "_runner" if engine == "postgresql" else None
-        if engine == "mysql" and runner is None:
-            raise ValueError("a MySQL target runs its routines as a restricted runner user")
+        if runner is None or runner.engine != engine:
+            raise ValueError(
+                f"a {engine} target runs its routines as a restricted runner of its engine"
+            )
         self._runner = runner
-        # MySQL: the setup, the routines and the calls run as the run's restricted user,
-        # through its own secret; only the scratch database's create, grant and drop run as
-        # the master user.
-        self._backend = _DataApiBackend(client, cluster_arn,
-                                        runner.secret_arn if runner else secret_arn, engine,
-                                        self.database, role, call_timeout_s)  # fmt: skip
+        # The setup, the routines and the calls run as the run's restricted runner, signed in
+        # through its own secret; the master user only creates, grants and drops the scratch
+        # database (on PostgreSQL also hands its schemas over, in it: _owner).
+        self._backend = _DataApiBackend(client, cluster_arn, runner.secret_arn, engine,
+                                        self.database, runner.username, call_timeout_s)  # fmt: skip
+        self._owner = _DataApiBackend(client, cluster_arn, secret_arn, engine, self.database, None,
+                                      call_timeout_s)  # fmt: skip
         self._handle = de.EngineHandle(engine, version, Path("/nonexistent"), "rds-data", None,
                                        self._backend)  # fmt: skip
         self._created = False
         self.drop_failed = False
-        self._session_user: str | None = None  # read in the first call's transaction
-        self._role_sql = de._quote(self.database + "_runner", '"')
+        self._signed_in = False  # read in the first call's transaction
+        self._role_sql = de._quote(runner.username, '"')
         self._strict_ready = False
         try:
             self._create()
@@ -910,11 +919,13 @@ class DataApiTarget(DisposableEngineTarget):
             self._created = True
             if self.engine == "postgresql":
                 role = self._role_sql
-                self._admin._guarded(f"CREATE ROLE {role} NOLOGIN NOSUPERUSER NOCREATEDB "
-                                     "NOCREATEROLE NOREPLICATION NOBYPASSRLS")  # fmt: skip
-                self._admin._guarded(f"GRANT {role} TO CURRENT_USER")
-                self._backend._guarded(f"ALTER SCHEMA public OWNER TO {role}")
-                self._backend._guarded("REVOKE ALL ON SCHEMA public FROM PUBLIC")
+                self._admin._guarded(f"REVOKE ALL ON DATABASE {db} FROM PUBLIC")
+                self._admin._guarded(f"GRANT CONNECT, TEMPORARY ON DATABASE {db} TO {role}")
+                # Everything the master user runs in the database comes before the runner
+                # owns anything there (review of #2417): the strict check's extension first.
+                self._prepare_strict()
+                self._as_owner([(f"ALTER SCHEMA public OWNER TO {role}", []),
+                                ("REVOKE ALL ON SCHEMA public FROM PUBLIC", [])])  # fmt: skip
             elif self._runner is not None:
                 self._admin._guarded(
                     f"GRANT ALL PRIVILEGES ON {grant_database(self.database)}.* TO "
@@ -924,8 +935,36 @@ class DataApiTarget(DisposableEngineTarget):
             raise ProofTargetError(f"the scratch database was not created on {self.description}",
                                    exc.sqlstate) from None  # fmt: skip
 
+    def _as_owner(self, statements: Sequence[tuple[str, list[Any]]]) -> list[dict[str, Any]]:
+        """``statements`` as the master user in the scratch database, in one transaction whose
+        first statement pins ``search_path`` to ``pg_catalog``, so no name it resolves can be
+        an object the runner made. Called only before the runner owns anything there."""
+        owner = self._owner
+        got = _resumed(owner._client.begin_transaction, **owner._arn, database=owner.database)
+        owner._tx = str(got["transactionId"])
+        try:
+            owner._guarded(_PIN)
+            out = [owner._guarded(sql, params, meta=True) for sql, params in statements]
+            owner.commit()
+            return out
+        finally:
+            owner.rollback()
+
+    def _prepare_strict(self) -> None:
+        """Whether the cluster offers ``plpgsql_check`` and, when it does, the extension in the
+        scratch database's ``public`` schema while the master user still owns it."""
+        if not self._strict_check:
+            self._strict_check.append(self._offer_strict())
+        if self._strict_check[0] != _PLPGSQL_CHECK:
+            return
+        try:
+            self._as_owner([(f"CREATE EXTENSION IF NOT EXISTS {_PLPGSQL_CHECK} SCHEMA public", [])])
+            self._strict_ready = True
+        except de.EngineError:
+            self._strict_check[0] = "not_available"  # offered, but it could not be created
+
     def close(self) -> None:
-        """Roll back, drop the scratch database (and its role), whatever happened."""
+        """Roll back and drop the scratch database, whatever happened."""
         with contextlib.suppress(Exception):  # the drop below still runs
             self._backend.close()
         if not getattr(self, "_created", False):
@@ -936,8 +975,6 @@ class DataApiTarget(DisposableEngineTarget):
             drop += " WITH (FORCE)"
         try:
             self._admin._guarded(drop)
-            if self.engine == "postgresql":
-                self._admin._guarded(f"DROP ROLE IF EXISTS {self._role_sql}")
             self._created = False
         except de.EngineError:
             self.drop_failed = True  # the proof's final drop_scratch sweep tries again
@@ -945,8 +982,8 @@ class DataApiTarget(DisposableEngineTarget):
     # ---- the protocol, where the Data API differs
     def _create_schemas(self, names: Sequence[str]) -> None:
         """Each source schema of the setup (#1970), in the scratch database, owned by the
-        run's role as ``public`` is, and closed to everyone else. Made by the master user in
-        the scratch database (the role cannot create a schema there); the names are checked."""
+        runner as ``public`` is, and closed to everyone else. Made by the master user in the
+        scratch database (the runner cannot create a schema there); the names are checked."""
         if self.engine != "postgresql":
             raise ProofTargetError(
                 f"{self.description} cannot hold a source database other than the scratch "
@@ -954,13 +991,16 @@ class DataApiTarget(DisposableEngineTarget):
             )
         made = list(self._backend._namespaces)
         try:
+            todo: list[tuple[str, list[Any]]] = []
             for name in names:
                 if name.casefold() == "public" or name in made:
                     continue
                 schema = de._quote(name, '"')
-                self._backend._guarded(f"CREATE SCHEMA {schema} AUTHORIZATION {self._role_sql}")
-                self._backend._guarded(f"REVOKE ALL ON SCHEMA {schema} FROM PUBLIC")
+                todo += [(f"CREATE SCHEMA {schema} AUTHORIZATION {self._role_sql}", []),
+                         (f"REVOKE ALL ON SCHEMA {schema} FROM PUBLIC", [])]  # fmt: skip
                 made.append(name)
+            if todo:
+                self._as_owner(todo)
         except (de.EngineError, ValueError) as exc:
             raise ProofTargetError(f"the source schemas were not created on {self.description}",
                                    getattr(exc, "sqlstate", None)) from None  # fmt: skip
@@ -980,16 +1020,9 @@ class DataApiTarget(DisposableEngineTarget):
         """``plpgsql_check`` on every PL/pgSQL routine of the scratch database (a trigger
         function with its trigger's table), when the cluster offers it: its errors by
         level and SQLSTATE, per routine id, never a message."""
-        if not self._strict_check:
-            self._strict_check.append(self._offer_strict())
-        if self._strict_check[0] != _PLPGSQL_CHECK:
+        if not self._strict_check or self._strict_check[0] != _PLPGSQL_CHECK:
             return
-        try:
-            if not self._strict_ready:
-                self._backend._guarded(f"CREATE EXTENSION IF NOT EXISTS {_PLPGSQL_CHECK}")
-                self._strict_ready = True
-        except de.EngineError:
-            self._strict_check[0] = "not_available"  # offered, but it could not be created
+        if not self._strict_ready:  # created with the database (_prepare_strict), or not at all
             return
         try:
             routines = self._backend._rows(self._backend._guarded(_PG_PLPGSQL_ROUTINES, meta=True))[
@@ -1045,10 +1078,9 @@ class DataApiTarget(DisposableEngineTarget):
 
     def _offer_strict(self) -> str:
         try:
-            got = self._backend._rows(self._backend._guarded(
-                "SELECT count(*) FROM pg_available_extensions WHERE name = %s", [_PLPGSQL_CHECK],
-                meta=True,
-            ))[0]  # fmt: skip
+            got = self._owner._rows(self._as_owner([(
+                "SELECT count(*) FROM pg_catalog.pg_available_extensions WHERE name = %s",
+                [_PLPGSQL_CHECK])])[0])[0]  # fmt: skip
         except de.EngineError:
             return "not_available"
         return _PLPGSQL_CHECK if got and got[0][0] else EXTRA_ERRORS
@@ -1088,11 +1120,10 @@ class DataApiTarget(DisposableEngineTarget):
                                    getattr(exc, "sqlstate", None)) from None  # fmt: skip
         self._open = True
         if self.engine == "postgresql":
-            if self._session_user is None:
-                current, session = self._who()
-                if current != self._backend.role:
-                    raise ProofTargetError(f"{self.description} did not take the runner role")
-                self._session_user = session
+            if not self._signed_in:
+                if self._who() != (self._backend.role, self._backend.role):
+                    raise ProofTargetError(f"{self.description} did not sign in as the runner role")
+                self._signed_in = True
             self._execute("SELECT setseed(%s)", [seed])
         else:
             self._execute("SET time_zone = '+05:47'")
@@ -1129,15 +1160,16 @@ class DataApiTarget(DisposableEngineTarget):
         return (str(got[0][0]), str(got[0][1])) if got else ("", "")
 
     def _check_role(self) -> None:
-        """After the call and before its rollback: a call that left the runner role, by any
-        spelling the screen missed (dynamic SQL included), or changed ``session_user``, is
-        refused. The screen is a first line only; this read is what holds."""
+        """After the call and before its rollback: a call that ends on another
+        ``current_user`` or ``session_user`` than the runner role it signed in as, by any
+        spelling the screen missed (dynamic SQL included), is refused. Signed in as that role,
+        a call cannot take the master user's privileges; this read is defence in depth."""
         try:
             current, session = self._who()
         except de.EngineError as exc:
             raise ProofTargetError(f"{self.description} could not read the call's role",
                                    exc.sqlstate) from None  # fmt: skip
-        if current != self._backend.role or session != self._session_user:
+        if current != self._backend.role or session != self._backend.role:
             raise RoleChanged("the call changed the role it runs as")
 
     def _pg_row_change(self, call: ProofCall) -> de.CallResult:
@@ -1198,9 +1230,9 @@ def data_api_target(client: DataApiClient, *, cluster_arn: str, secret_arn: str,
 def drop_scratch(client: DataApiClient, *, cluster_arn: str, secret_arn: str, engine: str,
                  job_id: str, admin_database: str | None) -> tuple[list[str], list[str]]:  # fmt: skip
     """Drop every scratch database of ``job_id`` the cluster still holds (what a run that
-    was killed left) and, on PostgreSQL, every ``<scratch>_runner`` role, also one whose
-    database is gone. Each drop is tried on its own: one that fails never stops the others.
-    Returns ``(dropped, left)``, ``left`` naming what could not be dropped or listed."""
+    was killed left). Each drop is tried on its own: one that fails never stops the others.
+    Returns ``(dropped, left)``, ``left`` naming what could not be dropped or listed. The
+    run's runner is :func:`drop_runner`'s and :func:`sweep_runners`'."""
     prefix = scratch_prefix(job_id)
     if not _PREFIX.fullmatch(prefix):  # pragma: no cover - built above
         raise ValueError("not a scratch prefix")
@@ -1208,44 +1240,36 @@ def drop_scratch(client: DataApiClient, *, cluster_arn: str, secret_arn: str, en
         client, cluster_arn, secret_arn, engine, admin_database or "", None, CALL_TIMEOUT_S
     )
     mark = _MARK[engine]
-    lists: tuple[tuple[str, str, list[Any]], ...]
     if engine == "postgresql":
-        lists = (
-            ("database", "SELECT datname::text FROM pg_database WHERE starts_with(datname::text, %s) ORDER BY 1", [prefix]),
-            ("role", "SELECT rolname::text FROM pg_roles WHERE starts_with(rolname::text, %s) ORDER BY 1", [prefix]),
-        )  # fmt: skip
+        sql = (
+            "SELECT datname::text FROM pg_database WHERE starts_with(datname::text, %s) ORDER BY 1"
+        )
+        params: list[Any] = [prefix]
     else:
-        lists = (
-            ("database", "SELECT SCHEMA_NAME FROM information_schema.SCHEMATA "
-             "WHERE LEFT(SCHEMA_NAME, %s) = %s ORDER BY 1", [len(prefix), prefix]),
-        )  # fmt: skip
+        sql = ("SELECT SCHEMA_NAME FROM information_schema.SCHEMATA "
+               "WHERE LEFT(SCHEMA_NAME, %s) = %s ORDER BY 1")  # fmt: skip
+        params = [len(prefix), prefix]
     dropped: list[str] = []
     left: list[str] = []
-    for what, sql, params in lists:
-        try:
-            names = [str(r[0]) for r in admin._rows(admin._guarded(sql, params, meta=True))[0]]
-        except Exception:  # noqa: BLE001 - reported, never raised
-            left.append(f"the {what}s of prefix {prefix} (could not be listed)")
+    try:
+        names = [str(r[0]) for r in admin._rows(admin._guarded(sql, params, meta=True))[0]]
+    except Exception:  # noqa: BLE001 - reported, never raised
+        return dropped, [f"the databases of prefix {prefix} (could not be listed)"]
+    for name in names:
+        if not _SCRATCH.fullmatch(name):
             continue
-        for name in names:
-            base = name[: -len("_runner")] if what == "role" and name.endswith("_runner") else name
-            if not _SCRATCH.fullmatch(base):
-                continue
-            if what == "database":
-                drop = f"DROP DATABASE IF EXISTS {de._quote(name, mark)}" + (
-                    " WITH (FORCE)" if engine == "postgresql" else ""
-                )
-            else:
-                drop = f"DROP ROLE IF EXISTS {de._quote(name, mark)}"
-            try:
-                admin._guarded(drop)
-                dropped.append(name)
-            except Exception:  # noqa: BLE001 - the next one is still dropped
-                left.append(name)
+        drop = f"DROP DATABASE IF EXISTS {de._quote(name, mark)}" + (
+            " WITH (FORCE)" if engine == "postgresql" else ""
+        )
+        try:
+            admin._guarded(drop)
+            dropped.append(name)
+        except Exception:  # noqa: BLE001 - the next one is still dropped
+            left.append(name)
     return dropped, left
 
 
-# --------------------------------------------------------------------------- MySQL runner
+# --------------------------------------------------------------------------- the runner
 
 _RUNNER_PREFIX = "mdzr_"
 _RUNNER_NAME = re.compile(r"^mdzr_[0-9a-f]{10}_[0-9a-f]{8}$")
@@ -1253,20 +1277,32 @@ _RUNNER_NAME = re.compile(r"^mdzr_[0-9a-f]{10}_[0-9a-f]{8}$")
 RUNNER_SECRET_PREFIX = (
     "modernizer/routine-proof/"  # nosec B105 - a secret name prefix, not a password
 )
+#: A runner role's attributes on PostgreSQL: it signs in, and nothing more.
+_PG_RUNNER = (
+    "LOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE NOREPLICATION NOBYPASSRLS CONNECTION LIMIT 10"
+)
+#: How long a PostgreSQL runner's password works after the run starts (review of #2417): a
+#: role a failed ``DROP ROLE`` left stops being usable on its own.
+RUNNER_VALID_HOURS = 6
+_WHO = "SELECT current_user::text, session_user::text"
 
 
 @dataclass(frozen=True)
 class RunnerAccount:
-    """The run's restricted MySQL user: granted each scratch database it runs in and
-    nothing else, reached through the Data API with its own Secrets Manager secret."""
+    """The run's restricted account (a MySQL user, a PostgreSQL login role): granted each
+    scratch database it runs in and nothing else, reached through the Data API with its own
+    Secrets Manager secret."""
 
     username: str
     secret_arn: str
+    engine: str = "mysql"
 
     @property
     def account_sql(self) -> str:
         if not _RUNNER_NAME.fullmatch(self.username):
             raise ValueError("not a runner user name")
+        if self.engine == "postgresql":
+            return de._quote(self.username, '"')
         return f"'{self.username}'@'%'"
 
     @property
@@ -1285,45 +1321,74 @@ def runner_secret_name(job_id: str, username: str) -> str:
 
 def create_runner(client: DataApiClient, secrets_client: Any, *, cluster_arn: str,
                   secret_arn: str, job_id: str, admin_database: str | None,
-                  tags: Sequence[Mapping[str, str]]) -> RunnerAccount:  # fmt: skip
-    """Create the run's restricted MySQL user (no privilege yet: each scratch database
-    grants its own) and its secret, tagged with the job id, then sign in as it through the
-    Data API. The password is generated here and kept only in the secret: the Data API takes
-    no bound parameter in ``CREATE USER ... IDENTIFIED BY ?``, so the user is created from its
-    ``caching_sha2_password`` hash, computed here (:mod:`~src.tools.routines.mysql_auth`), and
-    the plain password is never in a statement (#2298)."""
-    from src.tools.routines.mysql_auth import AUTH_STRING, caching_sha2_auth_string
-
+                  tags: Sequence[Mapping[str, str]], engine: str = "mysql",
+                  now: datetime.datetime | None = None) -> RunnerAccount:  # fmt: skip
+    """Create the run's restricted account (no privilege yet: each scratch database grants
+    its own) and its secret, tagged with the job id, then sign in as it through the Data
+    API. The password is generated here and kept only in the secret: the Data API takes no
+    bound parameter in ``CREATE USER ... IDENTIFIED BY ?``, so the account is created from a
+    hash computed here and the plain password is never in a statement. On MySQL a user from
+    its ``caching_sha2_password`` hash (:mod:`~src.tools.routines.mysql_auth`, #2298), signed
+    in with no database; on PostgreSQL a login role from its SCRAM-SHA-256 verifier
+    (:mod:`~src.tools.routines.postgresql_auth`, #2352), which the master user is made a
+    member of so it can hand the scratch schemas to it, signed in in ``admin_database`` with
+    no grant there, and whose ``current_user`` and ``session_user`` must both be the role."""
+    if engine not in _MARK:
+        raise ValueError(f"not an engine the proof runs on: {engine!r}")
     username = runner_prefix(job_id) + secrets.token_hex(4)
     if not _RUNNER_NAME.fullmatch(username):  # pragma: no cover - built above
         raise ValueError("not a runner user name")
     password = secrets.token_urlsafe(24)
-    auth = caching_sha2_auth_string(password)
-    if not AUTH_STRING.fullmatch(auth):  # pragma: no cover - checked where it is built
-        raise ValueError("not a caching_sha2_password authentication string")
+    account_name = "role" if engine == "postgresql" else "user"
+    kind = "PostgreSQL role" if engine == "postgresql" else "MySQL user"
+    if engine == "postgresql":
+        from src.tools.routines.postgresql_auth import scram_verifier, verifier_literal
+
+        # A verifier is base 64 only (checked where it is built), its colons escaped.
+        role = de._quote(username, '"')
+        start = now or datetime.datetime.now(datetime.UTC)
+        until = (start + datetime.timedelta(hours=RUNNER_VALID_HOURS)).astimezone(datetime.UTC)
+        expires = until.strftime("%Y-%m-%d %H:%M:%S+00")  # digits and fixed marks only
+        create = (f"CREATE ROLE {role} {_PG_RUNNER} VALID UNTIL '{expires}' "
+                  f"PASSWORD {verifier_literal(scram_verifier(password))}")  # fmt: skip
+    else:
+        from src.tools.routines.mysql_auth import AUTH_STRING, caching_sha2_auth_string
+
+        auth = caching_sha2_auth_string(password)
+        if not AUTH_STRING.fullmatch(auth):  # pragma: no cover - checked where it is built
+            raise ValueError("not a caching_sha2_password authentication string")
+        # The hash, not the password, is in the text: crypt's alphabet only, checked above.
+        create = (f"CREATE USER '{username}'@'%' "
+                  f"IDENTIFIED WITH caching_sha2_password AS '{auth}'")  # fmt: skip
     created = secrets_client.create_secret(
         Name=runner_secret_name(job_id, username),
-        Description="The routine proof's restricted MySQL user on the throwaway test cluster",
+        Description=f"The routine proof's restricted {kind} on the throwaway test cluster",
         SecretString=json.dumps({"username": username, "password": password}),
         Tags=list(tags),
     )  # nosec B106 - a generated password, stored only in the secret
-    account = RunnerAccount(username, str(created["ARN"]))
-    admin = _DataApiBackend(client, cluster_arn, secret_arn, "mysql", admin_database or "", None,
+    account = RunnerAccount(username, str(created["ARN"]), engine)
+    admin = _DataApiBackend(client, cluster_arn, secret_arn, engine, admin_database or "", None,
                             CALL_TIMEOUT_S)  # fmt: skip
-    # Signed in through the runner's own secret, with no database: it has no grant yet.
-    own = _DataApiBackend(client, cluster_arn, account.secret_arn, "mysql", "", None,
+    # Signed in through the runner's own secret. MySQL: no database, it has no grant yet.
+    # PostgreSQL: the cluster's own database, which every role may connect to.
+    own = _DataApiBackend(client, cluster_arn, account.secret_arn, engine,
+                          (admin_database or "") if engine == "postgresql" else "", None,
                           CALL_TIMEOUT_S)  # fmt: skip
     try:
-        # The hash, not the password, is in the text: crypt's alphabet only, checked above.
-        admin._guarded(f"CREATE USER {account.account_sql} "
-                       f"IDENTIFIED WITH caching_sha2_password AS '{auth}'")  # fmt: skip
+        admin._guarded(create)
+        if engine == "postgresql":
+            admin._guarded(f"GRANT {account.account_sql} TO CURRENT_USER")
         try:
-            who = own._rows(own._guarded("SELECT CURRENT_USER()", meta=True), as_text=True)[0]
+            sql = _WHO if engine == "postgresql" else "SELECT CURRENT_USER()"
+            who = own._rows(own._guarded(sql, meta=True), as_text=True)[0]
         except de.EngineError as exc:
-            raise de.EngineError("the Data API could not sign in as the runner user",
+            raise de.EngineError(f"the Data API could not sign in as the runner {account_name}",
                                  exc.sqlstate) from None  # fmt: skip
-        if not who or str(who[0][0]) != f"{username}@%":
-            raise de.EngineError("the Data API signed in as another user than the runner")
+        expected = [username, username] if engine == "postgresql" else [f"{username}@%"]
+        if not who or [str(v) for v in who[0]] != expected:
+            raise de.EngineError(
+                f"the Data API signed in as another {account_name} than the runner"
+            )
     except de.EngineError as exc:
         left = drop_runner(client, secrets_client, cluster_arn=cluster_arn, secret_arn=secret_arn,
                            admin_database=admin_database, account=account)  # fmt: skip
@@ -1336,8 +1401,8 @@ def create_runner(client: DataApiClient, secrets_client: Any, *, cluster_arn: st
 
 
 class RunnerNotCreated(de.EngineError):
-    """``CREATE USER`` for the runner failed; ``left`` names what the cleanup that followed
-    could not remove (empty when the user and its secret are both gone)."""
+    """The runner could not be created or signed in as; ``left`` names what the cleanup that
+    followed could not remove (empty when the account and its secret are both gone)."""
 
     def __init__(self, message: str, sqlstate: str | None, left: Sequence[str]) -> None:
         super().__init__(message, sqlstate)
@@ -1345,32 +1410,41 @@ class RunnerNotCreated(de.EngineError):
 
 
 def sweep_runners(client: DataApiClient, secrets_client: Any, *, cluster_arn: str,
-                  secret_arn: str, job_id: str,
-                  admin_database: str | None) -> tuple[list[str], list[str]]:  # fmt: skip
-    """Drop every runner user of ``job_id`` the cluster still holds and delete every runner
-    secret under the job's name prefix: what a run killed between the runner's creation and
-    its drop left. Nothing of another job is touched (each name is checked against the
-    job's prefix and the runner pattern). Each removal is tried on its own; returns
-    ``(removed, left)``."""
+                  secret_arn: str, job_id: str, admin_database: str | None,
+                  engine: str = "mysql") -> tuple[list[str], list[str]]:  # fmt: skip
+    """Drop every runner of ``job_id`` the cluster still holds (MySQL users, PostgreSQL
+    roles) and delete every runner secret under the job's name prefix: what a run killed
+    between the runner's creation and its drop left. On PostgreSQL a role that still owns
+    objects cannot be dropped, so the job's scratch databases go first (:func:`drop_scratch`).
+    Nothing of another job is touched (each name is checked against the job's prefix and the
+    runner pattern). Each removal is tried on its own; returns ``(removed, left)``."""
     prefix = runner_prefix(job_id)
     removed: list[str] = []
     left: list[str] = []
-    admin = _DataApiBackend(client, cluster_arn, secret_arn, "mysql", admin_database or "", None,
+    admin = _DataApiBackend(client, cluster_arn, secret_arn, engine, admin_database or "", None,
                             CALL_TIMEOUT_S)  # fmt: skip
+    params: list[Any]
+    if engine == "postgresql":
+        sql = "SELECT rolname::text FROM pg_roles WHERE starts_with(rolname::text, %s) ORDER BY 1"
+        params = [prefix]
+    else:
+        sql = "SELECT User FROM mysql.user WHERE LEFT(User, %s) = %s ORDER BY 1"
+        params = [len(prefix), prefix]
     try:
-        users = [str(r[0]) for r in admin._rows(admin._guarded(
-            "SELECT User FROM mysql.user WHERE LEFT(User, %s) = %s ORDER BY 1",
-            [len(prefix), prefix], meta=True))[0]]  # fmt: skip
+        users = [str(r[0]) for r in admin._rows(admin._guarded(sql, params, meta=True))[0]]
     except Exception:  # noqa: BLE001 - reported, never raised
-        users, left = [], [f"the runner users of prefix {prefix} (could not be listed)"]
+        users, left = [], [f"the runners of prefix {prefix} (could not be listed)"]
+    what = "role" if engine == "postgresql" else "user"
     for user in users:
         if not (user.startswith(prefix) and _RUNNER_NAME.fullmatch(user)):
             continue
         try:
-            admin._guarded(f"DROP USER IF EXISTS '{user}'@'%'")
-            removed.append(f"user {user}")
+            admin._guarded(
+                f"DROP {what.upper()} IF EXISTS {RunnerAccount(user, '', engine).account_sql}"
+            )
+            removed.append(f"{what} {user}")
         except Exception:  # noqa: BLE001 - the next one is still dropped
-            left.append(f"user {user}")
+            left.append(f"{what} {user}")
     name_prefix = f"{RUNNER_SECRET_PREFIX}{job_id}/"
     try:
         found, token = [], None
@@ -1442,19 +1516,21 @@ def delete_runner_secrets(secrets_client: Any, *, job_id: str) -> tuple[int, lis
 
 def drop_runner(client: DataApiClient, secrets_client: Any, *, cluster_arn: str, secret_arn: str,
                 admin_database: str | None, account: RunnerAccount) -> list[str]:  # fmt: skip
-    """Drop the runner user and delete its secret with no recovery window, each tried on
-    its own; returns what could not be removed."""
+    """Drop the runner (a MySQL user, a PostgreSQL role) and delete its secret with no
+    recovery window, each tried on its own; returns what could not be removed. A PostgreSQL
+    role is dropped once the scratch databases it owns objects in are gone."""
     left: list[str] = []
-    admin = _DataApiBackend(client, cluster_arn, secret_arn, "mysql", admin_database or "", None,
-                            CALL_TIMEOUT_S)  # fmt: skip
+    what = "role" if account.engine == "postgresql" else "user"
+    admin = _DataApiBackend(client, cluster_arn, secret_arn, account.engine, admin_database or "",
+                            None, CALL_TIMEOUT_S)  # fmt: skip
     try:
-        admin._guarded(f"DROP USER IF EXISTS {account.account_sql}")
+        admin._guarded(f"DROP {what.upper()} IF EXISTS {account.account_sql}")
     except Exception:  # noqa: BLE001 - the secret is still deleted
-        left.append(f"user {account.username}")
+        left.append(f"{what} {account.username}")
     try:
         secrets_client.delete_secret(SecretId=account.secret_arn, ForceDeleteWithoutRecovery=True)
     except Exception:  # noqa: BLE001 - reported, never raised
-        left.append(f"secret of user {account.username}")
+        left.append(f"secret of {what} {account.username}")
     return left
 
 

@@ -87,12 +87,22 @@ __all__ = [
     "prove_routines",
 ]
 
-#: Why the MySQL proof stops when its restricted runner user cannot be made; the cleanup's
-#: outcome follows (:data:`RUNNER_CLEANED` or :data:`RUNNER_LEFT`).
+#: Why the proof stops when its restricted runner cannot be made or signed in as; the
+#: cleanup's outcome follows (:data:`RUNNER_CLEANED` or :data:`RUNNER_LEFT`).
 RUNNER_REFUSED = (
     "the MySQL proof runs its routines only as a restricted user granted the scratch database, "
     "and the RDS Data API could not create that user or sign in as it: nothing ran"
 )
+PG_RUNNER_REFUSED = (
+    "the PostgreSQL proof runs its routines only as a login role made for the run and granted "
+    "the scratch database, and the RDS Data API could not create that role or sign in as it: "
+    "nothing ran"
+)
+#: Who the routines ran as, on the command's line.
+RUNNER_LINE = {
+    "mysql": "a restricted user granted the scratch database only",
+    "postgresql": "a login role made for the run, granted the scratch database only",
+}
 RUNNER_CLEANED = ", and its secret was deleted"
 RUNNER_LEFT = ", and what could not be deleted is in left_on_cluster: {left}"
 #: The statuses a routine is carried with.
@@ -549,9 +559,9 @@ def run_proof(
             "status": "error",
             "message": "the test cluster has no Data API or no master secret ARN",
         }
-    if engine == "mysql" and secrets_client is None:
-        return {"status": "error", "message": "the MySQL proof needs Secrets Manager for its "
-                "restricted runner user's secret"}  # fmt: skip
+    if secrets_client is None:
+        return {"status": "error", "message": "the proof needs Secrets Manager for its "
+                "restricted runner's secret"}  # fmt: skip
     from src.tools.routines import data_api_target as dat
 
     arns = {
@@ -568,27 +578,36 @@ def run_proof(
                     "routine-proof-target.yaml, whose parameter group sets it OFF"}  # fmt: skip
     left: list[str] = []
     dropped: list[str] = []
-    if engine == "mysql":
-        # What a killed run left: its runner users and their secrets, by the job's prefixes.
-        done, missed = dat.sweep_runners(data_api, secrets_client, **arns, job_id=job_id,
-                                         admin_database=admin)  # fmt: skip
+
+    def cleanup() -> None:
+        done, missed = dat.drop_scratch(data_api, **arns, engine=engine, job_id=job_id,
+                                        admin_database=admin)  # fmt: skip
         dropped.extend(done)
         left.extend(missed)
+
+    if engine == "postgresql":
+        cleanup()  # a role that owns objects cannot be dropped: a killed run's databases first
+    # What a killed run left: its runners and their secrets, by the job's prefixes.
+    done, missed = dat.sweep_runners(data_api, secrets_client, **arns, job_id=job_id,
+                                     admin_database=admin, engine=engine)  # fmt: skip
+    dropped.extend(done)
+    left.extend(missed)
     before = dat.cluster_baseline(data_api, **arns, engine=engine, admin_database=admin)
     runner: Any = None
     try:
-        if engine == "mysql":
-            try:
-                runner = dat.create_runner(data_api, secrets_client, **arns, job_id=job_id,
-                                           admin_database=admin, tags=_tags(job_id))  # fmt: skip
-            except de.EngineError as exc:
-                # Never a fallback to the master user: the MySQL proof stops here.
-                left.extend(getattr(exc, "left", []))
-                tail = RUNNER_LEFT.format(left=", ".join(left)) if left else RUNNER_CLEANED
-                return {"status": "error", "sqlstate": exc.sqlstate,
-                        "message": RUNNER_REFUSED + tail, "left_on_cluster": left}  # fmt: skip
+        try:
+            runner = dat.create_runner(data_api, secrets_client, cluster_arn=arns["cluster_arn"],
+                                       secret_arn=arns["secret_arn"], job_id=job_id,
+                                       admin_database=admin, tags=_tags(job_id), engine=engine)  # fmt: skip
+        except de.EngineError as exc:
+            # Never a fallback to the master user: the proof stops here.
+            left.extend(getattr(exc, "left", []))
+            tail = RUNNER_LEFT.format(left=", ".join(left)) if left else RUNNER_CLEANED
+            why = PG_RUNNER_REFUSED if engine == "postgresql" else RUNNER_REFUSED
+            return {"status": "error", "sqlstate": exc.sqlstate,
+                    "message": why + tail, "left_on_cluster": left}  # fmt: skip
         collector = store.read_json(f"{db}/{job_id}/collector/output.json")
-        user = runner.definer if runner else str(cluster.get("master_username") or "proofadmin")
+        user = runner.definer if engine == "mysql" else runner.username
         plan = plan_proof(migration, read_routine_sources(store, db, job_id), collector,
                           target_user=user)  # fmt: skip
         strict: dict[str, list[tuple[str, str]]] = {}
@@ -605,17 +624,12 @@ def run_proof(
         major = _major(engine, migration.source_version)
         make_source = source_factory or (lambda e, v: disposable_target(e, v))
         source = make_source(engine, major) if major else None
-
-        def cleanup() -> None:
-            done, missed = dat.drop_scratch(data_api, **arns, engine=engine, job_id=job_id,
-                                            admin_database=admin)  # fmt: skip
-            dropped.extend(done)
-            left.extend(missed)
-
         schema = collector.get("database_schema") or {}
         entries = prove_routines(plan, schema.get("tables") or [], target=target, source=source,
                                  cleanup=cleanup, strict=strict, strict_check=strict_check)  # fmt: skip
     finally:
+        # After prove_routines' cleanup dropped the scratch databases: a PostgreSQL role
+        # that still owns objects in one cannot be dropped.
         if runner is not None:
             left.extend(dat.drop_runner(data_api, secrets_client, **arns, admin_database=admin,
                                         account=runner))  # fmt: skip
@@ -647,8 +661,7 @@ def run_proof(
         "strict_check": run.strict_check,
         "counts": run.counts,
         "seconds": run.seconds,
-        "runner": "a restricted user granted the scratch database only" if runner else
-        "a NOLOGIN role that owns the scratch database's public schema",
+        "runner": RUNNER_LINE[engine],
         "leftover_scratch_dropped": len(dropped),
         "left_on_cluster": left,
         "cluster_changes": changes,

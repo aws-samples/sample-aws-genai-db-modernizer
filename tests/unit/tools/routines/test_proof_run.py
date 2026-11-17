@@ -16,7 +16,7 @@ import pytest
 
 from src.contracts.routine_migration import RoutineMigrationContract
 from src.contracts.routine_sources import RoutineSource
-from tests.unit.tools.routines.fake_data_api import FakeDataApi
+from tests.unit.tools.routines.fake_data_api import FakeDataApi, runner_for
 
 ARNS = {"cluster_arn": "arn:aws:rds:us-east-1:111122223333:cluster:c",
         "secret_arn": "arn:aws:secretsmanager:us-east-1:111122223333:secret:s"}  # fmt: skip  # pragma: allowlist secret
@@ -68,6 +68,7 @@ def _sources() -> list[RoutineSource]:
 
 
 def _target(client: FakeDataApi, **kw: Any) -> Any:
+    kw.setdefault("runner", runner_for(client, **ARNS))
     return _mod("data_api_target").data_api_target(client, **ARNS, engine="postgresql", version="16.15",
                                                    job_id="job1", admin_database="routine_proof", **kw)  # fmt: skip
 
