@@ -431,8 +431,11 @@ Run them as an ordinary user: a disposable engine refuses to start as root (an
 stay 0700 there. <!-- claim: tests/unit/tools/database/test_disposable_engine.py::test_running_as_root_is_refused -->
 `MODERNIZER_DISPOSABLE_ENGINE_PASSWORD` sets the password of MySQL's `root`; the
 role that runs the routines always gets its own generated password. <!-- claim: tests/unit/tools/database/test_disposable_engine.py::test_root_and_the_runner_never_share_a_password -->
-An engine that a crashed run left behind, with its folder, is stopped and removed by
-the next start once its owning process is gone. <!-- claim: tests/unit/tools/database/test_disposable_engine.py::test_a_dead_owners_folder_is_swept_and_a_live_one_is_left -->
+An engine never outlives the process that started it: a small watcher process stops
+the server when its owner dies, even by `SIGKILL`.
+<!-- claim: tests/unit/tools/database/test_disposable_engine_owner_death.py::test_a_sigkilled_owner_takes_its_engine_with_it -->
+A folder a crashed run left behind is stopped and removed by the next start once its
+owning process is gone, whether or not the watcher ran. <!-- claim: tests/unit/tools/database/test_disposable_engine.py::test_a_dead_owners_folder_is_swept_and_a_live_one_is_left -->
 
 `make test` needs the AWS Transform SDK for the `atx_orchestrator` tests
 (`uv pip install -r src/atx_orchestrator/requirements-sdk.txt`; see
