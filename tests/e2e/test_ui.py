@@ -169,30 +169,61 @@ def _each_tab(page: Page) -> Iterator[str]:
         yield tab
 
 
+# The sections stay unchanged for this many frames and this long before a snapshot counts.
+SETTLED_FRAMES = 30
+SETTLED_QUIET_MS = 500
+
 _SETTLED_SECTIONS_JS = """
-([ids, unlisted]) => {
-  const present = ids.filter(id => document.getElementById(id));
-  const listed = present.filter(id => !unlisted.includes(id));
-  const nav = document.querySelector('nav[aria-labelledby="results-on-this-page-title"]');
-  const hrefs = nav ? [...nav.querySelectorAll('a')].map(a => a.getAttribute('href')) : [];
-  const want = listed.length < 2 ? [] : listed.map(id => '#' + id);
-  const same = hrefs.length === want.length && hrefs.every((h, i) => h === want[i]);
-  return same ? { present, listed } : false;
+async ([ids, unlisted, frames, quietMs, timeoutMs]) => {
+  const snapshot = () => {
+    const present = ids.filter(id => document.getElementById(id));
+    const listed = present.filter(id => !unlisted.includes(id));
+    const nav = document.querySelector('nav[aria-labelledby="results-on-this-page-title"]');
+    const hrefs = nav ? [...nav.querySelectorAll('a')].map(a => a.getAttribute('href')) : [];
+    const want = listed.length < 2 ? [] : listed.map(id => '#' + id);
+    const same = hrefs.length === want.length && hrefs.every((h, i) => h === want[i]);
+    return { present, listed, same };
+  };
+  const nextFrame = () => new Promise(resolve => requestAnimationFrame(resolve));
+  const start = performance.now();
+  let last = null;
+  let key = null;
+  let stableFrames = 0;
+  let since = start;
+  while (performance.now() - start < timeoutMs) {
+    await nextFrame();
+    const now = snapshot();
+    const nowKey = JSON.stringify(now);
+    if (!now.same || nowKey !== key) {
+      key = nowKey;
+      last = now;
+      stableFrames = 0;
+      since = performance.now();
+      continue;
+    }
+    stableFrames += 1;
+    if (stableFrames >= frames && performance.now() - since >= quietMs) {
+      return { present: last.present, listed: last.listed };
+    }
+  }
+  return null;
 }
 """
 
 
 def _settled_sections(page: Page, tab: str) -> tuple[list[str], list[str]]:
     """The open tab's sections on the page and the ones its On this page navigation
-    lists, once the two agree (#2376). A section that renders late reaches the page
-    first and the navigation a frame after, so one read of either can disagree with the
-    other on a slow runner. Both come from one DOM snapshot, retried in the page until
-    the navigation lists exactly the listed sections; a navigation that never does
-    times out."""
-    handle = page.wait_for_function(
-        _SETTLED_SECTIONS_JS, arg=[TAB_SECTIONS[tab], sorted(UNLISTED_SECTIONS)], timeout=READY_MS
+    lists, once the two agree and stay unchanged (#2376, #2394). A section that renders
+    late reaches the page first and the navigation a frame after, and a further section
+    can still arrive after the two first agree. Both come from one DOM snapshot that is
+    taken only after the page and the navigation have held the same sections for
+    ``SETTLED_FRAMES`` animation frames and ``SETTLED_QUIET_MS``; a tab that never
+    settles fails."""
+    settled = page.evaluate(
+        _SETTLED_SECTIONS_JS,
+        [TAB_SECTIONS[tab], sorted(UNLISTED_SECTIONS), SETTLED_FRAMES, SETTLED_QUIET_MS, READY_MS],
     )
-    settled = handle.json_value()
+    assert settled, f"the {tab} tab's sections and On this page links never settled"
     return settled["present"], settled["listed"]
 
 
