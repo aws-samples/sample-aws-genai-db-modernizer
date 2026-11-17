@@ -293,6 +293,12 @@ def _table_keys(table: Mapping) -> TableKeys:
     for index in table.get("indexes") or []:
         if str(index.get("index_type") or "").lower() in _NON_KEY_INDEX_TYPES:
             continue
+        # An expression index (#2381) keys on an expression, which no query's columns
+        # name, and its plain ``columns`` are only part of its keys, in an order the
+        # collection does not record: a unique (tenant_id, lower(name)) does not make
+        # tenant_id unique. Like the index types above, it is no key evidence.
+        if index.get("has_expressions") is True:
+            continue
         columns = _lower(index.get("columns") or [])
         if not columns:
             continue

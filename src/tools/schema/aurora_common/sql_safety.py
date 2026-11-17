@@ -254,3 +254,186 @@ def parse_index_statement(statement: str) -> ParsedIndex:
         pg_only=pg_only,
         quotes=quotes,
     )
+
+
+# ---------------------------------------------------------------------------
+# PostgreSQL expression index keys (#2381)
+# ---------------------------------------------------------------------------
+
+MAX_EXPRESSION_LENGTH = 300
+_MAX_EXPRESSION_DEPTH = 6
+
+_EXPRESSION_TOKENS = re.compile(
+    r"\s*(?:"
+    r"(?P<string>'(?:[^'\\\n\r]|'')*')"
+    r"|(?P<number>\d+)"
+    r"|(?P<quoted>\"[A-Za-z_][A-Za-z0-9_$]*\")"
+    r"|(?P<word>[A-Za-z_][A-Za-z0-9_$]*)"
+    r"|(?P<cast>::)"
+    r"|(?P<punct>[(),])"
+    r")"
+)
+#: The functions an expression key may call, as (fewest, most) arguments and how the DDL
+#: spells the name: pg_get_expr's own spelling, ``"left"`` quoted since LEFT is a keyword.
+#: Every one is a built-in, immutable function of Aurora PostgreSQL.
+_EXPRESSION_FUNCTIONS: dict[str, tuple[int, int, str]] = {
+    "lower": (1, 1, "lower"),
+    "upper": (1, 1, "upper"),
+    "md5": (1, 1, "md5"),
+    "left": (2, 2, '"left"'),
+    "coalesce": (2, 8, "COALESCE"),
+}
+#: The casts a literal may keep (``'-1'::integer``), as the DDL spells them.
+_LITERAL_CASTS = frozenset({"integer", "bigint", "smallint", "text"})
+
+
+@dataclass
+class _Node:
+    kind: str  # "column", "literal", "call"
+    sql: str
+    has_column: bool
+    column: str | None = None  # the table's spelling, for a bare column
+
+
+class _ExpressionParser:
+    """Recursive descent over one ``pg_get_expr`` key list; see ``render_index_expressions``."""
+
+    def __init__(self, text: str, columns: list[str], quote, text_columns: set[str]):
+        self.tokens = self._tokenize(text)
+        self.pos = 0
+        self.columns = columns
+        self.quote = quote
+        self.text_columns = text_columns
+
+    @staticmethod
+    def _tokenize(text: str) -> list[tuple[str, str]]:
+        tokens: list[tuple[str, str]] = []
+        pos = 0
+        while pos < len(text):
+            if not text[pos:].strip():
+                break
+            match = _EXPRESSION_TOKENS.match(text, pos)
+            if match is None or match.end() == pos:
+                raise SqlFragmentError("expression: a character outside the supported grammar")
+            kind = match.lastgroup or ""
+            tokens.append((kind, match.group(kind)))
+            pos = match.end()
+        return tokens
+
+    def _peek(self) -> tuple[str, str] | None:
+        return self.tokens[self.pos] if self.pos < len(self.tokens) else None
+
+    def _take(self, value: str | None = None) -> tuple[str, str]:
+        token = self._peek()
+        if token is None or (value is not None and token[1] != value):
+            raise SqlFragmentError("expression: incomplete or unbalanced")
+        self.pos += 1
+        return token
+
+    def keys(self) -> list[str]:
+        keys = [self._key()]
+        while self._peek() is not None:
+            self._take(",")
+            keys.append(self._key())
+        return keys
+
+    def _key(self) -> str:
+        node = self._expr(0)
+        if not node.has_column or node.kind == "column":
+            # A bare column is a plain key, which the collector names itself; a key with no
+            # column is a constant.
+            raise SqlFragmentError("expression: each key must call a function on a column")
+        return node.sql
+
+    def _expr(self, depth: int) -> _Node:
+        if depth > _MAX_EXPRESSION_DEPTH:
+            raise SqlFragmentError("expression: nested too deeply")
+        node = self._primary(depth)
+        while (token := self._peek()) is not None and token[0] == "cast":
+            self._take()
+            node = self._cast(node)
+        return node
+
+    def _primary(self, depth: int) -> _Node:
+        kind, value = self._take()
+        if value == "(":
+            node = self._expr(depth + 1)
+            self._take(")")
+            return node
+        if kind == "string":
+            return _Node("literal", value, False)
+        if kind == "number":
+            return _Node("literal", value, False)
+        if kind in ("word", "quoted"):
+            name = value.strip('"')
+            nxt = self._peek()
+            if nxt is not None and nxt[1] == "(":
+                return self._call(name.lower(), depth)
+            column = resolve_column(self.columns, name)
+            if column is None:
+                raise SqlFragmentError("expression: a name that is not a column of this table")
+            return _Node("column", self.quote(column), True, column)
+        raise SqlFragmentError("expression: unexpected punctuation")
+
+    def _call(self, name: str, depth: int) -> _Node:
+        if name not in _EXPRESSION_FUNCTIONS:
+            raise SqlFragmentError("expression: a function outside the supported set")
+        fewest, most, spelling = _EXPRESSION_FUNCTIONS[name]
+        self._take("(")
+        args = [self._expr(depth + 1)]
+        while (token := self._peek()) is not None and token[1] == ",":
+            self._take()
+            args.append(self._expr(depth + 1))
+        self._take(")")
+        if not fewest <= len(args) <= most:
+            raise SqlFragmentError("expression: a function called with the wrong arguments")
+        if name == "left" and (args[1].kind != "literal" or not args[1].sql.isdigit()):
+            raise SqlFragmentError("expression: left() takes a length")
+        return _Node(
+            "call",
+            f"{spelling}({', '.join(a.sql for a in args)})",
+            any(a.has_column for a in args),
+        )
+
+    def _cast(self, node: _Node) -> _Node:
+        kind, value = self._take()
+        if kind != "word":
+            raise SqlFragmentError("expression: a cast to a type outside the supported set")
+        cast = value.lower()
+        if cast == "character":
+            self._take("varying")
+            cast = "character varying"
+        if node.kind == "column":
+            if cast in _COLUMN_TEXT_CASTS and str(node.column).lower() in self.text_columns:
+                return node  # (email)::text on a text column: PostgreSQL's own no-op cast
+            raise SqlFragmentError("expression: a cast that changes a column's type")
+        if node.kind == "literal" and cast in _LITERAL_CASTS:
+            return _Node("literal", f"{node.sql}::{cast}", False)
+        raise SqlFragmentError("expression: a cast outside the supported set")
+
+
+def render_index_expressions(
+    text: str, columns: list[str], quote, text_columns: Iterable[str] = ()
+) -> list[str]:
+    """A PostgreSQL index's expression keys (``pg_get_expr`` of ``pg_index.indexprs``),
+    each validated and re-rendered on its own (#2381).
+
+    Collector text, so nothing of it is pasted: it is tokenized and parsed under a strict
+    grammar, and each key is written again from the parse, columns quoted with ``quote``.
+    Allowed: a call of ``lower``, ``upper``, ``md5``, ``left`` (a column and a length) or
+    ``COALESCE`` on columns of the table and literals; the no-op text casts PostgreSQL puts
+    on a text column (``(email)::text``, dropped, ``text_columns`` names those columns);
+    and ``integer``, ``bigint``, ``smallint`` or ``text`` casts on a literal. Every key
+    must call a function on a column. Anything else (operators, other functions or casts,
+    JSON paths, comments, a second statement) raises ``SqlFragmentError`` with a fixed
+    message that quotes none of the text.
+    """
+    text = text.strip()
+    if not text:
+        raise SqlFragmentError("expression: blank")
+    if len(text) > MAX_EXPRESSION_LENGTH:
+        raise SqlFragmentError(f"expression: longer than {MAX_EXPRESSION_LENGTH} characters")
+    if any(seq in text for seq in _FORBIDDEN_SEQUENCES):
+        raise SqlFragmentError("expression: newlines, backslashes, comments or ';'")
+    texts = {c.lower() for c in text_columns}
+    return _ExpressionParser(text, columns, quote, texts).keys()
