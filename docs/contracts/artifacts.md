@@ -24,7 +24,7 @@ Versioned (`contract_version`, MAJOR.MINOR), written through their model and che
 | `assignment/v\d+/assignment\.json` | `Assignment` (`src.contracts.assignment_models`) |
 | `assignment/v\d+/validation\.json` | `ValidationResult` (`src.contracts.assignment_models`) |
 | `routines/v\d+/routine_migration\.json` | `RoutineMigrationContract` (`src.contracts.routine_migration`): how each collected routine migrates, keyed on the assignment version: id, kind, dependencies, deploy order, status, applied rewrite rules and check results, never the routine's text (#1934) |
-| `routines/v\d+/routine_repair\.json` | `RoutineRepairContract` (`src.contracts.routine_repair`): what the routine repair seam made of a model's answer for that version's routines the deterministic path could not carry (#1940): per routine its state (`repaired_pending_proof`, `refused`, `no_answer`, `not_repaired`, never proved), the reasons it needed an intervention, and for a candidate the redacted `CREATE` and the model's change note; never the exact text |
+| `routines/v\d+/routine_repair\.json` | `RoutineRepairContract` (`src.contracts.routine_repair`): what the routine repair loop made of a model's answers for that version's routines the deterministic path could not carry (#1940, #1941): per routine its state (`model_repaired` only after the side-by-side proof accepted the candidate rebuilt onto the exact text, `repaired_pending_proof`, `needs_attention`, `refused`, `no_answer`, `not_repaired`), the reasons it needed an intervention, each attempt's stage, code and error in words (at most 3), and for a candidate the redacted `CREATE`, a diff of the redacted texts and the model's change note; the proof target and the rounds run; never the exact text |
 | `reality-check/awaiting_llm\.json` | `RealityCheckMarker` (`src.contracts.reality_check_marker`) |
 | `decisions/(?!engine_scope\.json$)[^/]+\.json` | `DecisionRecord` (`src.contracts.decision_record`) |
 | `reality-check/(?:v\d+/)?output\.json` | `RealityCheckOutputContract` (`src.contracts.reality_check_output`) |
@@ -81,6 +81,7 @@ Not contracts: callers may not rely on their shape. A pattern starting with `^` 
 
 | Path pattern | Why it is not a contract |
 |---|---|
+| `routines/v\d+/repair/loop_state\.json` | the routine repair loop's progress between external rounds (#1941): ids, attempts and error words, read only by the next `--finalize`; the result is `routine_repair.json` |
 | `wave-redesign/v\d+/rounds\.json` | the bounded redesign rounds of held waves: read by the next round and copied by synthesis into report.json's wave_redesign, which the contract types |
 | `schema-[^/]+/(?:v\d+/)?redesign_request\.json` | the failed checks one redesign round sends back to an engine's design, and, in a round on DynamoDB parts, the parts it redesigns and the parts it keeps with their digests: read only by that round's design input, `--split` and the review check, and deleted when the rounds end |
 | `collector/sql_shadow\.json` | parser comparison (sqlglot facade vs regex table references, #557): a diagnostic rewritten every collect, read by no phase |

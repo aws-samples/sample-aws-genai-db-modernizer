@@ -31,6 +31,12 @@ def routine_repair_response_path(database_name: str, job_id: str, version: int) 
     return f"{database_name}/{job_id}/routines/v{version}/repair/llm_response.json"
 
 
+def routine_repair_state_path(database_name: str, job_id: str, version: int) -> str:
+    """The repair loop's progress between external rounds (#1941):
+    ``routines/v<N>/repair/loop_state.json`` (ids, attempts and words, never routine text)."""
+    return f"{database_name}/{job_id}/routines/v{version}/repair/loop_state.json"
+
+
 def read_routine_repair(
     store: Any, database_name: str, job_id: str, version: int
 ) -> RoutineRepairContract | None:

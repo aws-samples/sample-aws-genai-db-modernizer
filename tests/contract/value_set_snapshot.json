@@ -955,6 +955,26 @@
     ],
     "version": "1.0"
   },
+  "routine_repair.AttemptStage": {
+    "module": "routine_repair",
+    "values": [
+      "answer",
+      "proof",
+      "rebuild",
+      "recheck",
+      "rescreen",
+      "screen"
+    ],
+    "version": "1.0"
+  },
+  "routine_repair.AttentionCode": {
+    "module": "routine_repair",
+    "values": [
+      "attempts_used",
+      "not_rebuildable"
+    ],
+    "version": "1.0"
+  },
   "routine_repair.RefusalCode": {
     "module": "routine_repair",
     "values": [

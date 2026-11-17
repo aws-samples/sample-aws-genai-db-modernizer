@@ -77,20 +77,24 @@ def collector() -> dict[str, Any]:
     }
 
 
-def migration(col: dict[str, Any] | None = None) -> RoutineMigrationContract:
-    """The routine-migration artifact, checked on the exact text of every routine."""
+def sources(col: dict[str, Any] | None = None) -> list[RoutineSource]:
+    """The routine sources: the exact text of every routine, literals in place."""
     col = col or collector()
-    procs = col["database_schema"]["procedures"]
-    sources = [
+    return [
         RoutineSource(
             kind="function", routine_id=p["procedure_name"], schema_name="public",
             specific_name=p["specific_name"], create_statement=p["definition"],
             origin="pg_get_functiondef",
         )  # fmt: skip
-        for p in procs
+        for p in col["database_schema"]["procedures"]
     ]
+
+
+def migration(col: dict[str, Any] | None = None) -> RoutineMigrationContract:
+    """The routine-migration artifact, checked on the exact text of every routine."""
+    col = col or collector()
     built = run_routine_migration_deterministic(
-        col, None, sources, job_id=JOB, database_name=DB, assignment_version=1
+        col, None, sources(col), job_id=JOB, database_name=DB, assignment_version=1
     )
     assert built is not None
     return built
@@ -106,15 +110,27 @@ def opted_out(col: dict[str, Any]) -> dict[str, Any]:
     return out
 
 
-def job(tmp_path, *, col: dict[str, Any] | None = None, hide: bool = True) -> LocalArtifactStore:
-    """A store with the job's collection and routine-migration artifact (v1). With
-    ``hide`` the collection marks hidden's body opted out, though the artifact was
-    checked on its text (as if the two disagreed)."""
+def job(
+    tmp_path,
+    *,
+    col: dict[str, Any] | None = None,
+    hide: bool = True,
+    built: RoutineMigrationContract | None = None,
+    written: list[RoutineSource] | None = None,
+) -> LocalArtifactStore:
+    """A store with the job's collection, its routine sources (the exact texts) and its
+    routine-migration artifact (v1, or ``built``). With ``hide`` the collection marks
+    hidden's body opted out, though the artifact was checked on its text (as if the two
+    disagreed)."""
+    from src.agents.collector.routine_sources import write_routine_sources
+
     store = LocalArtifactStore(base_dir=str(tmp_path))
     col = col or collector()
     store.write_json(f"{DB}/{JOB}/collector/output.json", opted_out(col) if hide else col)
+    write_routine_sources(store, DB, JOB, col, written if written is not None else sources(col))
     store.write_json(
-        f"{DB}/{JOB}/routines/v1/routine_migration.json", migration(col).model_dump(mode="json")
+        f"{DB}/{JOB}/routines/v1/routine_migration.json",
+        (built or migration(col)).model_dump(mode="json"),
     )
     return store
 

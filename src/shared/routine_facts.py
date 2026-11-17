@@ -62,12 +62,20 @@ artifact's ``findings``): the exact text stays in the routine sources (the two-f
 decision, ADR-034 Decision 4). Verdicts rest on the static checks, labelled
 :data:`PROOF_LABEL` until the load-and-run proof (#1945).
 
-**Interventions** (#1940). ``interventions`` lists each routine the routine repair seam
-holds a model's candidate for (``routines/v<N>/routine_repair.json``, the same version
-as the migration artifact): it needed an intervention, and its ``change_note`` says what
-changed, in the model's own words (untrusted text a renderer escapes). Such a routine is
-``repaired_pending_proof``: it stays in its headline category, not carried, until the
-proof accepts it (#1941); no figure counts it as carried.
+**Interventions** (#1940, #1941). ``interventions`` lists each routine the routine repair
+loop worked on (``routines/v<N>/routine_repair.json``, the same version as the migration
+artifact), so the deliverables say it needed an intervention and what came of it, in the
+words :func:`intervention_line` gives (``line``):
+
+- ``model_repaired``: the proof accepted the model's repair side by side; ``change_note``
+  says what changed, in the model's own words (untrusted text a renderer escapes);
+- ``repaired_pending_proof``: a candidate passed every check, but no proof accepted it,
+  so its change note is never printed as what changed;
+- ``needs_attention``: the routine could not be rebuilt by position, or every attempt
+  failed; ``attempts`` holds each attempt's stage, code and error (words, never text).
+
+No figure counts an intervention as carried: step 1 does not deploy a repaired routine
+yet, so it stays in its headline category.
 
 **The words** (#1939). The deliverables print each row's ``status_text`` and ``why``
 (:func:`routine_status_text`, :func:`routine_why`: the catalog's reason and fix hint for
@@ -286,13 +294,64 @@ def target_wave(target_engine: str, migration_waves: Iterable[Any] | None) -> in
     return min(numbered) if numbered else None
 
 
+#: The repair states the deliverables report as an intervention (#1941).
+INTERVENTION_STATES = ("model_repaired", "repaired_pending_proof", "needs_attention")
+_STAGE_WORDS = {
+    "answer": "no answer",
+    "screen": "refused by the repair screen",
+    "rebuild": "not rebuilt onto the exact text",
+    "rescreen": "refused by the repair screen on the exact text",
+    "recheck": "failed the routine checks on the exact text",
+    "proof": "the side-by-side proof",
+}
+
+
+def _sentence(text: str) -> str:
+    text = " ".join(str(text).split()).rstrip(".")
+    return f"{text[:1].upper()}{text[1:]}." if text else ""
+
+
+def attempt_line(attempt: Mapping[str, Any]) -> str:
+    """One attempt of the repair loop in words: its number, where it stopped and why."""
+    stage = _STAGE_WORDS.get(str(attempt.get("stage")), str(attempt.get("stage")))
+    error = " ".join(str(attempt.get("error") or attempt.get("code") or "").split())
+    return f"Attempt {attempt.get('attempt')}: {stage}" + (f": {error}" if error else "")
+
+
+def intervention_line(item: Mapping[str, Any]) -> str:
+    """What the deliverables say about one intervention (module docstring)."""
+    state = item.get("state")
+    if state == "model_repaired":
+        where = item.get("proof_source") or "a disposable engine of the source"
+        note = _sentence(str(item.get("change_note") or ""))
+        return (
+            "A model repaired it, and side by side on "
+            f"{where} the repair gave the same results as the original on every call "
+            f"compared. What changed: {note} Step 1 does not deploy a repaired routine "
+            "yet, so it stays to migrate yourself."
+        )
+    if state == "repaired_pending_proof":
+        return (
+            "A model proposed a repair that passed every check again on the exact text, "
+            "but no side-by-side proof has accepted it, so it is not carried."
+        )
+    detail = _sentence(str(item.get("attention_detail") or ""))
+    if item.get("attention") == "not_rebuildable":
+        return f"It was not sent for a model repair: {detail}"
+    n = len(item.get("attempts") or [])
+    return (
+        f"A model repair was tried {n} time{'s' if n != 1 else ''} and none was accepted, so "
+        "it needs attention."
+    )
+
+
 def routine_interventions(
     repair: RoutineRepairContract | Mapping[str, Any] | None, version: int
 ) -> list[dict[str, Any]]:
-    """``facts.routines.interventions`` (#1940): each routine of the repair seam's result
-    for routine-migration ``version`` that has a model's candidate waiting for the proof,
-    with its reasons and the model's change note. Empty without a result, or with one for
-    another version."""
+    """``facts.routines.interventions`` (#1940, #1941): each routine of the repair
+    result for routine-migration ``version`` in :data:`INTERVENTION_STATES`, with its
+    reasons, the model's change note, its attempts (words only) and the line the
+    deliverables print. Empty without a result, or with one for another version."""
     if repair is None:
         return []
     data = (
@@ -302,17 +361,39 @@ def routine_interventions(
     )
     if data.get("assignment_version") != version:
         return []
-    return [
-        {
+    out = []
+    for row in data.get("routines") or []:
+        if row.get("state") not in INTERVENTION_STATES:
+            continue
+        item = {
             "kind": row["kind"],
             "routine_id": row["routine_id"],
             "state": row["state"],
             "reasons": list(row.get("reasons") or []),
-            "change_note": row["change_note"],
+            "change_note": row.get("change_note") or "",
+            "proof_source": row.get("proof_source"),
+            "attention": row.get("attention"),
+            "attention_detail": row.get("attention_detail"),
+            "attempts": [
+                {k: a.get(k) for k in ("attempt", "stage", "outcome", "code", "error")}
+                for a in row.get("attempts") or []
+            ],
         }
-        for row in data.get("routines") or []
-        if row.get("state") == "repaired_pending_proof"
-    ]
+        out.append(with_intervention_words(item))
+    return out
+
+
+def with_intervention_words(item: Mapping[str, Any]) -> dict[str, Any]:
+    """An intervention with the words the deliverables print: ``line`` and, for a
+    routine that still needs attention, ``attempt_lines``."""
+    out = dict(item)
+    out["line"] = intervention_line(item)
+    out["attempt_lines"] = (
+        [attempt_line(a) for a in item.get("attempts") or []]
+        if item.get("state") == "needs_attention"
+        else []
+    )
+    return out
 
 
 def routine_facts(
@@ -647,6 +728,11 @@ def with_routine_words(
     ]
     out["check_notes"] = check_notes(rows, rules, rewrite_kinds)
     out["others_line"] = others_line(int(facts.get("routine_count") or 0), len(rows))
+    out["interventions"] = [
+        with_intervention_words(i)
+        for i in facts.get("interventions") or []
+        if isinstance(i, Mapping)
+    ]
     return out
 
 
@@ -663,6 +749,8 @@ def needs_routine_words(facts: Any) -> bool:
     if int(facts.get("migrate_yourself_count") or 0) and not facts.get("to_do_routines"):
         return True
     if int(facts.get("carried_review_count") or 0) and not facts.get("check_notes"):
+        return True
+    if any(isinstance(i, Mapping) and not i.get("line") for i in facts.get("interventions") or []):
         return True
     return not facts.get("others_line") and int(facts.get("routine_count") or 0) > len(rows)
 

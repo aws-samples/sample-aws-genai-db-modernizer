@@ -391,6 +391,13 @@ def is_model_io(path: str) -> bool:
 # ``tests/contract/test_declared_artifacts.py`` fails on a written JSON file in none
 # of the three lists, and on an entry of any of them that no write or run produces.
 INTERNAL_ARTIFACTS: tuple[tuple[str, str], ...] = (
+    # The routine repair loop (#1941)
+    (
+        r"routines/v\d+/repair/loop_state\.json",
+        "the routine repair loop's progress between external rounds (#1941): ids, attempts "
+        "and error words, read only by the next `--finalize`; the result is "
+        "`routine_repair.json`",
+    ),
     # Wave redesign (#1992)
     (
         r"wave-redesign/v\d+/rounds\.json",

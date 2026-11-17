@@ -27,7 +27,20 @@ Two shapes, one per side of the seam (ADR-034 Decision 2):
   - ``refused``: the candidate broke one of those rules (``refusal`` says which);
   - ``no_answer``: the model gave none for it (or its call failed);
   - ``not_repaired``: no repair ran (``--llm-mode none``): it stays not carried, with the
-    routine-migration artifact's reasons.
+    routine-migration artifact's reasons;
+  - ``model_repaired`` (#1941): the repair loop rebuilt the candidate onto the exact text,
+    the rebuilt text passed every check again, and the side-by-side proof found it gives
+    the same results as the original. Only this state is a carried repair, with its
+    ``diff`` (of the redacted texts: no literal) and ``change_note``;
+  - ``needs_attention`` (#1941): the loop could not repair it: its literals cannot be put
+    back by position (``attention`` ``not_rebuildable``, never sent to a model), or every
+    one of :data:`MAX_ATTEMPTS` attempts failed (``attempts_used``).
+
+The repair loop (``src.agents.routine_repair.loop``) records each attempt in
+``attempts`` (:class:`RepairAttempt`): its stage, outcome, a fixed code and the error in
+words, never routine text or a literal. A candidate the loop could not prove (no proof
+target, ``--proof none``, or a comparison that could not run) stays
+``repaired_pending_proof``.
 
 A routine whose body the customer opted out of collecting (#1933) never has a row: its
 body is never sent to a model.
@@ -50,7 +63,14 @@ from typing import Literal
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 RoutineKind = Literal["function", "procedure", "trigger", "event"]
-RepairState = Literal["repaired_pending_proof", "refused", "no_answer", "not_repaired"]
+RepairState = Literal[
+    "repaired_pending_proof",
+    "refused",
+    "no_answer",
+    "not_repaired",
+    "model_repaired",
+    "needs_attention",
+]
 #: Why a candidate was refused: the rules every repaired routine keeps (#1940).
 RefusalCode = Literal[
     "not_one_statement",
@@ -71,7 +91,16 @@ REPAIR_STATES: tuple[RepairState, ...] = (
     "refused",
     "no_answer",
     "not_repaired",
+    "model_repaired",
+    "needs_attention",
 )
+#: The most attempts the repair loop makes per routine (#1941).
+MAX_ATTEMPTS = 3
+#: Where an attempt stopped: the model's answer, the redacted screen, the rebuild onto the
+#: exact text, the screen and the checks again on it, and the side-by-side proof.
+AttemptStage = Literal["answer", "screen", "rebuild", "rescreen", "recheck", "proof"]
+#: Why a routine needs attention after the loop.
+AttentionCode = Literal["not_rebuildable", "attempts_used"]
 #: The longest change note a model may write: one or two plain sentences.
 CHANGE_NOTE_MAX = 300
 #: The longest repaired CREATE a model may return.
@@ -142,6 +171,25 @@ def parse_routine_repair_response(raw: object) -> RoutineRepairResponse:
     return RoutineRepairResponse.model_validate(raw)
 
 
+class RepairAttempt(BaseModel):
+    """One attempt of the repair loop at a routine (#1941): where it stopped and why, in
+    words that hold no routine text and no literal (the next attempt is fed them)."""
+
+    attempt: int = Field(..., ge=1, le=MAX_ATTEMPTS, description="1 to MAX_ATTEMPTS")
+    stage: AttemptStage = Field(..., description="Where the attempt stopped")
+    outcome: Literal["failed", "no_answer", "pending", "proved"] = Field(
+        ...,
+        description=(
+            "failed: refused at that stage; no_answer: the model gave none; pending: every "
+            "check passed but no proof ran; proved: the proof found no difference"
+        ),
+    )
+    code: str | None = Field(None, max_length=64, description="The stage's fixed code")
+    error: str | None = Field(
+        None, max_length=300, description="Why, in words: never routine text or a literal"
+    )
+
+
 class RoutineRepairRow(BaseModel):
     """What the seam made of one routine that may be repaired."""
 
@@ -167,16 +215,53 @@ class RoutineRepairRow(BaseModel):
     change_note: str | None = Field(
         None,
         max_length=CHANGE_NOTE_MAX,
-        description="repaired_pending_proof: what changed, the model's own words (untrusted)",
+        description=(
+            "repaired_pending_proof and model_repaired: what changed, the model's own words "
+            "(untrusted)"
+        ),
+    )
+    diff: str | None = Field(
+        None,
+        max_length=CREATE_MAX,
+        description=(
+            "repaired_pending_proof and model_repaired: a unified diff of the routine's "
+            "redacted text and the candidate (no literal), with no context lines"
+        ),
+    )
+    attempts: list[RepairAttempt] = Field(
+        default_factory=list,
+        max_length=MAX_ATTEMPTS,
+        description="The repair loop's attempts, in order (#1941); empty for the seam alone",
+    )
+    attention: AttentionCode | None = Field(
+        None, description="needs_attention: not_rebuildable or attempts_used"
+    )
+    attention_detail: str | None = Field(
+        None, max_length=300, description="needs_attention: why, in words, never routine text"
+    )
+    proof_source: str | None = Field(
+        None, max_length=200, description="model_repaired: where the side-by-side proof ran"
     )
 
     @model_validator(mode="after")
     def _state_fits(self) -> RoutineRepairRow:
-        pending = self.state == "repaired_pending_proof"
-        if pending and not (self.repaired_create and self.change_note):
+        keeps = self.state in ("repaired_pending_proof", "model_repaired")
+        if keeps and not (self.repaired_create and self.change_note):
             raise ValueError(f"{self.kind} {self.routine_id}: repaired with no candidate or note")
-        if not pending and (self.repaired_create is not None or self.change_note is not None):
+        if not keeps and (
+            self.repaired_create is not None or self.change_note is not None or self.diff
+        ):
             raise ValueError(f"{self.kind} {self.routine_id}: {self.state} keeps a candidate")
+        if self.state == "model_repaired" and not (
+            self.diff and self.attempts and self.attempts[-1].outcome == "proved"
+        ):
+            raise ValueError(f"{self.kind} {self.routine_id}: model_repaired with no proof")
+        if any(a.outcome == "proved" for a in self.attempts) and self.state != "model_repaired":
+            raise ValueError(f"{self.kind} {self.routine_id}: proved but {self.state}")
+        if (self.state == "needs_attention") != (self.attention is not None):
+            raise ValueError(f"{self.kind} {self.routine_id}: attention does not fit {self.state}")
+        if [a.attempt for a in self.attempts] != sorted({a.attempt for a in self.attempts}):
+            raise ValueError(f"{self.kind} {self.routine_id}: attempts out of order")
         if (self.state == "refused") != (self.refusal is not None):
             raise ValueError(f"{self.kind} {self.routine_id}: refusal does not fit {self.state}")
         return self
@@ -207,10 +292,25 @@ class RoutineRepairContract(BaseModel):
     ignored_answers: int = Field(
         0, ge=0, description="Answers for a routine the request did not list, dropped"
     )
+    proof: Literal["none", "local"] | None = Field(
+        None,
+        description=(
+            "The repair loop's proof target (#1941): local (disposable engines of the "
+            "source's major), none (no proof: a candidate stays repaired_pending_proof); "
+            "None when the seam ran alone"
+        ),
+    )
+    rounds: int = Field(0, ge=0, le=MAX_ATTEMPTS, description="Model rounds the loop ran")
     counts: dict[RepairState, int] = Field(..., description="Routines per state, every state")
     routines: list[RoutineRepairRow] = Field(
         default_factory=list, description="One row per routine that may be repaired"
     )
+
+    @field_validator("counts", mode="after")
+    @classmethod
+    def _every_state(cls, v: dict[RepairState, int]) -> dict[RepairState, int]:
+        """Every state listed: a result written before #1941 lists the first four only."""
+        return {s: int(v.get(s, 0)) for s in REPAIR_STATES}
 
     @model_validator(mode="after")
     def _consistent(self) -> RoutineRepairContract:
@@ -224,6 +324,10 @@ class RoutineRepairContract(BaseModel):
             seen.add(key)
         if dict(self.counts) != counted:
             raise ValueError("counts do not match the routines' states")
-        if self.llm_mode == "none" and counted["repaired_pending_proof"]:
+        if self.llm_mode == "none" and (
+            counted["repaired_pending_proof"] or counted["model_repaired"]
+        ):
             raise ValueError("llm_mode none repairs nothing")
+        if counted["model_repaired"] and self.proof in (None, "none"):
+            raise ValueError("model_repaired with no proof target")
         return self

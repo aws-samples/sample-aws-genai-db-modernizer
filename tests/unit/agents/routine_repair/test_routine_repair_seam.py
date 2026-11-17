@@ -501,9 +501,9 @@ def test_a_collection_that_opted_out_of_every_body_sends_nothing(tmp_path):
     request = json.dumps(seam.prepare_routine_repair_llm_input(plan))
     assert fx.OPTED_OUT_MARK not in request and "wal_pos" not in request
     status = seam.run_routine_repair(store, fx.DB, fx.JOB, llm_mode="external")
-    assert status["status"] == "complete" and status["counts"] == dict.fromkeys(
-        ("repaired_pending_proof", "refused", "no_answer", "not_repaired"), 0
-    )
+    from src.contracts.routine_repair import REPAIR_STATES
+
+    assert status["status"] == "complete" and status["counts"] == dict.fromkeys(REPAIR_STATES, 0)
 
 
 def test_a_tampered_artifact_cannot_widen_the_calls_a_repair_may_add(tmp_path):

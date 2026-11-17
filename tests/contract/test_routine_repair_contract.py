@@ -125,4 +125,7 @@ def test_the_states_never_include_proved():
         "refused",
         "no_answer",
         "not_repaired",
+        # #1941: the repair loop's outcomes; model_repaired only after the proof.
+        "model_repaired",
+        "needs_attention",
     }

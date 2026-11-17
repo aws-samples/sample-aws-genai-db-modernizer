@@ -28,20 +28,22 @@ LLM mode (AGENTS.md, "The LLM seam pattern"):
    carries it: the side-by-side comparison (#1944) and the test-cluster proof (#1945)
    decide, in the repair loop (#1941).
 
-The modes (:func:`run_routine_repair`): ``none`` runs no repair, and each routine stays
-not carried, with its reasons (``not_repaired``); ``bedrock`` asks a Strands agent;
-``external`` writes ``routines/v<N>/repair/llm_input.json`` and stops ``awaiting_llm``,
-and :func:`finalize_routine_repair` applies the answer the session writes to
-``routines/v<N>/repair/llm_response.json``. Each writes
-``routines/v<N>/routine_repair.json`` (:class:`~src.contracts.routine_repair.
-RoutineRepairContract`) for the routine-migration artifact of version N.
+The modes (:func:`run_routine_repair`, which runs the repair loop,
+``src.agents.routine_repair.loop``, #1941): ``none`` runs no repair, and each routine
+stays not carried, with its reasons (``not_repaired``); ``bedrock`` asks a Strands agent,
+up to three rounds; ``external`` writes ``routines/v<N>/repair/llm_input.json`` and stops
+``awaiting_llm``, and :func:`finalize_routine_repair` applies the answer the session
+writes to ``routines/v<N>/repair/llm_response.json``, then writes the next round's
+request or the result. Each writes ``routines/v<N>/routine_repair.json``
+(:class:`~src.contracts.routine_repair.RoutineRepairContract`) for the routine-migration
+artifact of version N.
 """
 
 from __future__ import annotations
 
 import json
 import logging
-from collections.abc import Mapping
+from collections.abc import Collection, Mapping
 from dataclasses import dataclass
 from typing import Any
 
@@ -63,12 +65,6 @@ from src.contracts.routine_repair import (
 )
 from src.shared.bedrock_guardrail import GuardrailConfigError, GuardrailIntervened
 from src.shared.skill_sections import skill_sections
-from src.storage.collector_for_models import read_collector_for_models
-from src.storage.routine_repair_store import (
-    routine_repair_path,
-    routine_repair_request_path,
-    routine_repair_response_path,
-)
 from src.tools.routines.migration import collection_routines
 from src.tools.routines.repair_screen import RepairedRoutine, hinted_calls, refusal_of
 
@@ -92,9 +88,10 @@ logger = logging.getLogger(__name__)
 #: The one instruction both modes follow: the command points Claude Code at it, and the
 #: Bedrock prompt is built from its sections.
 SKILL = "routine-repair.md"
-_SKILL_SECTIONS = ("Untrusted input", "Instruction", "Rules", "Response")
+# The system prompt carries the data directive; the skill's "Untrusted input" section names
+# the frame's tags and the request file's notice, which a prompt must not repeat.
+_SKILL_SECTIONS = ("Instruction", "Rules", "Response")
 LLM_MODE_NONE_REASON = "llm_mode=none: no repair runs; the routines stay not carried"
-_NO_ANSWER_REASON = "the model gave no usable answer"
 #: Reasons no edit of the routine's own text settles: it is not sent to a model.
 _NOT_REPAIRABLE = frozenset(REASON_CODES) - {"depends_on_needs_attention"}
 _NO_BODY = frozenset({"opted_out", "not_readable", "not_supported"})
@@ -118,6 +115,10 @@ class RepairCandidate:
     reasons: tuple[str, ...]
     failed_rules: tuple[Mapping[str, Any], ...]
     target_error: str | None
+    #: The repair loop's attempt (#1941) and the previous attempt's error, in words that
+    #: hold no routine text or literal; None on the first attempt.
+    attempt: int = 1
+    previous_failure: str | None = None
 
     @property
     def ref(self) -> tuple[str, str]:
@@ -180,11 +181,16 @@ def run_routine_repair_deterministic(
     migration: RoutineMigrationContract,
     *,
     target_errors: Mapping[tuple[str, str], str] | None = None,
+    previous_failures: Mapping[tuple[str, str], str] | None = None,
+    only: Collection[tuple[str, str]] | None = None,
+    attempt: int = 1,
 ) -> RoutineRepairPlan:
     """The routines of ``migration`` a model may repair (module docstring), each with its
     redacted ``CREATE`` from ``collector`` (read for models, redacted on read).
-    ``target_errors`` gives a routine the target's error from an earlier attempt (the
-    repair loop, #1941), keyed ``(kind, routine_id)``; it replaces the proof's."""
+    ``target_errors`` gives a routine the target's error, keyed ``(kind, routine_id)``; it
+    replaces the proof's. The repair loop (#1941) asks for attempt ``attempt`` of the
+    routines in ``only``, each with the error its previous attempt ended on
+    (``previous_failures``: words, never routine text)."""
     rules = {r.rule_id: r for r in migration.rules if r.rule == "check"}
     # The collection-wide opt-out (#1933) wins over every row: nothing is sent.
     rows = collection_routines(collector) if collection_includes_bodies(collector) else {}
@@ -192,7 +198,7 @@ def run_routine_repair_deterministic(
     candidates: list[RepairCandidate] = []
     for row in migration.routines:
         reasons = _why(row, set(rules))
-        if reasons is None:
+        if reasons is None or (only is not None and (row.kind, row.routine_id) not in only):
             continue
         found = rows.get((row.kind, row.routine_id))
         # The collection's own word too: an opted-out body is never sent (#1933).
@@ -228,6 +234,8 @@ def run_routine_repair_deterministic(
                 reasons=reasons,
                 failed_rules=failed,
                 target_error=error,
+                attempt=attempt,
+                previous_failure=(previous_failures or {}).get((row.kind, row.routine_id)),
             )
         )
     return RoutineRepairPlan(
@@ -257,6 +265,8 @@ def _block(c: RepairCandidate) -> dict[str, Any]:
         "failed_rules": [dict(r) for r in c.failed_rules],
         "other_reasons": [r for r in c.reasons if r not in {f["rule_id"] for f in c.failed_rules}],
         "target_error": c.target_error,
+        "attempt": c.attempt,
+        "previous_attempt_error": c.previous_failure,
     }
 
 
@@ -483,40 +493,6 @@ def _ask_bedrock(request: Mapping[str, Any]) -> RoutineRepairResponse | None:
 # --------------------------------------------------------------------------- runs
 
 
-def _plan(
-    store: Any, database_name: str, job_id: str, assignment_version: int | None
-) -> RoutineRepairPlan | None:
-    from src.storage.assignment_versioning import resolve_downstream_assignment_version
-    from src.storage.routine_migration_store import latest_routine_migration
-
-    version = assignment_version or resolve_downstream_assignment_version(
-        store, database_name, job_id
-    )
-    found = latest_routine_migration(store, database_name, job_id, version)
-    if found is None:
-        return None
-    collector = read_collector_for_models(store, database_name, job_id)
-    return run_routine_repair_deterministic(collector, found[1])
-
-
-def _write(store: Any, result: RoutineRepairContract) -> str:
-    key = routine_repair_path(result.database_name, result.job_id, result.assignment_version)
-    store.write_json(key, result.model_dump(mode="json"))
-    return key
-
-
-def _status(status: str, result: RoutineRepairContract, key: str) -> dict[str, Any]:
-    out: dict[str, Any] = {
-        "status": status,
-        "assignment_version": result.assignment_version,
-        "counts": dict(result.counts),
-        "artifact": key,
-    }
-    if result.skipped_reason:
-        out["reason"] = result.skipped_reason
-    return out
-
-
 def run_routine_repair(
     store: Any,
     database_name: str,
@@ -524,43 +500,25 @@ def run_routine_repair(
     *,
     llm_mode: str,
     assignment_version: int | None = None,
+    proof: str = "none",
+    proof_options: Mapping[str, Any] | None = None,
 ) -> dict[str, Any]:
-    """Run the seam for the job's newest routine-migration artifact at or below
-    ``assignment_version`` (default: the effective one) in ``llm_mode``; a status dict:
+    """Run the repair loop (``src.agents.routine_repair.loop``, #1941) on this seam for
+    the job's newest routine-migration artifact at or below ``assignment_version``
+    (default: the effective one) in ``llm_mode``, proving on ``proof``; a status dict:
     ``skipped`` (no artifact, or ``none``), ``awaiting_llm`` (external, with the request
-    and response paths) or ``complete``."""
-    det = _plan(store, database_name, job_id, assignment_version)
-    if det is None:
-        return {"status": "skipped", "reason": "the job has no routine-migration artifact"}
-    if llm_mode == "none":
-        result = run_without_repair(det)
-        return _status("skipped", result, _write(store, result))
-    if not det.candidates:
-        result = _result(det, [], llm_mode)
-        return _status("complete", result, _write(store, result))
-    request = prepare_routine_repair_llm_input(det)
-    if llm_mode == "external":
-        path = routine_repair_request_path(database_name, job_id, det.assignment_version)
-        store.write_json(path, request)
-        return {
-            "status": "awaiting_llm",
-            "assignment_version": det.assignment_version,
-            "routines": len(det.candidates),
-            "llm_request": path,
-            "llm_response": routine_repair_response_path(
-                database_name, job_id, det.assignment_version
-            ),
-        }
-    if llm_mode != "bedrock":
-        raise ValueError(f"unknown llm_mode {llm_mode!r}")
-    response = _ask_bedrock(request)
-    if response is None:
-        result = _result(
-            det, _unrepaired(det, "no_answer"), "bedrock", skipped_reason=_NO_ANSWER_REASON
-        )
-    else:
-        result = apply_routine_repair_llm_output(det, response, llm_mode="bedrock")
-    return _status("complete", result, _write(store, result))
+    and response paths and the round) or ``complete``."""
+    from src.agents.routine_repair.loop import run_repair_loop
+
+    return run_repair_loop(
+        store,
+        database_name,
+        job_id,
+        llm_mode=llm_mode,
+        assignment_version=assignment_version,
+        proof=proof,
+        proof_options=proof_options,
+    )
 
 
 class StaleRepairRequest(ValueError):
@@ -573,23 +531,19 @@ def finalize_routine_repair(
     job_id: str,
     *,
     assignment_version: int | None = None,
+    proof_options: Mapping[str, Any] | None = None,
 ) -> dict[str, Any]:
-    """Apply the external session's answer (``routines/v<N>/repair/llm_response.json``)
-    and write the result. Raises ``FileNotFoundError`` with no request or answer,
-    :class:`StaleRepairRequest` when the artifacts changed since the request, and
-    ``pydantic.ValidationError`` for an answer off the contract (nothing is written)."""
-    det = _plan(store, database_name, job_id, assignment_version)
-    if det is None:
-        raise FileNotFoundError("the job has no routine-migration artifact")
-    request_path = routine_repair_request_path(database_name, job_id, det.assignment_version)
-    response_path = routine_repair_response_path(database_name, job_id, det.assignment_version)
-    for path in (request_path, response_path):
-        if store.exists(path) is not True:
-            raise FileNotFoundError(f"{path} not found")
-    if store.read_json(request_path) != prepare_routine_repair_llm_input(det):
-        raise StaleRepairRequest(
-            f"{request_path} is not the request the job's routines give now: run the "
-            "repair again"
-        )
-    result = apply_routine_repair_llm_output(det, store.read_json(response_path))
-    return _status("complete", result, _write(store, result))
+    """Apply the external session's answer to the loop's current round
+    (``routines/v<N>/repair/llm_response.json``): ``awaiting_llm`` with the next round's
+    request, or ``complete`` with the result. Raises ``FileNotFoundError`` with no request
+    or answer, :class:`StaleRepairRequest` when the artifacts changed since the request,
+    and ``pydantic.ValidationError`` for an answer off the contract (nothing is written)."""
+    from src.agents.routine_repair.loop import finalize_repair_loop
+
+    return finalize_repair_loop(
+        store,
+        database_name,
+        job_id,
+        assignment_version=assignment_version,
+        proof_options=proof_options,
+    )

@@ -61,6 +61,17 @@ def test_a_repaired_routine_is_an_intervention_with_what_changed() -> None:
             "state": "repaired_pending_proof",
             "reasons": ["postgresql-routine-v10-renamed-functions"],
             "change_note": NOTE,
+            # #1941: what the loop recorded, and the words the deliverables print; a
+            # pending candidate's note is never printed as what changed.
+            "proof_source": None,
+            "attention": None,
+            "attention_detail": None,
+            "attempts": [],
+            "line": (
+                "A model proposed a repair that passed every check again on the exact text, "
+                "but no side-by-side proof has accepted it, so it is not carried."
+            ),
+            "attempt_lines": [],
         }
     ]
     RoutineFacts.model_validate(facts)

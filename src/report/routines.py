@@ -11,7 +11,9 @@ module only formats them (ADR-032):
   to-do with the routines to migrate yourself, each listed routine (to migrate yourself,
   that would behave differently, with no code collected) by id, kind and status with why
   and the routines it names, then each rewrite and check that could not run once with its
-  routines (the LOW roll-up). The routine risks' "And N more" points here;
+  routines (the LOW roll-up), then each intervention (#1941): what came of the model
+  repair of each routine it was asked for, in the facts' own words. The routine risks'
+  "And N more" points here;
 - :func:`routine_summary_lines`: the headline and the to-do, counts only, which the
   executive report and the final chat summary print.
 
@@ -105,6 +107,27 @@ def _note_md(note: dict[str, Any]) -> str:
     )
 
 
+def _interventions_md(routines: dict[str, Any]) -> list[str]:
+    """Each routine a model was asked to repair and what came of it (#1941): the facts'
+    ``line`` and, for one that still needs attention, each attempt's line."""
+    items = [
+        i for i in routines.get("interventions") or [] if isinstance(i, dict) and i.get("line")
+    ]
+    if not items:
+        return []
+    out = [
+        "### Interventions",
+        "",
+        "Each routine a model was asked to repair, and what came of it.",
+        "",
+    ]
+    for item in items:
+        out.append(f"- {_ref(item)}: {escaping.md_text(item.get('line'))}")
+        out += [f"  - {escaping.md_text(a)}" for a in item.get("attempt_lines") or []]
+    out.append("")
+    return out
+
+
 def routines_md(report: dict[str, Any]) -> list[str]:
     """The engineering report's Routines section, from ``facts.routines``; nothing when
     the report has none."""
@@ -148,6 +171,7 @@ def routines_md(report: dict[str, Any]) -> list[str]:
                 f"| {tables or '-'} |"
             )
         out.append("")
+    out += _interventions_md(routines)
     if notes:
         out += ["### Rewrites and checks that could not run", ""]
         out += [_note_md(n) for n in notes]

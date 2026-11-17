@@ -58,6 +58,9 @@ READERS = LOADERS | {
     # artifact ids and refuses a model's candidate by the repair screen; not a routing or
     # synthesis module.
     "src.agents.routine_repair.handler",
+    # The repair loop (#1941): it rebuilds, re-checks and proves each candidate through
+    # src.tools.routines.repair_proof; not a routing or synthesis module.
+    "src.agents.routine_repair.loop",
 }
 
 

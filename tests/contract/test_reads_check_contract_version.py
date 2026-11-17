@@ -51,6 +51,10 @@ HELPERS = {"load_contract", "check_contract_version", "check_artifact", "carries
 _BUILT = "built in memory from the offline upload's fields, not read from a file"
 _ANSWER = "a model's answer, parsed before it becomes an artifact"
 NOT_ARTIFACT_READS: dict[tuple[str, str, str], str] = {
+    # The repair loop (#1941) builds its result in memory from the rounds it ran.
+    ("src/agents/routine_repair/loop.py", "_result", "RoutineRepairContract"): (
+        "built in memory from the loop's own rounds, not read from a file"
+    ),
     # The routine proof (#1945) builds the artifact it writes from the one it read with
     # load_contract (latest_routine_migration), its rows and the proof's results.
     ("src/tools/routines/proof_run.py", "apply_proof", "RoutineMigrationContract"): (

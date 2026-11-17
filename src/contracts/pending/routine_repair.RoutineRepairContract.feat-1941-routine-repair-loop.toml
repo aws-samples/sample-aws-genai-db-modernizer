@@ -1,0 +1,6 @@
+# A pending contract version bump (ADR-008 Decision 8). The number is assigned by
+# uv run python scripts/resolve_contract_versions.py --release at release (a MAJOR: in its pull request).
+contract = "routine_repair.RoutineRepairContract"
+kind = "minor"
+reason = "Added the repair loop's states model_repaired (the side-by-side proof accepted the repair on the rebuilt exact text) and needs_attention (not rebuildable by position, or every attempt failed), RepairAttempt and the optional RoutineRepairRow.attempts, diff, attention, attention_detail and proof_source, and RoutineRepairContract.proof and rounds (#1941). Backward compatible: new values and optional fields; a result written before lists counts for the first four states only, and the missing ones read as 0"
+issue = 1941
