@@ -50,6 +50,7 @@ MOCK_HISTORY = [
 @pytest.fixture(autouse=True)
 def mock_services():
     sfn = MagicMock()
+    sfn.read_source_engine.return_value = None
     s3 = MagicMock()
     assessments.sfn_service = sfn
     assessments.s3_service = s3
@@ -404,6 +405,133 @@ class TestListAssessments:
         data = client.get("/api/v1/assessments?limit=3&offset=2").json()
         assert len(data["assessments"]) == 3
         assert data["offset"] == 2
+
+
+class TestListAssessmentFacts:
+    """#2345: each row carries the engines and the projected cost its report's facts state."""
+
+    ROW = {
+        "job_id": "j1",
+        "status": "SUCCEEDED",
+        "started_at": "2026-02-23T10:00:00Z",
+        "stopped_at": "2026-02-23T14:00:00Z",
+        "database_name": "shop",
+    }
+
+    @staticmethod
+    def _report(**facts):
+        return {
+            "facts": {
+                "projected_monthly_cost_usd": 1234.5,
+                "target_engines": ["aurora_postgresql", "dynamodb", "elasticache"],
+                "engines": [],
+                **facts,
+            }
+        }
+
+    @staticmethod
+    def _row(client_response):
+        return client_response.json()["assessments"][0]
+
+    def test_row_states_engines_and_projected_cost_from_the_facts(self, mock_services):
+        mock_services["sfn"].list_executions.return_value = [self.ROW]
+        mock_services["sfn"].read_source_engine.return_value = "mysql"
+        mock_services["s3"].read_synthesis.return_value = self._report()
+        row = self._row(client.get("/api/v1/assessments"))
+        assert row["source_database_type"] == "mysql"
+        assert row["source_database_label"] == "MySQL"
+        assert row["target_engines"] == ["aurora_postgresql", "dynamodb", "elasticache"]
+        assert row["projected_monthly_cost_usd"] == 1234.5
+
+    def test_an_engine_with_a_failed_design_that_owns_queries_is_a_target(self, mock_services):
+        """The results page names it (facts.engine_query_counts); the list says the same."""
+        import json
+        from pathlib import Path
+
+        from src.shared.report_facts import compute_report_facts
+
+        path = Path(__file__).resolve().parents[1] / "report" / "fixtures" / "wordpress_report.json"
+        report = json.loads(path.read_text())
+        report.pop("facts", None)
+        for design in (report.get("schema_designs") or {}).values():
+            if isinstance(design, dict):
+                design["status"] = "failed"
+        expected = compute_report_facts(report)
+        assert set(expected["engine_query_counts"]) <= set(expected["target_engines"])
+        mock_services["sfn"].list_executions.return_value = [self.ROW]
+        mock_services["sfn"].read_source_engine.return_value = None
+        mock_services["s3"].read_synthesis.return_value = report
+        row = self._row(client.get("/api/v1/assessments"))
+        assert row["target_engines"] == expected["target_engines"]
+        assert row["target_engines"]
+
+    def test_a_stated_zero_cost_is_the_figure(self, mock_services):
+        mock_services["sfn"].list_executions.return_value = [self.ROW]
+        mock_services["s3"].read_synthesis.return_value = self._report(
+            projected_monthly_cost_usd=0.0
+        )
+        assert self._row(client.get("/api/v1/assessments"))["projected_monthly_cost_usd"] == 0.0
+
+    def test_job_with_no_report_states_no_cost_and_no_engines(self, mock_services):
+        mock_services["sfn"].list_executions.return_value = [self.ROW]
+        mock_services["s3"].read_synthesis.return_value = None
+        row = self._row(client.get("/api/v1/assessments"))
+        assert row["projected_monthly_cost_usd"] is None
+        assert row["target_engines"] == []
+        assert row["source_database_type"] is None
+        assert row["source_database_label"] is None
+
+    def test_an_engine_id_that_is_not_an_id_is_left_out(self, mock_services):
+        mock_services["sfn"].list_executions.return_value = [self.ROW]
+        mock_services["s3"].read_synthesis.return_value = self._report(
+            target_engines=["dynamodb", "x" * 65, "", 7]
+        )
+        assert self._row(client.get("/api/v1/assessments"))["target_engines"] == ["dynamodb"]
+
+    def test_the_engine_list_is_capped(self, mock_services):
+        mock_services["sfn"].list_executions.return_value = [self.ROW]
+        mock_services["s3"].read_synthesis.return_value = self._report(
+            target_engines=[f"engine_{i}" for i in range(40)]
+        )
+        assert len(self._row(client.get("/api/v1/assessments"))["target_engines"]) == 12
+
+    def test_unreadable_report_leaves_the_row_without_figures_and_logs_no_traceback(
+        self, mock_services, caplog
+    ):
+        mock_services["sfn"].list_executions.return_value = [self.ROW]
+        mock_services["s3"].read_synthesis.side_effect = ValueError("secret report text")
+        with caplog.at_level("WARNING"):
+            resp = client.get("/api/v1/assessments")
+        assert resp.status_code == 200
+        row = self._row(resp)
+        assert row["projected_monthly_cost_usd"] is None
+        assert row["target_engines"] == []
+        warnings = [r for r in caplog.records if r.levelname == "WARNING"]
+        assert warnings and "j1" in warnings[0].getMessage()
+        assert "ValueError" in warnings[0].getMessage()
+        assert all(r.exc_info is None for r in warnings)
+        assert "secret report text" not in warnings[0].getMessage()
+
+    def test_only_the_requested_page_reads_reports(self, mock_services):
+        rows = [{**self.ROW, "job_id": f"j{i}"} for i in range(10)]
+        mock_services["sfn"].list_executions.return_value = rows
+        mock_services["s3"].read_synthesis.return_value = None
+        client.get("/api/v1/assessments?limit=3&offset=2")
+        assert mock_services["s3"].read_synthesis.call_count == 3
+
+    def test_the_handler_runs_in_the_threadpool_not_on_the_event_loop(self):
+        import inspect
+
+        assert not inspect.iscoroutinefunction(assessments.list_assessments)
+
+    @pytest.mark.parametrize("query", ["limit=101", "limit=0", "limit=-1", "offset=-1"])
+    def test_limit_and_offset_are_bounded(self, mock_services, query):
+        mock_services["sfn"].list_executions.return_value = []
+        assert client.get(f"/api/v1/assessments?{query}").status_code == 422
+
+    def test_the_largest_page_is_allowed(self, mock_services):
+        mock_services["sfn"].list_executions.return_value = []
+        assert client.get("/api/v1/assessments?limit=100&offset=0").status_code == 200
 
 
 # === GET /api/v1/assessments/{job_id} ===

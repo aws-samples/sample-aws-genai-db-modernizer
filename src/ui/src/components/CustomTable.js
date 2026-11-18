@@ -41,6 +41,11 @@ const TableComponent = memo(({columnsTable,visibleContent, dataset, title, descr
 
     const [preferences, setPreferences] = useState({ pageSize: pageSize, visibleContent: visibleContent });
 
+    // A page that changes its columns (the dashboard on a phone, #2345) replaces the list.
+    useEffect(() => {
+        setPreferences(prev => ({ ...prev, visibleContent }));
+    }, [visibleContent]);
+
     const { items, actions, filteredItemsCount, collectionProps, filterProps, paginationProps } = useCollection(
                 dataset,
                 {

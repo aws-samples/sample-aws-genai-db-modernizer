@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import logging
 import os
+import re
 import shutil
 import time
 import uuid
@@ -18,6 +19,15 @@ from src.api.secret_guard import find_submitted_secrets, strip_secrets
 from src.contracts.reality_check_marker import MarkerStatus, RealityCheckMarker
 from src.report.deliverables import DELIVERABLES_DIR, FOLDER_FILENAMES
 from src.shared.contract_versioning import ContractVersionError, load_contract
+
+# The collector's ``metadata.source_database.engine``, read from the first bytes of its output.
+_SOURCE_ENGINE_PREFIX_BYTES = 8192
+_SOURCE_ENGINE_MAX_LENGTH = 64
+_SOURCE_ENGINE_RE = re.compile(
+    r'"source_database"\s*:\s*\{\s*"engine"\s*:\s*"([^"\\]{1,'
+    + str(_SOURCE_ENGINE_MAX_LENGTH)
+    + r'})"'
+)
 
 logger = logging.getLogger(__name__)
 
@@ -182,7 +192,7 @@ class LocalExecutionService:
             "stopped_at": stopped_at,
             "input": {
                 "database_name": db_name,
-                "source_database_type": self._read_source_engine(db_name, job_id),
+                "source_database_type": self.read_source_engine(db_name, job_id),
             },
         }
         if error is not None:
@@ -1019,21 +1029,32 @@ class LocalExecutionService:
     # Internal helpers
     # ------------------------------------------------------------------
 
-    def _read_source_engine(self, db_name: str, job_id: str) -> str | None:
+    def read_source_engine(self, db_name: str, job_id: str) -> str | None:
         """Return the source engine recorded by the collector, or None if unknown.
 
         A job run by the local scripts and skills has a ``_meta.json`` with its start
         time but no request input (#2304), so the collector output is the only record
-        of the source engine.
+        of the source engine. The collector writes ``metadata`` first, so the engine is
+        found in the file's first bytes; the assessments list calls this once per row
+        and the file can be megabytes (#2345). Only a file that lays it out differently
+        is parsed whole.
         """
         path = f"{db_name}/{job_id}/collector/output.json"
         if not self._store.exists(path):
             return None
         try:
+            match = _SOURCE_ENGINE_RE.search(
+                self._store.read_prefix(path, _SOURCE_ENGINE_PREFIX_BYTES).decode(
+                    "utf-8", errors="replace"
+                )
+            )
+            if match:
+                return match.group(1)
             engine = self._store.read_json(path)["metadata"]["source_database"]["engine"]
         except Exception:
             return None
-        return str(engine) if engine else None
+        # The same cap as the prefix path: an id longer than that is not an engine.
+        return str(engine) if engine and len(str(engine)) <= _SOURCE_ENGINE_MAX_LENGTH else None
 
     def _find_job_dir(self, job_id: str) -> tuple[str, Path | None]:
         """Scan artifact root to find which {db}/{job_id} directory exists."""

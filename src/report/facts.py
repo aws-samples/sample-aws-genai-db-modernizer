@@ -47,6 +47,7 @@ from src.shared.report_facts import (
     shares_replica_risk,
     step_gate_key,
     table_ownership_facts,
+    target_engine_facts,
     trade_off_topic_facts,
     unservable_query_facts,
     unwritten_owner_rule,
@@ -141,6 +142,11 @@ def report_facts(report: dict[str, Any]) -> dict[str, Any]:
             # The value decides, not the key: a block re-dumped through the contract
             # reads the field back as None.
             missing["engine_query_counts"] = engine_query_count_facts(report, facts["engines"])
+        if facts.get("target_engines") is None:
+            # A block written before #2345: the target engines, from the final counts.
+            missing["target_engines"] = target_engine_facts(
+                report, missing.get("engine_query_counts") or facts.get("engine_query_counts") or {}
+            )
         if "cost_assumptions" not in facts:
             # A block written before #1195: the TCO's own assumption lines.
             missing["cost_assumptions"] = cost_assumptions(report)

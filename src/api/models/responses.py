@@ -64,6 +64,10 @@ class AssessmentSummary(BaseModel):
     completed_at: str | None = None
     duration_seconds: int | None = None
     progress_percent: int = 0
+    # #2345: read from the job's report facts; None / empty when the job has no report.
+    source_database_label: str | None = None
+    target_engines: list[str] = []
+    projected_monthly_cost_usd: float | None = None
 
 
 class AssessmentList(BaseModel):

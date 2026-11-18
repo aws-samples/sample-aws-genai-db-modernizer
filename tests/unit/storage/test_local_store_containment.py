@@ -214,6 +214,7 @@ _METHODS = [
     ("read_json", ()),
     ("write_json", ({},)),
     ("read_bytes", ()),
+    ("read_prefix", (8,)),
     ("write_bytes", (b"x",)),
     ("delete", ()),
     ("exists", ()),

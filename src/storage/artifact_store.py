@@ -26,6 +26,14 @@ class ArtifactStore(ABC):
         """Read a binary artifact and return its raw bytes."""
         ...
 
+    def read_prefix(self, path: str, size: int) -> bytes:
+        """Read at most the first *size* bytes of an artifact (#2345).
+
+        For a reader that wants one field near the top of a large file. A store that can
+        read a range overrides this; the default reads the whole artifact.
+        """
+        return self.read_bytes(path)[:size]
+
     @abstractmethod
     def write_bytes(self, path: str, data: bytes) -> None:
         """Write raw bytes as a binary artifact."""

@@ -143,3 +143,19 @@ test('a report saved before the figure shows the reality check distribution', as
   await renderWith(report({ engines: [] }));
   expect(shown()).toEqual(REALITY_CHECK);
 });
+
+// #2345: the target engines are one fact, facts.target_engines, which the assessments list reads too.
+const badges = () => [...container.querySelectorAll('[data-engine-badge]')].map((n) => n.dataset.engineBadge);
+
+test('the target engine badges are the facts target engines, cache layer included', async () => {
+  const synthesis = report({ engine_query_counts: FINAL, target_engines: ['documentdb', 'elasticache'] });
+  synthesis.synthesis.cache_overlay = { engine: 'elasticache' };
+  await renderWith(synthesis);
+  expect(badges().slice(0, 2)).toEqual(['documentdb', 'elasticache']);
+  expect(container.textContent).toContain('cache-layer.engine-badge-suffix');
+});
+
+test('a report saved before the fact derives them from the counts, as before', async () => {
+  await renderWith(report({ engine_query_counts: FINAL }));
+  expect(badges().slice(0, 3)).toEqual(['aurora_postgresql', 'dynamodb', 'documentdb']);
+});

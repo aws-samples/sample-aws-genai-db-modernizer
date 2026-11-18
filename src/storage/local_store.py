@@ -135,6 +135,14 @@ class LocalArtifactStore(ArtifactStore):
         with open(full_path, "rb") as f:
             return f.read()
 
+    def read_prefix(self, path: str, size: int) -> bytes:
+        base = os.path.realpath(str(self.base_dir))
+        full_path = os.path.realpath(os.path.join(base, _plain_key(path)))
+        if not full_path.startswith(base + os.sep):
+            raise ValueError(f"path escapes the artifact root: {path!r}")
+        with open(full_path, "rb") as f:
+            return f.read(size)
+
     def write_bytes(self, path: str, data: bytes) -> None:
         base = os.path.realpath(str(self.base_dir))
         full_path = os.path.realpath(os.path.join(base, _plain_key(path)))

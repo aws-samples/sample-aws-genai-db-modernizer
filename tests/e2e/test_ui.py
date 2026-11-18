@@ -342,6 +342,23 @@ def test_dashboard_lists_both_jobs(page: Page, ui: str, all_runs: list[PipelineR
     assert ev == {"console": [], "pageerror": [], "failed": []}
 
 
+@pytest.mark.parametrize("width", [1440, 390])
+def test_dashboard_rows_show_engines_and_projected_cost(
+    page: Page, ui: str, all_runs: list[PipelineResult], width: int
+) -> None:
+    """#2345: each finished job's row shows its target engines as catalog badges and the
+    projected monthly cost from its report facts; at phone width the list does not
+    scroll the page sideways."""
+    page.set_viewport_size({"width": width, "height": 900})
+    r = all_runs[0]
+    page.goto(f"{ui}/dashboard")
+    row = page.locator("tbody tr", has_text=r.db).first
+    expect(row).to_be_visible(timeout=READY_MS)
+    expect(row.locator("[data-engine-badge]").first).to_be_visible(timeout=READY_MS)
+    assert re.search(r"\$[\d,]+\.\d\d/mo", row.inner_text()), row.inner_text()
+    assert page.evaluate("document.documentElement.scrollWidth <= window.innerWidth + 1")
+
+
 def test_dashboard_stats_are_plain_values_with_real_figures(
     page: Page, ui: str, all_runs: list[PipelineResult]
 ) -> None:
@@ -2248,8 +2265,21 @@ def test_job_pages_have_no_accessibility_violations(
     sort_labels = page.locator("table th [aria-label$='sorted.']").evaluate_all(
         "els => els.map(e => e.getAttribute('aria-label'))"
     )
-    assert "Job ID, not sorted." in sort_labels, sort_labels
-    assert not [lbl for lbl in sort_labels if lbl.startswith(("jobId", "databaseName"))]
+    # The phone list drops the Job ID column (#2345), so it names the database column.
+    expected_label = "Job ID, not sorted." if width == 1440 else "Database, not sorted."
+    assert expected_label in sort_labels, sort_labels
+    raw_ids = (
+        "jobId",
+        "databaseName",
+        "sourceEngine",
+        "sourceLabel",
+        "projectedCost",
+        "targetEngines",
+    )
+    assert not [lbl for lbl in sort_labels if lbl.startswith(raw_ids)]
+    if width == 390:
+        # #2345: the phone list's cost column is sortable and named by its header.
+        assert "Projected cost, not sorted." in sort_labels, sort_labels
 
 
 def test_results_page_has_no_accessibility_violations_with_an_earlier_path_picked(

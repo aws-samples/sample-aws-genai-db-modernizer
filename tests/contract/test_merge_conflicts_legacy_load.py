@@ -114,6 +114,7 @@ def test_a_report_written_before_1_72_validates_and_reads_back_unchanged() -> No
         "slice_plan",
         "adoption",
         "engine_query_counts",
+        "target_engines",
         "executive_brief",
     )
     assert {k: v for k, v in facts.items() if k not in filled} == {

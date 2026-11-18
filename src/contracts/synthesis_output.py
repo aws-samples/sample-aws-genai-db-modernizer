@@ -5253,6 +5253,14 @@ class ReportFacts(BaseModel):
             "written before it"
         ),
     )
+    target_engines: list[str] | None = Field(
+        None,
+        description=(
+            "The target engines the results page and the assessments list name: the "
+            "engines that own queries in the final assignment version, then the cache "
+            "layer's engine (#2345). None in a report written before it"
+        ),
+    )
     results_tab_counts: dict[str, int] | None = Field(
         None,
         description=(

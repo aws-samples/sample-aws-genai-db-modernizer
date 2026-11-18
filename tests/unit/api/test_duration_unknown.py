@@ -61,6 +61,7 @@ def test_dashboard_average_ignores_negative_durations(sfn):
 
 def test_assessment_list_duration_is_null_when_end_precedes_start(monkeypatch):
     svc = MagicMock()
+    svc.read_source_engine.return_value = None
     svc.list_executions.return_value = [
         {
             "job_id": "j1",

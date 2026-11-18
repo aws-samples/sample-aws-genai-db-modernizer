@@ -36,7 +36,9 @@ import { getStatusType as sharedGetStatusType, getStatusText as sharedGetStatusT
 import { buildDashboardActionItems } from "../utils/dashboardActions";
 import { assessmentHref, copyJobIdLabel, databaseLabel } from "../utils/assessmentRows";
 import { formatDuration, UNKNOWN_DURATION } from "../utils/duration";
-import { formatCount, formatPercent, formatHours, NO_FIGURE } from "../utils/format";
+import { formatCount, formatPercent, formatHours, formatMonthlyMoney, NO_FIGURE } from "../utils/format";
+import EngineBadge from "../components/EngineBadge";
+import usePhoneWidth from "../hooks/usePhoneWidth";
 
 // The id of the assessments list, the target of /dashboard#assessments (#2393).
 const ASSESSMENTS_SECTION_ID = 'assessments';
@@ -59,11 +61,21 @@ const ComponentPage = memo(() => {
   //--|#######################| Static Variables Section  |#######################
 
   //--## Table variables
-  const [visibleTableColumns] = useState(['databaseName', 'jobId', 'status', 'created', 'duration']);
+  // #2345: under 600 px the list keeps the columns that fit a phone.
+  const isPhone = usePhoneWidth();
+  const visibleTableColumns = useMemo(
+    () => (isPhone
+      ? ['databaseName', 'targetEngines', 'projectedCost', 'status']
+      : ['databaseName', 'sourceEngine', 'targetEngines', 'projectedCost', 'jobId', 'status', 'created', 'duration']),
+    [isPhone],
+  );
 
   const tableColumnsList = useMemo(() => {
         return  [
             {id: 'databaseName', header: t('dashboard.table.col-database'), cell: item => (<Link href={assessmentHref(item.jobId, item.status)} variant="primary">{databaseLabel(item.databaseName, item.jobId)}</Link>), ariaLabel: createLabelFunction(t('dashboard.table.col-database')), sortingField: 'databaseName'},
+            {id: 'sourceEngine', header: t('dashboard.table.col-source'), cell: item => item.sourceLabel || NO_FIGURE, ariaLabel: createLabelFunction(t('dashboard.table.col-source')), sortingField: 'sourceLabel'},
+            {id: 'targetEngines', header: t('dashboard.table.col-targets'), cell: item => (item.targetEngines.length === 0 ? NO_FIGURE : (<SpaceBetween direction="horizontal" size="xxs">{item.targetEngines.map(engine => <EngineBadge key={engine} engine={engine} />)}</SpaceBetween>)), ariaLabel: createLabelFunction(t('dashboard.table.col-targets'))},
+            {id: 'projectedCost', header: t('dashboard.table.col-cost'), cell: item => formatMonthlyMoney(item.projectedCost), ariaLabel: createLabelFunction(t('dashboard.table.col-cost')), sortingField: 'projectedCost'},
             {id: 'jobId', header: t('dashboard.table.col-job-id'), cell: item => (<SpaceBetween direction="horizontal" size="xxs" alignItems="center"><Box fontFamily="monospace" fontSize="body-s">{item.jobId}</Box><CopyToClipboard variant="icon" textToCopy={item.jobId} copyButtonAriaLabel={copyJobIdLabel(t, item.databaseName, item.jobId)} copySuccessText={t('common.success.copied')} copyErrorText={t('common.errors.copy-failed')} /></SpaceBetween>), ariaLabel: createLabelFunction(t('dashboard.table.col-job-id')), sortingField: 'jobId'},
             {id: 'status', header: t('dashboard.table.col-status'), cell: item => (<StatusIndicator type={getStatusType(item.status)}>{item.statusText}</StatusIndicator>), ariaLabel: createLabelFunction(t('dashboard.table.col-status')), sortingField: 'status'},
             {id: 'created', header: t('dashboard.table.col-created'), cell: item => item.created, ariaLabel: createLabelFunction(t('dashboard.table.col-created')), sortingField: 'created'},
@@ -187,6 +199,9 @@ const ComponentPage = memo(() => {
                 const newTableItems = newAssessments.map(assessment => ({
                   jobId: assessment.job_id,
                   databaseName: assessment.database_name,
+                  sourceLabel: assessment.source_database_label || assessment.source_database_type || null,
+                  targetEngines: assessment.target_engines || [],
+                  projectedCost: assessment.projected_monthly_cost_usd ?? null,
                   sourceDatabase: `${assessment.source_database_type} - ${assessment.database_name}`,
                   status: assessment.status,
                   statusText: getStatusText(assessment.status),
@@ -532,6 +547,9 @@ const ComponentPage = memo(() => {
                     assessments.map(assessment => ({
                                                     jobId: assessment.job_id,
                                                     databaseName: assessment.database_name,
+                                                    sourceLabel: assessment.source_database_label || assessment.source_database_type || null,
+                                                    targetEngines: assessment.target_engines || [],
+                                                    projectedCost: assessment.projected_monthly_cost_usd ?? null,
                                                     sourceDatabase: `${assessment.source_database_type} - ${assessment.database_name}`,
                                                     status: assessment.status,
                                                     statusText: getStatusText(assessment.status),

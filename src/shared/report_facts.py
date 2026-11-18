@@ -2731,6 +2731,25 @@ def engine_query_count_facts(
     return out
 
 
+def target_engine_facts(
+    report: dict[str, Any], engine_query_counts: Mapping[str, int]
+) -> list[str]:
+    """The target engines the results page and the assessments list name (#2345, ADR-032).
+
+    The engines that own queries in the final assignment version
+    (``engine_query_counts``, #2358), in that order, and the cache layer's engine when the
+    report has a ``cache_overlay``: the cache layer owns no query, so a cache engine in the
+    counts is left to the overlay, which names it once. An engine that owns queries stays
+    whatever its role or design status.
+    """
+    overlay = report.get("cache_overlay")
+    owners = [str(e) for e in engine_query_counts if not (overlay and e in CACHE_ENGINES)]
+    cache = overlay.get("engine") if isinstance(overlay, dict) else None
+    if cache and str(cache) not in owners:
+        owners.append(str(cache))
+    return owners
+
+
 def query_move_facts(report: dict[str, Any], engines: list[dict[str, Any]]) -> dict[str, int]:
     """The in-scope queries the owner engines serve and how many of them move (#1020).
 
@@ -4069,6 +4088,8 @@ def compute_report_facts(
         **query_total_facts(report, moves["in_scope_query_count"]),
         # #2358: each owner engine's final query count; the results page reads it.
         "engine_query_counts": engine_query_count_facts(report, engines),
+        # #2345: the target engines the results page and the assessments list name.
+        "target_engines": target_engine_facts(report, engine_query_count_facts(report, engines)),
         "workload_total_percent": _unrounded(sum(e["workload_percent"] or 0.0 for e in engines)),
         "engine_cost_total_usd": round(sum(costs), 2),
         # #1197: the read I/O basis a cost rests on, stated wherever the cost is shown.

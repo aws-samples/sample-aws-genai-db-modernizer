@@ -8,7 +8,7 @@ import os
 import uuid
 from datetime import UTC, datetime, timedelta
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Query
 
 from src.api.dependencies import (
     database_name_param,
@@ -17,11 +17,7 @@ from src.api.dependencies import (
     validated_filename,
 )
 from src.api.durations import duration_seconds
-from src.api.models.requests import (
-    DETECT_FROM_FILE,
-    AssessmentRequest,
-    PrepareAssessmentRequest,
-)
+from src.api.models.requests import DETECT_FROM_FILE, AssessmentRequest, PrepareAssessmentRequest
 from src.api.models.responses import (
     AgentStatus,
     AssessmentCreated,
@@ -41,7 +37,10 @@ from src.api.services.local_execution import (
     LocalExecutionService,
 )
 from src.api.services.local_s3 import LocalS3Service
+from src.report.deliverables import deliverable_report
+from src.report.facts import report_facts
 from src.shared.contract_versioning import ContractVersionError
+from src.shared.engine_names import SOURCE_ENGINE_DISPLAY_NAMES
 from src.shared.ranking import fit_text, main_engine
 from src.shared.report_facts import analysis_overview_facts
 
@@ -318,14 +317,57 @@ async def create_assessment(request: AssessmentRequest):
     )
 
 
+# What the list states of one job's engines (#2345): ids are short, and a job has few targets.
+_MAX_ENGINE_ID_LENGTH = 64
+_MAX_TARGET_ENGINES = 12
+
+
+def _list_row_facts(
+    s3_svc, database_name: str | None, job_id: str
+) -> tuple[list[str], float | None]:
+    """The target engines and projected monthly cost a job's report facts state (#2345, ADR-032).
+
+    Read only, from the same facts block the results route serves; nothing is decided or
+    recounted here, so the list names what the results page names. A job with no report,
+    or one that cannot be read, has no figures: ``([], None)``, which the list shows as a
+    dash. The traceback stays at DEBUG, since an exception message can echo report content.
+    """
+    if not database_name:
+        return [], None
+    try:
+        synthesis = s3_svc.read_synthesis(database_name, job_id)
+        if not synthesis:
+            return [], None
+        facts = report_facts(deliverable_report(synthesis))
+    except Exception as exc:
+        logger.warning(
+            "assessment list: no report facts for job %s (%s)", job_id, type(exc).__name__
+        )
+        logger.debug("assessment list: report facts failure for job %s", job_id, exc_info=True)
+        return [], None
+    engines = [
+        e
+        for e in facts.get("target_engines") or []
+        if isinstance(e, str) and 0 < len(e) <= _MAX_ENGINE_ID_LENGTH
+    ][:_MAX_TARGET_ENGINES]
+    cost = facts.get("projected_monthly_cost_usd")
+    if isinstance(cost, bool) or not isinstance(cost, (int, float)):
+        cost = None
+    return engines, cost
+
+
 @router.get("", response_model=AssessmentList)
-async def list_assessments(
+def list_assessments(
     status: str | None = None,
-    limit: int = 25,
-    offset: int = 0,
+    limit: int = Query(25, ge=1, le=100),
+    offset: int = Query(0, ge=0),
 ):
-    """List all assessments."""
-    sfn_svc, _ = _require_services()
+    """List all assessments.
+
+    A plain ``def``: each row reads a stored report, which runs in the threadpool rather
+    than on the event loop (#2345).
+    """
+    sfn_svc, s3_svc = _require_services()
     executions = sfn_svc.list_executions(
         status_filter=status.upper() if status else None,
         max_results=limit + offset,
@@ -337,10 +379,18 @@ async def list_assessments(
     assessments = []
     for ex in page:
         duration = duration_seconds(ex["started_at"], ex["stopped_at"])
+        engines, cost = _list_row_facts(s3_svc, ex.get("database_name"), ex["job_id"])
+        source = sfn_svc.read_source_engine(ex.get("database_name") or "", ex["job_id"])
 
         assessments.append(
             AssessmentSummary(
                 job_id=ex["job_id"],
+                source_database_type=source,
+                source_database_label=(
+                    SOURCE_ENGINE_DISPLAY_NAMES.get(source, source) if source else None
+                ),
+                target_engines=engines,
+                projected_monthly_cost_usd=cost,
                 database_name=ex.get("database_name"),
                 status=ex["status"],
                 created_at=ex["started_at"],

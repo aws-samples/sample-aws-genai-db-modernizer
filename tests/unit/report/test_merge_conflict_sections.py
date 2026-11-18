@@ -317,6 +317,7 @@ def test_an_old_job_loads_and_renders_without_the_section() -> None:
         "slice_plan",
         "adoption",
         "engine_query_counts",
+        "target_engines",
         "executive_brief",
     )
     brief = old["facts"]["executive_brief"]
