@@ -1,0 +1,28 @@
+# Write intent orphan-cleanup (#1362). Fields: src/shared/catalog/write_intents.py.
+id = "orphan-cleanup"
+name = "Orphan clean-up"
+summary = "Removes rows, or clears references, whose parent row no longer exists."
+
+[engines.dynamodb]
+approach = "Enforce the rule where the parent is deleted: delete or update its dependents in the same TransactWriteItems (up to 100 items), or, for a wider fan-out, from a DynamoDB Streams consumer on the parent's REMOVE events; keep the dependents in the parent's item collection (the same partition key) so one Query finds them. A sweep that must stay is a scheduled batch job over a sparse GSI of the reference attribute."
+docs = "Amazon DynamoDB Developer Guide, Managing complex workflows with DynamoDB transactions; Change data capture for DynamoDB Streams"
+
+[engines.documentdb]
+approach = "Embed dependents the parent owns in the parent document, so they go with it; otherwise remove or update them where the parent is deleted, in a multi-document transaction or from a change stream consumer."
+docs = "Amazon DocumentDB Developer Guide, Transactions; Using change streams with Amazon DocumentDB"
+
+[engines.elasticache]
+approach = "Delete the dependent keys with the parent (in one MULTI/EXEC, or keep them in one hash under the parent's key), or give them the parent's expiry."
+docs = "Valkey documentation, Transactions"
+
+[engines.opensearch]
+approach = "Delete the dependents with the parent from the pipeline that indexes them (a delete by query on the parent id), or denormalize the parent's fields into each dependent so nothing is left dangling."
+docs = "OpenSearch documentation, Delete by query API"
+
+[engines.aurora_postgresql]
+approach = "Declare the foreign key with ON DELETE CASCADE or ON DELETE SET NULL, so the database keeps the rule at write time; keep the sweep only for rows written before the constraint."
+docs = "PostgreSQL documentation, Constraints chapter, Foreign Keys section"
+
+[engines.aurora_mysql]
+approach = "Declare the InnoDB foreign key with ON DELETE CASCADE or ON DELETE SET NULL, so the database keeps the rule at write time; keep the sweep only for rows written before the constraint."
+docs = "MySQL 8.0 Reference Manual, FOREIGN KEY Constraints"

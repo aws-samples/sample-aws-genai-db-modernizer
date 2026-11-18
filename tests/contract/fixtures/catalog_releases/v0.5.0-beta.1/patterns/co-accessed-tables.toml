@@ -1,0 +1,57 @@
+# Pattern co-accessed-tables. Fields: src/shared/catalog/patterns.py (ADR-031 Decision 8).
+id = "co-accessed-tables"
+name = "Co-accessed tables"
+detectors = [
+    "src.tools.analysis.dynamodb_analysis_tools:analyze_dynamodb_use_cases",
+]
+penalty = 0
+
+# Detection (#920): a key-anchored join of two or three tables at 50 calls/hour or more
+# (CO_ACCESS_FREQUENCY_THRESHOLD), not any multi-table query.
+[engines.dynamodb]
+kind = "fit"
+supported = true
+catalog = "dynamodb"
+catalog_id = "dynamodb-07c"
+score = 70
+why = "Tables frequently accessed together in the same queries (co-access frequency > 50 calls/hour). Strong signal for denormalization into one item collection that a single Query returns (Amazon DynamoDB Developer Guide, Best practices for modeling relational data)."
+concerns = ["Denormalization increases write amplification for updates"]
+# A denormalizable join: a moderate fit that needs design work (more migration effort).
+bonus_group = "denormalizable-join"
+table_bonus = 5
+complexity_bonus = -10
+
+[engines.documentdb]
+kind = "unscored"
+supported = true
+why = "DocumentDB's analysis does not report this pattern; it adds no cross-engine penalty."
+
+[engines.opensearch]
+kind = "unscored"
+supported = true
+why = "OpenSearch's analysis does not report this pattern; it adds no cross-engine penalty."
+
+[engines.elasticache]
+kind = "unscored"
+supported = true
+why = "ElastiCache's analysis does not report this pattern; it adds no cross-engine penalty."
+
+[engines.aurora_postgresql]
+kind = "unscored"
+supported = true
+why = "Aurora PostgreSQL's analysis does not report this pattern; it adds no cross-engine penalty."
+
+[engines.aurora_mysql]
+kind = "unscored"
+supported = true
+why = "Aurora MySQL's analysis does not report this pattern; it adds no cross-engine penalty."
+
+[engines.neptune]
+kind = "future"
+supported = false
+why = "Not modelled yet (future enhancement)"
+
+[engines.keyspaces]
+kind = "future"
+supported = false
+why = "Not modelled yet (future enhancement)"

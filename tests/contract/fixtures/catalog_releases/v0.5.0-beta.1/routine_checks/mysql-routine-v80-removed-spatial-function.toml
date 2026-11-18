@@ -1,0 +1,31 @@
+# Routine check mysql-routine-v80-removed-spatial-function (#1952). Fields: src/shared/catalog/routine_checks.py.
+# Source: MySQL 8.0 Reference Manual, What Is New in MySQL 8.0 (Features Removed: the spatial functions deprecated in 5.7 whose names lack the ST_ or MBR prefix, and GLength()).
+id = "mysql-routine-v80-removed-spatial-function"
+feature = "A spatial function name MySQL 8.0 removed"
+source_engines = ["mysql"]
+targets = ["aurora_mysql"]
+kinds = ["procedure", "function", "trigger", "event"]
+impact = "needs_rewrite"
+reason = "The routine calls a spatial function by a name MySQL 8.0 removed (the 5.7 names without the ST_ or MBR prefix), so on Aurora MySQL 3 and later the call fails when the routine runs."
+fix_hint = "Call the ST_ name of the same function (ST_AsText(), ST_X(), ST_Length() for GLength(), MBREquals() for MBREqual()) or its MBR name for the bounding-box tests (MBRContains(), MBRWithin()), and check the results: 8.0 spatial functions honour the geometry's spatial reference system."
+docs = "MySQL 8.0 Reference Manual, What Is New in MySQL 8.0 (Features Removed in MySQL 8.0); Spatial Function Reference"
+
+[version_change]
+line = "8.0"
+
+[match]
+function_calls = [
+  "AREA", "ASBINARY", "ASTEXT", "ASWKB", "ASWKT", "BUFFER", "CENTROID", "CONTAINS",
+  "CONVEXHULL", "CROSSES", "DIMENSION", "DISJOINT", "DISTANCE", "ENDPOINT", "ENVELOPE",
+  "EQUALS", "EXTERIORRING", "GEOMCOLLFROMTEXT", "GEOMCOLLFROMWKB", "GEOMFROMTEXT",
+  "GEOMFROMWKB", "GEOMETRYCOLLECTIONFROMTEXT", "GEOMETRYCOLLECTIONFROMWKB",
+  "GEOMETRYFROMTEXT", "GEOMETRYFROMWKB", "GEOMETRYN", "GEOMETRYTYPE", "GLENGTH",
+  "INTERIORRINGN", "INTERSECTS", "ISCLOSED", "ISEMPTY", "ISSIMPLE", "LINEFROMTEXT",
+  "LINEFROMWKB", "LINESTRINGFROMTEXT", "LINESTRINGFROMWKB", "MBREQUAL", "MLINEFROMTEXT", "MLINEFROMWKB",
+  "MPOINTFROMTEXT", "MPOINTFROMWKB", "MPOLYFROMTEXT", "MPOLYFROMWKB",
+  "MULTILINESTRINGFROMTEXT", "MULTILINESTRINGFROMWKB", "MULTIPOINTFROMTEXT",
+  "MULTIPOINTFROMWKB", "MULTIPOLYGONFROMTEXT", "MULTIPOLYGONFROMWKB", "NUMGEOMETRIES",
+  "NUMINTERIORRINGS", "NUMPOINTS", "OVERLAPS", "POINTFROMTEXT", "POINTFROMWKB", "POINTN",
+  "POLYFROMTEXT", "POLYFROMWKB", "POLYGONFROMTEXT", "POLYGONFROMWKB", "SRID", "STARTPOINT",
+  "TOUCHES", "WITHIN", "X", "Y",
+]

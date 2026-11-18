@@ -1,0 +1,14 @@
+# Routine check mysql-routine-load-file (#1936). Fields: src/shared/catalog/routine_checks.py.
+# Source: MySQL 8.0 Reference Manual, String Functions (LOAD_FILE); Amazon Aurora User Guide, Role-based privilege model.
+id = "mysql-routine-load-file"
+feature = "Reading a server file with LOAD_FILE()"
+source_engines = ["mysql"]
+targets = ["aurora_mysql"]
+kinds = ["procedure", "function", "trigger", "event"]
+impact = "behaves_differently"
+reason = "LOAD_FILE() reads a file on the database server and needs the FILE privilege, which the Aurora MySQL administrative role (rds_superuser_role) does not include, so on Aurora it returns NULL instead of the file."
+fix_hint = "Load the file from Amazon S3 with LOAD DATA FROM S3 into a table, and read the table instead."
+docs = "MySQL 8.0 Reference Manual, String Functions and Operators (LOAD_FILE); Amazon Aurora User Guide, Loading data into an Amazon Aurora MySQL DB cluster from text files in an Amazon S3 bucket"
+
+[match]
+function_calls = ["LOAD_FILE"]

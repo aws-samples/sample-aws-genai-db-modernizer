@@ -1,0 +1,16 @@
+# Gap rule mysql-system-variables (#1330). Fields: src/shared/catalog/gaps.py.
+# Source: MySQL 8.0 Reference Manual, Server System Variables; Amazon Aurora User Guide, Working with parameter groups.
+id = "mysql-system-variables"
+feature = "MySQL system variables and SET SESSION/GLOBAL"
+source_engines = ["mysql", "mariadb"]
+targets = ["aurora_postgresql"]
+impact = "needs_rewrite"
+reason = "@@ variables and SET SESSION or SET GLOBAL name MySQL server variables (sql_mode, autocommit, sql_big_selects, ...) that PostgreSQL does not have, so each maps to a PostgreSQL setting or a DB cluster parameter group change, or is dropped."
+docs = "MySQL 8.0 Reference Manual, Server System Variables; Amazon Aurora User Guide, Working with parameter groups"
+
+# Looks for: Words starting with @@, and statements that set a server variable (SET SESSION, SET GLOBAL, SET sql_mode, ...).
+[match]
+# "SET =" is a SET whose variable name is quoted (a digest writes SET `sql_mode` = ?):
+# a user variable is written @name, so a quoted name there is a server variable.
+word_prefixes = ["@@"]
+statement_starts = ["SET SESSION", "SET GLOBAL", "SET PERSIST", "SET PERSIST_ONLY", "SET =", "SET SQL_MODE", "SET AUTOCOMMIT", "SET TIME_ZONE", "SET SQL_BIG_SELECTS", "SET SQL_SAFE_UPDATES", "SET FOREIGN_KEY_CHECKS", "SET UNIQUE_CHECKS", "SET GROUP_CONCAT_MAX_LEN", "SET MAX_EXECUTION_TIME", "SET WAIT_TIMEOUT", "SET INNODB_LOCK_WAIT_TIMEOUT", "SET CHARACTER_SET_CLIENT"]

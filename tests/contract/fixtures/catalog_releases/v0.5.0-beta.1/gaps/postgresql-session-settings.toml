@@ -1,0 +1,14 @@
+# Gap rule postgresql-session-settings (#1330). Fields: src/shared/catalog/gaps.py.
+# Source: PostgreSQL documentation, SET, SHOW and System Administration Functions; MySQL 8.0 Reference Manual, Server System Variables.
+id = "postgresql-session-settings"
+feature = "PostgreSQL session settings (SET, SHOW, RESET)"
+source_engines = ["postgresql"]
+targets = ["aurora_mysql"]
+impact = "needs_rewrite"
+reason = "SHOW, RESET and SET name PostgreSQL settings (search_path, statement_timeout, client_min_messages, ...) that MySQL does not have under those names, so each maps to a MySQL system variable (time_zone, max_execution_time, ...) or a DB cluster parameter group change, or is dropped; these may be an ORM's connection setup, which its MySQL adapter issues on its own."
+docs = "PostgreSQL documentation, SET, SHOW and System Administration Functions; MySQL 8.0 Reference Manual, Server System Variables"
+
+# Looks for: Statements that start with SHOW, RESET, SET LOCAL, SET SESSION and similar, and current_setting() and set_config().
+[match]
+statement_starts = ["SHOW", "RESET", "DISCARD", "SET LOCAL", "SET SESSION", "SET TIME ZONE", "SET SEARCH_PATH", "SET STATEMENT_TIMEOUT", "SET LOCK_TIMEOUT", "SET ROLE", "SET APPLICATION_NAME", "SET CLIENT_MIN_MESSAGES", "SET CLIENT_ENCODING", "SET STANDARD_CONFORMING_STRINGS", "SET DATESTYLE", "SET INTERVALSTYLE", "SET TIMEZONE", "SET WORK_MEM", "SET IDLE_IN_TRANSACTION_SESSION_TIMEOUT"]
+calls = ["CURRENT_SETTING", "SET_CONFIG"]

@@ -1,0 +1,13 @@
+# Gap rule mysql-functions-behave-differently (#1330). Fields: src/shared/catalog/gaps.py.
+# Source: MySQL 8.0 Reference Manual, String Functions and Mathematical Functions; PostgreSQL documentation, String Functions and Operators, Mathematical Functions and Conditional Expressions.
+id = "mysql-functions-behave-differently"
+feature = "Functions that return different results on PostgreSQL"
+source_engines = ["mysql", "mariadb"]
+targets = ["aurora_postgresql"]
+impact = "behaves_differently"
+reason = "These functions exist on PostgreSQL with other results: LENGTH counts bytes in MySQL and characters in PostgreSQL, LOG(x) is the natural logarithm in MySQL and base 10 in PostgreSQL, and CONCAT, GREATEST and LEAST return NULL for a NULL argument in MySQL while PostgreSQL skips it; check each call."
+docs = "MySQL 8.0 Reference Manual, String Functions and Mathematical Functions; PostgreSQL documentation, String Functions and Operators, Mathematical Functions and Conditional Expressions"
+
+# Looks for: Calls to LENGTH, LOG, CONCAT, GREATEST and LEAST.
+[match]
+calls = ["LENGTH", "LOG", "CONCAT", "GREATEST", "LEAST"]

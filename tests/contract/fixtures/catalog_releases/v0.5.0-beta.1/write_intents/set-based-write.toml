@@ -1,0 +1,29 @@
+# Write intent set-based-write (#1362): any other write whose rows a predicate picks with
+# no key value. Fields: src/shared/catalog/write_intents.py.
+id = "set-based-write"
+name = "Set-based maintenance write"
+summary = "Any other maintenance write: model what it is for, the target's way, not its SQL."
+
+[engines.dynamodb]
+approach = "Model what the statement is for, not its SQL: enforce the rule where the data is written (UpdateItem or TransactWriteItems), react to the change with a DynamoDB Streams consumer, or run a scheduled batch job over a sparse GSI of the rows it picks; never a Scan of the table."
+docs = "Amazon DynamoDB Developer Guide, Best practices for designing and architecting with DynamoDB"
+
+[engines.documentdb]
+approach = "Model what the statement is for: make the change where the data is written, from a change stream consumer, or in batches over an index that selects the rows; never a collection scan."
+docs = "Amazon DocumentDB Developer Guide, Using change streams with Amazon DocumentDB"
+
+[engines.elasticache]
+approach = "Make the change where the source is written, or let the keys expire; a cache holds no set to sweep."
+docs = "Amazon ElastiCache User Guide, section on caching strategies"
+
+[engines.opensearch]
+approach = "Re-index the affected documents from the source's change events, or run an update or delete by query in batches."
+docs = "OpenSearch documentation, Update by query API"
+
+[engines.aurora_postgresql]
+approach = "Keep the statement, in batches over an index on its predicate."
+docs = "PostgreSQL documentation, Indexes chapter"
+
+[engines.aurora_mysql]
+approach = "Keep the statement, in batches over an index on its predicate."
+docs = "MySQL 8.0 Reference Manual, Optimization and Indexes"

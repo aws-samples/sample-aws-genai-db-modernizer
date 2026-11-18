@@ -1,0 +1,16 @@
+# Routine check mysql-routine-file-output (#1936). Fields: src/shared/catalog/routine_checks.py.
+# Source: Amazon Aurora User Guide, Saving data from an Amazon Aurora MySQL DB cluster into text files in an Amazon S3 bucket; Role-based privilege model.
+id = "mysql-routine-file-output"
+feature = "Writing a file on the database server"
+source_engines = ["mysql"]
+targets = ["aurora_mysql"]
+kinds = ["procedure", "function", "trigger", "event"]
+impact = "needs_rewrite"
+reason = "SELECT ... INTO OUTFILE and INTO DUMPFILE write a file on the database server, which needs the FILE privilege; the Aurora MySQL administrative role (rds_superuser_role) does not include it."
+fix_hint = "Write the file to Amazon S3 with SELECT ... INTO OUTFILE S3, after granting the AWS_SELECT_S3_ACCESS role."
+docs = "Amazon Aurora User Guide, Saving data from an Amazon Aurora MySQL DB cluster into text files in an Amazon S3 bucket"
+
+[match]
+statement_contains = ["INTO OUTFILE", "INTO DUMPFILE"]
+# Aurora MySQL's own SELECT ... INTO OUTFILE S3 writes to Amazon S3, not the server: the fix, never a finding.
+statement_exceptions = ["INTO OUTFILE S3"]

@@ -1,0 +1,17 @@
+# Routine check postgresql-routine-v17-removed-settings (#2016 review). Fields: src/shared/catalog/routine_checks.py.
+# Source: PostgreSQL 17 release notes, Migration to Version 17 (PostgreSQL 17 removed old_snapshot_threshold, db_user_namespace and trace_recovery_messages).
+id = "postgresql-routine-v17-removed-settings"
+feature = "A setting PostgreSQL 17 removed or renamed"
+source_engines = ["postgresql"]
+targets = ["aurora_postgresql"]
+kinds = ["function", "procedure"]
+impact = "needs_rewrite"
+reason = "PostgreSQL 17 removed old_snapshot_threshold, db_user_namespace and trace_recovery_messages, so on Aurora PostgreSQL 17 and later a routine that sets, shows or reads it fails with an unrecognized configuration parameter."
+fix_hint = "Drop the setting: none of them has a replacement."
+docs = "PostgreSQL 17 release notes, Migration to Version 17"
+
+[version_change]
+line = "17"
+
+[match]
+removed_settings = ["old_snapshot_threshold", "db_user_namespace", "trace_recovery_messages"]

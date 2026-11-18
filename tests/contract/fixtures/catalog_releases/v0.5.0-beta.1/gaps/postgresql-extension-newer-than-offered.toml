@@ -1,0 +1,13 @@
+# Gap rule postgresql-extension-newer-than-offered (#1078). Fields: src/shared/catalog/gaps.py.
+# Source: Extension versions for Amazon Aurora PostgreSQL (src/catalog/aurora_postgresql_extensions.toml).
+id = "postgresql-extension-newer-than-offered"
+feature = "Installed extensions newer than Aurora PostgreSQL offers"
+source_engines = ["postgresql"]
+targets = ["aurora_postgresql"]
+impact = "behaves_differently"
+reason = "These extensions are installed at a newer version than the source's Aurora PostgreSQL version offers, so what the newer version added may be missing: test the workload against the version Aurora PostgreSQL offers."
+docs = "Extension versions for Amazon Aurora PostgreSQL"
+
+# Looks for: Metadata.extensions above the version the source's own line offers when no line offers them all (never a module that ships with PostgreSQL).
+[match]
+extensions = "newer_than_offered"

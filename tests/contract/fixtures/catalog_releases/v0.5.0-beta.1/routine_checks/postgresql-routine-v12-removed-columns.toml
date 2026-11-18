@@ -1,0 +1,17 @@
+# Routine check postgresql-routine-v12-removed-columns (#1951). Fields: src/shared/catalog/routine_checks.py.
+# Source: PostgreSQL 12 release notes, Migration to Version 12 (pg_attrdef.adsrc and pg_constraint.consrc removed; OIDS removed with pg_class.relhasoids; pg_stat_ssl.clientdn renamed to client_dn).
+id = "postgresql-routine-v12-removed-columns"
+feature = "A catalog column PostgreSQL 12 removed"
+source_engines = ["postgresql"]
+targets = ["aurora_postgresql"]
+kinds = ["function", "procedure"]
+impact = "needs_rewrite"
+reason = "PostgreSQL 12 removed pg_attrdef.adsrc, pg_constraint.consrc and, with WITH OIDS tables, pg_class.relhasoids, and renamed pg_stat_ssl.clientdn to client_dn, so on every Aurora PostgreSQL line the query fails with an unknown column."
+fix_hint = "Read pg_get_expr(adbin, adrelid) for adsrc and pg_get_constraintdef(oid) for consrc, and drop the relhasoids test (no table has OIDs from PostgreSQL 12 on), and read client_dn for clientdn."
+docs = "PostgreSQL 12 release notes, Migration to Version 12"
+
+[version_change]
+line = "12"
+
+[match]
+catalog_columns = ["pg_attrdef.adsrc", "pg_constraint.consrc", "pg_class.relhasoids", "pg_stat_ssl.clientdn"]

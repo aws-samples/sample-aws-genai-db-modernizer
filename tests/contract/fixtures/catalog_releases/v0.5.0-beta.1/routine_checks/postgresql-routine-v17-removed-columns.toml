@@ -1,0 +1,24 @@
+# Routine check postgresql-routine-v17-removed-columns (#1951). Fields: src/shared/catalog/routine_checks.py.
+# Source: PostgreSQL 17 release notes, Migration to Version 17 (checkpoint columns moved from pg_stat_bgwriter to pg_stat_checkpointer; buffers_backend and buffers_backend_fsync removed, see pg_stat_io; pg_stat_progress_vacuum's max_dead_tuples and num_dead_tuples renamed; pg_collation.colliculocale and pg_database.daticulocale renamed to colllocale and datlocale; information_schema.element_types.domain_default removed).
+id = "postgresql-routine-v17-removed-columns"
+feature = "A catalog column PostgreSQL 17 moved, renamed or removed"
+source_engines = ["postgresql"]
+targets = ["aurora_postgresql"]
+kinds = ["function", "procedure"]
+impact = "needs_rewrite"
+reason = "PostgreSQL 17 moved pg_stat_bgwriter's checkpoint columns to the new pg_stat_checkpointer view, removed buffers_backend, buffers_backend_fsync and information_schema.element_types.domain_default, and renamed pg_stat_progress_vacuum's max_dead_tuples and num_dead_tuples, pg_collation.colliculocale and pg_database.daticulocale, so on Aurora PostgreSQL 17 and later the query fails with an unknown column."
+fix_hint = "Read the checkpoint figures from pg_stat_checkpointer (num_timed, num_requested, write_time, sync_time, buffers_written) and the backend writes from pg_stat_io; read max_dead_tuple_bytes and num_dead_item_ids, colllocale and datlocale for the renamed columns."
+docs = "PostgreSQL 17 release notes, Migration to Version 17"
+
+[version_change]
+line = "17"
+
+[match]
+catalog_columns = [
+  "pg_stat_bgwriter.checkpoints_timed", "pg_stat_bgwriter.checkpoints_req",
+  "pg_stat_bgwriter.checkpoint_write_time", "pg_stat_bgwriter.checkpoint_sync_time",
+  "pg_stat_bgwriter.buffers_checkpoint", "pg_stat_bgwriter.buffers_backend",
+  "pg_stat_bgwriter.buffers_backend_fsync", "pg_stat_progress_vacuum.max_dead_tuples",
+  "pg_stat_progress_vacuum.num_dead_tuples", "pg_collation.colliculocale",
+  "pg_database.daticulocale", "element_types.domain_default",
+]

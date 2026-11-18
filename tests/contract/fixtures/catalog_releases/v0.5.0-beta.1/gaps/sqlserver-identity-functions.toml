@@ -1,0 +1,14 @@
+# Gap rule sqlserver-identity-functions (#471). Fields: src/shared/catalog/gaps.py.
+# Source: SQL Server to Aurora PostgreSQL Migration Playbook (AWS DMS documentation), Identity and sequences.
+id = "sqlserver-identity-functions"
+feature = "Identity and row count functions"
+source_engines = ["sqlserver"]
+targets = ["aurora_mysql", "aurora_postgresql"]
+impact = "needs_rewrite"
+reason = "SCOPE_IDENTITY(), @@IDENTITY and @@ROWCOUNT become RETURNING on Aurora PostgreSQL, and LAST_INSERT_ID() and ROW_COUNT() on Aurora MySQL."
+docs = "SQL Server to Aurora PostgreSQL Migration Playbook (AWS DMS documentation), Identity and sequences"
+
+# Looks for: Function calls and system variables.
+[match]
+calls = ["SCOPE_IDENTITY", "IDENT_CURRENT"]
+words = ["@@IDENTITY", "@@ROWCOUNT"]

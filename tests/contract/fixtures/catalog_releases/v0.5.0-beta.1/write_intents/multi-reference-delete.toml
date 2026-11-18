@@ -1,0 +1,28 @@
+# Write intent multi-reference-delete (#1362). Fields: src/shared/catalog/write_intents.py.
+id = "multi-reference-delete"
+name = "Delete by any of several references"
+summary = "Removes every row that refers to one entity through any of several columns, for example when the entity is deleted."
+
+[engines.dynamodb]
+approach = "Give each reference a GSI (or keep the rows in the entity's item collection), Query each one for the entity and delete what it returns with BatchWriteItem; run it where the entity is deleted, or from a DynamoDB Streams consumer on that delete, never as a Scan."
+docs = "Amazon DynamoDB Developer Guide, Using Global Secondary Indexes in DynamoDB; Change data capture for DynamoDB Streams"
+
+[engines.documentdb]
+approach = "Index each reference field and run one deleteMany per field (or one $or over the indexed fields) where the entity is deleted, or from a change stream consumer."
+docs = "Amazon DocumentDB Developer Guide, Managing Amazon DocumentDB indexes; Using change streams with Amazon DocumentDB"
+
+[engines.elasticache]
+approach = "Keep a set of the entity's dependent keys and remove them with the entity (UNLINK)."
+docs = "Valkey documentation, UNLINK command reference"
+
+[engines.opensearch]
+approach = "Map the reference fields as keyword and delete by query on them from the pipeline that handles the entity's delete."
+docs = "OpenSearch documentation, Delete by query API"
+
+[engines.aurora_postgresql]
+approach = "Index each reference column, so the OR reads the indexes (a bitmap OR) instead of the table, or declare the foreign keys with ON DELETE CASCADE."
+docs = "PostgreSQL documentation, Combining Multiple Indexes"
+
+[engines.aurora_mysql]
+approach = "Index each reference column, so the OR reads the indexes (an index merge union) instead of the table, or declare the foreign keys with ON DELETE CASCADE."
+docs = "MySQL 8.0 Reference Manual, Index Merge Optimization"

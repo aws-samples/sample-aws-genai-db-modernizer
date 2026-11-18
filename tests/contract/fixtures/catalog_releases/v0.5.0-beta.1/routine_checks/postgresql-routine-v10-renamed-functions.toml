@@ -1,0 +1,22 @@
+# Routine check postgresql-routine-v10-renamed-functions (#1951). Fields: src/shared/catalog/routine_checks.py.
+# Source: PostgreSQL 10 release notes, Migration to Version 10 (functions with xlog in their names renamed to wal, and location to lsn).
+id = "postgresql-routine-v10-renamed-functions"
+feature = "A WAL function PostgreSQL 10 renamed from xlog to wal"
+source_engines = ["postgresql"]
+targets = ["aurora_postgresql"]
+kinds = ["function", "procedure"]
+impact = "needs_rewrite"
+reason = "PostgreSQL 10 renamed the functions with xlog in their names to wal (and location to lsn), so on every Aurora PostgreSQL line the call fails with an unknown function when the routine runs."
+fix_hint = "Call the new name: pg_current_wal_lsn() for pg_current_xlog_location(), pg_walfile_name() for pg_xlogfile_name(), pg_wal_lsn_diff() for pg_xlog_location_diff(), pg_last_wal_replay_lsn() for pg_last_xlog_replay_location(), and so on."
+docs = "PostgreSQL 10 release notes, Migration to Version 10"
+
+[version_change]
+line = "10"
+
+[match]
+called_functions = [
+  "pg_current_xlog_location", "pg_current_xlog_insert_location", "pg_current_xlog_flush_location",
+  "pg_xlogfile_name", "pg_xlogfile_name_offset", "pg_xlog_location_diff",
+  "pg_last_xlog_receive_location", "pg_last_xlog_replay_location", "pg_is_xlog_replay_paused",
+  "pg_xlog_replay_pause", "pg_xlog_replay_resume", "pg_switch_xlog",
+]

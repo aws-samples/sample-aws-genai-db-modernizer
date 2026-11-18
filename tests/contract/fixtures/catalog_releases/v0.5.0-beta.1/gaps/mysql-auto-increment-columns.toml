@@ -1,0 +1,13 @@
+# Gap rule mysql-auto-increment-columns (#1330). Fields: src/shared/catalog/gaps.py.
+# Source: AWS Schema Conversion Tool User Guide, Using MySQL as a source; PostgreSQL documentation, CREATE TABLE (identity columns) and Sequence Manipulation Functions.
+id = "mysql-auto-increment-columns"
+feature = "AUTO_INCREMENT columns"
+source_engines = ["mysql", "mariadb"]
+targets = ["aurora_postgresql"]
+impact = "behaves_differently"
+reason = "AUTO_INCREMENT columns become identity columns backed by a sequence, which an insert with an explicit id does not advance: reset each sequence past the highest loaded id (setval) after the data load."
+docs = "AWS Schema Conversion Tool User Guide, Using MySQL as a source; PostgreSQL documentation, CREATE TABLE (identity columns) and Sequence Manipulation Functions"
+
+# Looks for: Columns the collector marks auto-incrementing.
+[match]
+auto_increment = true

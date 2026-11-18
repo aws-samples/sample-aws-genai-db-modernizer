@@ -1,0 +1,13 @@
+# Gap rule mysql-utf8mb3-character-set (#471). Fields: src/shared/catalog/gaps.py.
+# Source: MySQL 8.0 Reference Manual, The utf8mb3 Character Set.
+id = "mysql-utf8mb3-character-set"
+feature = "Tables in the utf8mb3 character set"
+source_engines = ["mysql", "mariadb"]
+targets = ["aurora_mysql"]
+impact = "informational"
+reason = "utf8mb3 (also spelled utf8) is deprecated in MySQL 8.0 and stores no 4-byte characters such as emoji: plan the conversion to utf8mb4."
+docs = "MySQL 8.0 Reference Manual, The utf8mb3 Character Set"
+
+# Looks for: Table.collation, from information_schema.TABLES.TABLE_COLLATION.
+[match]
+collations = ["utf8_*", "utf8mb3_*"]

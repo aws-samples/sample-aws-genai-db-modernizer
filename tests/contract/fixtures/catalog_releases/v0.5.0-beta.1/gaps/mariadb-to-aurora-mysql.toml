@@ -1,0 +1,13 @@
+# Gap rule mariadb-to-aurora-mysql (#471). Fields: src/shared/catalog/gaps.py.
+# Source: Amazon Aurora User Guide, Migrating data to an Amazon Aurora MySQL DB cluster; AWS DMS User Guide, Using a MySQL-compatible database as a source.
+id = "mariadb-to-aurora-mysql"
+feature = "MariaDB source on a MySQL-compatible target"
+source_engines = ["mariadb"]
+targets = ["aurora_mysql"]
+impact = "behaves_differently"
+reason = "Aurora MySQL is compatible with MySQL, not MariaDB, which diverged after 5.5: check every MariaDB-only feature the application uses (system-versioned tables, Aria or ColumnStore tables, RETURNING, its JSON and optimizer differences)."
+docs = "Amazon Aurora User Guide, Migrating data to an Amazon Aurora MySQL DB cluster; AWS DMS User Guide, Using a MySQL-compatible database as a source"
+
+# Looks for: Every MariaDB source.
+[match]
+always = true

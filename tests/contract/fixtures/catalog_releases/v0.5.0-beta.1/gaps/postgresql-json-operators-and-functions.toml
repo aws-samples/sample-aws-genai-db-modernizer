@@ -1,0 +1,14 @@
+# Gap rule postgresql-json-operators-and-functions (#1330). Fields: src/shared/catalog/gaps.py.
+# Source: AWS Schema Conversion Tool User Guide, Using PostgreSQL as a source; PostgreSQL documentation, JSON Functions and Operators; MySQL 8.0 Reference Manual, JSON Functions.
+id = "postgresql-json-operators-and-functions"
+feature = "jsonb operators and JSON functions"
+source_engines = ["postgresql"]
+targets = ["aurora_mysql"]
+impact = "needs_rewrite"
+reason = "PostgreSQL's JSON operators (->> on a key, #>, @>, <@, ?|) and functions (jsonb_build_object, jsonb_agg, jsonb_set, ...) become MySQL JSON functions with JSON path strings ('$.key'), and containment and key-exists tests become JSON_CONTAINS and JSON_CONTAINS_PATH."
+docs = "AWS Schema Conversion Tool User Guide, Using PostgreSQL as a source; PostgreSQL documentation, JSON Functions and Operators; MySQL 8.0 Reference Manual, JSON Functions"
+
+# Looks for: The JSON operators and calls to the PostgreSQL JSON functions.
+[match]
+syntax = ["- >", "# >", "@ >", "< @", "? |", "? &"]
+calls = ["JSONB_BUILD_OBJECT", "JSON_BUILD_OBJECT", "JSONB_BUILD_ARRAY", "JSON_BUILD_ARRAY", "JSONB_AGG", "JSON_AGG", "JSONB_OBJECT_AGG", "JSON_OBJECT_AGG", "JSONB_SET", "JSONB_INSERT", "JSONB_ARRAY_ELEMENTS", "JSON_ARRAY_ELEMENTS", "JSONB_ARRAY_ELEMENTS_TEXT", "JSON_ARRAY_ELEMENTS_TEXT", "JSONB_EACH", "JSON_EACH", "JSONB_EACH_TEXT", "JSON_EACH_TEXT", "JSONB_OBJECT_KEYS", "JSON_OBJECT_KEYS", "JSONB_EXTRACT_PATH", "JSON_EXTRACT_PATH", "JSONB_EXTRACT_PATH_TEXT", "JSON_EXTRACT_PATH_TEXT", "JSONB_TYPEOF", "JSON_TYPEOF", "JSONB_ARRAY_LENGTH", "JSON_ARRAY_LENGTH", "JSONB_STRIP_NULLS", "JSON_STRIP_NULLS", "JSONB_PRETTY", "TO_JSONB", "TO_JSON", "ROW_TO_JSON", "ARRAY_TO_JSON", "JSONB_PATH_QUERY", "JSONB_PATH_EXISTS", "JSONB_POPULATE_RECORD", "JSON_POPULATE_RECORD", "JSONB_TO_RECORD", "JSON_TO_RECORD", "JSONB_TO_RECORDSET", "JSON_TO_RECORDSET"]

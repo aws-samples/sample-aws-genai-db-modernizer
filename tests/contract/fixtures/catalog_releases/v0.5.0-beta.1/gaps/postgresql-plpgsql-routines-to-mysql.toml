@@ -1,0 +1,18 @@
+# Gap rule postgresql-plpgsql-routines-to-mysql (#1330). Fields: src/shared/catalog/gaps.py.
+# Source: AWS Schema Conversion Tool User Guide, Using PostgreSQL as a source; PostgreSQL documentation, PL/pgSQL; MySQL 8.0 Reference Manual, Stored Objects.
+id = "postgresql-plpgsql-routines-to-mysql"
+feature = "PL/pgSQL and other procedural-language routines and trigger functions"
+source_engines = ["postgresql"]
+targets = ["aurora_mysql"]
+impact = "needs_rewrite"
+reason = "PL/pgSQL, PL/Perl, PL/Python, PL/Tcl and PL/v8 functions and procedures are rewritten as MySQL stored routines, which have no set-returning functions, overloading or exception blocks of the same form and no other procedural languages, and a trigger's function body moves into the MySQL trigger itself."
+docs = "AWS Schema Conversion Tool User Guide, Using PostgreSQL as a source; PostgreSQL documentation, PL/pgSQL; MySQL 8.0 Reference Manual, Stored Objects"
+
+# Looks for: Routines in a procedural language, triggers that EXECUTE FUNCTION, and DO blocks.
+[match]
+# Not "sql": an extension's SQL-language wrappers (citext's regexp_replace, strpos,
+# ...) carry no schema or extension in the collection, so they would read as the
+# application's routines.
+routine_languages = ["plpgsql", "plperl", "plperlu", "plpythonu", "plpython2u", "plpython3u", "pltcl", "pltclu", "plv8", "plr", "pljava"]
+syntax = ["EXECUTE FUNCTION", "EXECUTE PROCEDURE"]
+statement_starts = ["DO"]

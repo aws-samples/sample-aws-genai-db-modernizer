@@ -1,0 +1,21 @@
+# Routine check mysql-routine-v84-removed-statement (#2006 review). Fields: src/shared/catalog/routine_checks.py.
+# Source: MySQL 8.4 Reference Manual, What Is New in MySQL 8.4 since MySQL 8.0 (Features Removed: FLUSH HOSTS; the MASTER and SLAVE forms of the replication statements); the 8.4 grammar (sql/sql_yacc.yy) keeps only the BINARY LOG and REPLICA forms.
+id = "mysql-routine-v84-removed-statement"
+feature = "A statement MySQL 8.4 removed"
+source_engines = ["mysql"]
+targets = ["aurora_mysql"]
+kinds = ["procedure", "function", "trigger", "event"]
+impact = "needs_rewrite"
+reason = "MySQL 8.4 removed FLUSH HOSTS and the MASTER and SLAVE forms of the replication statements, so on Aurora MySQL version 8.4 the statement no longer parses and the routine cannot be created."
+fix_hint = "Use TRUNCATE TABLE performance_schema.host_cache for FLUSH HOSTS, and the 8.4 forms of the others: SHOW BINARY LOG STATUS, SHOW BINARY LOGS, SHOW REPLICA STATUS, SHOW REPLICAS, RESET BINARY LOGS AND GTIDS, RESET REPLICA, PURGE BINARY LOGS, START REPLICA, STOP REPLICA and CHANGE REPLICATION SOURCE TO."
+docs = "MySQL 8.4 Reference Manual, What Is New in MySQL 8.4 since MySQL 8.0 (Features Removed)"
+
+[version_change]
+line = "8.4"
+
+[match]
+statement_starts = [
+  "FLUSH HOSTS", "SHOW MASTER STATUS", "SHOW MASTER LOGS", "SHOW SLAVE STATUS",
+  "SHOW SLAVE HOSTS", "RESET MASTER", "RESET SLAVE", "PURGE MASTER LOGS", "START SLAVE",
+  "STOP SLAVE", "CHANGE MASTER",
+]

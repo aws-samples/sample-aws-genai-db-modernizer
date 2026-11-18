@@ -1,0 +1,12 @@
+# Routine rewrite postgresql-routine-pin-search-path (#1937). Fields: src/shared/catalog/routine_rewrites.py.
+# Source: PostgreSQL documentation, CREATE FUNCTION (the SET clause, restored on exit).
+id = "postgresql-routine-pin-search-path"
+feature = "A SECURITY DEFINER routine pins the source's effective search_path"
+source_engines = ["postgresql"]
+targets = ["aurora_postgresql"]
+kinds = ["function", "procedure"]
+reason = "A SECURITY DEFINER routine that sets no search_path resolves unqualified names in its caller's search_path, so a SET search_path clause naming the source's effective path is added to its header to keep the name resolution it had on the source (it is not hardening: no pg_temp is added, and a caller whose path differs now resolves names in the pinned one); a routine that already sets one, or whose body reads, sets or resets the search_path, is left as it is."
+docs = "PostgreSQL documentation, CREATE FUNCTION"
+
+[match]
+rewrite = "search_path"

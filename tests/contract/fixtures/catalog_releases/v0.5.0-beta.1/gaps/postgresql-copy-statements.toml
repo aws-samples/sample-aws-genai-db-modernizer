@@ -1,0 +1,13 @@
+# Gap rule postgresql-copy-statements (#1330). Fields: src/shared/catalog/gaps.py.
+# Source: PostgreSQL documentation, COPY; Amazon Aurora User Guide, Loading data into an Amazon Aurora MySQL DB cluster from text files in an Amazon S3 bucket.
+id = "postgresql-copy-statements"
+feature = "COPY statements"
+source_engines = ["postgresql"]
+targets = ["aurora_mysql"]
+impact = "needs_rewrite"
+reason = "MySQL has no COPY statement, so bulk loads become LOAD DATA LOCAL INFILE or LOAD DATA FROM S3 on Aurora MySQL, and exports SELECT ... INTO OUTFILE S3."
+docs = "PostgreSQL documentation, COPY; Amazon Aurora User Guide, Loading data into an Amazon Aurora MySQL DB cluster from text files in an Amazon S3 bucket"
+
+# Looks for: Statements that start with COPY.
+[match]
+statement_starts = ["COPY"]

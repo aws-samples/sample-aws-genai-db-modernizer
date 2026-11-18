@@ -1,0 +1,17 @@
+# Routine check mysql-routine-mode-deprecated (#1936). Fields: src/shared/catalog/routine_checks.py.
+# Source: MySQL 8.0 Reference Manual, Server SQL Modes (PAD_CHAR_TO_FULL_LENGTH is deprecated as of 8.0.13; ERROR_FOR_DIVISION_BY_ZERO, NO_ZERO_DATE and NO_ZERO_IN_DATE are deprecated).
+id = "mysql-routine-mode-deprecated"
+feature = "An sql_mode MySQL 8.0 deprecates"
+source_engines = ["mysql"]
+targets = ["aurora_mysql"]
+kinds = ["procedure", "function", "trigger", "event"]
+impact = "informational"
+reason = "The routine's sql_mode includes a mode MySQL 8.0 deprecates; it still works on Aurora MySQL today, but a later version line may remove it."
+fix_hint = "Keep the mode on Aurora MySQL 8.0; drop it only when the target line removes it, padding CHAR values with RPAD in place of PAD_CHAR_TO_FULL_LENGTH, and dropping the zero-date and division-by-zero modes only on a line whose strict mode includes their effect."
+docs = "MySQL 8.0 Reference Manual, Server SQL Modes"
+
+# Every mode MySQL 8.0 deprecates. ERROR_FOR_DIVISION_BY_ZERO, NO_ZERO_DATE and NO_ZERO_IN_DATE are in
+# MySQL's default sql_mode, so most routines show this finding; it is informational and leaves the
+# routine as is.
+[match]
+sql_modes = ["PAD_CHAR_TO_FULL_LENGTH", "ERROR_FOR_DIVISION_BY_ZERO", "NO_ZERO_DATE", "NO_ZERO_IN_DATE"]

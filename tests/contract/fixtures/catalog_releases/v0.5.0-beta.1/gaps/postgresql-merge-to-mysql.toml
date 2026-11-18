@@ -1,0 +1,13 @@
+# Gap rule postgresql-merge-to-mysql (#1330). Fields: src/shared/catalog/gaps.py.
+# Source: PostgreSQL documentation, MERGE; MySQL 8.0 Reference Manual, INSERT ... ON DUPLICATE KEY UPDATE Statement.
+id = "postgresql-merge-to-mysql"
+feature = "MERGE statements on Aurora MySQL"
+source_engines = ["postgresql"]
+targets = ["aurora_mysql"]
+impact = "needs_rewrite"
+reason = "Aurora MySQL has no MERGE statement, so each becomes INSERT ... ON DUPLICATE KEY UPDATE, or separate UPDATE, INSERT and DELETE statements in one transaction."
+docs = "PostgreSQL documentation, MERGE; MySQL 8.0 Reference Manual, INSERT ... ON DUPLICATE KEY UPDATE Statement"
+
+# Looks for: MERGE INTO.
+[match]
+syntax = ["MERGE INTO"]

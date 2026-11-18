@@ -1,0 +1,14 @@
+# Routine check mysql-routine-plugin-install (#1936). Fields: src/shared/catalog/routine_checks.py.
+# Source: Amazon Aurora User Guide, Comparing Aurora MySQL version 3 and MySQL 8.0 Community Edition (plugins, the mysql database).
+id = "mysql-routine-plugin-install"
+feature = "Installing or removing a plugin or component"
+source_engines = ["mysql"]
+targets = ["aurora_mysql"]
+kinds = ["procedure", "function", "trigger", "event"]
+impact = "needs_rewrite"
+reason = "Installing or removing a plugin or component writes to the mysql system database, which Aurora MySQL users cannot change; Aurora manages its plugins itself."
+fix_hint = "Remove the statement; turn on a supported feature through the DB cluster parameter group instead."
+docs = "Amazon Aurora User Guide, Comparing Aurora MySQL version 3 and MySQL 8.0 Community Edition"
+
+[match]
+statement_starts = ["INSTALL PLUGIN", "UNINSTALL PLUGIN", "INSTALL COMPONENT", "UNINSTALL COMPONENT"]

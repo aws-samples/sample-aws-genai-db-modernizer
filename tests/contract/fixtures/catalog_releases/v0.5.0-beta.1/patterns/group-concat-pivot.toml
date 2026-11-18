@@ -1,0 +1,65 @@
+# Pattern group-concat-pivot. Fields: src/shared/catalog/patterns.py (ADR-031 Decision 8).
+id = "group-concat-pivot"
+name = "Group concatenation or pivot"
+detectors = [
+    "src.tools.analysis.aurora_mysql_analysis_tools:detect_mysql_specific_features",
+    "src.tools.analysis.aurora_pg_analysis_tools:detect_pg_specific_features",
+]
+penalty = 0
+
+[engines.dynamodb]
+kind = "unscored"
+supported = true
+why = "DynamoDB's analysis does not report this pattern; it adds no cross-engine penalty."
+
+[engines.documentdb]
+kind = "unscored"
+supported = true
+why = "DocumentDB's analysis does not report this pattern; it adds no cross-engine penalty."
+
+[engines.opensearch]
+kind = "unscored"
+supported = true
+why = "OpenSearch's analysis does not report this pattern; it adds no cross-engine penalty."
+
+[engines.elasticache]
+kind = "unscored"
+supported = true
+why = "ElastiCache's analysis does not report this pattern; it adds no cross-engine penalty."
+
+[engines.aurora_postgresql]
+kind = "fit"
+supported = true
+catalog = "aurora_pg"
+catalog_id = "aurora-pg-10"
+score = 75
+why = "String aggregation with string_agg (a source's GROUP_CONCAT, STRING_AGG or LISTAGG) for pivoting and denormalized output, server-side (PostgreSQL documentation, Aggregate Functions)."
+concerns = [
+    "An ORDER BY inside the aggregate is needed for a stable order.",
+]
+table_bonus = 5
+complexity_feature = true
+
+# Detection signals: GROUP_CONCAT, string aggregation patterns
+[engines.aurora_mysql]
+kind = "fit"
+supported = true
+catalog = "aurora_mysql"
+catalog_id = "aurora-mysql-04"
+score = 75
+why = "String aggregation with GROUP_CONCAT (a source's STRING_AGG or LISTAGG) for pivoting and denormalized output, server-side (MySQL Reference Manual, Aggregate Function Descriptions)."
+concerns = [
+    "Default group_concat_max_len (1024) may truncate results; increase as needed.",
+]
+table_bonus = 5
+complexity_feature = true
+
+[engines.neptune]
+kind = "future"
+supported = false
+why = "Not modelled yet (future enhancement)"
+
+[engines.keyspaces]
+kind = "future"
+supported = false
+why = "Not modelled yet (future enhancement)"

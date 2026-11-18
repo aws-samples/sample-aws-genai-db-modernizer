@@ -1,0 +1,36 @@
+# Routine check mysql-routine-v84-removed-system-variable (#2006 review). Fields: src/shared/catalog/routine_checks.py.
+# Source: MySQL 8.4 Reference Manual, What Is New in MySQL 8.4 since MySQL 8.0 (Features Removed); MySQL Shell upgrade checker, removed system variables (res/upgrade_checker/sysvars.json: added before 8.1, removed by 8.4.0).
+id = "mysql-routine-v84-removed-system-variable"
+feature = "A system variable MySQL 8.4 removed"
+source_engines = ["mysql"]
+targets = ["aurora_mysql"]
+kinds = ["procedure", "function", "trigger", "event"]
+impact = "needs_rewrite"
+reason = "The routine sets or reads a system variable MySQL 8.4 removed, so on Aurora MySQL version 8.4 the statement fails with an unknown system variable when the routine runs."
+fix_hint = "Use the 8.4 name (binlog_expire_logs_seconds for expire_logs_days, authentication_policy for default_authentication_plugin, replica_ and source_ names for the slave_ and master_ ones), or drop the statement for a variable with no replacement."
+docs = "MySQL 8.4 Reference Manual, What Is New in MySQL 8.4 since MySQL 8.0 (Features Removed); MySQL Shell, Upgrade Checker Utility"
+
+[version_change]
+line = "8.4"
+
+# Every variable the upgrade checker lists as added before 8.1 and removed by 8.4.0, except new,
+# old and language: a trigger's SET NEW.col and a local variable named language would read as
+# them, and a routine has no reason to set them.
+[match]
+system_variables = [
+  "authentication_fido_rp_id", "avoid_temporal_upgrade", "binlog_transaction_dependency_tracking",
+  "daemon_memcached_enable_binlog", "daemon_memcached_engine_lib_name",
+  "daemon_memcached_engine_lib_path", "daemon_memcached_option", "daemon_memcached_r_batch_size",
+  "daemon_memcached_w_batch_size", "default_authentication_plugin", "expire_logs_days",
+  "group_replication_ip_whitelist", "group_replication_recovery_complete_at", "have_openssl",
+  "have_ssl", "innodb_api_bk_commit_interval", "innodb_api_disable_rowlock",
+  "innodb_api_enable_binlog", "innodb_api_enable_mdl", "innodb_api_trx_level",
+  "keyring_encrypted_file_data", "keyring_encrypted_file_password", "keyring_file_data",
+  "keyring_oci_ca_certificate", "keyring_oci_compartment", "keyring_oci_encryption_endpoint",
+  "keyring_oci_key_file", "keyring_oci_key_fingerprint", "keyring_oci_management_endpoint",
+  "keyring_oci_master_key", "keyring_oci_secrets_endpoint", "keyring_oci_tenancy",
+  "keyring_oci_user", "keyring_oci_vaults_endpoint", "keyring_oci_virtual_vault",
+  "log_bin_use_v1_row_events", "master_info_file", "master_info_repository",
+  "relay_log_info_file", "relay_log_info_repository", "show_old_temporals",
+  "slave_rows_search_algorithms", "transaction_write_set_extraction",
+]

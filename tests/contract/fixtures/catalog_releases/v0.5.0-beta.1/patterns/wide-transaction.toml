@@ -1,0 +1,63 @@
+# Pattern wide-transaction. Fields: src/shared/catalog/patterns.py (ADR-031 Decision 8).
+id = "wide-transaction"
+name = "Wide transaction"
+detectors = [
+    "src.tools.analysis.dynamodb_analysis_tools:analyze_dynamodb_use_cases",
+]
+# ADR-031 Decision 3 (#493): the score reflects the transaction's shape
+# (src/agents/referee/transaction_shape.py). A write of at most 100 items fits one
+# TransactWriteItems call and costs nothing here; a write that changes more items, or a
+# set the statement does not bound, is this pattern. Its size is the penalty basis's
+# (ADR-031 Decision 8 Amendment 6), calibrated in #916: see penalty_why.
+penalty = 10
+penalty_basis = "bounded_limit"
+removed_by_redesign = "write_shape"
+penalty_why = "DynamoDB runs every item of a wider write within a documented bound: one PartiQL DELETE or UPDATE changes one item (its condition resolves to a single primary key), and the documented way to change several is a transaction of up to 100 items or a batch (Amazon DynamoDB Developer Guide, PartiQL delete statements; Amazon DynamoDB Transactions), so the design splits the write into bounded calls, reads the keys of a predicate-picked set first, and gives up all-or-nothing atomicity across the calls; the data model needs no redesign (needs_redesign is for an access path no server-side operation serves)."
+
+# Detection signal: transaction_shape(...).shape == "unbounded" on a write
+# Writes only: no parity anchor borrows from it and no access class lists it (#936).
+write_pattern = true
+
+[engines.dynamodb]
+kind = "anti_pattern"
+supported = true
+catalog = "dynamodb"
+catalog_id = "dynamodb-ap-04"
+severity = 0.3
+why = "A write wider than one transaction: more than 100 items, or rows a range, join, subquery or a filter with no key anchor picks (a write by a non-unique key column is a key-scoped Query plus batch write, not this). DynamoDB TransactWriteItems holds up to 100 items and 4 MB across tables (Amazon DynamoDB Developer Guide, Amazon DynamoDB Transactions)."
+guidance = "Writes of up to 100 known items run as one TransactWriteItems call. A wider write needs batches of at most 100 items or a retry-safe multi-step flow."
+
+[engines.documentdb]
+kind = "unscored"
+supported = true
+why = "DocumentDB's analysis does not report this pattern; it adds no cross-engine penalty."
+
+[engines.opensearch]
+kind = "unscored"
+supported = true
+why = "OpenSearch's analysis does not report this pattern; it adds no cross-engine penalty."
+
+[engines.elasticache]
+kind = "unscored"
+supported = true
+why = "ElastiCache's analysis does not report this pattern; it adds no cross-engine penalty."
+
+[engines.aurora_postgresql]
+kind = "unscored"
+supported = true
+why = "Aurora PostgreSQL's analysis does not report this pattern; it adds no cross-engine penalty."
+
+[engines.aurora_mysql]
+kind = "unscored"
+supported = true
+why = "Aurora MySQL's analysis does not report this pattern; it adds no cross-engine penalty."
+
+[engines.neptune]
+kind = "future"
+supported = false
+why = "Not modelled yet (future enhancement)"
+
+[engines.keyspaces]
+kind = "future"
+supported = false
+why = "Not modelled yet (future enhancement)"

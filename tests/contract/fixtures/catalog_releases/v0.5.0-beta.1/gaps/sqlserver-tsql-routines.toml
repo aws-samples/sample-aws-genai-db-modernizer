@@ -1,0 +1,13 @@
+# Gap rule sqlserver-tsql-routines (#471). Fields: src/shared/catalog/gaps.py.
+# Source: AWS DMS User Guide, Converting database schemas using DMS Schema Conversion; AWS Schema Conversion Tool User Guide.
+id = "sqlserver-tsql-routines"
+feature = "T-SQL procedures, functions and triggers"
+source_engines = ["sqlserver"]
+targets = ["aurora_mysql", "aurora_postgresql"]
+impact = "needs_rewrite"
+reason = "T-SQL routines are converted to the target's procedural language (PL/pgSQL on Aurora PostgreSQL, stored programs on Aurora MySQL): a schema conversion tool converts most of the code, and the rest is rewritten by hand."
+docs = "AWS DMS User Guide, Converting database schemas using DMS Schema Conversion; AWS Schema Conversion Tool User Guide"
+
+# Looks for: Every collected procedure, function and trigger.
+[match]
+routines = true

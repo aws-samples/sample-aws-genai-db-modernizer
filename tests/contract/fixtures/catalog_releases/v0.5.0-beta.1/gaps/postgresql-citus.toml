@@ -1,0 +1,16 @@
+# Gap rule postgresql-citus (#471). Fields: src/shared/catalog/gaps.py.
+# Source: Extension versions for Amazon Aurora PostgreSQL.
+id = "postgresql-citus"
+feature = "Citus distributed tables"
+source_engines = ["postgresql"]
+targets = ["aurora_postgresql"]
+impact = "blocks_move"
+reason = "Citus is not among the extensions Aurora PostgreSQL offers, so distributed and reference tables must become ordinary tables (or move to a service that runs Citus) before the move."
+docs = "Extension versions for Amazon Aurora PostgreSQL"
+
+# Looks for: CREATE EXTENSION citus, its installed C functions, or a call to one of its functions that is unqualified or qualified with pg_catalog (never a user's same-named function).
+[match]
+extension = "citus"
+# Citus creates its functions in pg_catalog; a same-named function in another schema is a user's.
+extension_schemas = ["pg_catalog"]
+extension_calls = ["CREATE_DISTRIBUTED_TABLE", "CREATE_REFERENCE_TABLE", "CITUS_ADD_NODE"]

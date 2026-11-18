@@ -1,0 +1,13 @@
+# Gap rule sqlserver-top-clause (#471). Fields: src/shared/catalog/gaps.py.
+# Source: SQL Server to Aurora PostgreSQL Migration Playbook (AWS DMS documentation); AWS Schema Conversion Tool User Guide.
+id = "sqlserver-top-clause"
+feature = "TOP row limits"
+source_engines = ["sqlserver"]
+targets = ["aurora_mysql", "aurora_postgresql"]
+impact = "needs_rewrite"
+reason = "TOP (n) becomes LIMIT n, and a DELETE or UPDATE with TOP becomes a keyed subquery."
+docs = "SQL Server to Aurora PostgreSQL Migration Playbook (AWS DMS documentation); AWS Schema Conversion Tool User Guide"
+
+# Looks for: The TOP keyword.
+[match]
+words = ["TOP"]

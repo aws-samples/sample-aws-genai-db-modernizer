@@ -1,0 +1,13 @@
+# Gap rule sqlserver-builtin-functions (#471). Fields: src/shared/catalog/gaps.py.
+# Source: SQL Server to Aurora PostgreSQL Migration Playbook (AWS DMS documentation), String functions; AWS Schema Conversion Tool User Guide.
+id = "sqlserver-builtin-functions"
+feature = "T-SQL string, null and other built-in functions"
+source_engines = ["sqlserver"]
+targets = ["aurora_mysql", "aurora_postgresql"]
+impact = "needs_rewrite"
+reason = "These T-SQL functions have other names on the target, and ISNULL exists on Aurora MySQL with a different meaning, so each call is converted (COALESCE, LENGTH, POSITION, gen_random_uuid() or UUID(), COUNT)."
+docs = "SQL Server to Aurora PostgreSQL Migration Playbook (AWS DMS documentation), String functions; AWS Schema Conversion Tool User Guide"
+
+# Looks for: Function calls in queries and routines.
+[match]
+calls = ["ISNULL", "LEN", "CHARINDEX", "STUFF", "DATALENGTH", "IIF", "CHOOSE", "COUNT_BIG", "NEWID", "NEWSEQUENTIALID"]

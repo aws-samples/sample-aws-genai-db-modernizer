@@ -1,0 +1,13 @@
+# Gap rule mysql-regexp-operators (#1330). Fields: src/shared/catalog/gaps.py.
+# Source: MySQL 8.0 Reference Manual, Regular Expressions; PostgreSQL documentation, Pattern Matching.
+id = "mysql-regexp-operators"
+feature = "REGEXP and RLIKE"
+source_engines = ["mysql", "mariadb"]
+targets = ["aurora_postgresql"]
+impact = "needs_rewrite"
+reason = "REGEXP and RLIKE become PostgreSQL's ~ operator (or ~* to ignore case), and MySQL's ICU regular expressions, which follow the column's collation for case, differ in places from PostgreSQL's POSIX ones."
+docs = "MySQL 8.0 Reference Manual, Regular Expressions; PostgreSQL documentation, Pattern Matching"
+
+# Looks for: The REGEXP and RLIKE operators.
+[match]
+words = ["REGEXP", "RLIKE"]

@@ -1,0 +1,18 @@
+# Routine check mysql-routine-v80-found-rows (#1952). Fields: src/shared/catalog/routine_checks.py.
+# Source: MySQL 8.0 Reference Manual, Information Functions (FOUND_ROWS: SQL_CALC_FOUND_ROWS and FOUND_ROWS() are deprecated as of 8.0.17).
+id = "mysql-routine-v80-found-rows"
+feature = "SQL_CALC_FOUND_ROWS and FOUND_ROWS(), deprecated in MySQL 8.0"
+source_engines = ["mysql"]
+targets = ["aurora_mysql"]
+kinds = ["procedure", "function", "trigger", "event"]
+impact = "informational"
+reason = "MySQL 8.0.17 deprecates the SQL_CALC_FOUND_ROWS modifier and FOUND_ROWS(); they still run on Aurora MySQL 3, but a later version line may remove them."
+fix_hint = "Keep the routine as it is for now; when you next change it, count the rows with a separate SELECT COUNT(*) on the same conditions, without LIMIT."
+docs = "MySQL 8.0 Reference Manual, Information Functions (FOUND_ROWS)"
+
+[version_change]
+line = "8.0"
+
+[match]
+statement_contains = ["SQL_CALC_FOUND_ROWS"]
+function_calls = ["FOUND_ROWS"]

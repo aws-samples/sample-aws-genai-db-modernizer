@@ -1,0 +1,13 @@
+# Gap rule mysql-double-quoted-strings (#1330). Fields: src/shared/catalog/gaps.py.
+# Source: MySQL 8.0 Reference Manual, String Literals; PostgreSQL documentation, Lexical Structure.
+id = "mysql-double-quoted-strings"
+feature = "Double-quoted string literals"
+source_engines = ["mysql", "mariadb"]
+targets = ["aurora_postgresql"]
+impact = "needs_rewrite"
+reason = "MySQL reads \"text\" as a string literal, and PostgreSQL reads it as a name, so double-quoted strings become single-quoted."
+docs = "MySQL 8.0 Reference Manual, String Literals; PostgreSQL documentation, Lexical Structure"
+
+# Looks for: A double-quoted span in the text (a string, in MySQL's dialect).
+[match]
+quoted_with = ["\""]

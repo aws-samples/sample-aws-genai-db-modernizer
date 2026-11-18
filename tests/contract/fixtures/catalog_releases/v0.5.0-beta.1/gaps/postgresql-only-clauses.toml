@@ -1,0 +1,13 @@
+# Gap rule postgresql-only-clauses (#1330). Fields: src/shared/catalog/gaps.py.
+# Source: PostgreSQL documentation, SELECT; MySQL 8.0 Reference Manual, SELECT Statement and Comparison Functions and Operators.
+id = "postgresql-only-clauses"
+feature = "NULLS FIRST/LAST, IS DISTINCT FROM and other PostgreSQL-only clauses"
+source_engines = ["postgresql"]
+targets = ["aurora_mysql"]
+impact = "needs_rewrite"
+reason = "MySQL has no NULLS FIRST or NULLS LAST (sort on col IS NULL first), no IS [NOT] DISTINCT FROM (use <=>), no MATERIALIZED hint on a CTE and no FOR NO KEY UPDATE or FOR KEY SHARE locks, so these clauses are rewritten."
+docs = "PostgreSQL documentation, SELECT; MySQL 8.0 Reference Manual, SELECT Statement and Comparison Functions and Operators"
+
+# Looks for: NULLS FIRST, NULLS LAST, IS [NOT] DISTINCT FROM, AS [NOT] MATERIALIZED and the two lock strengths.
+[match]
+syntax = ["NULLS FIRST", "NULLS LAST", "IS DISTINCT FROM", "IS NOT DISTINCT FROM", "AS MATERIALIZED", "AS NOT MATERIALIZED", "FOR NO KEY UPDATE", "FOR KEY SHARE"]

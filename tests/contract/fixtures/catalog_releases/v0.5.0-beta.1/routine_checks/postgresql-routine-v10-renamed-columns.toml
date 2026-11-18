@@ -1,0 +1,20 @@
+# Routine check postgresql-routine-v10-renamed-columns (#1951). Fields: src/shared/catalog/routine_checks.py.
+# Source: PostgreSQL 10 release notes, Migration to Version 10 (pg_stat_replication's *_location columns renamed to *_lsn).
+id = "postgresql-routine-v10-renamed-columns"
+feature = "A pg_stat_replication column PostgreSQL 10 renamed"
+source_engines = ["postgresql"]
+targets = ["aurora_postgresql"]
+kinds = ["function", "procedure"]
+impact = "needs_rewrite"
+reason = "PostgreSQL 10 renamed pg_stat_replication's sent_location, write_location, flush_location and replay_location columns to sent_lsn, write_lsn, flush_lsn and replay_lsn, so on every Aurora PostgreSQL line the query fails with an unknown column."
+fix_hint = "Read the _lsn column in place of the _location one."
+docs = "PostgreSQL 10 release notes, Migration to Version 10"
+
+[version_change]
+line = "10"
+
+[match]
+catalog_columns = [
+  "pg_stat_replication.sent_location", "pg_stat_replication.write_location",
+  "pg_stat_replication.flush_location", "pg_stat_replication.replay_location",
+]

@@ -1,0 +1,15 @@
+# Gap rule oracle-connect-by (#471). Fields: src/shared/catalog/gaps.py.
+# Source: Oracle to Aurora PostgreSQL Migration Playbook (AWS DMS documentation), Hierarchical queries.
+id = "oracle-connect-by"
+feature = "Hierarchical CONNECT BY queries"
+source_engines = ["oracle"]
+targets = ["aurora_mysql", "aurora_postgresql"]
+impact = "needs_rewrite"
+reason = "CONNECT BY becomes a recursive common table expression (WITH RECURSIVE)."
+docs = "Oracle to Aurora PostgreSQL Migration Playbook (AWS DMS documentation), Hierarchical queries"
+
+# Looks for: CONNECT BY and its functions.
+[match]
+syntax = ["CONNECT BY"]
+words = ["CONNECT_BY_ROOT"]
+calls = ["SYS_CONNECT_BY_PATH"]

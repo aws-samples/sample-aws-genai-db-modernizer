@@ -1,0 +1,40 @@
+# Amazon DocumentDB. Engine-wide facts only (ADR-031 Decision 8); fields: src/shared/catalog/engines.py.
+id = "documentdb"
+display_name = "DocumentDB"
+display_order = 2
+ui_picker_order = 2
+status = "active"
+role = "document"
+system_of_record = true
+# No complexity_by_feature_count: no DocumentDB pattern is a table-level complexity
+# credit (#1102, ADR-031 Decision 14); JSON reads are rated per query.
+
+[colors]
+ui = "#1d8102"
+
+[pricing]
+base_monthly = 200
+extra_engine_burden_monthly = 300
+max_burden_per_unique_query = 100
+# Priced on Standard storage (#1196): the I/O, storage and instance prices are the price
+# table's (src/catalog/prices.toml). A read I/O is one 8 KB page read from storage, so a
+# read served from the buffer cache costs none; a write I/O is a 4 KB unit
+# (aws.amazon.com/documentdb/pricing/).
+list_prices = "documentdb.standard"
+read_unit_bytes = 8192
+write_unit_bytes = 4096
+reads_billed_on_cache_miss_only = true
+# The instance the cost estimate prices (one db.r6g.large). Its memory, from the price
+# table's instance_memory_gib, scales the source's buffer-cache hit ratio before that
+# ratio bills a read (#1197, #1396).
+estimate_instance_class = "db.r6g.large"
+
+# Score-dimension weights (ADR-031 Decision 5). Cost is the same 10% for every engine
+# (#1002); the first profile is the engine's default.
+# The other three keep the 45/25/15 balance they had at a 15% cost weight, scaled by
+# 90/85 and rounded to whole percent.
+[score_weights.default]
+pattern_match = 0.48
+complexity = 0.26
+performance = 0.16
+cost = 0.10

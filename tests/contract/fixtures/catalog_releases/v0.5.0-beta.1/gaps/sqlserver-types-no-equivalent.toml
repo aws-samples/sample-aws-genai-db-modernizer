@@ -1,0 +1,13 @@
+# Gap rule sqlserver-types-no-equivalent (#471). Fields: src/shared/catalog/gaps.py.
+# Source: SQL Server to Aurora PostgreSQL Migration Playbook (AWS DMS documentation), Data types; AWS Schema Conversion Tool User Guide.
+id = "sqlserver-types-no-equivalent"
+feature = "Data types with no direct equivalent"
+source_engines = ["sqlserver"]
+targets = ["aurora_mysql", "aurora_postgresql"]
+impact = "needs_rewrite"
+reason = "sql_variant, hierarchyid, rowversion (timestamp) and geography have no direct equivalent on the target, so their columns and the code that reads them are redesigned (for example ltree or PostGIS on Aurora PostgreSQL)."
+docs = "SQL Server to Aurora PostgreSQL Migration Playbook (AWS DMS documentation), Data types; AWS Schema Conversion Tool User Guide"
+
+# Looks for: Column data types (SQL Server's timestamp is rowversion).
+[match]
+data_types = ["sql_variant", "hierarchyid", "rowversion", "timestamp", "geography"]

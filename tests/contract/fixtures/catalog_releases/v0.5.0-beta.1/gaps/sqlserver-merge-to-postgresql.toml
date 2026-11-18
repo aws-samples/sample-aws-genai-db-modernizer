@@ -1,0 +1,15 @@
+# Gap rule sqlserver-merge-to-postgresql (#471). Fields: src/shared/catalog/gaps.py.
+# Source: PostgreSQL documentation, MERGE; SQL Server to Aurora PostgreSQL Migration Playbook (AWS DMS documentation).
+id = "sqlserver-merge-to-postgresql"
+feature = "MERGE statements on Aurora PostgreSQL"
+source_engines = ["sqlserver"]
+targets = ["aurora_postgresql"]
+impact = "needs_rewrite"
+reason = "PostgreSQL 15 and later run MERGE with a different syntax from T-SQL: INTO is required, and the OUTPUT clause becomes RETURNING (PostgreSQL 17), so each statement is rewritten."
+docs = "PostgreSQL documentation, MERGE; SQL Server to Aurora PostgreSQL Migration Playbook (AWS DMS documentation)"
+
+# Looks for: The MERGE statement.
+[match]
+words = ["MERGE"]
+# Not T-SQL's MERGE JOIN or MERGE UNION hints (INNER MERGE JOIN, OPTION (MERGE JOIN)).
+unless_followed_by = ["JOIN", "UNION"]

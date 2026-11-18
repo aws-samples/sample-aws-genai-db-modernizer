@@ -1,0 +1,65 @@
+# Pattern regex-search. Fields: src/shared/catalog/patterns.py (ADR-031 Decision 8).
+id = "regex-search"
+name = "Regular expression search"
+detectors = [
+    "src.tools.analysis.opensearch_analysis_tools:analyze_opensearch_use_cases",
+]
+triage_signal = "text_search"
+capability = "text_search"
+# Penalty: REGEXP/RLIKE/~: same reasoning as wildcard-search.
+penalty = 40
+penalty_basis = "cannot_run"
+exempt_note = "{engine} runs this search pattern natively: not penalized. OpenSearch is worth the move only when traffic, data size or search depth justify a dedicated search engine"
+
+[engines.dynamodb]
+kind = "penalized"
+supported = false
+why = "DynamoDB cannot run this pattern: a query another engine reports it for loses 40 points on DynamoDB."
+
+[engines.documentdb]
+kind = "native"
+supported = true
+why = "$regex is a native operator, but only a prefix regular expression without the i, m or o options uses an index; any other is a collection scan (Amazon DocumentDB Developer Guide, Query planner). Class score (#728): 45, a scan of every document; a prefix regular expression is prefix-regex's (#982)."
+class_score = 45
+
+# Detection signals: regexp, rlike, ~ , ~*
+[engines.opensearch]
+kind = "fit"
+supported = true
+catalog = "opensearch"
+catalog_id = "os-03"
+score = 75
+profile = "search"
+why = "Regex pattern matching (REGEXP, RLIKE, PostgreSQL ~ operator). OpenSearch supports regexp queries with finite automaton execution, avoiding full-scan overhead."
+concerns = [
+    "Complex regex patterns can be expensive even with inverted index.",
+    "Requires custom analyzer configuration for optimal performance.",
+]
+table_bonus = 5
+
+[engines.elasticache]
+kind = "penalized"
+supported = false
+why = "ElastiCache cannot run this pattern: a query another engine reports it for loses 40 points on ElastiCache."
+
+[engines.aurora_postgresql]
+kind = "native"
+supported = true
+why = "The ~ and ~* operators are native SQL, and a pg_trgm GIN or GiST index serves them as far as trigrams can be extracted from the expression; one with none reads the whole index (PostgreSQL documentation, pg_trgm, Index Support). Class score (#728): 75, index-assisted, less reliably than a LIKE."
+class_score = 75
+
+[engines.aurora_mysql]
+kind = "native"
+supported = true
+why = "REGEXP and RLIKE are native SQL, but they are not among the comparisons a B-tree index serves, so every row is read and tested (MySQL Reference Manual, Comparison of B-Tree and Hash Indexes). Class score (#728): 45, a scan of every row."
+class_score = 45
+
+[engines.neptune]
+kind = "future"
+supported = false
+why = "Not modelled yet (future enhancement)"
+
+[engines.keyspaces]
+kind = "future"
+supported = false
+why = "Not modelled yet (future enhancement)"

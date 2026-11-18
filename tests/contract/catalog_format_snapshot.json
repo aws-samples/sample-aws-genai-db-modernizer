@@ -138,6 +138,82 @@
       },
       "location": "src/catalog/access_classes.toml"
     },
+    "aurora_postgresql_extensions": {
+      "files": [
+        "aurora_postgresql_extensions.toml"
+      ],
+      "keys": {
+        "docs": {
+          "required": true,
+          "types": [
+            "string"
+          ]
+        },
+        "lines": {
+          "required": true,
+          "types": [
+            "table"
+          ]
+        },
+        "lines.*": {
+          "types": [
+            "table"
+          ]
+        },
+        "lines.*.extensions": {
+          "required": true,
+          "types": [
+            "table"
+          ]
+        },
+        "lines.*.extensions.*": {
+          "types": [
+            "string"
+          ]
+        },
+        "lines.*.newest_release": {
+          "required": true,
+          "types": [
+            "string"
+          ]
+        },
+        "retrieved_on": {
+          "required": true,
+          "types": [
+            "string"
+          ]
+        },
+        "server_modules": {
+          "required": true,
+          "types": [
+            "array"
+          ]
+        },
+        "server_modules[]": {
+          "types": [
+            "string"
+          ]
+        },
+        "server_modules_docs": {
+          "required": true,
+          "types": [
+            "string"
+          ]
+        },
+        "source_engines": {
+          "required": true,
+          "types": [
+            "array"
+          ]
+        },
+        "source_engines[]": {
+          "types": [
+            "string"
+          ]
+        }
+      },
+      "location": "src/catalog/aurora_postgresql_extensions.toml"
+    },
     "aurora_versions": {
       "files": [
         "aurora_versions.toml"
@@ -251,6 +327,394 @@
         }
       },
       "location": "src/catalog/carried_writes.toml"
+    },
+    "dms_sizing": {
+      "files": [
+        "dms_sizing.toml"
+      ],
+      "keys": {
+        "engine": {
+          "required": true,
+          "types": [
+            "table"
+          ]
+        },
+        "engine.source_why": {
+          "required": true,
+          "types": [
+            "table"
+          ]
+        },
+        "engine.source_why.mysql": {
+          "required": true,
+          "types": [
+            "string"
+          ]
+        },
+        "engine.source_why.postgresql": {
+          "required": true,
+          "types": [
+            "string"
+          ]
+        },
+        "engine.version": {
+          "required": true,
+          "types": [
+            "string"
+          ]
+        },
+        "engine.why": {
+          "required": true,
+          "types": [
+            "string"
+          ]
+        },
+        "gate": {
+          "required": true,
+          "types": [
+            "table"
+          ]
+        },
+        "gate.max_lag_seconds": {
+          "required": true,
+          "types": [
+            "integer"
+          ]
+        },
+        "gate.why": {
+          "required": true,
+          "types": [
+            "string"
+          ]
+        },
+        "lob": {
+          "required": true,
+          "types": [
+            "table"
+          ]
+        },
+        "lob.declared_is_type_ceiling": {
+          "required": true,
+          "types": [
+            "array"
+          ]
+        },
+        "lob.declared_is_type_ceiling[]": {
+          "types": [
+            "string"
+          ]
+        },
+        "lob.default_max_kb": {
+          "required": true,
+          "types": [
+            "integer"
+          ]
+        },
+        "lob.fails_on_truncation": {
+          "required": true,
+          "types": [
+            "array"
+          ]
+        },
+        "lob.fails_on_truncation[]": {
+          "types": [
+            "string"
+          ]
+        },
+        "lob.instance_classes": {
+          "required": true,
+          "types": [
+            "array"
+          ]
+        },
+        "lob.instance_classes[]": {
+          "types": [
+            "table"
+          ]
+        },
+        "lob.instance_classes[].included_storage_gb": {
+          "required": true,
+          "types": [
+            "integer"
+          ]
+        },
+        "lob.instance_classes[].instance_class": {
+          "required": true,
+          "types": [
+            "string"
+          ]
+        },
+        "lob.instance_classes[].max_lob_kb": {
+          "required": true,
+          "types": [
+            "integer"
+          ]
+        },
+        "lob.instance_classes[].max_table_lob_kb": {
+          "required": true,
+          "types": [
+            "integer"
+          ]
+        },
+        "lob.instance_classes[].max_total_lob_kb": {
+          "required": true,
+          "types": [
+            "integer"
+          ]
+        },
+        "lob.instance_classes[].memory_gib": {
+          "required": true,
+          "types": [
+            "integer"
+          ]
+        },
+        "lob.instance_classes[].why": {
+          "required": true,
+          "types": [
+            "string"
+          ]
+        },
+        "lob.limited_max_kb": {
+          "required": true,
+          "types": [
+            "integer"
+          ]
+        },
+        "lob.limited_only": {
+          "required": true,
+          "types": [
+            "array"
+          ]
+        },
+        "lob.limited_only[]": {
+          "types": [
+            "string"
+          ]
+        },
+        "lob.limited_only_why": {
+          "required": true,
+          "types": [
+            "string"
+          ]
+        },
+        "lob.measure_required": {
+          "required": true,
+          "types": [
+            "array"
+          ]
+        },
+        "lob.measure_required[]": {
+          "types": [
+            "string"
+          ]
+        },
+        "lob.measured_bytes_per_character": {
+          "required": true,
+          "types": [
+            "integer"
+          ]
+        },
+        "lob.measured_headroom": {
+          "required": true,
+          "types": [
+            "float"
+          ]
+        },
+        "lob.measured_round_kb": {
+          "required": true,
+          "types": [
+            "integer"
+          ]
+        },
+        "lob.measured_round_kb_by_source": {
+          "required": true,
+          "types": [
+            "table"
+          ]
+        },
+        "lob.measured_round_kb_by_source.mysql": {
+          "required": true,
+          "types": [
+            "integer"
+          ]
+        },
+        "lob.measured_why": {
+          "required": true,
+          "types": [
+            "string"
+          ]
+        },
+        "lob.scalars": {
+          "required": true,
+          "types": [
+            "table"
+          ]
+        },
+        "lob.scalars.postgresql": {
+          "required": true,
+          "types": [
+            "array"
+          ]
+        },
+        "lob.scalars.postgresql[]": {
+          "types": [
+            "string"
+          ]
+        },
+        "lob.scalars_why": {
+          "required": true,
+          "types": [
+            "string"
+          ]
+        },
+        "lob.skipped_max_kb": {
+          "required": true,
+          "types": [
+            "integer"
+          ]
+        },
+        "lob.skipped_why": {
+          "required": true,
+          "types": [
+            "string"
+          ]
+        },
+        "lob.table_settings_why": {
+          "required": true,
+          "types": [
+            "string"
+          ]
+        },
+        "lob.types": {
+          "required": true,
+          "types": [
+            "table"
+          ]
+        },
+        "lob.types.mysql": {
+          "required": true,
+          "types": [
+            "array"
+          ]
+        },
+        "lob.types.mysql[]": {
+          "types": [
+            "string"
+          ]
+        },
+        "lob.types.postgresql": {
+          "required": true,
+          "types": [
+            "array"
+          ]
+        },
+        "lob.types.postgresql[]": {
+          "types": [
+            "string"
+          ]
+        },
+        "lob.unbounded_varchar_max_bytes": {
+          "required": true,
+          "types": [
+            "integer"
+          ]
+        },
+        "lob.undeclared_max_kb": {
+          "required": true,
+          "types": [
+            "integer"
+          ]
+        },
+        "lob.why": {
+          "required": true,
+          "types": [
+            "string"
+          ]
+        },
+        "not_moved": {
+          "required": true,
+          "types": [
+            "table"
+          ]
+        },
+        "not_moved.postgresql": {
+          "required": true,
+          "types": [
+            "array"
+          ]
+        },
+        "not_moved.postgresql[]": {
+          "types": [
+            "string"
+          ]
+        },
+        "not_moved.why": {
+          "required": true,
+          "types": [
+            "string"
+          ]
+        },
+        "rows": {
+          "required": true,
+          "types": [
+            "array"
+          ]
+        },
+        "rows[]": {
+          "types": [
+            "table"
+          ]
+        },
+        "rows[].allocated_storage_gb": {
+          "required": true,
+          "types": [
+            "integer"
+          ]
+        },
+        "rows[].id": {
+          "required": true,
+          "types": [
+            "string"
+          ]
+        },
+        "rows[].included_storage_gb": {
+          "required": true,
+          "types": [
+            "integer"
+          ]
+        },
+        "rows[].instance_class": {
+          "required": true,
+          "types": [
+            "string"
+          ]
+        },
+        "rows[].max_database_gb": {
+          "required": false,
+          "types": [
+            "integer"
+          ]
+        },
+        "rows[].max_writes_per_second": {
+          "required": false,
+          "types": [
+            "integer"
+          ]
+        },
+        "rows[].note": {
+          "required": false,
+          "types": [
+            "string"
+          ]
+        },
+        "rows[].why": {
+          "required": true,
+          "types": [
+            "string"
+          ]
+        }
+      },
+      "location": "src/catalog/dms_sizing.toml"
     },
     "engines": {
       "files": [
@@ -402,6 +866,12 @@
         },
         "pricing.extra_engine_burden_monthly": {
           "required": true,
+          "types": [
+            "integer"
+          ]
+        },
+        "pricing.index_item_overhead_bytes": {
+          "required": false,
           "types": [
             "integer"
           ]
@@ -579,6 +1049,24 @@
             "table"
           ]
         },
+        "thresholds.high_volume_text_search_min_calls_per_second": {
+          "required": false,
+          "types": [
+            "table"
+          ]
+        },
+        "thresholds.high_volume_text_search_min_calls_per_second.value": {
+          "required": true,
+          "types": [
+            "float"
+          ]
+        },
+        "thresholds.high_volume_text_search_min_calls_per_second.why": {
+          "required": true,
+          "types": [
+            "string"
+          ]
+        },
         "thresholds.hot_read_min_calls_per_second": {
           "required": false,
           "types": [
@@ -610,6 +1098,24 @@
           ]
         },
         "thresholds.max_rows_avg.why": {
+          "required": true,
+          "types": [
+            "string"
+          ]
+        },
+        "thresholds.memory_read_capacity_calls_per_second": {
+          "required": false,
+          "types": [
+            "table"
+          ]
+        },
+        "thresholds.memory_read_capacity_calls_per_second.value": {
+          "required": true,
+          "types": [
+            "float"
+          ]
+        },
+        "thresholds.memory_read_capacity_calls_per_second.why": {
           "required": true,
           "types": [
             "string"
@@ -715,6 +1221,7 @@
         "mysql-fulltext-search.toml",
         "mysql-functions-behave-differently.toml",
         "mysql-implicit-type-conversion.toml",
+        "mysql-index-key-length.toml",
         "mysql-insert-ignore.toml",
         "mysql-json-functions.toml",
         "mysql-last-insert-id.toml",
@@ -742,6 +1249,7 @@
         "mysql-utf8mb3-character-set.toml",
         "mysql-zero-dates.toml",
         "oracle-builtin-functions.toml",
+        "oracle-case-sensitive-to-mysql.toml",
         "oracle-connect-by.toml",
         "oracle-date-type.toml",
         "oracle-empty-string-is-null.toml",
@@ -763,6 +1271,9 @@
         "postgresql-date-functions.toml",
         "postgresql-distinct-on.toml",
         "postgresql-double-quoted-identifiers.toml",
+        "postgresql-extension-newer-than-offered.toml",
+        "postgresql-extension-not-offered.toml",
+        "postgresql-extension-on-a-later-version.toml",
         "postgresql-extensions-to-mysql.toml",
         "postgresql-full-text-search.toml",
         "postgresql-functions-behave-differently.toml",
@@ -797,6 +1308,7 @@
         "sqlserver-babelfish-option.toml",
         "sqlserver-builtin-functions.toml",
         "sqlserver-case-insensitive-comparison.toml",
+        "sqlserver-collation-to-mysql.toml",
         "sqlserver-date-functions.toml",
         "sqlserver-identity-functions.toml",
         "sqlserver-merge-to-mysql.toml",
@@ -934,6 +1446,24 @@
             "string"
           ]
         },
+        "match.extensions": {
+          "required": false,
+          "types": [
+            "string"
+          ]
+        },
+        "match.index_key_bytes_over": {
+          "required": false,
+          "types": [
+            "integer"
+          ]
+        },
+        "match.index_key_bytes_per_character": {
+          "required": false,
+          "types": [
+            "integer"
+          ]
+        },
         "match.index_types": {
           "required": false,
           "types": [
@@ -1032,6 +1562,12 @@
         "match.syntax[]": {
           "types": [
             "string"
+          ]
+        },
+        "match.text_unique_keys": {
+          "required": false,
+          "types": [
+            "boolean"
           ]
         },
         "match.unless_followed_by": {
@@ -1760,6 +2296,17 @@
             "table"
           ]
         },
+        "engines.aurora_mysql.better_served_by": {
+          "required": false,
+          "types": [
+            "array"
+          ]
+        },
+        "engines.aurora_mysql.better_served_by[]": {
+          "types": [
+            "string"
+          ]
+        },
         "engines.aurora_mysql.catalog": {
           "required": false,
           "types": [
@@ -1853,6 +2400,17 @@
           "required": true,
           "types": [
             "table"
+          ]
+        },
+        "engines.aurora_postgresql.better_served_by": {
+          "required": false,
+          "types": [
+            "array"
+          ]
+        },
+        "engines.aurora_postgresql.better_served_by[]": {
+          "types": [
+            "string"
           ]
         },
         "engines.aurora_postgresql.catalog": {
@@ -2039,6 +2597,17 @@
             "table"
           ]
         },
+        "engines.dynamodb.better_served_by": {
+          "required": false,
+          "types": [
+            "array"
+          ]
+        },
+        "engines.dynamodb.better_served_by[]": {
+          "types": [
+            "string"
+          ]
+        },
         "engines.dynamodb.bonus_group": {
           "required": false,
           "types": [
@@ -2222,6 +2791,17 @@
           "required": true,
           "types": [
             "table"
+          ]
+        },
+        "engines.opensearch.better_served_by": {
+          "required": false,
+          "types": [
+            "array"
+          ]
+        },
+        "engines.opensearch.better_served_by[]": {
+          "types": [
+            "string"
           ]
         },
         "engines.opensearch.bonus_group": {
@@ -2574,6 +3154,52 @@
             "float"
           ]
         },
+        "dms": {
+          "required": true,
+          "types": [
+            "table"
+          ]
+        },
+        "dms.replication": {
+          "required": true,
+          "types": [
+            "table"
+          ]
+        },
+        "dms.replication.instance_hourly": {
+          "required": true,
+          "types": [
+            "table"
+          ]
+        },
+        "dms.replication.instance_hourly.*": {
+          "types": [
+            "float"
+          ]
+        },
+        "dms.replication.multi_az_instance_hourly": {
+          "required": true,
+          "types": [
+            "table"
+          ]
+        },
+        "dms.replication.multi_az_instance_hourly.*": {
+          "types": [
+            "float"
+          ]
+        },
+        "dms.replication.multi_az_storage_price_per_gb_month": {
+          "required": true,
+          "types": [
+            "float"
+          ]
+        },
+        "dms.replication.storage_price_per_gb_month": {
+          "required": true,
+          "types": [
+            "float"
+          ]
+        },
         "documentdb": {
           "required": true,
           "types": [
@@ -2794,6 +3420,53 @@
             "float"
           ]
         },
+        "msk": {
+          "required": true,
+          "types": [
+            "table"
+          ]
+        },
+        "msk.provisioned": {
+          "required": true,
+          "types": [
+            "table"
+          ]
+        },
+        "msk.provisioned.instance_hourly": {
+          "required": true,
+          "types": [
+            "table"
+          ]
+        },
+        "msk.provisioned.instance_hourly.*": {
+          "types": [
+            "float"
+          ]
+        },
+        "msk.provisioned.storage_price_per_gb_month": {
+          "required": true,
+          "types": [
+            "float"
+          ]
+        },
+        "msk_connect": {
+          "required": true,
+          "types": [
+            "table"
+          ]
+        },
+        "msk_connect.workers": {
+          "required": true,
+          "types": [
+            "table"
+          ]
+        },
+        "msk_connect.workers.mcu_price_per_hour": {
+          "required": true,
+          "types": [
+            "float"
+          ]
+        },
         "opensearch": {
           "required": true,
           "types": [
@@ -2848,6 +3521,514 @@
         }
       },
       "location": "src/catalog/prices.toml"
+    },
+    "routine_checks": {
+      "files": [
+        "mysql-routine-declare-order.toml",
+        "mysql-routine-definer.toml",
+        "mysql-routine-dependency-not-moved.toml",
+        "mysql-routine-dynamic-sql.toml",
+        "mysql-routine-file-output.toml",
+        "mysql-routine-handler.toml",
+        "mysql-routine-kill.toml",
+        "mysql-routine-load-file.toml",
+        "mysql-routine-mode-deprecated.toml",
+        "mysql-routine-mode-removed.toml",
+        "mysql-routine-mode-unknown.toml",
+        "mysql-routine-plugin-install.toml",
+        "mysql-routine-replication-control.toml",
+        "mysql-routine-restricted-session-variable.toml",
+        "mysql-routine-server-shutdown.toml",
+        "mysql-routine-set-global.toml",
+        "mysql-routine-sql-log-bin.toml",
+        "mysql-routine-unparseable.toml",
+        "mysql-routine-v80-found-rows.toml",
+        "mysql-routine-v80-group-by-direction.toml",
+        "mysql-routine-v80-group-by-sort.toml",
+        "mysql-routine-v80-query-cache-hint.toml",
+        "mysql-routine-v80-removed-function.toml",
+        "mysql-routine-v80-removed-spatial-function.toml",
+        "mysql-routine-v80-removed-system-variable.toml",
+        "mysql-routine-v80-reserved-word.toml",
+        "mysql-routine-v84-removed-function.toml",
+        "mysql-routine-v84-removed-statement.toml",
+        "mysql-routine-v84-removed-system-variable.toml",
+        "mysql-routine-v84-reserved-word.toml",
+        "postgresql-routine-backup-control.toml",
+        "postgresql-routine-dependency-not-moved.toml",
+        "postgresql-routine-extension-not-offered.toml",
+        "postgresql-routine-language.toml",
+        "postgresql-routine-superuser-security-definer.toml",
+        "postgresql-routine-unparseable.toml",
+        "postgresql-routine-v10-removed-settings.toml",
+        "postgresql-routine-v10-renamed-columns.toml",
+        "postgresql-routine-v10-renamed-functions.toml",
+        "postgresql-routine-v11-removed-columns.toml",
+        "postgresql-routine-v12-removed-columns.toml",
+        "postgresql-routine-v12-removed-types.toml",
+        "postgresql-routine-v13-removed-settings.toml",
+        "postgresql-routine-v14-removed-functions.toml",
+        "postgresql-routine-v14-removed-settings.toml",
+        "postgresql-routine-v15-public-schema.toml",
+        "postgresql-routine-v15-removed-functions.toml",
+        "postgresql-routine-v15-removed-settings.toml",
+        "postgresql-routine-v16-removed-settings.toml",
+        "postgresql-routine-v17-maintenance-search-path.toml",
+        "postgresql-routine-v17-removed-columns.toml",
+        "postgresql-routine-v17-removed-settings.toml",
+        "postgresql-routine-v18-removed-columns.toml"
+      ],
+      "keys": {
+        "docs": {
+          "required": true,
+          "types": [
+            "string"
+          ]
+        },
+        "feature": {
+          "required": true,
+          "types": [
+            "string"
+          ]
+        },
+        "fix_hint": {
+          "required": true,
+          "types": [
+            "string"
+          ]
+        },
+        "id": {
+          "required": true,
+          "types": [
+            "string"
+          ]
+        },
+        "impact": {
+          "required": true,
+          "types": [
+            "string"
+          ]
+        },
+        "kinds": {
+          "required": true,
+          "types": [
+            "array"
+          ]
+        },
+        "kinds[]": {
+          "types": [
+            "string"
+          ]
+        },
+        "match": {
+          "required": true,
+          "types": [
+            "table"
+          ]
+        },
+        "match.always_definer_kinds": {
+          "required": false,
+          "types": [
+            "array"
+          ]
+        },
+        "match.always_definer_kinds[]": {
+          "types": [
+            "string"
+          ]
+        },
+        "match.called_functions": {
+          "required": false,
+          "types": [
+            "array"
+          ]
+        },
+        "match.called_functions[]": {
+          "types": [
+            "string"
+          ]
+        },
+        "match.catalog_columns": {
+          "required": false,
+          "types": [
+            "array"
+          ]
+        },
+        "match.catalog_columns[]": {
+          "types": [
+            "string"
+          ]
+        },
+        "match.creates_in_public_schema": {
+          "required": false,
+          "types": [
+            "boolean"
+          ]
+        },
+        "match.declare_order": {
+          "required": false,
+          "types": [
+            "boolean"
+          ]
+        },
+        "match.definer_not_target_user": {
+          "required": false,
+          "types": [
+            "boolean"
+          ]
+        },
+        "match.dependencies_moved_together": {
+          "required": false,
+          "types": [
+            "boolean"
+          ]
+        },
+        "match.dynamic_sql": {
+          "required": false,
+          "types": [
+            "boolean"
+          ]
+        },
+        "match.extensions": {
+          "required": false,
+          "types": [
+            "string"
+          ]
+        },
+        "match.function_calls": {
+          "required": false,
+          "types": [
+            "array"
+          ]
+        },
+        "match.function_calls[]": {
+          "types": [
+            "string"
+          ]
+        },
+        "match.group_by": {
+          "required": false,
+          "types": [
+            "string"
+          ]
+        },
+        "match.known_sql_modes": {
+          "required": false,
+          "types": [
+            "array"
+          ]
+        },
+        "match.known_sql_modes[]": {
+          "types": [
+            "string"
+          ]
+        },
+        "match.languages": {
+          "required": false,
+          "types": [
+            "array"
+          ]
+        },
+        "match.languages[]": {
+          "types": [
+            "string"
+          ]
+        },
+        "match.parses": {
+          "required": false,
+          "types": [
+            "boolean"
+          ]
+        },
+        "match.removed_settings": {
+          "required": false,
+          "types": [
+            "array"
+          ]
+        },
+        "match.removed_settings[]": {
+          "types": [
+            "string"
+          ]
+        },
+        "match.removed_types": {
+          "required": false,
+          "types": [
+            "array"
+          ]
+        },
+        "match.removed_types[]": {
+          "types": [
+            "string"
+          ]
+        },
+        "match.reserved_word_contexts": {
+          "required": false,
+          "types": [
+            "array"
+          ]
+        },
+        "match.reserved_word_contexts[]": {
+          "types": [
+            "string"
+          ]
+        },
+        "match.reserved_words": {
+          "required": false,
+          "types": [
+            "array"
+          ]
+        },
+        "match.reserved_words[]": {
+          "types": [
+            "string"
+          ]
+        },
+        "match.security_definer_owned_by_superuser": {
+          "required": false,
+          "types": [
+            "boolean"
+          ]
+        },
+        "match.set_scopes": {
+          "required": false,
+          "types": [
+            "array"
+          ]
+        },
+        "match.set_scopes[]": {
+          "types": [
+            "string"
+          ]
+        },
+        "match.set_variables": {
+          "required": false,
+          "types": [
+            "array"
+          ]
+        },
+        "match.set_variables[]": {
+          "types": [
+            "string"
+          ]
+        },
+        "match.sql_modes": {
+          "required": false,
+          "types": [
+            "array"
+          ]
+        },
+        "match.sql_modes[]": {
+          "types": [
+            "string"
+          ]
+        },
+        "match.statement_contains": {
+          "required": false,
+          "types": [
+            "array"
+          ]
+        },
+        "match.statement_contains[]": {
+          "types": [
+            "string"
+          ]
+        },
+        "match.statement_exceptions": {
+          "required": false,
+          "types": [
+            "array"
+          ]
+        },
+        "match.statement_exceptions[]": {
+          "types": [
+            "string"
+          ]
+        },
+        "match.statement_starts": {
+          "required": false,
+          "types": [
+            "array"
+          ]
+        },
+        "match.statement_starts[]": {
+          "types": [
+            "string"
+          ]
+        },
+        "match.system_variables": {
+          "required": false,
+          "types": [
+            "array"
+          ]
+        },
+        "match.system_variables[]": {
+          "types": [
+            "string"
+          ]
+        },
+        "match.trusted_extension_languages": {
+          "required": false,
+          "types": [
+            "array"
+          ]
+        },
+        "match.trusted_extension_languages[]": {
+          "types": [
+            "string"
+          ]
+        },
+        "match.unknown_sql_modes": {
+          "required": false,
+          "types": [
+            "boolean"
+          ]
+        },
+        "match.unqualified_without_search_path": {
+          "required": false,
+          "types": [
+            "boolean"
+          ]
+        },
+        "match.valid_handlers": {
+          "required": false,
+          "types": [
+            "boolean"
+          ]
+        },
+        "reason": {
+          "required": true,
+          "types": [
+            "string"
+          ]
+        },
+        "source_engines": {
+          "required": true,
+          "types": [
+            "array"
+          ]
+        },
+        "source_engines[]": {
+          "types": [
+            "string"
+          ]
+        },
+        "targets": {
+          "required": true,
+          "types": [
+            "array"
+          ]
+        },
+        "targets[]": {
+          "types": [
+            "string"
+          ]
+        },
+        "version_change": {
+          "required": false,
+          "types": [
+            "table"
+          ]
+        },
+        "version_change.line": {
+          "required": true,
+          "types": [
+            "string"
+          ]
+        }
+      },
+      "location": "src/catalog/routine_checks/*.toml"
+    },
+    "routine_rewrites": {
+      "files": [
+        "mysql-routine-definer-to-target-user.toml",
+        "postgresql-routine-owner-to-target-user.toml",
+        "postgresql-routine-pin-search-path.toml",
+        "routine-dependency-order.toml"
+      ],
+      "keys": {
+        "docs": {
+          "required": true,
+          "types": [
+            "string"
+          ]
+        },
+        "feature": {
+          "required": true,
+          "types": [
+            "string"
+          ]
+        },
+        "id": {
+          "required": true,
+          "types": [
+            "string"
+          ]
+        },
+        "kinds": {
+          "required": true,
+          "types": [
+            "array"
+          ]
+        },
+        "kinds[]": {
+          "types": [
+            "string"
+          ]
+        },
+        "match": {
+          "required": true,
+          "types": [
+            "table"
+          ]
+        },
+        "match.resolves": {
+          "required": false,
+          "types": [
+            "array"
+          ]
+        },
+        "match.resolves[]": {
+          "types": [
+            "string"
+          ]
+        },
+        "match.rewrite": {
+          "required": true,
+          "types": [
+            "string"
+          ]
+        },
+        "reason": {
+          "required": true,
+          "types": [
+            "string"
+          ]
+        },
+        "source_engines": {
+          "required": true,
+          "types": [
+            "array"
+          ]
+        },
+        "source_engines[]": {
+          "types": [
+            "string"
+          ]
+        },
+        "targets": {
+          "required": true,
+          "types": [
+            "array"
+          ]
+        },
+        "targets[]": {
+          "types": [
+            "string"
+          ]
+        }
+      },
+      "location": "src/catalog/routine_rewrites/*.toml"
     },
     "routing": {
       "files": [
@@ -3752,5 +4933,5 @@
       "location": "src/catalog/write_intents/*.toml"
     }
   },
-  "released": "v0.4.0-beta.3"
+  "released": "v0.5.0-beta.1"
 }

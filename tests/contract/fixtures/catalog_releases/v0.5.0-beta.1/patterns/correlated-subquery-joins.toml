@@ -1,0 +1,53 @@
+# Pattern correlated-subquery-joins. Fields: src/shared/catalog/patterns.py (ADR-031 Decision 8).
+id = "correlated-subquery-joins"
+name = "Correlated subquery joins"
+detectors = [
+    "src.tools.analysis.documentdb_analysis_tools:analyze_documentdb_use_cases",
+]
+penalty = 20
+penalty_basis = "reads_more_than_returns"
+
+[engines.dynamodb]
+kind = "unscored"
+supported = true
+why = "DynamoDB's analysis does not report this pattern; it adds no cross-engine penalty."
+
+# Detection signals: correlated subqueries (SELECT in SELECT, EXISTS with correlated ref)
+[engines.documentdb]
+kind = "anti_pattern"
+supported = true
+catalog = "documentdb"
+catalog_id = "documentdb-anti-08"
+severity = 0.7
+why = "Queries with correlated subqueries. A correlated $lookup (let/pipeline) runs its sub-pipeline for each input document, and needs DocumentDB 8.0.2 or later on an instance-based cluster (Amazon DocumentDB Developer Guide, Supported MongoDB APIs, operations, and data types); otherwise pre-denormalize."
+guidance = "Pre-denormalize at write time. Use Extended Reference Pattern to embed frequently co-accessed fields."
+
+[engines.opensearch]
+kind = "unscored"
+supported = true
+why = "OpenSearch's analysis does not report this pattern; it adds no cross-engine penalty."
+
+[engines.elasticache]
+kind = "unscored"
+supported = true
+why = "ElastiCache's analysis does not report this pattern; it adds no cross-engine penalty."
+
+[engines.aurora_postgresql]
+kind = "unscored"
+supported = true
+why = "Aurora PostgreSQL's analysis does not report this pattern; it adds no cross-engine penalty."
+
+[engines.aurora_mysql]
+kind = "unscored"
+supported = true
+why = "Aurora MySQL's analysis does not report this pattern; it adds no cross-engine penalty."
+
+[engines.neptune]
+kind = "future"
+supported = false
+why = "Not modelled yet (future enhancement)"
+
+[engines.keyspaces]
+kind = "future"
+supported = false
+why = "Not modelled yet (future enhancement)"

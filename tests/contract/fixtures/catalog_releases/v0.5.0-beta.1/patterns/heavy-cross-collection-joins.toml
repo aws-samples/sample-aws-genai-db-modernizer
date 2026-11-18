@@ -1,0 +1,54 @@
+# Pattern heavy-cross-collection-joins. Fields: src/shared/catalog/patterns.py (ADR-031 Decision 8).
+id = "heavy-cross-collection-joins"
+name = "Heavy cross-collection joins"
+detectors = [
+    "src.tools.analysis.documentdb_analysis_tools:analyze_documentdb_use_cases",
+]
+penalty = 20
+penalty_basis = "reads_more_than_returns"
+removed_by_redesign = "rows"
+
+[engines.dynamodb]
+kind = "unscored"
+supported = true
+why = "DynamoDB's analysis does not report this pattern; it adds no cross-engine penalty."
+
+# Detection signals: 3+ table JOINs at high frequency
+[engines.documentdb]
+kind = "anti_pattern"
+supported = true
+catalog = "documentdb"
+catalog_id = "documentdb-anti-01"
+severity = 0.6
+why = "Queries joining 3 or more tables. Each join becomes a $lookup stage that reads the joined collection for the documents flowing through it, one stage per collection, with a nested-loop, hash or sort-merge algorithm (Amazon DocumentDB Developer Guide, Functional differences, $lookup); correlated $lookup needs DocumentDB 8.0.2 or later."
+guidance = "Pre-denormalize via Extended Reference Pattern or write-time aggregation. Never chain $lookup operations."
+
+[engines.opensearch]
+kind = "unscored"
+supported = true
+why = "OpenSearch's analysis does not report this pattern; it adds no cross-engine penalty."
+
+[engines.elasticache]
+kind = "unscored"
+supported = true
+why = "ElastiCache's analysis does not report this pattern; it adds no cross-engine penalty."
+
+[engines.aurora_postgresql]
+kind = "unscored"
+supported = true
+why = "Aurora PostgreSQL's analysis does not report this pattern; it adds no cross-engine penalty."
+
+[engines.aurora_mysql]
+kind = "unscored"
+supported = true
+why = "Aurora MySQL's analysis does not report this pattern; it adds no cross-engine penalty."
+
+[engines.neptune]
+kind = "future"
+supported = false
+why = "Not modelled yet (future enhancement)"
+
+[engines.keyspaces]
+kind = "future"
+supported = false
+why = "Not modelled yet (future enhancement)"

@@ -1,0 +1,14 @@
+# Gap rule postgresql-system-catalog (#1330). Fields: src/shared/catalog/gaps.py.
+# Source: PostgreSQL documentation, System Catalogs and System Information Functions; MySQL 8.0 Reference Manual, INFORMATION_SCHEMA Tables.
+id = "postgresql-system-catalog"
+feature = "PostgreSQL system catalog reads"
+source_engines = ["postgresql"]
+targets = ["aurora_mysql"]
+impact = "needs_rewrite"
+reason = "pg_catalog tables and views and the catalog functions (pg_get_indexdef, format_type, current_schemas, obj_description, ...) do not exist on MySQL, so these reads move to information_schema and performance_schema; they may be an ORM's schema introspection, which its MySQL adapter issues on its own."
+docs = "PostgreSQL documentation, System Catalogs and System Information Functions; MySQL 8.0 Reference Manual, INFORMATION_SCHEMA Tables"
+
+# Looks for: pg_catalog table and view names, and calls to the catalog functions.
+[match]
+words = ["PG_CLASS", "PG_ATTRIBUTE", "PG_ATTRDEF", "PG_NAMESPACE", "PG_TYPE", "PG_INDEX", "PG_CONSTRAINT", "PG_PROC", "PG_TRIGGER", "PG_DESCRIPTION", "PG_ENUM", "PG_INHERITS", "PG_DEPEND", "PG_AM", "PG_COLLATION", "PG_EXTENSION", "PG_DATABASE", "PG_ROLES", "PG_USER", "PG_TABLES", "PG_INDEXES", "PG_VIEWS", "PG_MATVIEWS", "PG_SEQUENCES", "PG_SETTINGS", "PG_LOCKS", "PG_STAT_ACTIVITY", "PG_STAT_USER_TABLES", "PG_STAT_USER_INDEXES", "PG_STAT_DATABASE", "PG_STAT_STATEMENTS", "PG_TABLESPACE"]
+calls = ["CURRENT_SCHEMA", "CURRENT_SCHEMAS", "OBJ_DESCRIPTION", "COL_DESCRIPTION", "FORMAT_TYPE", "PG_GET_EXPR", "PG_GET_INDEXDEF", "PG_GET_CONSTRAINTDEF", "PG_GET_VIEWDEF", "PG_GET_FUNCTIONDEF", "PG_GET_TRIGGERDEF", "PG_TABLE_SIZE", "PG_RELATION_SIZE", "PG_TOTAL_RELATION_SIZE", "PG_INDEXES_SIZE", "PG_DATABASE_SIZE", "PG_BACKEND_PID", "PG_IS_IN_RECOVERY", "PG_POSTMASTER_START_TIME", "PG_TABLE_IS_VISIBLE", "HAS_TABLE_PRIVILEGE", "PG_CANCEL_BACKEND", "PG_TERMINATE_BACKEND"]

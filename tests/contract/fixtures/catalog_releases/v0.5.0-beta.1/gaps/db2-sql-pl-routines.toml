@@ -1,0 +1,13 @@
+# Gap rule db2-sql-pl-routines (#471). Fields: src/shared/catalog/gaps.py.
+# Source: AWS Schema Conversion Tool User Guide, Migrating from Db2 for LUW.
+id = "db2-sql-pl-routines"
+feature = "SQL PL procedures, functions and triggers"
+source_engines = ["db2"]
+targets = ["aurora_mysql", "aurora_postgresql"]
+impact = "needs_rewrite"
+reason = "Db2 SQL PL routines are converted to the target's procedural language (PL/pgSQL on Aurora PostgreSQL, stored programs on Aurora MySQL), by a schema conversion tool where it supports them and by hand otherwise."
+docs = "AWS Schema Conversion Tool User Guide, Migrating from Db2 for LUW"
+
+# Looks for: Every collected procedure, function and trigger.
+[match]
+routines = true

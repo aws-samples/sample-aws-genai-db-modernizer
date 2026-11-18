@@ -1,0 +1,13 @@
+# Gap rule postgresql-serial-columns-to-mysql (#1330). Fields: src/shared/catalog/gaps.py.
+# Source: AWS Schema Conversion Tool User Guide, Using PostgreSQL as a source; MySQL 8.0 Reference Manual, Using AUTO_INCREMENT.
+id = "postgresql-serial-columns-to-mysql"
+feature = "Serial and identity columns"
+source_engines = ["postgresql"]
+targets = ["aurora_mysql"]
+impact = "informational"
+reason = "Serial and identity columns become AUTO_INCREMENT columns: MySQL allows one per table, it must lead an index, and a sequence shared between tables, a custom increment or a cycling sequence does not carry over."
+docs = "AWS Schema Conversion Tool User Guide, Using PostgreSQL as a source; MySQL 8.0 Reference Manual, Using AUTO_INCREMENT"
+
+# Looks for: Columns the collector marks auto-incrementing.
+[match]
+auto_increment = true

@@ -1,0 +1,13 @@
+# Gap rule mysql-non-innodb-storage-engine (#471). Fields: src/shared/catalog/gaps.py.
+# Source: Amazon Aurora User Guide, Migrating data to an Amazon Aurora MySQL DB cluster (convert MyISAM tables to InnoDB).
+id = "mysql-non-innodb-storage-engine"
+feature = "Tables on a storage engine other than InnoDB"
+source_engines = ["mysql", "mariadb"]
+targets = ["aurora_mysql"]
+impact = "needs_rewrite"
+reason = "Aurora MySQL stores table data in InnoDB only, so these tables are converted to InnoDB during the move, which changes their locking, full-text indexing and crash behaviour."
+docs = "Amazon Aurora User Guide, Migrating data to an Amazon Aurora MySQL DB cluster (convert MyISAM tables to InnoDB)"
+
+# Looks for: Table.storage_engine, from information_schema.TABLES.ENGINE.
+[match]
+storage_engines = ["MyISAM", "MRG_MYISAM", "MERGE", "ARCHIVE", "CSV", "FEDERATED", "BLACKHOLE", "Aria", "TokuDB", "ROCKSDB"]
