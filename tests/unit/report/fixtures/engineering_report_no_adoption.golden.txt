@@ -8,7 +8,7 @@ Recommendation: move the app MySQL database to four AWS services in three waves.
 
 Risk: overall risk is low, with no open risks.
 
-Decision: approve wave 1. It is safe to approve: it moves the database 1:1 to Aurora MySQL, the same engine family as MySQL, with its current data model, and its cutover waits until schema and data parity is validated against the source.
+Decision: approve wave 1. It moves the database 1:1 to Aurora MySQL, the same engine family as MySQL, and keeps its current data model. The cutover is your responsibility.
 
 *Engine and query assignments are produced deterministically. No language model decides which engine a table or query goes to. The executive summary is written over already-computed results and cannot change a recommendation.*
 

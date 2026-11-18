@@ -10,7 +10,8 @@ The executive summary leads with what an executive reader acts on, in plain lang
   collected for the source, it says so and claims no saving.
 - **Risk:** the overall risk level and the one or two open risks driving it, with the
   wave to act before.
-- **Decision:** what to approve next (normally wave 1), and why it is safe to approve.
+- **Decision:** what to approve next (normally wave 1), what that wave does, and the
+  one sentence about the cutover (``CUTOVER_MESSAGE``, #2434).
 
 Engineering detail (table and key-design counts, TTLs, consistency settings) stays in
 the engineering report's body.
@@ -31,6 +32,7 @@ import re
 from collections.abc import Mapping
 from typing import Any
 
+from src.shared.cutover_message import CUTOVER_MESSAGE
 from src.shared.engine_names import SOURCE_ENGINE_DISPLAY_NAMES, display_engine
 from src.shared.engines_in_use import retired_in_use_statement
 from src.shared.exposure_wording import EXPOSURE_PHRASES
@@ -401,7 +403,7 @@ def _unsuggested_wave_sentences(facts: Mapping[str, Any]) -> list[str]:
 
 def decision_paragraph(facts: Mapping[str, Any] | None) -> str | None:
     """The executive summary's Decision, rendered from the facts only (#1992): the wave
-    to approve, why it is safe, and every wave the plan does not suggest. Every summary
+    to approve, what it does, and every wave the plan does not suggest. Every summary
     ends with it, a model's included (:func:`compose_summary`). None when ``facts`` has
     no ``executive_brief``."""
     if not isinstance(facts, Mapping):
@@ -458,34 +460,33 @@ def _decision_head(facts: Mapping[str, Any], brief: Mapping[str, Any]) -> str:
         return "Decision: no wave is suggested yet."
     if wave_n is None or not waves:
         return "Decision: approve the plan's first step."
-    # The decision wave's own facts say why it is safe (#1992: not always wave 1).
+    # The decision wave's own facts say what it does (#1992: not always wave 1). It gives
+    # no cutover condition and claims no safety: the cutover is the customer's (#2434).
     first = next((w for w in waves if int(w.get("wave") or 0) == int(wave_n)), waves[0])
     names = [display_engine(str(e)) for e in first.get("engines") or []]
     source = _source_name(brief.get("source_engine"))
     kind = first.get("kind")
     head = f"Decision: approve wave {wave_n}."
     if kind == "homogeneous" and names:
-        why = (
-            f"It is safe to approve: it moves the database 1:1 to {names[0]}, the same engine "
-            f"family as {source}, with its current data model, and its cutover waits until "
-            "schema and data parity is validated against the source."
+        does = (
+            f"It moves the database 1:1 to {names[0]}, the same engine family as {source}, "
+            "and keeps its current data model."
         )
     elif kind == "cross_engine" and names:
         fact_rows = {
             int(w.get("wave") or 0): w for w in facts.get("waves") or [] if isinstance(w, dict)
         }
         gaps = bool((fact_rows.get(int(wave_n)) or {}).get("lists_relational_gaps"))
-        why = (
-            f"It is safe to approve: it converts the SQL dialect and data types from {source} "
-            f"to {names[0]} and keeps the current data model, and its cutover waits until the "
-            "schema and query translation is validated"
-            + ("; the SQL compatibility check lists what to rewrite first." if gaps else ".")
+        does = (
+            f"It converts the SQL dialect and data types from {source} to {names[0]} and "
+            "keeps the current data model."
+            + (" The SQL compatibility check lists what to rewrite first." if gaps else "")
         )
     elif kind == "cache" and names:
-        why = f"It is safe to approve: {_join(names)} moves no data and can be switched off again."
+        does = f"It adds {_join(names)} and moves no data."
     else:
-        why = "Each wave cuts over only once its validation gate passes."
-    return f"{head} {why}"
+        return f"{head} {CUTOVER_MESSAGE}"
+    return f"{head} {does} {CUTOVER_MESSAGE}"
 
 
 # #1992: a sentence that puts a wave, a step or the plan up for approval or for starting.

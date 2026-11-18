@@ -82,7 +82,7 @@ def _decision(facts: dict) -> str:
 
 def test_the_decision_names_a_held_wave_with_its_reason_and_next_step() -> None:
     decision = _decision(_facts({3: "held"}))
-    assert decision.startswith("Decision: approve wave 1. It is safe to approve:")
+    assert decision.startswith("Decision: approve wave 1. It moves the database 1:1")
     assert decision.endswith(
         " Wave 3 is not suggested yet: an open high risk on DynamoDB (RISK-001). Next, run "
         "its schema design."
@@ -120,11 +120,15 @@ def test_waves_not_designed_or_not_reviewed_are_named_and_never_approved() -> No
     )
 
 
-def test_the_decision_wave_says_why_it_is_safe_from_its_own_facts() -> None:
-    """With wave 1 not suggested, the decision is a later wave, and the reason is that
-    wave's own (a cache moves no data), never wave 1's."""
+def test_the_decision_wave_says_what_it_does_from_its_own_facts() -> None:
+    """With wave 1 not suggested, the decision is a later wave, and what it does is that
+    wave's own (a cache moves no data), never wave 1's. #2434: no "safe", and the one
+    cutover sentence."""
     decision = _decision(_facts({1: "not_designed"}, decision=2))
-    assert decision.startswith("Decision: approve wave 2. It is safe to approve: ElastiCache")
+    assert decision.startswith(
+        "Decision: approve wave 2. It adds ElastiCache and moves no data. "
+        "The cutover is your responsibility."
+    )
     assert "1:1" not in decision
 
 

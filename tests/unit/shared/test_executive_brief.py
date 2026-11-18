@@ -15,6 +15,7 @@ import copy
 
 import pytest
 
+from src.shared.cutover_message import CUTOVER_MESSAGE
 from src.shared.executive_brief import (
     SUMMARY_WORD_BUDGET,
     check_summary_brief,
@@ -197,10 +198,13 @@ class TestTheDeterministicSummary:
         facts["open_risk_count"] = 0
         assert _text(facts).split("\n\n")[1] == "Risk: overall risk is low, with no open risks."
 
-    def test_decision_is_wave_one_and_why_it_is_safe(self) -> None:
+    def test_decision_is_wave_one_and_what_it_does(self) -> None:
+        """#2434: what the wave does, then the one cutover sentence; no "safe", no condition."""
         decision = _text().split("\n\n")[2]
-        assert decision.startswith("Decision: approve wave 1. It is safe to approve:")
-        assert "1:1 to Aurora MySQL, the same engine family as MySQL" in decision
+        assert decision == (
+            "Decision: approve wave 1. It moves the database 1:1 to Aurora MySQL, the same "
+            f"engine family as MySQL, and keeps its current data model. {CUTOVER_MESSAGE}"
+        )
 
     def test_a_cross_engine_wave_one_is_a_conversion(self) -> None:
         facts = _facts(
@@ -211,7 +215,21 @@ class TestTheDeterministicSummary:
         text = _text(facts)
         assert "Wave 1 converts it to Aurora PostgreSQL" in text
         assert "from SQL Server to Aurora PostgreSQL and keeps the current data model" in text
-        assert "SQL compatibility check lists what to rewrite first" in text
+        assert text.split("\n\n")[2] == (
+            "Decision: approve wave 1. It converts the SQL dialect and data types from SQL "
+            "Server to Aurora PostgreSQL and keeps the current data model. The SQL "
+            f"compatibility check lists what to rewrite first. {CUTOVER_MESSAGE}"
+        )
+        facts["waves"] = [{"wave": 1, "lists_relational_gaps": False}]
+        assert _text(facts).split("\n\n")[2] == (
+            "Decision: approve wave 1. It converts the SQL dialect and data types from SQL "
+            f"Server to Aurora PostgreSQL and keeps the current data model. {CUTOVER_MESSAGE}"
+        )
+
+    def test_a_wave_of_unknown_kind_says_only_the_cutover_sentence(self) -> None:
+        """#2434: it read "Each wave cuts over only once its validation gate passes."."""
+        facts = _facts(waves=[{"wave": 1, "engines": ["dynamodb"], "kind": "migration"}])
+        assert _text(facts).split("\n\n")[2] == f"Decision: approve wave 1. {CUTOVER_MESSAGE}"
 
     def test_the_counts_are_the_facts_own(self) -> None:
         """ADR-032: the text reads engine_count and migration_wave_count, never counts."""

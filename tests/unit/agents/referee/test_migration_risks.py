@@ -1708,3 +1708,28 @@ def test_a_duplicate_index_name_note_raises_no_application_code_risk() -> None:
     risk = _one(both, "design.app_layer")
     assert "duplicate index name" not in risk["description"]
     assert "1 source object needs application code" in risk["description"]
+
+
+def test_a_choice_in_no_wave_names_no_cutover_timing() -> None:
+    """#2434: a close call or open tie no wave holds names no time to settle it (it read
+    "before cutover"); one in a wave names the wave's start."""
+    risks = _build(
+        migration_waves=[],
+        query_assignments=[_qa("q1", DDB, ["db.a"])],
+        query_traces={"close_calls": [_close("q1", DDB, AURORA, 2.0)]},
+        tied_queries=[{"query_id": "t1", "assigned_engine": DDB, "tied_engines": [DOC, DDB]}],
+    )
+    mitigations = {r["rule"]: r["mitigation"] for r in risks if r["rule"].startswith("routing.")}
+    assert set(mitigations) == {"routing.close_calls", "routing.tie_open"}
+    for text in mitigations.values():
+        assert "cutover" not in text.casefold(), text
+    assert mitigations["routing.tie_open"] == (
+        "Choose DocumentDB or DynamoDB for this query in the assignment review."
+    )
+    in_wave = _build(
+        migration_waves=WAVES,
+        tied_queries=[{"query_id": "t1", "assigned_engine": DDB, "tied_engines": [DOC, DDB]}],
+    )
+    assert _one(in_wave, "routing.tie_open")["mitigation"].endswith(
+        "in the assignment review before Wave 3 starts."
+    )
