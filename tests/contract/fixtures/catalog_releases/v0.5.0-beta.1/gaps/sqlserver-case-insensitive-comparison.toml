@@ -1,0 +1,13 @@
+# Gap rule sqlserver-case-insensitive-comparison (#471). Fields: src/shared/catalog/gaps.py.
+# Source: SQL Server to Aurora PostgreSQL Migration Playbook (AWS DMS documentation), Collations.
+id = "sqlserver-case-insensitive-comparison"
+feature = "Case-insensitive text comparison"
+source_engines = ["sqlserver"]
+targets = ["aurora_postgresql"]
+impact = "behaves_differently"
+reason = "SQL Server compares text case-insensitively under its default collation, and Aurora PostgreSQL compares case-sensitively unless a column uses citext or a nondeterministic ICU collation, so lookups, sorts and unique keys on text can change."
+docs = "SQL Server to Aurora PostgreSQL Migration Playbook (AWS DMS documentation), Collations"
+
+# Looks for: Every SQL Server source moving to Aurora PostgreSQL (the collection names no collation).
+[match]
+always = true

@@ -1,0 +1,13 @@
+# Gap rule mysql-unsigned-integers (#1330). Fields: src/shared/catalog/gaps.py.
+# Source: AWS Schema Conversion Tool User Guide, Using MySQL as a source; MySQL 8.0 Reference Manual, Numeric Data Type Syntax.
+id = "mysql-unsigned-integers"
+feature = "UNSIGNED and ZEROFILL numeric columns"
+source_engines = ["mysql", "mariadb"]
+targets = ["aurora_postgresql"]
+impact = "behaves_differently"
+reason = "PostgreSQL has no unsigned types: an unsigned column becomes the next wider signed type (bigint unsigned becomes numeric(20)) or keeps its type with a CHECK (col >= 0), and ZEROFILL padding is dropped."
+docs = "AWS Schema Conversion Tool User Guide, Using MySQL as a source; MySQL 8.0 Reference Manual, Numeric Data Type Syntax"
+
+# Looks for: Column types declared UNSIGNED or ZEROFILL.
+[match]
+data_type_globs = ["* unsigned", "* unsigned zerofill", "* zerofill"]

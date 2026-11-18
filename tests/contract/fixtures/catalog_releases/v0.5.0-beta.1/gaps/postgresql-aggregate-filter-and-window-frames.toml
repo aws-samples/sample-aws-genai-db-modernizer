@@ -1,0 +1,14 @@
+# Gap rule postgresql-aggregate-filter-and-window-frames (#1330). Fields: src/shared/catalog/gaps.py.
+# Source: PostgreSQL documentation, Aggregate Expressions and Window Function Calls; MySQL 8.0 Reference Manual, Window Function Frame Specification.
+id = "postgresql-aggregate-filter-and-window-frames"
+feature = "Aggregate FILTER, ordered-set aggregates and window frame options"
+source_engines = ["postgresql"]
+targets = ["aurora_mysql"]
+impact = "needs_rewrite"
+reason = "MySQL has no aggregate FILTER (WHERE ...) clause, no ordered-set aggregates (WITHIN GROUP, percentile_cont) and no GROUPS or EXCLUDE window frames, so FILTER becomes COUNT or SUM over a CASE, and percentiles and these frames become window-function subqueries."
+docs = "PostgreSQL documentation, Aggregate Expressions and Window Function Calls; MySQL 8.0 Reference Manual, Window Function Frame Specification"
+
+# Looks for: FILTER ( WHERE, WITHIN GROUP, the percentile functions and the GROUPS and EXCLUDE frame options.
+[match]
+syntax = ["FILTER ( WHERE", "WITHIN GROUP", "GROUPS BETWEEN", "EXCLUDE CURRENT", "EXCLUDE TIES", "EXCLUDE GROUP", "EXCLUDE NO OTHERS"]
+calls = ["PERCENTILE_CONT", "PERCENTILE_DISC"]

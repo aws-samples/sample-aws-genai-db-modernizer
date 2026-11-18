@@ -1,0 +1,13 @@
+# Gap rule postgresql-lateral-joins (#1330). Fields: src/shared/catalog/gaps.py.
+# Source: PostgreSQL documentation, LATERAL Subqueries; MySQL 8.0 Reference Manual, Lateral Derived Tables.
+id = "postgresql-lateral-joins"
+feature = "LATERAL joins"
+source_engines = ["postgresql"]
+targets = ["aurora_mysql"]
+impact = "behaves_differently"
+reason = "Aurora MySQL 3 runs LATERAL derived tables, but not LATERAL over a function (unnest, generate_series, jsonb_array_elements), which becomes JSON_TABLE or a join; test each one."
+docs = "PostgreSQL documentation, LATERAL Subqueries; MySQL 8.0 Reference Manual, Lateral Derived Tables"
+
+# Looks for: The LATERAL keyword.
+[match]
+words = ["LATERAL"]

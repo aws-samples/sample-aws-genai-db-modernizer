@@ -1,0 +1,17 @@
+# Routine check postgresql-routine-v15-removed-settings (#2016 review). Fields: src/shared/catalog/routine_checks.py.
+# Source: PostgreSQL 15 release notes, Migration to Version 15 (PostgreSQL 15 removed stats_temp_directory with the statistics collector).
+id = "postgresql-routine-v15-removed-settings"
+feature = "A setting PostgreSQL 15 removed or renamed"
+source_engines = ["postgresql"]
+targets = ["aurora_postgresql"]
+kinds = ["function", "procedure"]
+impact = "needs_rewrite"
+reason = "PostgreSQL 15 removed stats_temp_directory with the statistics collector, so on Aurora PostgreSQL 15 and later a routine that sets, shows or reads it fails with an unrecognized configuration parameter."
+fix_hint = "Drop the setting: statistics now live in shared memory."
+docs = "PostgreSQL 15 release notes, Migration to Version 15"
+
+[version_change]
+line = "15"
+
+[match]
+removed_settings = ["stats_temp_directory"]

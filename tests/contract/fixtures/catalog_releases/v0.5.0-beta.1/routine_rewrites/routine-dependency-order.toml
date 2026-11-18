@@ -1,0 +1,12 @@
+# Routine rewrite routine-dependency-order (#1937). Fields: src/shared/catalog/routine_rewrites.py.
+# Source: PostgreSQL documentation, CREATE TRIGGER; MySQL 8.0 Reference Manual, CREATE TRIGGER Statement.
+id = "routine-dependency-order"
+feature = "Routines and triggers are created in dependency order"
+source_engines = ["mysql", "postgresql"]
+targets = ["aurora_mysql", "aurora_postgresql"]
+kinds = ["function", "procedure", "trigger", "event"]
+reason = "Each routine and trigger is created after the routines it names, ties in routine id order, so what it calls exists when it is created; a dependency cycle is reported, and its routines are created one after another in routine id order."
+docs = "PostgreSQL documentation, CREATE TRIGGER; MySQL 8.0 Reference Manual, CREATE TRIGGER Statement"
+
+[match]
+rewrite = "dependency_order"

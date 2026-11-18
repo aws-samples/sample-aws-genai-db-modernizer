@@ -1,0 +1,13 @@
+# Gap rule mysql-removed-functions (#471). Fields: src/shared/catalog/gaps.py.
+# Source: MySQL 8.0 Reference Manual, Features Removed in MySQL 8.0.
+id = "mysql-removed-functions"
+feature = "Functions removed in MySQL 8.0"
+source_engines = ["mysql", "mariadb"]
+targets = ["aurora_mysql"]
+impact = "needs_rewrite"
+reason = "These functions were removed in MySQL 8.0, which Aurora MySQL version 3 is compatible with: replace PASSWORD() with the server's own authentication and ENCODE/ENCRYPT/DES_* with AES_ENCRYPT() or SHA2()."
+docs = "MySQL 8.0 Reference Manual, Features Removed in MySQL 8.0"
+
+# Looks for: Function calls in queries and routines.
+[match]
+calls = ["PASSWORD", "OLD_PASSWORD", "ENCODE", "DECODE", "ENCRYPT", "DES_ENCRYPT", "DES_DECRYPT"]

@@ -44,23 +44,40 @@ from scripts.catalog_format_snapshot import RELEASE_FILES_DIR
 from scripts.usage_cost import load_prices
 from src.shared import models
 from src.shared.catalog.access_classes import load_access_class_table
+from src.shared.catalog.dms_sizing import load_dms_sizing
 from src.shared.catalog.engines import load_engine_catalog
-from src.shared.catalog.gaps import load_aurora_versions, load_gap_rules
+from src.shared.catalog.gaps import load_aurora_extensions, load_aurora_versions, load_gap_rules
 from src.shared.catalog.patterns import load_pattern_catalog
 from src.shared.catalog.prices import load_price_table
+from src.shared.catalog.routine_checks import load_routine_check_rules
+from src.shared.catalog.routine_rewrites import load_routine_rewrite_rules
 from src.shared.catalog.routing import load_gates_file, load_routing_file, load_triage_signals_file
 from src.shared.catalog.write_intents import load_carried_write_settings, load_write_intents
 
 RELEASES = sorted(p.name for p in RELEASE_FILES_DIR.iterdir() if p.is_dir())
 
+#: Per-file kinds: one file per entry, ``<kind>/<id>.toml``.
+PER_FILE_KINDS = {
+    "engines",
+    "patterns",
+    "gaps",
+    "write_intents",
+    "routine_checks",
+    "routine_rewrites",
+}
+
 #: Single-file kinds read by one loader that returns the file's model.
 SINGLE_FILES: dict[str, Callable[[Path], BaseModel]] = {
     "access_classes.toml": load_access_class_table,
     "carried_writes.toml": load_carried_write_settings,
+    "dms_sizing.toml": load_dms_sizing,
     "gates.toml": load_gates_file,
     "routing.toml": load_routing_file,
     "triage_signals.toml": load_triage_signals_file,
 }
+
+#: Single files a release before the one that added them does not ship.
+OPTIONAL_SINGLE_FILES = {"dms_sizing.toml"}
 
 
 def _json(value: Any) -> Any:
@@ -126,9 +143,32 @@ def load_and_compare(root: Path) -> list[str]:
         f"aurora_versions.toml{c}"
         for c in meaning_changes(_raw(root, "aurora_versions.toml"), loaded_versions)
     ]
-    problems += _per_file(root, "gaps", load_gap_rules(root / "gaps", versions))
+    # The extension lists (v0.5.0-beta.1 on): the loader keys the file's one table by the
+    # Aurora engine it describes. A release without the file has no rule that reads one.
+    extension_lines: dict[str, Any] = {}
+    if (root / "aurora_postgresql_extensions.toml").is_file():
+        extension_lines = load_aurora_extensions(root / "aurora_postgresql_extensions.toml")
+        problems += [
+            f"aurora_postgresql_extensions.toml{c}"
+            for c in meaning_changes(
+                _raw(root, "aurora_postgresql_extensions.toml"),
+                _dump(extension_lines["aurora_postgresql"]),
+            )
+        ]
+    problems += _per_file(root, "gaps", load_gap_rules(root / "gaps", versions, extension_lines))
     problems += _per_file(root, "write_intents", load_write_intents(root / "write_intents"))
+    # The routine rules (v0.5.0-beta.1 on): each rewrite resolves the release's own checks.
+    if (root / "routine_checks").is_dir() or (root / "routine_rewrites").is_dir():
+        checks = load_routine_check_rules(root / "routine_checks", extension_lines, versions)
+        problems += _per_file(root, "routine_checks", checks)
+        problems += _per_file(
+            root,
+            "routine_rewrites",
+            load_routine_rewrite_rules(root / "routine_rewrites", checks),
+        )
     for rel, loader in SINGLE_FILES.items():
+        if rel in OPTIONAL_SINGLE_FILES and not (root / rel).is_file():
+            continue
         problems += [
             f"{rel}{c}" for c in meaning_changes(_raw(root, rel), _dump(loader(root / rel)))
         ]
@@ -160,14 +200,19 @@ def test_a_release_is_recorded() -> None:
     assert "v0.4.0-beta.2" in RELEASES
 
 
+@pytest.mark.passes_on_main
 @pytest.mark.parametrize("tag", RELEASES)
 def test_a_release_s_catalog_loads_with_the_same_meaning(tag: str) -> None:
     root = RELEASE_FILES_DIR / tag
     every_file = {p.relative_to(root).as_posix() for p in root.rglob("*.toml")}
-    covered = {*SINGLE_FILES, "aurora_versions.toml", "prices.toml", "model_prices.toml"}
-    covered |= {
-        f for f in every_file if f.split("/")[0] in {"engines", "patterns", "gaps", "write_intents"}
+    covered = {
+        *SINGLE_FILES,
+        "aurora_versions.toml",
+        "aurora_postgresql_extensions.toml",
+        "prices.toml",
+        "model_prices.toml",
     }
+    covered |= {f for f in every_file if f.split("/")[0] in PER_FILE_KINDS}
     assert every_file <= covered, f"{tag}: no loader reads {sorted(every_file - covered)}"
     problems = load_and_compare(root)
     assert not problems, f"{tag}'s catalog files load differently now:\n" + "\n".join(problems)

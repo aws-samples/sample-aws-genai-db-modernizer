@@ -1,0 +1,14 @@
+# Gap rule postgresql-date-functions (#1330). Fields: src/shared/catalog/gaps.py.
+# Source: AWS Schema Conversion Tool User Guide, Using PostgreSQL as a source; PostgreSQL documentation, Date/Time Functions and Operators; MySQL 8.0 Reference Manual, Date and Time Functions.
+id = "postgresql-date-functions"
+feature = "PostgreSQL date and time functions and intervals"
+source_engines = ["postgresql"]
+targets = ["aurora_mysql"]
+impact = "needs_rewrite"
+reason = "These date and time functions and forms have no MySQL equivalent of the same name, so each is rewritten (date_trunc and to_char to DATE_FORMAT, age and date_part to TIMESTAMPDIFF and EXTRACT, AT TIME ZONE to CONVERT_TZ, EXTRACT(EPOCH FROM ...) to UNIX_TIMESTAMP, and a text interval to INTERVAL n unit)."
+docs = "AWS Schema Conversion Tool User Guide, Using PostgreSQL as a source; PostgreSQL documentation, Date/Time Functions and Operators; MySQL 8.0 Reference Manual, Date and Time Functions"
+
+# Looks for: Calls to PostgreSQL date and time functions, AT TIME ZONE, EXTRACT(EPOCH and INTERVAL over a parameter.
+[match]
+calls = ["DATE_TRUNC", "DATE_PART", "DATE_BIN", "AGE", "TO_CHAR", "TO_DATE", "TO_TIMESTAMP", "TO_NUMBER", "CLOCK_TIMESTAMP", "STATEMENT_TIMESTAMP", "TRANSACTION_TIMESTAMP", "TIMEOFDAY", "MAKE_DATE", "MAKE_TIME", "MAKE_TIMESTAMP", "MAKE_TIMESTAMPTZ", "MAKE_INTERVAL", "JUSTIFY_DAYS", "JUSTIFY_HOURS", "JUSTIFY_INTERVAL", "ISFINITE"]
+syntax = ["AT TIME ZONE", "EXTRACT ( EPOCH", "INTERVAL $"]

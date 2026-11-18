@@ -1,0 +1,65 @@
+# Pattern full-text-search. Fields: src/shared/catalog/patterns.py (ADR-031 Decision 8).
+id = "full-text-search"
+name = "Full-text search"
+detectors = [
+    "src.tools.analysis.opensearch_analysis_tools:analyze_opensearch_use_cases",
+]
+triage_signal = "text_search"
+capability = "text_search"
+# Penalty: tsvector/MATCH AGAINST: same reasoning as wildcard-search.
+penalty = 40
+penalty_basis = "cannot_run"
+exempt_note = "{engine} runs this search pattern natively: not penalized. OpenSearch is worth the move only when traffic, data size or search depth justify a dedicated search engine"
+
+[engines.dynamodb]
+kind = "penalized"
+supported = false
+why = "DynamoDB cannot run this pattern: a query another engine reports it for loses 40 points on DynamoDB."
+
+[engines.documentdb]
+kind = "native"
+supported = true
+why = "The $text operator runs full-text search natively within its documented limits: one text index per collection, English only, no array fields, no compound index with other fields and no term exclusion (Amazon DocumentDB Developer Guide, Performing text search). Class score (#728): 60, a narrow text index, not a search engine."
+class_score = 60
+
+# Detection signals: tsvector, tsquery, to_tsvector, plainto_tsquery, @@, match against
+[engines.opensearch]
+kind = "fit"
+supported = true
+catalog = "opensearch"
+catalog_id = "os-01"
+score = 95
+profile = "search"
+why = "Full-text search using PostgreSQL tsvector/tsquery operators or MySQL MATCH AGAINST. OpenSearch's inverted index is purpose-built for this workload: tokenization, stemming, and relevance ranking are native."
+concerns = [
+    "Ranking differences: OpenSearch uses BM25; PostgreSQL uses ts_rank. Results may differ.",
+    "Custom analyzers may be needed to match existing text normalization.",
+]
+table_bonus = 15
+
+[engines.elasticache]
+kind = "penalized"
+supported = false
+why = "ElastiCache cannot run this pattern: a query another engine reports it for loses 40 points on ElastiCache."
+
+[engines.aurora_postgresql]
+kind = "native"
+supported = true
+why = "tsvector and tsquery full-text search with a GIN index is native SQL (PostgreSQL documentation, Full Text Search, Preferred Index Types for Text Search). Class score (#728): 75, a built-in text index for moderate search, below a dedicated search engine's relevance ranking."
+class_score = 75
+
+[engines.aurora_mysql]
+kind = "native"
+supported = true
+why = "FULLTEXT indexes with MATCH ... AGAINST, in natural-language and boolean modes, are native SQL (MySQL Reference Manual, Full-Text Search Functions). Class score (#728): 80, a built-in text index for moderate search, below a dedicated search engine's relevance ranking."
+class_score = 80
+
+[engines.neptune]
+kind = "future"
+supported = false
+why = "Not modelled yet (future enhancement)"
+
+[engines.keyspaces]
+kind = "future"
+supported = false
+why = "Not modelled yet (future enhancement)"

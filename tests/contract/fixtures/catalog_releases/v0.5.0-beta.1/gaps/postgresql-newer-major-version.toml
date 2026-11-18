@@ -1,0 +1,13 @@
+# Gap rule postgresql-newer-major-version (#471). Fields: src/shared/catalog/gaps.py.
+# Source: Amazon Aurora PostgreSQL release calendar.
+id = "postgresql-newer-major-version"
+feature = "Source PostgreSQL major version newer than Aurora PostgreSQL"
+source_engines = ["postgresql"]
+targets = ["aurora_postgresql"]
+impact = "needs_rewrite"
+reason = "The source runs a PostgreSQL major version newer than every Aurora PostgreSQL version, so the move goes to an older major version: replace any feature added since, and move the data with logical replication or a dump."
+docs = "Amazon Aurora PostgreSQL release calendar"
+
+# Looks for: A source above the newest line in aurora_versions.toml.
+[match]
+version = "newer_than_target"

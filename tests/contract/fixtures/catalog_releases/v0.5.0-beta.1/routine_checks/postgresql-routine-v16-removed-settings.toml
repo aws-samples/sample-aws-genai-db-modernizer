@@ -1,0 +1,17 @@
+# Routine check postgresql-routine-v16-removed-settings (#2016 review). Fields: src/shared/catalog/routine_checks.py.
+# Source: PostgreSQL 16 release notes, Migration to Version 16 (PostgreSQL 16 removed vacuum_defer_cleanup_age and promote_trigger_file and renamed force_parallel_mode to debug_parallel_query).
+id = "postgresql-routine-v16-removed-settings"
+feature = "A setting PostgreSQL 16 removed or renamed"
+source_engines = ["postgresql"]
+targets = ["aurora_postgresql"]
+kinds = ["function", "procedure"]
+impact = "needs_rewrite"
+reason = "PostgreSQL 16 removed vacuum_defer_cleanup_age and promote_trigger_file and renamed force_parallel_mode to debug_parallel_query, so on Aurora PostgreSQL 16 and later a routine that sets, shows or reads it fails with an unrecognized configuration parameter."
+fix_hint = "Use debug_parallel_query for force_parallel_mode, and drop the other two: they have no replacement."
+docs = "PostgreSQL 16 release notes, Migration to Version 16"
+
+[version_change]
+line = "16"
+
+[match]
+removed_settings = ["vacuum_defer_cleanup_age", "promote_trigger_file", "force_parallel_mode"]

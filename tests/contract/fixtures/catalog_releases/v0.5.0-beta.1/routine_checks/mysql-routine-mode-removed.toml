@@ -1,0 +1,14 @@
+# Routine check mysql-routine-mode-removed (#1936). Fields: src/shared/catalog/routine_checks.py.
+# Source: MySQL 8.0 Reference Manual, What Is New in MySQL 8.0 (Features Removed: NO_AUTO_CREATE_USER and the combination modes); Server SQL Modes.
+id = "mysql-routine-mode-removed"
+feature = "An sql_mode MySQL 8.0 removed"
+source_engines = ["mysql"]
+targets = ["aurora_mysql"]
+kinds = ["procedure", "function", "trigger", "event"]
+impact = "needs_rewrite"
+reason = "The routine was created under an sql_mode MySQL 8.0 removed, and every Aurora MySQL line in standard support is 8.0 or later; setting that mode fails, so the routine cannot be created under its own sql_mode."
+fix_hint = "Drop the removed mode from the routine's sql_mode (NO_AUTO_CREATE_USER has no replacement; a removed combination mode becomes the modes it stood for) and check the routine still behaves the same."
+docs = "MySQL 8.0 Reference Manual, What Is New in MySQL 8.0 (Features Removed in MySQL 8.0); Server SQL Modes"
+
+[match]
+sql_modes = ["NO_AUTO_CREATE_USER", "DB2", "MAXDB", "MSSQL", "MYSQL323", "MYSQL40", "ORACLE", "POSTGRESQL", "NO_FIELD_OPTIONS", "NO_KEY_OPTIONS", "NO_TABLE_OPTIONS"]

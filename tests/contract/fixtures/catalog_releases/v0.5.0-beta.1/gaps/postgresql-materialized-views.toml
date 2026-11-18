@@ -1,0 +1,13 @@
+# Gap rule postgresql-materialized-views (#1330). Fields: src/shared/catalog/gaps.py.
+# Source: PostgreSQL documentation, Materialized Views; MySQL 8.0 Reference Manual, Using the Event Scheduler.
+id = "postgresql-materialized-views"
+feature = "Materialized views"
+source_engines = ["postgresql"]
+targets = ["aurora_mysql"]
+impact = "needs_rewrite"
+reason = "MySQL has no materialized views, so each becomes a summary table that a scheduled event, a trigger or the application refreshes (REFRESH MATERIALIZED VIEW becomes that refresh)."
+docs = "PostgreSQL documentation, Materialized Views; MySQL 8.0 Reference Manual, Using the Event Scheduler"
+
+# Looks for: MATERIALIZED VIEW.
+[match]
+syntax = ["MATERIALIZED VIEW"]

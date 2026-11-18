@@ -1,0 +1,14 @@
+# Gap rule sqlserver-table-and-query-hints (#471). Fields: src/shared/catalog/gaps.py.
+# Source: SQL Server to Aurora PostgreSQL Migration Playbook (AWS DMS documentation), Query hints and table hints.
+id = "sqlserver-table-and-query-hints"
+feature = "T-SQL table and query hints"
+source_engines = ["sqlserver"]
+targets = ["aurora_mysql", "aurora_postgresql"]
+impact = "behaves_differently"
+reason = "Neither target has T-SQL table or query hints, so they are dropped: readers never block writers under the targets' multi-version concurrency, so NOLOCK's dirty reads go away."
+docs = "SQL Server to Aurora PostgreSQL Migration Playbook (AWS DMS documentation), Query hints and table hints"
+
+# Looks for: Table hints and the OPTION (...) query hint clause.
+[match]
+words = ["NOLOCK", "READPAST", "UPDLOCK", "HOLDLOCK", "ROWLOCK", "PAGLOCK", "TABLOCK", "TABLOCKX", "READUNCOMMITTED", "NOEXPAND"]
+calls = ["OPTION"]

@@ -1,0 +1,14 @@
+# Gap rule postgresql-schemas-to-mysql (#1330). Fields: src/shared/catalog/gaps.py.
+# Source: AWS Schema Conversion Tool User Guide, Using PostgreSQL as a source; PostgreSQL documentation, Schemas.
+id = "postgresql-schemas-to-mysql"
+feature = "Objects outside the public schema"
+source_engines = ["postgresql"]
+targets = ["aurora_mysql"]
+impact = "informational"
+reason = "MySQL has no schemas inside a database, so each PostgreSQL schema becomes its own MySQL database: names outside it are written database.name, and search_path has no equivalent."
+docs = "AWS Schema Conversion Tool User Guide, Using PostgreSQL as a source; PostgreSQL documentation, Schemas"
+
+# Looks for: Tables, views, routines and triggers in a schema other than public, and CREATE SCHEMA.
+[match]
+schemas_other_than = ["public"]
+syntax = ["CREATE SCHEMA"]

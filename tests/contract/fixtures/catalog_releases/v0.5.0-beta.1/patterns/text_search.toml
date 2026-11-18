@@ -1,0 +1,48 @@
+# Pattern text_search. Fields: src/shared/catalog/patterns.py (ADR-031 Decision 8).
+id = "text_search"
+name = "Generic text search"
+detectors = []
+triage_signal = "text_search"
+# Penalty: DynamoDB can't do full-text search at all.
+penalty = 40
+penalty_basis = "cannot_run"
+
+[engines.dynamodb]
+kind = "unscored"
+supported = true
+why = "No analysis reports this type, so the 40-point penalty key is inert today."
+
+[engines.documentdb]
+kind = "unscored"
+supported = true
+why = "No analysis reports this type, so the 40-point penalty key is inert today."
+
+[engines.opensearch]
+kind = "unscored"
+supported = true
+why = "No analysis reports this type, so the 40-point penalty key is inert today."
+
+[engines.elasticache]
+kind = "unscored"
+supported = true
+why = "No analysis reports this type, so the 40-point penalty key is inert today."
+
+[engines.aurora_postgresql]
+kind = "unscored"
+supported = true
+why = "No analysis reports this type, so the 40-point penalty key is inert today."
+
+[engines.aurora_mysql]
+kind = "unscored"
+supported = true
+why = "No analysis reports this type, so the 40-point penalty key is inert today."
+
+[engines.neptune]
+kind = "future"
+supported = false
+why = "Not modelled yet (future enhancement)"
+
+[engines.keyspaces]
+kind = "future"
+supported = false
+why = "Not modelled yet (future enhancement)"

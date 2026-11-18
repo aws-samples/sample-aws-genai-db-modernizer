@@ -1,0 +1,14 @@
+# Gap rule mysql-select-modifiers-and-hints (#1330). Fields: src/shared/catalog/gaps.py.
+# Source: MySQL 8.0 Reference Manual, SELECT Statement and Index Hints.
+id = "mysql-select-modifiers-and-hints"
+feature = "MySQL statement modifiers, index hints and DUAL"
+source_engines = ["mysql", "mariadb"]
+targets = ["aurora_postgresql"]
+impact = "needs_rewrite"
+reason = "PostgreSQL rejects MySQL's statement modifiers (DISTINCTROW, STRAIGHT_JOIN, SQL_SMALL_RESULT, LOW_PRIORITY, ...) and index hints (USE, FORCE and IGNORE INDEX) and has no DUAL table, so they are removed (DISTINCTROW becomes DISTINCT; FROM DUAL is dropped)."
+docs = "MySQL 8.0 Reference Manual, SELECT Statement and Index Hints"
+
+# Looks for: The modifier keywords, the index hint clauses and FROM DUAL.
+[match]
+words = ["DISTINCTROW", "STRAIGHT_JOIN", "SQL_SMALL_RESULT", "SQL_BIG_RESULT", "SQL_BUFFER_RESULT", "SQL_NO_CACHE", "SQL_CACHE", "HIGH_PRIORITY", "LOW_PRIORITY", "DELAYED"]
+syntax = ["FROM DUAL", "USE INDEX", "FORCE INDEX", "IGNORE INDEX", "USE KEY", "FORCE KEY", "IGNORE KEY"]

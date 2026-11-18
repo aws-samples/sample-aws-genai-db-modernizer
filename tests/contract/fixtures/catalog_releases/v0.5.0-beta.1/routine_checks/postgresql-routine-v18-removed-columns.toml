@@ -1,0 +1,20 @@
+# Routine check postgresql-routine-v18-removed-columns (#2016 review). Fields: src/shared/catalog/routine_checks.py.
+# Source: PostgreSQL 18 release notes, Migration to Version 18 (pg_stat_wal's wal_write, wal_sync, wal_write_time and wal_sync_time removed, see pg_stat_io; pg_backend_memory_contexts.parent removed; pg_attribute.attcacheoff removed).
+id = "postgresql-routine-v18-removed-columns"
+feature = "A catalog column PostgreSQL 18 removed"
+source_engines = ["postgresql"]
+targets = ["aurora_postgresql"]
+kinds = ["function", "procedure"]
+impact = "needs_rewrite"
+reason = "PostgreSQL 18 removed pg_stat_wal's wal_write, wal_sync, wal_write_time and wal_sync_time columns, pg_backend_memory_contexts.parent and pg_attribute.attcacheoff, so on Aurora PostgreSQL 18 the query fails with an unknown column."
+fix_hint = "Read the WAL write and sync figures from pg_stat_io (object 'wal'), a memory context's ancestry from pg_backend_memory_contexts.path, and drop the attcacheoff read."
+docs = "PostgreSQL 18 release notes, Migration to Version 18"
+
+[version_change]
+line = "18"
+
+[match]
+catalog_columns = [
+  "pg_stat_wal.wal_write", "pg_stat_wal.wal_sync", "pg_stat_wal.wal_write_time",
+  "pg_stat_wal.wal_sync_time", "pg_backend_memory_contexts.parent", "pg_attribute.attcacheoff",
+]

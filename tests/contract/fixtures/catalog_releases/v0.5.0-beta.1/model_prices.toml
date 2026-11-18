@@ -1,0 +1,51 @@
+# On-demand Bedrock list prices (#1494), USD per 1M tokens, us-east-1, by the model names
+# of MODEL_IDS in src/shared/models.py (the one place a model ID is spelled) and the
+# inference profile prefix of the ID in use. Read by scripts/usage_cost.py; a model or
+# profile with no entry raises.
+#
+# Source: the public AWS Price List bulk file for Amazon Bedrock foundation models,
+#   https://pricing.us-east-1.amazonaws.com/offers/v1.0/aws/AmazonBedrockFoundationModels/current/us-east-1/index.csv
+# Retrieved 2026-10-24 (EffectiveDate of each row: Opus 5.5 2026-09-01, Sonnet 5.5 and
+# Haiku 5.5 2026-10-01). Standard tier, prompts up to the standard context length (the
+# long-context rows are priced higher and not used here). Cache writes are the 5-minute TTL
+# rows, the TTL these calls use.
+# The "us" profiles are the geographic cross-region rows ("Standard"); the "global"
+# profiles are the "Standard, Global" rows. Re-read the file when a price changes.
+retrieved_on = 2026-10-24
+source = "https://pricing.us-east-1.amazonaws.com/offers/v1.0/aws/AmazonBedrockFoundationModels/current/us-east-1/index.csv"
+
+["opus-5.5".us]
+input = 4.4
+output = 22.0
+cache_read = 0.22
+cache_write = 5.5
+
+["sonnet-5.5".us]
+input = 2.2
+output = 11.0
+cache_read = 0.11
+cache_write = 2.75
+
+["haiku-5.5".us]
+input = 0.11
+output = 0.55
+cache_read = 0.011
+cache_write = 0.1375
+
+["opus-5.5".global]
+input = 4.0
+output = 20.0
+cache_read = 0.2
+cache_write = 5.0
+
+["sonnet-5.5".global]
+input = 2.0
+output = 10.0
+cache_read = 0.1
+cache_write = 2.5
+
+["haiku-5.5".global]
+input = 0.1
+output = 0.5
+cache_read = 0.01
+cache_write = 0.125

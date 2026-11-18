@@ -1,0 +1,13 @@
+# Gap rule mysql-load-data-and-outfile (#1330). Fields: src/shared/catalog/gaps.py.
+# Source: MySQL 8.0 Reference Manual, LOAD DATA Statement; Amazon Aurora User Guide, Importing data from Amazon S3 into an Aurora PostgreSQL DB cluster.
+id = "mysql-load-data-and-outfile"
+feature = "LOAD DATA and SELECT ... INTO OUTFILE"
+source_engines = ["mysql", "mariadb"]
+targets = ["aurora_postgresql"]
+impact = "needs_rewrite"
+reason = "LOAD DATA and SELECT ... INTO OUTFILE become COPY through the client, or the aws_s3 extension's table_import_from_s3 and query_export_to_s3 on Aurora PostgreSQL."
+docs = "MySQL 8.0 Reference Manual, LOAD DATA Statement; Amazon Aurora User Guide, Importing data from Amazon S3 into an Aurora PostgreSQL DB cluster"
+
+# Looks for: LOAD DATA, LOAD XML, INTO OUTFILE and INTO DUMPFILE.
+[match]
+syntax = ["LOAD DATA", "LOAD XML", "INTO OUTFILE", "INTO DUMPFILE"]

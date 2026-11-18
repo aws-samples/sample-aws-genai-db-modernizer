@@ -1,0 +1,17 @@
+# Routine check mysql-routine-v80-group-by-sort (#1952). Fields: src/shared/catalog/routine_checks.py.
+# Source: MySQL 8.0 Reference Manual, What Is New in MySQL 8.0 (Features Removed: implicit sorting for GROUP BY); ORDER BY Optimization.
+id = "mysql-routine-v80-group-by-sort"
+feature = "A SELECT that relied on GROUP BY sorting its rows"
+source_engines = ["mysql"]
+targets = ["aurora_mysql"]
+kinds = ["procedure", "function", "trigger", "event"]
+impact = "behaves_differently"
+reason = "MySQL 5.7 returned GROUP BY results sorted by the grouped columns; MySQL 8.0 no longer sorts them, so on Aurora MySQL 3 and later this SELECT (or the cursor reading it) can return its rows in another order, and a grouped subquery or INSERT ... SELECT with LIMIT can keep other rows."
+fix_hint = "Add ORDER BY with the grouped columns to the SELECT wherever the routine depends on the order of its rows (a cursor loop, a LIMIT at any level, a result returned to the caller)."
+docs = "MySQL 8.0 Reference Manual, What Is New in MySQL 8.0 (Features Removed in MySQL 8.0); ORDER BY Optimization"
+
+[version_change]
+line = "8.0"
+
+[match]
+group_by = "without_order_by"

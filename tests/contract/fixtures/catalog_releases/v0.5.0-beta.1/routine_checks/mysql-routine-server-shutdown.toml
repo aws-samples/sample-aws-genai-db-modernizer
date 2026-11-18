@@ -1,0 +1,14 @@
+# Routine check mysql-routine-server-shutdown (#1936). Fields: src/shared/catalog/routine_checks.py.
+# Source: MySQL 8.0 Reference Manual, SHUTDOWN Statement and RESTART Statement; Amazon Aurora User Guide, Role-based privilege model.
+id = "mysql-routine-server-shutdown"
+feature = "Stopping or restarting the server"
+source_engines = ["mysql"]
+targets = ["aurora_mysql"]
+kinds = ["procedure", "function", "trigger", "event"]
+impact = "needs_rewrite"
+reason = "SHUTDOWN and RESTART need the SHUTDOWN privilege, which the Aurora MySQL administrative role does not include; Aurora instances are stopped and rebooted through the RDS API."
+fix_hint = "Remove the statement; reboot or stop the instance with the RDS console, CLI or API."
+docs = "MySQL 8.0 Reference Manual, SHUTDOWN Statement; RESTART Statement; Amazon Aurora User Guide, Role-based privilege model"
+
+[match]
+statement_starts = ["SHUTDOWN", "RESTART"]

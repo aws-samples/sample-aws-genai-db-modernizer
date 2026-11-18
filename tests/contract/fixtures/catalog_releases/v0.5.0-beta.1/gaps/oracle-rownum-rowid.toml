@@ -1,0 +1,13 @@
+# Gap rule oracle-rownum-rowid (#471). Fields: src/shared/catalog/gaps.py.
+# Source: Oracle to Aurora PostgreSQL Migration Playbook (AWS DMS documentation), ROWNUM and ROWID.
+id = "oracle-rownum-rowid"
+feature = "ROWNUM and ROWID pseudo-columns"
+source_engines = ["oracle"]
+targets = ["aurora_mysql", "aurora_postgresql"]
+impact = "needs_rewrite"
+reason = "ROWNUM becomes LIMIT or ROW_NUMBER(), and ROWID has no stable equivalent, so code that uses it reads by primary key instead."
+docs = "Oracle to Aurora PostgreSQL Migration Playbook (AWS DMS documentation), ROWNUM and ROWID"
+
+# Looks for: The pseudo-columns.
+[match]
+words = ["ROWNUM", "ROWID"]

@@ -1,0 +1,17 @@
+# Routine check postgresql-routine-v17-maintenance-search-path (#1951). Fields: src/shared/catalog/routine_checks.py.
+# Source: PostgreSQL 17 release notes, Migration to Version 17 (functions used by expression indexes and materialized views run with a safe search_path during maintenance operations).
+id = "postgresql-routine-v17-maintenance-search-path"
+feature = "A function with no search_path of its own that names tables without their schema"
+source_engines = ["postgresql"]
+targets = ["aurora_postgresql"]
+kinds = ["function"]
+impact = "informational"
+reason = "From PostgreSQL 17, ANALYZE, CLUSTER, CREATE INDEX, CREATE MATERIALIZED VIEW, REFRESH MATERIALIZED VIEW, REINDEX and VACUUM run functions with search_path set to pg_catalog, pg_temp, so if this function is used by an expression index or a materialized view, its unqualified table names no longer resolve during those operations."
+fix_hint = "If the function is used by an index expression or a materialized view, qualify its table names with their schema or give it its own SET search_path clause; otherwise nothing changes."
+docs = "PostgreSQL 17 release notes, Migration to Version 17"
+
+[version_change]
+line = "17"
+
+[match]
+unqualified_without_search_path = true

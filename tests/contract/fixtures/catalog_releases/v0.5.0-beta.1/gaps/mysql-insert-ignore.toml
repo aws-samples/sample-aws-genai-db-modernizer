@@ -1,0 +1,13 @@
+# Gap rule mysql-insert-ignore (#1330). Fields: src/shared/catalog/gaps.py.
+# Source: MySQL 8.0 Reference Manual, The Effect of IGNORE on Statement Execution; PostgreSQL documentation, INSERT (ON CONFLICT clause).
+id = "mysql-insert-ignore"
+feature = "INSERT IGNORE and the IGNORE modifier"
+source_engines = ["mysql", "mariadb"]
+targets = ["aurora_postgresql"]
+impact = "needs_rewrite"
+reason = "PostgreSQL has no IGNORE modifier: INSERT IGNORE becomes INSERT ... ON CONFLICT DO NOTHING, which skips only unique-key conflicts, so the other errors IGNORE turned into warnings (bad values, foreign keys) now fail the statement."
+docs = "MySQL 8.0 Reference Manual, The Effect of IGNORE on Statement Execution; PostgreSQL documentation, INSERT (ON CONFLICT clause)"
+
+# Looks for: IGNORE after INSERT, UPDATE or DELETE.
+[match]
+syntax = ["INSERT IGNORE", "INSERT LOW_PRIORITY IGNORE", "INSERT DELAYED IGNORE", "INSERT HIGH_PRIORITY IGNORE", "UPDATE IGNORE", "UPDATE LOW_PRIORITY IGNORE", "DELETE IGNORE", "DELETE LOW_PRIORITY IGNORE", "DELETE QUICK IGNORE"]

@@ -1,0 +1,14 @@
+# Gap rule mysql-fulltext-search (#1330). Fields: src/shared/catalog/gaps.py.
+# Source: AWS Schema Conversion Tool User Guide, Using MySQL as a source; MySQL 8.0 Reference Manual, Full-Text Search Functions; PostgreSQL documentation, Full Text Search.
+id = "mysql-fulltext-search"
+feature = "Full-text search (MATCH ... AGAINST)"
+source_engines = ["mysql", "mariadb"]
+targets = ["aurora_postgresql"]
+impact = "needs_rewrite"
+reason = "MATCH ... AGAINST and FULLTEXT indexes become PostgreSQL full-text search (a tsvector column or expression with a GIN index, queried with @@ and to_tsquery), whose parsing, stop words and ranking differ."
+docs = "AWS Schema Conversion Tool User Guide, Using MySQL as a source; MySQL 8.0 Reference Manual, Full-Text Search Functions; PostgreSQL documentation, Full Text Search"
+
+# Looks for: The AGAINST keyword and FULLTEXT indexes.
+[match]
+words = ["AGAINST"]
+index_types = ["fulltext"]

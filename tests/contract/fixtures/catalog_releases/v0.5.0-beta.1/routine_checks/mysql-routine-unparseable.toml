@@ -1,0 +1,14 @@
+# Routine check mysql-routine-unparseable (#1936). Fields: src/shared/catalog/routine_checks.py.
+# Source: MySQL 8.0 Reference Manual, CREATE PROCEDURE and CREATE FUNCTION Statements; Compound Statement Syntax.
+id = "mysql-routine-unparseable"
+feature = "A routine whose CREATE statement does not read as MySQL"
+source_engines = ["mysql"]
+targets = ["aurora_mysql"]
+kinds = ["procedure", "function", "trigger", "event"]
+impact = "needs_rewrite"
+reason = "The routine's CREATE text could not be read: its header, its quoting or its compound statements (BEGIN ... END, IF, CASE, LOOP, WHILE, REPEAT and their labels) do not close as MySQL requires, so it cannot be checked or carried as is."
+fix_hint = "Re-collect the routine with SHOW CREATE, or fix the text so it loads on the source MySQL, then run the check again."
+docs = "MySQL 8.0 Reference Manual, CREATE PROCEDURE and CREATE FUNCTION Statements; Compound Statement Syntax"
+
+[match]
+parses = true

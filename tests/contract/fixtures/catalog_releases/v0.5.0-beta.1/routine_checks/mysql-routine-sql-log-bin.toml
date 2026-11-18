@@ -1,0 +1,14 @@
+# Routine check mysql-routine-sql-log-bin (#1936). Fields: src/shared/catalog/routine_checks.py.
+# Source: MySQL 8.0 Reference Manual, sql_log_bin (a restricted session variable); Amazon Aurora User Guide, Role-based privilege model.
+id = "mysql-routine-sql-log-bin"
+feature = "Turning binary logging off for the session"
+source_engines = ["mysql"]
+targets = ["aurora_mysql"]
+kinds = ["procedure", "function", "trigger", "event"]
+impact = "needs_rewrite"
+reason = "Turning binary logging off for a session (sql_log_bin) needs SUPER, SYSTEM_VARIABLES_ADMIN or SESSION_VARIABLES_ADMIN, which the Aurora MySQL administrative role does not include, so the statement fails when the routine runs."
+fix_hint = "Remove the SET sql_log_bin statement; to keep changes out of replication, filter them on the replica or run them outside the replicated schema."
+docs = "MySQL 8.0 Reference Manual, Server System Variables (sql_log_bin); Amazon Aurora User Guide, Role-based privilege model"
+
+[match]
+set_variables = ["sql_log_bin"]

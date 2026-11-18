@@ -1,0 +1,17 @@
+# Routine check postgresql-routine-v15-public-schema (#1951). Fields: src/shared/catalog/routine_checks.py.
+# Source: PostgreSQL 15 release notes, Migration to Version 15 (PUBLIC's CREATE permission on the public schema removed; the schema is owned by pg_database_owner).
+id = "postgresql-routine-v15-public-schema"
+feature = "A routine that creates objects in the public schema, which PostgreSQL 15 closed to PUBLIC"
+source_engines = ["postgresql"]
+targets = ["aurora_postgresql"]
+kinds = ["function", "procedure"]
+impact = "behaves_differently"
+reason = "PostgreSQL 15 no longer lets every role create objects in the public schema (only the database owner may, unless granted), so on Aurora PostgreSQL 15 and later this CREATE (a table, view, sequence, function, type or domain) fails with permission denied when the routine runs as a role without CREATE on public."
+fix_hint = "Create the objects in a schema the running role owns, or grant CREATE ON SCHEMA public to the roles that run the routine; a temporary table needs neither."
+docs = "PostgreSQL 15 release notes, Migration to Version 15; PostgreSQL documentation, Schemas (The Public Schema)"
+
+[version_change]
+line = "15"
+
+[match]
+creates_in_public_schema = true

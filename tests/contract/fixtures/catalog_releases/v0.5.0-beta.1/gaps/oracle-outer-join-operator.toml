@@ -1,0 +1,13 @@
+# Gap rule oracle-outer-join-operator (#471). Fields: src/shared/catalog/gaps.py.
+# Source: Oracle to Aurora PostgreSQL Migration Playbook (AWS DMS documentation), Joins.
+id = "oracle-outer-join-operator"
+feature = "Oracle (+) outer join operator"
+source_engines = ["oracle"]
+targets = ["aurora_mysql", "aurora_postgresql"]
+impact = "needs_rewrite"
+reason = "The (+) outer join operator becomes an ANSI LEFT or RIGHT JOIN."
+docs = "Oracle to Aurora PostgreSQL Migration Playbook (AWS DMS documentation), Joins"
+
+# Looks for: The (+) operator.
+[match]
+syntax = ["( + )"]

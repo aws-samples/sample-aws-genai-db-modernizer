@@ -1,0 +1,13 @@
+# Gap rule postgresql-on-conflict (#1330). Fields: src/shared/catalog/gaps.py.
+# Source: PostgreSQL documentation, INSERT (ON CONFLICT clause); MySQL 8.0 Reference Manual, INSERT ... ON DUPLICATE KEY UPDATE Statement.
+id = "postgresql-on-conflict"
+feature = "INSERT ... ON CONFLICT"
+source_engines = ["postgresql"]
+targets = ["aurora_mysql"]
+impact = "needs_rewrite"
+reason = "ON CONFLICT DO UPDATE becomes INSERT ... ON DUPLICATE KEY UPDATE and ON CONFLICT DO NOTHING becomes INSERT IGNORE; MySQL resolves a conflict on any unique key, not the named one, and INSERT IGNORE also hides other errors."
+docs = "PostgreSQL documentation, INSERT (ON CONFLICT clause); MySQL 8.0 Reference Manual, INSERT ... ON DUPLICATE KEY UPDATE Statement"
+
+# Looks for: The ON CONFLICT clause.
+[match]
+syntax = ["ON CONFLICT"]

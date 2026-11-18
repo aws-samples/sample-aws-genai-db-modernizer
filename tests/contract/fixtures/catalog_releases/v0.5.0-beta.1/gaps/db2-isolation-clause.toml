@@ -1,0 +1,13 @@
+# Gap rule db2-isolation-clause (#471). Fields: src/shared/catalog/gaps.py.
+# Source: AWS Schema Conversion Tool User Guide, Migrating from Db2 for LUW.
+id = "db2-isolation-clause"
+feature = "Statement isolation clauses"
+source_engines = ["db2"]
+targets = ["aurora_mysql", "aurora_postgresql"]
+impact = "behaves_differently"
+reason = "WITH UR, CS, RS and RR set the isolation of one statement, which neither target can do, so the session's isolation level applies instead."
+docs = "AWS Schema Conversion Tool User Guide, Migrating from Db2 for LUW"
+
+# Looks for: The isolation clause at the end of a statement.
+[match]
+statement_endings = ["WITH UR", "WITH CS", "WITH RS", "WITH RR"]

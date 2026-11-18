@@ -1,0 +1,12 @@
+# Routine rewrite postgresql-routine-owner-to-target-user (#1937). Fields: src/shared/catalog/routine_rewrites.py.
+# Source: PostgreSQL documentation, CREATE FUNCTION and ALTER FUNCTION (OWNER TO).
+id = "postgresql-routine-owner-to-target-user"
+feature = "A function or procedure is owned by the target user"
+source_engines = ["postgresql"]
+targets = ["aurora_postgresql"]
+kinds = ["function", "procedure"]
+reason = "A function's CREATE statement names no owner, so on Aurora PostgreSQL the routine is owned by the user that creates it; the record names that user in place of the source owner, and the statement does not change; a SECURITY DEFINER routine then runs with the target user's privileges, and its record says so."
+docs = "PostgreSQL documentation, CREATE FUNCTION; PostgreSQL documentation, ALTER FUNCTION"
+
+[match]
+rewrite = "owner"

@@ -1,0 +1,13 @@
+# Gap rule postgresql-distinct-on (#1330). Fields: src/shared/catalog/gaps.py.
+# Source: PostgreSQL documentation, SELECT (DISTINCT clause); MySQL 8.0 Reference Manual, Window Functions.
+id = "postgresql-distinct-on"
+feature = "SELECT DISTINCT ON"
+source_engines = ["postgresql"]
+targets = ["aurora_mysql"]
+impact = "needs_rewrite"
+reason = "MySQL has no DISTINCT ON, so each becomes a ROW_NUMBER() OVER (PARTITION BY ... ORDER BY ...) subquery that keeps the first row of each group."
+docs = "PostgreSQL documentation, SELECT (DISTINCT clause); MySQL 8.0 Reference Manual, Window Functions"
+
+# Looks for: DISTINCT ON.
+[match]
+syntax = ["DISTINCT ON"]

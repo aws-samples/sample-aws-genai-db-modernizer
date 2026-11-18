@@ -1,0 +1,14 @@
+# Routine check mysql-routine-replication-control (#1936). Fields: src/shared/catalog/routine_checks.py.
+# Source: Amazon Aurora User Guide, Aurora MySQL stored procedure reference (replication); Role-based privilege model.
+id = "mysql-routine-replication-control"
+feature = "Replication and binary log control statements"
+source_engines = ["mysql"]
+targets = ["aurora_mysql"]
+kinds = ["procedure", "function", "trigger", "event"]
+impact = "needs_rewrite"
+reason = "Replication and binary log control statements need REPLICATION_SLAVE_ADMIN, BINLOG_ADMIN or SUPER, which the Aurora MySQL administrative role (rds_superuser_role) does not include; Aurora manages replication through its own stored procedures."
+fix_hint = "Call the Aurora MySQL procedures instead (mysql.rds_set_external_source, mysql.rds_start_replication, mysql.rds_stop_replication), or move the step out of the routine."
+docs = "Amazon Aurora User Guide, Aurora MySQL stored procedure reference; Role-based privilege model"
+
+[match]
+statement_starts = ["CHANGE MASTER", "CHANGE REPLICATION SOURCE", "CHANGE REPLICATION FILTER", "START SLAVE", "START REPLICA", "STOP SLAVE", "STOP REPLICA", "PURGE BINARY LOGS", "PURGE MASTER LOGS"]

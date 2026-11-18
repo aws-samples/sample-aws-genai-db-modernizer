@@ -1,0 +1,110 @@
+# The hard gates (ADR-031 Decision 2 steps 2 and 3, #921): what an engine structurally
+# cannot do, as opposed to how well it fits a pattern (the pattern files' scores). Fields:
+# src/shared/catalog/routing.py.
+#
+# [capabilities.<id>]: an engine without the capability cannot serve a query that needs
+# it at all (capability_registry.can_engine_serve_capability). A query needs it when it
+# shows one of ``facts`` (src.tools.sql.query_facts, read in the source dialect) or one
+# of ``triage_signals``. ``pattern_capability`` links the gate to the pattern files'
+# capability of the same meaning: their ``supported`` flags must name the same engines,
+# so the gate and the catalog cannot disagree (the loader checks it).
+#
+# [[exclusions]]: a rule that bars one engine from a query showing ``fact`` (at least
+# ``min`` for a count), checked in order. ``description`` is the technical reason (logs and
+# the decision trace only); ``customer_message`` is the plain verb phrase a rejected
+# override quotes (#548): no leading subject, no engine name, no mention of another engine.
+#
+# [[waivers]]: a capability an engine lacks in general but serves for one narrower query
+# shape, a class fact of the query (``fact``, src.agents.referee.access_pattern), only
+# when the query's one table has its source of truth on that engine (``when``, the
+# table's write group, ADR-031 Amendment 9; ADR-031 Decision 2 Amendment 12, #377). The
+# waiver only lifts the gate: the shared scorer still scores the engine and decides. It
+# depends on where the table's writes are, so the first assignment applies it once the
+# writes are placed (``AssignmentResolver`` Step 6d) and later passes read the sources of
+# truth of the version they route (``ScoringContext.with_sources_of_truth``); an engine's
+# standing-cost share never counts it (Decision 5).
+
+[capabilities.multi_doc_acid]
+engines = ["dynamodb", "documentdb", "aurora_postgresql", "aurora_mysql"]
+facts = []
+pattern_capability = "acid_transactions"
+why = "Multi-item ACID writes. DynamoDB's TransactWriteItems/TransactGetItems are ACID across up to 100 items (ADR-031 Decision 3); a write too wide for one transaction is scored by its shape (wide-transaction, #493). Detected structurally, not from the query text."
+
+[capabilities.strong_consistency]
+engines = ["dynamodb", "documentdb", "aurora_postgresql", "aurora_mysql"]
+facts = []
+why = "Strongly consistent reads. No query fact requires it today."
+
+[capabilities.aggregation]
+engines = ["documentdb", "opensearch", "aurora_postgresql", "aurora_mysql"]
+facts = ["needs_aggregation"]
+triage_signals = ["aggregations"]
+why = "An aggregate call, SQL_CALC_FOUND_ROWS, a window function, or a GROUP BY that does more than de-duplicate (#336, #338): an engine with no aggregation (DynamoDB) cannot run it at all, even on a single query."
+
+[capabilities.text_pattern_match]
+engines = ["documentdb", "opensearch", "aurora_postgresql", "aurora_mysql"]
+facts = ["text_search"]
+triage_signals = ["text_search"]
+pattern_capability = "text_search"
+why = "A text-pattern predicate (a leading-wildcard or parameterised LIKE, a full-text, regular-expression or similarity match, #893). DocumentDB runs it with $regex and $text (#485); a leading-wildcard predicate that runs as a scan is a score difference (substring-match), never this gate."
+
+[capabilities.scan_engine]
+engines = ["opensearch", "aurora_postgresql", "aurora_mysql"]
+facts = ["recursive_cte"]
+why = "A recursive CTE (a ranking or offset window function before #968, now their own capabilities)."
+
+[capabilities.ranking_window]
+engines = ["documentdb", "opensearch", "aurora_postgresql", "aurora_mysql"]
+facts = ["ranking_window_function"]
+why = "ROW_NUMBER, RANK or DENSE_RANK over a window. DocumentDB runs them with $setWindowFields ($documentNumber, $rank, $denseRank) on 8.0.2 or later on an instance-based cluster: a version bound the window-functions anti-pattern prices, not a capability gap (#968; Amazon DocumentDB Developer Guide, Supported MongoDB APIs, operations, and data types)."
+
+[capabilities.offset_window]
+engines = ["opensearch", "aurora_postgresql", "aurora_mysql"]
+facts = ["offset_window_function"]
+why = "LAG, LEAD or NTILE over a window: it reads another row or buckets rows. DocumentDB cannot run them on any version: LAG and LEAD need $shift, which no version supports, and the supported operators include no bucketing window operator for NTILE (#968; Amazon DocumentDB Developer Guide, Supported MongoDB APIs, operations, and data types)."
+
+[capabilities.complex_joins]
+engines = ["aurora_postgresql", "aurora_mysql"]
+facts = []
+triage_signals = ["complex_joins"]
+why = "Joins of three or more tables: DynamoDB and OpenSearch have no join, however the data is keyed (#338)."
+
+[capabilities.sql_admin]
+engines = ["aurora_postgresql", "aurora_mysql"]
+facts = []
+why = "A utility or metadata statement (DDL, session variables, transaction control, #327): only the Aurora engines understand it. Detected by utility_statements, not a query fact."
+
+[capabilities.computed_join]
+engines = ["aurora_postgresql", "aurora_mysql"]
+facts = ["computed_join_key"]
+why = "A join on a computed expression (lower(g.name) = u.username_lower), which a key lookup cannot evaluate (review of #375, finding B2)."
+
+[[waivers]]
+engine = "dynamodb"
+capability = "aggregation"
+rule_id = "ddb-key-scoped-count"
+fact = "key_scoped_count"
+when = "source_of_truth"
+why = "A COUNT with no GROUP BY over the rows one key value of one table addresses is a DynamoDB Query on that key with Select = COUNT, which returns the number of matching items (after any filter expression; a COUNT(col) adds attribute_exists(col)) instead of the items, yet still reads and bills every matching item: read capacity is the same as reading them, and a result past 1 MB is paged, so the count is summed over the pages (Amazon DynamoDB Developer Guide, Query, Select; maintainer decision on #377). It applies only when the table's writes are on DynamoDB, so no table is pulled off another engine for one count; routing has no cardinality gate, so the DynamoDB designer is given each such count's key and its cardinality (or unknown) to choose the key or a maintained counter. MIN and MAX are not waived (they need a designed sort key)."
+
+[[exclusions]]
+engine = "dynamodb"
+rule_id = "ddb-no-leading-wildcard"
+fact = "leading_wildcard_like"
+description = "Leading wildcard LIKE '%term' requires full scan; search engine territory"
+customer_message = "uses a leading-wildcard search (LIKE '%...')"
+
+[[exclusions]]
+engine = "opensearch"
+rule_id = "os-no-write-subquery"
+fact = "write_with_subquery"
+description = "OpenSearch cannot perform transactional writes with subquery logic. The application layer must handle conditional insert/update logic before indexing."
+customer_message = "performs a conditional write with a subquery, which needs transactional guarantees it can't provide"
+
+[[exclusions]]
+engine = "elasticache"
+rule_id = "ec-no-complex-join"
+fact = "join_count"
+min = 2
+description = "ElastiCache cannot perform multi-table JOINs; it's a key-value/data structure store"
+customer_message = "joins more than one table, and a key-value store can't serve joins"

@@ -1,0 +1,16 @@
+# Routine check mysql-routine-definer (#1936). Fields: src/shared/catalog/routine_checks.py.
+# Source: MySQL 8.0 Reference Manual, Stored Object Access Control (error 1449); Amazon Aurora User Guide, Role-based privilege model.
+id = "mysql-routine-definer"
+feature = "A DEFINER naming a user other than the target user"
+source_engines = ["mysql"]
+targets = ["aurora_mysql"]
+kinds = ["procedure", "function", "trigger", "event"]
+impact = "needs_rewrite"
+reason = "The routine runs as its DEFINER, a named user other than the user that creates it on Aurora MySQL; when that account does not exist on the target cluster, every call (or every trigger and event firing) fails with error 1449."
+fix_hint = "Set DEFINER to the target user (or CURRENT_USER), or create the named account on the target before the routine is used."
+docs = "MySQL 8.0 Reference Manual, Stored Object Access Control; Amazon Aurora User Guide, Role-based privilege model"
+
+# Kinds that always run as their definer; a procedure or function does unless it is SQL SECURITY INVOKER.
+[match]
+definer_not_target_user = true
+always_definer_kinds = ["trigger", "event"]

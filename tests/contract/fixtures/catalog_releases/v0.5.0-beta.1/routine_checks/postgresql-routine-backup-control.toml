@@ -1,0 +1,14 @@
+# Routine check postgresql-routine-backup-control (#2016 review). Fields: src/shared/catalog/routine_checks.py.
+# Source: Amazon Aurora User Guide, Backing up and restoring an Aurora DB cluster (Aurora backs up the cluster volume itself); PostgreSQL documentation, Backup Control Functions (they need superuser or a granted role, and PostgreSQL 15 renamed pg_start_backup and pg_stop_backup).
+id = "postgresql-routine-backup-control"
+feature = "A routine that starts or stops a base backup"
+source_engines = ["postgresql"]
+targets = ["aurora_postgresql"]
+kinds = ["function", "procedure"]
+impact = "needs_rewrite"
+reason = "Aurora PostgreSQL takes backups of the cluster volume itself and does not let a database session run a base backup, on any version line, so a routine that calls pg_start_backup(), pg_stop_backup() or their PostgreSQL 15 names pg_backup_start() and pg_backup_stop() fails there."
+fix_hint = "Drop the call and rely on Aurora's automated backups and snapshots; move any other step of the routine's backup job outside the database."
+docs = "Amazon Aurora User Guide, Backing up and restoring an Aurora DB cluster; PostgreSQL documentation, Backup Control Functions"
+
+[match]
+called_functions = ["pg_start_backup", "pg_stop_backup", "pg_backup_start", "pg_backup_stop"]

@@ -1,0 +1,13 @@
+# Gap rule oracle-types-no-equivalent (#471). Fields: src/shared/catalog/gaps.py.
+# Source: Oracle to Aurora PostgreSQL Migration Playbook (AWS DMS documentation), Data types; AWS Schema Conversion Tool User Guide.
+id = "oracle-types-no-equivalent"
+feature = "Data types with no direct equivalent"
+source_engines = ["oracle"]
+targets = ["aurora_mysql", "aurora_postgresql"]
+impact = "needs_rewrite"
+reason = "LONG, LONG RAW, BFILE, ROWID, XMLType, ANYDATA and SDO_GEOMETRY have no direct equivalent on the target, so their columns and the code that reads them are redesigned."
+docs = "Oracle to Aurora PostgreSQL Migration Playbook (AWS DMS documentation), Data types; AWS Schema Conversion Tool User Guide"
+
+# Looks for: Column data types.
+[match]
+data_types = ["long", "long raw", "bfile", "rowid", "urowid", "xmltype", "anydata", "sdo_geometry"]

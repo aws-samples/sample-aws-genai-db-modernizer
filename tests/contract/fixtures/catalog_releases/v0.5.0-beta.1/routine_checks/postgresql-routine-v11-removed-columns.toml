@@ -1,0 +1,17 @@
+# Routine check postgresql-routine-v11-removed-columns (#1951). Fields: src/shared/catalog/routine_checks.py.
+# Source: PostgreSQL 11 release notes, Migration to Version 11 (relhaspkey removed from pg_class; pg_proc's proisagg and proiswindow replaced by prokind).
+id = "postgresql-routine-v11-removed-columns"
+feature = "A catalog column PostgreSQL 11 removed"
+source_engines = ["postgresql"]
+targets = ["aurora_postgresql"]
+kinds = ["function", "procedure"]
+impact = "needs_rewrite"
+reason = "PostgreSQL 11 removed pg_class.relhaspkey and replaced pg_proc.proisagg and pg_proc.proiswindow with prokind, so on every Aurora PostgreSQL line the query fails with an unknown column."
+fix_hint = "Test for a primary key with EXISTS (SELECT 1 FROM pg_index WHERE indrelid = <table oid> AND indisprimary), and for an aggregate or window function with prokind = 'a' or prokind = 'w'."
+docs = "PostgreSQL 11 release notes, Migration to Version 11"
+
+[version_change]
+line = "11"
+
+[match]
+catalog_columns = ["pg_class.relhaspkey", "pg_proc.proisagg", "pg_proc.proiswindow"]

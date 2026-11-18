@@ -1,0 +1,17 @@
+# Routine check postgresql-routine-v10-removed-settings (#2016 review). Fields: src/shared/catalog/routine_checks.py.
+# Source: PostgreSQL 10 release notes, Migration to Version 10 (PostgreSQL 10 removed sql_inheritance and renamed min_parallel_relation_size to min_parallel_table_scan_size).
+id = "postgresql-routine-v10-removed-settings"
+feature = "A setting PostgreSQL 10 removed or renamed"
+source_engines = ["postgresql"]
+targets = ["aurora_postgresql"]
+kinds = ["function", "procedure"]
+impact = "needs_rewrite"
+reason = "PostgreSQL 10 removed sql_inheritance and renamed min_parallel_relation_size to min_parallel_table_scan_size, so on every Aurora PostgreSQL line a routine that sets, shows or reads it fails with an unrecognized configuration parameter."
+fix_hint = "Drop the sql_inheritance setting (inheritance is always on) and use min_parallel_table_scan_size."
+docs = "PostgreSQL 10 release notes, Migration to Version 10"
+
+[version_change]
+line = "10"
+
+[match]
+removed_settings = ["sql_inheritance", "min_parallel_relation_size"]

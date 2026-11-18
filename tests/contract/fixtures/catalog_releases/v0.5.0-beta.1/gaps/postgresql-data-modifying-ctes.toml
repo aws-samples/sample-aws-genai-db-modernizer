@@ -1,0 +1,13 @@
+# Gap rule postgresql-data-modifying-ctes (#1330). Fields: src/shared/catalog/gaps.py.
+# Source: PostgreSQL documentation, WITH Queries (data-modifying statements in WITH); MySQL 8.0 Reference Manual, WITH (Common Table Expressions).
+id = "postgresql-data-modifying-ctes"
+feature = "INSERT, UPDATE or DELETE inside WITH"
+source_engines = ["postgresql"]
+targets = ["aurora_mysql"]
+impact = "needs_rewrite"
+reason = "A MySQL WITH clause holds only queries, so a CTE that inserts, updates or deletes rows (often with RETURNING) is split into separate statements in one transaction."
+docs = "PostgreSQL documentation, WITH Queries (data-modifying statements in WITH); MySQL 8.0 Reference Manual, WITH (Common Table Expressions)"
+
+# Looks for: AS ( followed by INSERT, UPDATE or DELETE.
+[match]
+syntax = ["AS ( INSERT", "AS ( UPDATE", "AS ( DELETE", "MATERIALIZED ( INSERT", "MATERIALIZED ( UPDATE", "MATERIALIZED ( DELETE"]

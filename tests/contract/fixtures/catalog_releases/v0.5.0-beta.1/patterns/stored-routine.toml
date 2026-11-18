@@ -1,0 +1,65 @@
+# Pattern stored-routine. Fields: src/shared/catalog/patterns.py (ADR-031 Decision 8).
+id = "stored-routine"
+name = "Stored routine"
+detectors = [
+    "src.tools.analysis.aurora_mysql_analysis_tools:detect_mysql_specific_features",
+    "src.tools.analysis.aurora_pg_analysis_tools:detect_pg_specific_features",
+]
+penalty = 0
+
+[engines.dynamodb]
+kind = "unscored"
+supported = true
+why = "DynamoDB's analysis does not report this pattern; it adds no cross-engine penalty."
+
+[engines.documentdb]
+kind = "unscored"
+supported = true
+why = "DocumentDB's analysis does not report this pattern; it adds no cross-engine penalty."
+
+[engines.opensearch]
+kind = "unscored"
+supported = true
+why = "OpenSearch's analysis does not report this pattern; it adds no cross-engine penalty."
+
+[engines.elasticache]
+kind = "unscored"
+supported = true
+why = "ElastiCache's analysis does not report this pattern; it adds no cross-engine penalty."
+
+[engines.aurora_postgresql]
+kind = "fit"
+supported = true
+catalog = "aurora_pg"
+catalog_id = "aurora-pg-08"
+score = 70
+why = "Functions and procedures in PL/pgSQL (CALL, CREATE PROCEDURE, CREATE FUNCTION; a SQL Server EXEC of a procedure) encapsulate business logic server-side, reducing network round trips for multi-step operations (PostgreSQL documentation, User-Defined Procedures)."
+concerns = [
+    "Stored routines increase operational complexity and are harder to version-control.",
+    "Consider migrating complex logic to application layer for testability.",
+]
+complexity_feature = true
+
+# Detection signals: CALL procedure, DELIMITER patterns
+[engines.aurora_mysql]
+kind = "fit"
+supported = true
+catalog = "aurora_mysql"
+catalog_id = "aurora-mysql-05"
+score = 70
+why = "Stored procedures and functions (CALL, CREATE PROCEDURE; a SQL Server EXEC of a procedure) encapsulate business logic server-side, reducing network round trips for multi-step operations (MySQL Reference Manual, Using Stored Routines)."
+concerns = [
+    "Stored routines increase operational complexity and are harder to version-control.",
+    "Consider migrating complex logic to application layer for testability.",
+]
+complexity_feature = true
+
+[engines.neptune]
+kind = "future"
+supported = false
+why = "Not modelled yet (future enhancement)"
+
+[engines.keyspaces]
+kind = "future"
+supported = false
+why = "Not modelled yet (future enhancement)"

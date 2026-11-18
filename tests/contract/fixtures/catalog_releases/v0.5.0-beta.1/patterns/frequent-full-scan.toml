@@ -1,0 +1,54 @@
+# Pattern frequent-full-scan. Fields: src/shared/catalog/patterns.py (ADR-031 Decision 8).
+id = "frequent-full-scan"
+name = "Frequent full scan"
+detectors = [
+    "src.tools.analysis.dynamodb_analysis_tools:analyze_dynamodb_use_cases",
+]
+penalty = 20
+penalty_basis = "reads_more_than_returns"
+removed_by_redesign = "rows"
+
+# Detection signals: no_where_clause, high_frequency, large_rows_examined
+[engines.dynamodb]
+kind = "anti_pattern"
+supported = true
+catalog = "dynamodb"
+catalog_id = "dynamodb-ap-01"
+severity = 0.5
+why = "A read more frequent than once a minute that pins no column to a value, so no partition key value can address it whatever the key design. On DynamoDB that is a Scan, which reads every item and consumes read capacity for every item it reads, not only the ones it returns (Amazon DynamoDB Developer Guide, Scanning tables)."
+guidance = "The schema design agent will replace these scans with targeted Query or GetItem operations. Verify the generated access patterns cover all flagged queries. Remaining scans may need a GSI or access pattern redesign."
+
+[engines.documentdb]
+kind = "unscored"
+supported = true
+why = "DocumentDB's analysis does not report this pattern; it adds no cross-engine penalty."
+
+[engines.opensearch]
+kind = "unscored"
+supported = true
+why = "OpenSearch's analysis does not report this pattern; it adds no cross-engine penalty."
+
+[engines.elasticache]
+kind = "unscored"
+supported = true
+why = "ElastiCache's analysis does not report this pattern; it adds no cross-engine penalty."
+
+[engines.aurora_postgresql]
+kind = "unscored"
+supported = true
+why = "Aurora PostgreSQL's analysis does not report this pattern; it adds no cross-engine penalty."
+
+[engines.aurora_mysql]
+kind = "unscored"
+supported = true
+why = "Aurora MySQL's analysis does not report this pattern; it adds no cross-engine penalty."
+
+[engines.neptune]
+kind = "future"
+supported = false
+why = "Not modelled yet (future enhancement)"
+
+[engines.keyspaces]
+kind = "future"
+supported = false
+why = "Not modelled yet (future enhancement)"

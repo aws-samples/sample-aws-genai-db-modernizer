@@ -1,0 +1,68 @@
+# Amazon OpenSearch Service. A search read model: it indexes data synced from the
+# engine that owns each table and never owns a write (#303).
+id = "opensearch"
+display_name = "OpenSearch"
+display_order = 3
+ui_picker_order = 3
+status = "active"
+role = "search"
+system_of_record = false
+# Scores a query only on the query's own matched pattern, never on a table-wide average:
+# a table classified SEARCH because one query needs full-text search says nothing about a
+# neighbouring primary-key lookup (#475).
+pattern_only = true
+# A text-search signal override onto OpenSearch needs the reality check's justification
+# floor to agree the signal is real (#326, #475).
+override_needs_justification = true
+
+# The reality check lets OpenSearch absorb only the queries its specialty serves (#296).
+[absorbs_only]
+signals = ["text_search", "aggregations"]
+capabilities = ["text_pattern_match"]
+
+[colors]
+ui = "#2ea597"
+
+[pricing]
+base_monthly = 150
+extra_engine_burden_monthly = 300
+max_burden_per_unique_query = 100
+# A domain is billed by its instances and storage, not per request (#494): a managed
+# domain on gp3 EBS, priced from the price table (src/catalog/prices.toml, #1196).
+list_prices = "opensearch.managed"
+
+# Score-dimension weights (ADR-031 Decision 5). Cost is the same 10% for every engine
+# (#1002); the first profile is the engine's default.
+# A search table; a time-series table weights performance higher (ingest throughput
+# and aggregation latency).
+[score_weights.search]
+pattern_match = 0.45
+complexity = 0.25
+performance = 0.20
+cost = 0.10
+
+[score_weights.time_series]
+pattern_match = 0.40
+complexity = 0.20
+performance = 0.30
+cost = 0.10
+
+# The justification floors a standing OpenSearch domain must clear (#326, #921): a text
+# search signal alone never keeps the engine (reality_check_floors.opensearch_justification).
+# The floor itself, and the ledger reason a move off OpenSearch records (#616, #1081):
+[justification_floor]
+kind = "search_depth"
+reason_code = "floor.opensearch"
+why = "A standing search domain earns a query only with real search depth (relevance ranking, fuzzy matching or a facet) and enough traffic or result size to pay for it (#326)."
+
+[thresholds.min_calls_per_second]
+value = 1.0
+why = "Combined calls/s across every query OpenSearch would own before its fixed cost is worth a standing domain: the cache overlay's hot-read floor, the lowest traffic worth a dedicated store (#326)."
+
+[thresholds.native_override_min_calls_per_second]
+value = 10.0
+why = "The floor when the source engine's own text search (MySQL FULLTEXT, PostgreSQL tsvector or pg_trgm) already serves the pattern: ten times the base floor, since that index is already paid for (#326)."
+
+[thresholds.min_corpus_rows_avg]
+value = 1000.0
+why = "Average rows a query returns that marks a corpus large enough for a dedicated index to earn its cost below the traffic floor; a result-size proxy, the only per-query signal the collector gives (#326)."
