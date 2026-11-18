@@ -53,7 +53,6 @@ from src.agents.prompt_framing import (
     frame_untrusted,
     with_untrusted_notice,
 )
-from src.agents.routine_repair.source_text import redacted_create
 from src.contracts.routine_migration import REASON_CODES, RoutineMigration, RoutineMigrationContract
 from src.contracts.routine_repair import (
     REPAIR_STATES,
@@ -67,16 +66,20 @@ from src.shared.bedrock_guardrail import GuardrailConfigError, GuardrailInterven
 from src.shared.skill_sections import skill_sections
 from src.tools.routines.migration import collection_routines
 from src.tools.routines.repair_screen import RepairedRoutine, hinted_calls, refusal_of
+from src.tools.routines.repair_text import redacted_create, signature_mismatch
 
 __all__ = [
     "LLM_MODE_NONE_REASON",
     "RepairCandidate",
     "RoutineRepairPlan",
+    "SIGNATURE_MISMATCH_WORDS",
     "StaleRepairRequest",
+    "Unsent",
     "apply_routine_repair_llm_output",
     "finalize_routine_repair",
     "prepare_routine_repair_llm_input",
     "repair_refusal",
+    "routine_headers",
     "routine_repair_prompt",
     "run_routine_repair",
     "run_routine_repair_deterministic",
@@ -95,6 +98,11 @@ LLM_MODE_NONE_REASON = "llm_mode=none: no repair runs; the routines stay not car
 #: Reasons no edit of the routine's own text settles: it is not sent to a model.
 _NOT_REPAIRABLE = frozenset(REASON_CODES) - {"depends_on_needs_attention"}
 _NO_BODY = frozenset({"opted_out", "not_readable", "not_supported"})
+#: Why a routine whose text lost its signature is not sent (#2444): fixed words, no text.
+SIGNATURE_MISMATCH_WORDS = (
+    "the text the collection gives for it does not carry the signature read from the "
+    "routine, so a repair written on it would change the signature"
+)
 #: The target error a request quotes: at most this many failed calls.
 _FAILED_CALLS_QUOTED = 3
 
@@ -126,6 +134,31 @@ class RepairCandidate:
 
 
 @dataclass(frozen=True)
+class Unsent:
+    """A routine that may be repaired but is not sent (#2444): the text a model would see
+    does not carry the signature the routine-migration artifact read, or it read none."""
+
+    kind: str
+    routine_id: str
+    reasons: tuple[str, ...]
+
+    @property
+    def ref(self) -> tuple[str, str]:
+        return (self.kind, self.routine_id)
+
+    def row(self) -> dict[str, Any]:
+        """Its row in the repair result: needs attention, with a fixed reason (no text)."""
+        return {
+            "kind": self.kind,
+            "routine_id": self.routine_id,
+            "reasons": list(self.reasons),
+            "state": "needs_attention",
+            "attention": "signature_mismatch",
+            "attention_detail": SIGNATURE_MISMATCH_WORDS,
+        }
+
+
+@dataclass(frozen=True)
 class RoutineRepairPlan:
     """The deterministic result: the routines that may go to a model (the seam's ``det``)."""
 
@@ -136,6 +169,8 @@ class RoutineRepairPlan:
     target_engine: str
     target_line: str | None
     candidates: tuple[RepairCandidate, ...]
+    #: The routines not sent for a signature mismatch (:class:`Unsent`), each with its row.
+    unsent: tuple[Unsent, ...] = ()
 
 
 # --------------------------------------------------------------------------- seam 1
@@ -184,9 +219,14 @@ def run_routine_repair_deterministic(
     previous_failures: Mapping[tuple[str, str], str] | None = None,
     only: Collection[tuple[str, str]] | None = None,
     attempt: int = 1,
+    headers: Mapping[tuple[str, str], str] | None = None,
 ) -> RoutineRepairPlan:
     """The routines of ``migration`` a model may repair (module docstring), each with its
-    redacted ``CREATE`` from ``collector`` (read for models, redacted on read).
+    redacted ``CREATE`` from ``collector`` (read for models, redacted on read) under its
+    redacted header from the routines file, for a MySQL function or procedure in
+    ``headers`` (``repair_text.mysql_headers``, #2444). A function or procedure whose text's
+    signature is not the artifact's, or whose signature the artifact did not read, is not
+    sent: it is in the plan's ``unsent`` (``repair_text.signature_mismatch``).
     ``target_errors`` gives a routine the target's error, keyed ``(kind, routine_id)``; it
     replaces the proof's. The repair loop (#1941) asks for attempt ``attempt`` of the
     routines in ``only``, each with the error its previous attempt ended on
@@ -196,16 +236,21 @@ def run_routine_repair_deterministic(
     rows = collection_routines(collector) if collection_includes_bodies(collector) else {}
     engine = migration.source_engine
     candidates: list[RepairCandidate] = []
+    unsent: list[Unsent] = []
     for row in migration.routines:
         reasons = _why(row, set(rules))
-        if reasons is None or (only is not None and (row.kind, row.routine_id) not in only):
+        row_ref = (row.kind, row.routine_id)
+        if reasons is None or (only is not None and row_ref not in only):
             continue
         found = rows.get((row.kind, row.routine_id))
         # The collection's own word too: an opted-out body is never sent (#1933).
         if found is None or _value(found.get("body_status")) in _NO_BODY:
             continue
-        text = redacted_create(found, engine, row.kind)
+        text = redacted_create(found, engine, row.kind, (headers or {}).get(row_ref))
         if text is None:
+            continue
+        if signature_mismatch(text, row, engine, str(found.get("sql_mode") or "") or None):
+            unsent.append(Unsent(row.kind, row.routine_id, tuple(reasons)))
             continue
         findings = {c.rule_id: c.findings for c in row.checks}
         failed = tuple(
@@ -246,6 +291,7 @@ def run_routine_repair_deterministic(
         target_engine=migration.target_engine,
         target_line=migration.target_line,
         candidates=tuple(candidates),
+        unsent=tuple(unsent),
     )
 
 
@@ -351,6 +397,7 @@ def _result(
     skipped_reason: str | None = None,
     ignored: int = 0,
 ) -> RoutineRepairContract:
+    rows = _with_unsent(det, rows)
     return RoutineRepairContract(
         job_id=det.job_id,
         database_name=det.database_name,
@@ -364,6 +411,10 @@ def _result(
         counts=_counts(rows),  # type: ignore[arg-type]
         routines=rows,
     )
+
+
+def _with_unsent(det: RoutineRepairPlan, rows: list[RoutineRepairRow]) -> list[RoutineRepairRow]:
+    return [*rows, *(RoutineRepairRow.model_validate(u.row()) for u in det.unsent)]
 
 
 def _unrepaired(det: RoutineRepairPlan, state: str) -> list[RoutineRepairRow]:
@@ -568,4 +619,18 @@ def repairable_routines(store: Any, database_name: str, job_id: str) -> int:
     if found is None:
         return 0
     collector = read_collector_for_models(store, database_name, job_id, missing_ok=True)
-    return len(run_routine_repair_deterministic(collector, found[1]).candidates)
+    headers = routine_headers(store, database_name, job_id, found[1], collector)
+    return len(run_routine_repair_deterministic(collector, found[1], headers=headers).candidates)
+
+
+def routine_headers(
+    store: Any,
+    database_name: str,
+    job_id: str,
+    migration: RoutineMigrationContract,
+    collector: Mapping[str, Any],
+) -> dict[tuple[str, str], str]:
+    """The job's redacted MySQL headers (``repair_proof.routine_headers``, #2444)."""
+    from src.tools.routines.repair_proof import routine_headers as headers_of
+
+    return headers_of(store, database_name, job_id, migration, collector)

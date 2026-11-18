@@ -345,9 +345,40 @@ def test_each_sample_has_a_routine_to_repair(sample_run: PipelineResult) -> None
     from src.agents.routine_repair.handler import run_routine_repair_deterministic
     from src.contracts.routine_migration import RoutineMigrationContract
     from src.storage.collector_for_models import read_collector_for_models
+    from src.tools.routines.repair_proof import routine_headers
 
     store = LocalArtifactStore(base_dir=str(sample_run.artifact_root))
     db, job = sample_run.job_dir().parent.name, sample_run.job_dir().name
     migration = RoutineMigrationContract.model_validate(_migration(sample_run))
-    plan = run_routine_repair_deterministic(read_collector_for_models(store, db, job), migration)
+    collector = read_collector_for_models(store, db, job)
+    # The headers the loop reads from the routines file (#2444): without them the wordpress
+    # procedure's header would lose its parameter, and it is not sent.
+    headers = routine_headers(store, db, job, migration, collector)
+    plan = run_routine_repair_deterministic(collector, migration, headers=headers)
     assert len(plan.candidates) >= 1
+
+
+def test_the_wordpress_repair_request_keeps_the_procedures_parameters(
+    wordpress_run: PipelineResult, tmp_path: Path
+) -> None:
+    """#2444: the collector's row for wp_bulk_import_mode lists no parameters, so the
+    request's header comes from the routines file: `(IN p_on tinyint)`, as the routine
+    is, with no literal. Run on a copy of the job, so the shared run is left as it is."""
+    import shutil
+
+    from src.agents.routine_repair.handler import run_routine_repair
+
+    db, job = wordpress_run.job_dir().parent.name, wordpress_run.job_dir().name
+    shutil.copytree(wordpress_run.job_dir(), tmp_path / db / job)
+    store = LocalArtifactStore(base_dir=str(tmp_path))
+    status = run_routine_repair(store, db, job, llm_mode="external")
+    assert status["status"] == "awaiting_llm", status
+    request = store.read_json(status["llm_request"])
+    [framed] = [
+        r for r in request["routines"] if '"routine_id": "wordpress.wp_bulk_import_mode"' in r
+    ]
+    block = json.loads(
+        framed.split("<untrusted_customer_data>\n", 1)[1].rsplit("\n</untrusted_customer_data>")[0]
+    )
+    assert "PROCEDURE `wp_bulk_import_mode`(IN `p_on` tinyint)" in block["create_statement"]
+    assert block["signature"] == "IN tinyint"

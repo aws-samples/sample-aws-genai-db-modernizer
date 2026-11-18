@@ -53,4 +53,4 @@ The instruction, the rules a repair must keep and the response shape are in `src
    - `"status": "error"` with the reason (an answer off the contract names where it failed; fix the response and run `--finalize` again).
 
 6. **Report back**
-   One paragraph: how many routines the request listed, how many rounds ran, how many are `model_repaired` (the proof accepted them side by side), how many wait for the proof (`repaired_pending_proof`) and how many still need attention and why (each attempt's `stage` and `error` in the result). Step 1 deploys a repaired routine only once `/test-routines` tests that repair on a test Aurora and finds no difference on the calls made.
+   One paragraph: how many routines the request listed, how many rounds ran, how many are `model_repaired` (the proof accepted them side by side), how many wait for the proof (`repaired_pending_proof`) and how many still need attention and why (each attempt's `stage` and `error` in the result), and how many candidates the rounds refused (`refused_candidates`). Step 1 deploys a repaired routine only once `/test-routines` tests that repair on a test Aurora and finds no difference on the calls made.

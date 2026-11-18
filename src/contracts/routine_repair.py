@@ -33,8 +33,9 @@ Two shapes, one per side of the seam (ADR-034 Decision 2):
     the same results as the original. Only this state is a carried repair, with its
     ``diff`` (of the redacted texts: no literal) and ``change_note``;
   - ``needs_attention`` (#1941): the loop could not repair it: its literals cannot be put
-    back by position (``attention`` ``not_rebuildable``, never sent to a model), or every
-    one of :data:`MAX_ATTEMPTS` attempts failed (``attempts_used``).
+    back by position (``attention`` ``not_rebuildable``, never sent to a model), its text
+    does not carry the routine's signature (``signature_mismatch``, never sent, #2444), or
+    every one of :data:`MAX_ATTEMPTS` attempts failed (``attempts_used``).
 
 The repair loop (``src.agents.routine_repair.loop``) records each attempt in
 ``attempts`` (:class:`RepairAttempt`): its stage, outcome, a fixed code and the error in
@@ -51,6 +52,10 @@ never on the exact text of the routine sources (ADR-034 Decision 4). So
 the exact text only after the proof. No row holds the exact text, and no deliverable
 prints ``repaired_create``; ``change_note`` is the model's own words, untrusted, which a
 renderer escapes like any other model text.
+
+``refused_candidates`` (#2444) counts every candidate a round refused, so a routine whose
+first candidate the side-by-side proof refused, and for which the model then gave no
+answer, shows in it while ``counts`` lists it as ``no_answer``.
 
 Version History:
 - 1.0 (2026-11-16, #1940): First version.
@@ -101,7 +106,7 @@ MAX_ATTEMPTS = 3
 #: exact text, the screen and the checks again on it, and the side-by-side proof.
 AttemptStage = Literal["answer", "screen", "rebuild", "rescreen", "recheck", "proof"]
 #: Why a routine needs attention after the loop.
-AttentionCode = Literal["not_rebuildable", "attempts_used", "not_verified"]
+AttentionCode = Literal["not_rebuildable", "attempts_used", "not_verified", "signature_mismatch"]
 #: The longest change note a model may write: one or two plain sentences.
 CHANGE_NOTE_MAX = 300
 #: The longest repaired CREATE a model may return.
@@ -237,8 +242,10 @@ class RoutineRepairRow(BaseModel):
     attention: AttentionCode | None = Field(
         None,
         description=(
-            "needs_attention: not_rebuildable, attempts_used, or not_verified (a repair the "
-            "loop's saved state carried that failed its checks again in this run)"
+            "needs_attention: not_rebuildable, attempts_used, not_verified (a repair the "
+            "loop's saved state carried that failed its checks again in this run), or "
+            "signature_mismatch (never sent: the text a model would see does not carry the "
+            "signature the routine-migration artifact read, or it read none, #2444)"
         ),
     )
     attention_detail: str | None = Field(
@@ -270,6 +277,13 @@ class RoutineRepairRow(BaseModel):
         if (self.state == "refused") != (self.refusal is not None):
             raise ValueError(f"{self.kind} {self.routine_id}: refusal does not fit {self.state}")
         return self
+
+
+def refused_attempts(row: RoutineRepairRow) -> int:
+    """How many of ``row``'s candidates were refused: its failed attempts, or 1 for a
+    refused row of the seam alone, which records no attempt."""
+    failed = sum(1 for a in row.attempts if a.outcome == "failed")
+    return failed or int(row.state == "refused")
 
 
 class RoutineRepairContract(BaseModel):
@@ -309,6 +323,17 @@ class RoutineRepairContract(BaseModel):
     )
     rounds: int = Field(0, ge=0, le=MAX_ATTEMPTS, description="Model rounds the loop ran")
     counts: dict[RepairState, int] = Field(..., description="Routines per state, every state")
+    refused_candidates: int | None = Field(
+        None,
+        ge=0,
+        description=(
+            "Candidates refused in any round, over every routine (#2444): each attempt that "
+            "failed at the screen, the rebuild, the re-check or the side-by-side proof, or a "
+            "refused row of the seam alone. A routine whose candidate a round refused counts "
+            "here whatever its final state (no_answer when the model then gave none). A "
+            "result written before it reads it from its rows"
+        ),
+    )
     routines: list[RoutineRepairRow] = Field(
         default_factory=list, description="One row per routine that may be repaired"
     )
@@ -331,6 +356,11 @@ class RoutineRepairContract(BaseModel):
             seen.add(key)
         if dict(self.counts) != counted:
             raise ValueError("counts do not match the routines' states")
+        failed = sum(refused_attempts(row) for row in self.routines)
+        if self.refused_candidates is None:
+            self.refused_candidates = failed
+        elif self.refused_candidates != failed:
+            raise ValueError("refused_candidates does not match the routines' failed attempts")
         if self.llm_mode == "none" and (
             counted["repaired_pending_proof"] or counted["model_repaired"]
         ):

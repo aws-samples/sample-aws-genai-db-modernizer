@@ -234,6 +234,31 @@ def test_a_routine_left_out_of_the_answer_is_not_asked_again(tmp_path, model):
     assert row.state == "no_answer" and [a.outcome for a in row.attempts] == ["no_answer"]
 
 
+def test_a_candidate_a_round_refused_is_counted_when_the_model_then_gives_none(tmp_path, model):
+    """#2444: round 1's candidate is refused, round 2 leaves the routine out. The routine
+    ends no_answer, and the result and its status line still count the refused candidate;
+    a result written before the count reads it from its rows."""
+    from src.agents.routine_repair.handler import run_routine_repair
+
+    store = _job(tmp_path)
+    renamed = fx.WAL_REPAIRED.replace("public.wal_pos", "public.wal_pos2")
+    model([_answer(renamed), {"repairs": []}])
+    status = run_routine_repair(store, fx.DB, fx.JOB, llm_mode="bedrock")
+    result = _result(store, status)
+    row = _row(result)
+    assert row.state == "no_answer"
+    assert [a.outcome for a in row.attempts] == ["failed", "no_answer"]
+    assert result.refused_candidates == 1 and status["refused_candidates"] == 1
+    assert status["counts"]["refused"] == 0
+    saved = store.read_json(status["artifact"])
+    assert saved["refused_candidates"] == 1
+    saved.pop("refused_candidates")
+    assert RoutineRepairContract.model_validate(saved).refused_candidates == 1
+    saved["refused_candidates"] = 0
+    with pytest.raises(ValueError, match="refused_candidates"):
+        RoutineRepairContract.model_validate(saved)
+
+
 # --------------------------------------------------------------------------- external
 
 
@@ -580,3 +605,137 @@ def test_a_candidate_that_turns_a_literal_into_dynamic_sql_is_never_built(tmp_pa
     assert fake.requests == []
     row = _row(_result(store, status))
     assert (row.state, row.attention) == ("needs_attention", "not_rebuildable")
+
+
+# --------------------------------------------------------------------------- MySQL header
+# #2444: a MySQL collector row may not list its parameters (the offline script's rows carry
+# ``parameters: None``), so a header written from the row's fields drops them. The request
+# takes the header from the routines file instead, its literals redacted, and step 1's
+# rebuild reads the same text the model was given.
+
+MYSQL_COMMENT_MARK = "HeaderComment2444"
+MYSQL_HEADER_EXACT = (
+    "CREATE DEFINER=`app`@`%` PROCEDURE `hashpw`(IN `p` varchar(64), OUT `r` varchar(64))\n"
+    f"    READS SQL DATA\n    COMMENT '{MYSQL_COMMENT_MARK}'\n"
+)
+
+
+def _mysql_job(tmp_path, *, parameters: Any = None, sources: bool = True):
+    from src.agents.collector.routine_sources import write_routine_sources
+    from src.contracts.routine_sources import RoutineSource
+    from src.storage.local_store import LocalArtifactStore
+    from src.tools.routines.migration import run_routine_migration_deterministic
+
+    col = fx.mysql_collector()
+    col["database_schema"]["procedures"][0]["parameters"] = parameters
+    source = RoutineSource(
+        kind="procedure", routine_id=fx.MYSQL_ID, schema_name="shop", specific_name="hashpw",
+        create_statement=MYSQL_HEADER_EXACT + fx.MYSQL_BODY, origin="show_create",
+    )  # fmt: skip
+    built = run_routine_migration_deterministic(
+        col, None, [source], job_id=fx.JOB, database_name=fx.DB, assignment_version=1
+    )
+    assert built is not None
+    store = LocalArtifactStore(base_dir=str(tmp_path))
+    store.write_json(f"{fx.DB}/{fx.JOB}/collector/output.json", col)
+    write_routine_sources(store, fx.DB, fx.JOB, col, [source] if sources else [])
+    store.write_json(
+        f"{fx.DB}/{fx.JOB}/routines/v1/routine_migration.json", built.model_dump(mode="json")
+    )
+    return store, built
+
+
+def test_a_mysql_request_has_the_routines_file_header_with_its_parameters(tmp_path):
+    from src.agents.routine_repair.handler import repairable_routines, run_routine_repair
+
+    store, _ = _mysql_job(tmp_path)
+    assert repairable_routines(store, fx.DB, fx.JOB) == 1  # what /test-routines offers
+    status = run_routine_repair(store, fx.DB, fx.JOB, llm_mode="external")
+    assert status["status"] == "awaiting_llm", status
+    request = store.read_json(status["llm_request"])
+    (block,) = _blocks(request)
+    create = block["create_statement"]
+    assert create.startswith(
+        "CREATE DEFINER=`app`@`%` PROCEDURE `hashpw`(IN `p` varchar(64), OUT `r` varchar(64))\n"
+        "    READS SQL DATA\n    COMMENT '?'\nBEGIN"
+    ), create
+    assert MYSQL_COMMENT_MARK not in json.dumps(request) and "'salt'" not in create
+    assert block["signature"] == "IN varchar(64), OUT varchar(64)"
+
+
+def test_step_one_rebuilds_a_mysql_repair_on_the_text_the_model_saw(tmp_path):
+    from src.agents.routine_repair.handler import run_routine_repair
+    from src.tools.routines.repair_proof import seen_texts
+
+    store, built = _mysql_job(tmp_path)
+    status = run_routine_repair(store, fx.DB, fx.JOB, llm_mode="external")
+    (block,) = _blocks(store.read_json(status["llm_request"]))
+    seen = seen_texts(store, fx.DB, fx.JOB, built)
+    assert seen[("procedure", fx.MYSQL_ID)] == block["create_statement"]
+
+
+def test_a_mysql_row_without_its_parameters_and_no_header_is_not_sent(tmp_path):
+    """No header in the routines file and a row that lists no parameters: the header the
+    row's fields give has none, so it is not the routine's, and no model sees it."""
+    from src.agents.routine_repair.handler import run_routine_repair_deterministic
+    from src.storage.collector_for_models import read_collector_for_models
+
+    store, built = _mysql_job(tmp_path)
+    collector = read_collector_for_models(store, fx.DB, fx.JOB)
+    plan = run_routine_repair_deterministic(collector, built)
+    assert plan.candidates == ()
+    assert [(u.kind, u.routine_id) for u in plan.unsent] == [("procedure", fx.MYSQL_ID)]
+    store, built = _mysql_job(tmp_path / "listed", parameters=fx.mysql_collector()[
+        "database_schema"]["procedures"][0]["parameters"])  # fmt: skip
+    collector = read_collector_for_models(store, fx.DB, fx.JOB)
+    (c,) = run_routine_repair_deterministic(collector, built).candidates
+    assert "(IN `p` varchar(64), OUT `r` varchar(64))" in c.create_text
+
+
+def _without_signature(built):
+    rows = [r.model_copy(update={"signature": None}) for r in built.routines]
+    return built.model_copy(update={"routines": rows})
+
+
+def test_a_routine_whose_signature_the_artifact_did_not_read_is_never_sent(tmp_path):
+    """#2444 review: with no signature to compare, a header could have lost its parameters
+    unseen, so the routine is not sent, with the header from the routines file too."""
+    from src.agents.routine_repair.handler import run_routine_repair_deterministic
+    from src.storage.collector_for_models import read_collector_for_models
+    from src.tools.routines.repair_proof import routine_headers
+
+    store, built = _mysql_job(tmp_path)
+    collector = read_collector_for_models(store, fx.DB, fx.JOB)
+    headers = routine_headers(store, fx.DB, fx.JOB, built, collector)
+    assert len(run_routine_repair_deterministic(collector, built, headers=headers).candidates) == 1
+    plan = run_routine_repair_deterministic(collector, _without_signature(built), headers=headers)
+    assert plan.candidates == () and len(plan.unsent) == 1
+
+
+@pytest.mark.parametrize("llm_mode", ["external", "none"])
+def test_a_routine_not_sent_for_its_signature_has_a_row_with_its_reason(tmp_path, llm_mode):
+    """#2444 review: the result says why the routine was not offered for repair, in fixed
+    words that hold no routine text, and step 1 has no text of it to rebuild a repair on."""
+    from src.agents.routine_repair.handler import SIGNATURE_MISMATCH_WORDS, run_routine_repair
+    from src.tools.routines.repair_proof import seen_texts
+
+    store, built = _mysql_job(tmp_path)
+    blind = _without_signature(built)
+    store.write_json(
+        f"{fx.DB}/{fx.JOB}/routines/v1/routine_migration.json", blind.model_dump(mode="json")
+    )
+    status = run_routine_repair(store, fx.DB, fx.JOB, llm_mode=llm_mode)
+    assert status["status"] in ("complete", "skipped"), status
+    assert not store.exists(f"{fx.DB}/{fx.JOB}/routines/v1/repair/llm_input.json")
+    result = _result(store, status)
+    row = _row(result, fx.MYSQL_ID)
+    assert (row.state, row.attention) == ("needs_attention", "signature_mismatch")
+    assert row.attention_detail == SIGNATURE_MISMATCH_WORDS and row.attempts == []
+    assert result.counts["needs_attention"] == 1
+    assert seen_texts(store, fx.DB, fx.JOB, blind) == {}
+    from src.shared.routine_facts import read_routine_facts
+
+    facts = read_routine_facts(store, fx.DB, fx.JOB, 1)
+    assert facts is not None
+    (item,) = facts["interventions"]
+    assert item["line"].startswith("It was not sent for a model repair: The text")

@@ -5,9 +5,9 @@
 
 The routine repair seam (``src.agents.routine_repair.handler``) refuses a candidate
 ``CREATE`` that is not exactly one statement of the routine's kind, renames the routine
-(its kind, schema, name, or a trigger's table), changes its signature (argument types
-or return type), creates an object the routine does not, adds a write the routine does
-not run, runs a kind of statement the routine does not beyond reads and control
+(its kind, schema, name, or a trigger's table), changes its signature (each parameter's
+name, mode and type, #2444, or the return type), creates an object the routine does
+not, adds a write the routine does not run, runs a kind of statement the routine does not beyond reads and control
 statements (an allowlist, ``ROUTINE_STATEMENTS``, #2373), builds and runs a statement at
 run time the routine does not (``EXECUTE``, ``PREPARE``, by count and kind, #1941), calls
 a function the routine does not and the fix hints do not name, applies an operator,
@@ -32,7 +32,7 @@ from dataclasses import dataclass
 from typing import Any
 
 from src.contracts.routine_repair import RefusalCode
-from src.tools.routines.migration import routine_signature
+from src.tools.routines.migration import routine_parameters, routine_signature
 from src.tools.routines.mysql_checks import MySqlRoutine, check_mysql_routine
 from src.tools.routines.postgresql_checks import RoutineParts, parse_routine
 from src.tools.routines.proof_screen import (
@@ -175,14 +175,20 @@ def refusal_of(c: RepairedRoutine, text: str, engine: str) -> tuple[RefusalCode,
     why = create_refusal(text, engine, c.kind, namespace, sorted(own - {namespace}))
     if why is not None:
         return "screen_refused", f"the proof's screen refuses it: {why}"
-    if routine_signature(text, engine, c.kind, c.sql_mode) != routine_signature(
-        c.create_text, engine, c.kind, c.sql_mode
-    ) or (
-        c.kind == "trigger" and trigger_shape(text, engine) != trigger_shape(c.create_text, engine)
+    params = routine_parameters(text, engine, c.kind, c.sql_mode)
+    if (
+        params is None
+        or params != routine_parameters(c.create_text, engine, c.kind, c.sql_mode)
+        or routine_signature(text, engine, c.kind, c.sql_mode)
+        != routine_signature(c.create_text, engine, c.kind, c.sql_mode)
+        or (
+            c.kind == "trigger"
+            and trigger_shape(text, engine) != trigger_shape(c.create_text, engine)
+        )
     ):
         return "signature_changed", (
-            "the candidate changes the arguments, the return type, or a trigger's timing, "
-            "events, level, order or function"
+            "the candidate changes the parameters (their names, modes or types), the return "
+            "type, or a trigger's timing, events, level, order or function"
         )
     if privilege_clauses(text, engine) != privilege_clauses(c.create_text, engine):
         return "changes_privileges", "the candidate changes who the routine runs as"
