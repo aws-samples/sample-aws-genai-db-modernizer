@@ -33,8 +33,6 @@ const BY_COMPONENT = {
   'unservable-section': 'UnservableQueriesCallout',
   'close-calls-section': 'CloseCallCallout',
   'unreviewed-moves-note': 'UnreviewedMovesNote',
-  'engine-choices-note': 'EngineChoicesNote',
-  'routines-section': 'RoutineMigrationSection',
   'query-routing-section': 'QueryRoutingTable',
   'table-owners-section': 'TableOwnersCallout',
   'sources-of-truth-section': 'SourcesOfTruthCallout',

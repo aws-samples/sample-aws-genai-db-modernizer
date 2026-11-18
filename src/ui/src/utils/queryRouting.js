@@ -85,6 +85,9 @@ function propertyValues(row, key) {
     case 'destination': return row.destinations.map(d => d.name);
     case 'cached': return [row.cacheEngine ? 'yes' : 'no'];
     case 'routing': return [row.kinds ? 'yes' : 'no'];
+    // #2318: the close calls table's own properties.
+    case 'runnerUp': return row.runnerUp ? [row.runnerUp] : [];
+    case 'settledBy': return row.settledBy ? [row.settledBy] : [];
     default: return [];
   }
 }

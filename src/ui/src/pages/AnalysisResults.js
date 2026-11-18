@@ -56,7 +56,6 @@ import NoOpenRisksNote from "../components/NoOpenRisksNote";
 import PinRuleNote from "../components/PinRuleNote";
 import NoOpenRisksSection from "../components/NoOpenRisksSection";
 import UnreviewedMovesNote from "../components/UnreviewedMovesNote";
-import EngineChoicesNote from "../components/EngineChoicesNote";
 import MigrationWavePlan from "../components/MigrationWavePlan";
 import StepGateEvidence from "../components/StepGateEvidence";
 import { schemaSectionIdOf } from "../utils/adoptionPaths";
@@ -67,7 +66,6 @@ import ResultsOnThisPage from "../components/ResultsOnThisPage";
 import { designBodyState, explorerAvailability } from "../utils/sectionStates";
 import { failureError, failureFlash, failureKind, failureReason, reportFailure, upsertFlash } from "../utils/requestFailure";
 import { schemaDesignsRefused } from "../utils/schemaDesignsLoad";
-import RoutineMigrationSection from "../components/RoutineMigrationSection";
 import ExecutiveSummaryStats from "../components/ExecutiveSummaryStats";
 import SourcesOfTruthCallout from "../components/SourcesOfTruthCallout";
 import TableOwnersCallout from "../components/TableOwnersCallout";
@@ -2006,24 +2004,19 @@ const AnalysisResultsPage = memo(() => {
         />
         <RelatedSectionPointer target={relatedPointers.toRisks} t={t} />
 
-        {/* Close calls (#730): queries a kept engine could serve almost
-            as well, with the way into each one's decision trace and the
-            assignment review that moves them. */}
+        {/* Close calls (#730, #2318): queries a kept engine could serve almost
+            as well, one table row each, with the way into each one's decision
+            trace and the assignment review that moves them. */}
         <CloseCallCallout
           synthesis={resultsData?.synthesis}
           jobId={jobId}
           onOpen={fetchQueryJourney}
+          queries={queryRoutingRows}
           t={t}
         />
 
         {/* Reality-check moves no model reviewed (#746): one line when any. */}
         <UnreviewedMovesNote synthesis={resultsData?.synthesis} t={t} />
-        <EngineChoicesNote synthesis={resultsData?.synthesis} t={t} />
-
-        {/* Routines (#1939): how the job's routines migrate, the to-do and each
-            routine behind a routine risk, from facts.routines, as both reports
-            state them. Collapsed. */}
-        <RoutineMigrationSection synthesis={synthesis} t={t} />
       </SpaceBetween>
     ),
     queries: (

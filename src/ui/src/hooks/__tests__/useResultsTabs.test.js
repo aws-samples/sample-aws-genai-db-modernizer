@@ -236,8 +236,8 @@ describe('the sections on the page', () => {
   const ids = () => container.querySelector('[data-testid=ids]').textContent;
 
   test('are the tab\'s sections that rendered, in the tab\'s order', async () => {
-    await act(async () => { root.render(<Probe tabId="plan" present={['routines-section', 'migration-roadmap-section', 'table-design-section']} />); });
-    expect(ids()).toBe('migration-roadmap-section,routines-section');
+    await act(async () => { root.render(<Probe tabId="plan" present={['close-calls-section', 'migration-roadmap-section', 'table-design-section']} />); });
+    expect(ids()).toBe('migration-roadmap-section,close-calls-section');
   });
 
   test('follow a section that renders later (its data arrives after the page)', async () => {

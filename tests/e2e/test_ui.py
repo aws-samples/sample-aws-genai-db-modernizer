@@ -110,8 +110,6 @@ TAB_SECTIONS = {
         "unservable-section",
         "close-calls-section",
         "unreviewed-moves-note",
-        "engine-choices-note",
-        "routines-section",
     ],
     "queries": ["query-routing-section", "access-patterns-section"],
     "data-model": ["table-owners-section", "sources-of-truth-section", "table-design-section"],
@@ -132,7 +130,7 @@ TAB_READY = {
     "risks": "#risk-assessment-section",
 }
 # The notes on the Plan tab that are on the tab but not in its On this page navigation.
-UNLISTED_SECTIONS = {"unreviewed-moves-note", "engine-choices-note"}
+UNLISTED_SECTIONS = {"unreviewed-moves-note"}
 
 
 def _results_tab(page: Page, tab: str) -> Locator:
@@ -1053,6 +1051,30 @@ def _report_wave_stats(r: PipelineResult) -> dict[str, tuple[str, str]]:
     return out
 
 
+def _assert_readiness_shown(shown: Locator, wave: dict, db: str, n: str) -> None:
+    """A wave's readiness is a status beside the facts' readiness line (#2318). The line
+    is shown exactly as the reports print it; the status never replaces or trims it."""
+    line = wave["readiness_line"]
+    state = wave.get("readiness")
+    assert shown.locator("[data-figure=wave-readiness-line]").inner_text() == line, (db, n)
+    assert shown.inner_text().endswith(line), (db, n)
+    status = shown.locator("[class*=awsui_status-]").first
+    open_count = wave.get("open_warning_count") or 0
+    if state == "suggested":
+        want = (
+            f"Suggested, {open_count} warning{'' if open_count == 1 else 's'} to accept"
+            if open_count
+            else "Suggested"
+        )
+    else:
+        want = {
+            "held": "Not suggested yet",
+            "not_designed": "Not designed",
+            "not_reviewed": "Not reviewed",
+        }[state]
+    assert status.inner_text().strip() == want, (db, n, status.inner_text())
+
+
 def test_results_page_shows_the_reports_wave_plan(
     page: Page, ui: str, all_runs: list[PipelineResult]
 ) -> None:
@@ -1124,6 +1146,7 @@ def test_results_page_shows_the_reports_wave_plan(
             else:
                 assert note.count() == 0 and shown_gaps == [], (r.db, n)
         # #1992: each card states the facts' readiness line, the rule once.
+        wave_facts = {str(w["wave"]): w for w in report["facts"]["waves"]}
         readiness = {
             str(w["wave"]): (w.get("readiness"), w.get("readiness_line"))
             for w in report["facts"]["waves"]
@@ -1133,8 +1156,8 @@ def test_results_page_shows_the_reports_wave_plan(
             state, line = readiness[n]
             shown_line = c.locator("[data-figure=wave-readiness]")
             if line:
-                assert shown_line.inner_text() == f"Readiness: {line}", (r.db, n)
                 assert shown_line.get_attribute("data-readiness") == state, (r.db, n)
+                _assert_readiness_shown(shown_line, wave_facts[n], r.db, n)
             else:
                 assert shown_line.count() == 0, (r.db, n)
         rules = section.locator("[data-figure=wave-readiness-rule]").count()
@@ -1143,6 +1166,16 @@ def test_results_page_shows_the_reports_wave_plan(
         cutover = section.locator("[data-figure=cutover-responsibility]")
         assert cutover.count() == 1, r.db
         assert cutover.inner_text() == report["facts"]["cutover_responsibility"], r.db
+        # #2318: it is in the roadmap's header.
+        header = section.get_by_role("heading", name=re.compile("^Migration roadmap")).locator(
+            "xpath=ancestor::div[contains(@class, 'header')][1]"
+        )
+        assert header.locator("[data-figure=cutover-responsibility]").count() == 1, r.db
+        # The gates and routine lines state it in their own stored words; the roadmap adds
+        # no second statement of its own.
+        assert (
+            section.locator("[data-wave] [data-figure=cutover-responsibility]").count() == 0
+        ), r.db
         count = report["facts"]["migration_wave_count"]
         assert f"Migration roadmap ({count} waves)" in section.inner_text(), r.db
         assert ev == {"console": [], "pageerror": [], "failed": []}, (r.db, ev)
@@ -1179,8 +1212,48 @@ def _adoption_tiles(path: dict, adoption: dict) -> dict[str, str | None]:
     }
 
 
-def _choose_path(panel: Locator, path_id: str) -> None:
-    panel.locator(f'[role=group] [data-path="{path_id}"] button').click()
+def _path_label(adoption: dict, path_id: str) -> str:
+    """The label the path selector shows (``adoptionPaths.pathLabel``)."""
+    path = next(p for p in adoption["paths"] if p["path_id"] == path_id)
+    if path_id == "relational_only":
+        label = "Relational move only"
+    elif path_id == "full_target":
+        label = "Full target"
+    else:
+        label = f"Through step {path['stops_after_step']}"
+    return f"{label}, the default" if path_id == adoption["default_path_id"] else label
+
+
+def _segments(panel: Locator) -> Locator:
+    """The segments of the path selector, when it shows as a segmented control. In a narrow
+    container Cloudscape shows the same choice as a dropdown instead, and past six paths
+    the page itself uses one; the segments are then absent or hidden."""
+    return panel.locator("[data-figure=adoption-path-selector] button[data-testid]")
+
+
+def _selector_labels(panel: Locator) -> list[str]:
+    """The paths the selector offers, by label."""
+    segments = _segments(panel)
+    if segments.count() and segments.first.is_visible():
+        return [b.strip() for b in segments.all_inner_texts()]
+    trigger = panel.locator("[data-figure=adoption-path-selector] [aria-haspopup=listbox]").first
+    trigger.click()
+    # The selected option's text can repeat on a second line.
+    labels = [o.strip().split("\n")[0] for o in panel.page.get_by_role("option").all_inner_texts()]
+    panel.page.keyboard.press("Escape")
+    return labels
+
+
+def _choose_path(panel: Locator, path_id: str, adoption: dict) -> None:
+    """Pick a path in the selector (#2318: a segmented control, a dropdown past six paths)."""
+    segments = _segments(panel)
+    if segments.count() and segments.first.is_visible():
+        panel.locator(
+            f'[data-figure=adoption-path-selector] button[data-testid="{path_id}"]'
+        ).click()
+        return
+    panel.locator("[data-figure=adoption-path-selector] [aria-haspopup=listbox]").first.click()
+    panel.page.get_by_role("option", name=_path_label(adoption, path_id), exact=True).click()
 
 
 def _shown_tiles(panel: Locator) -> dict[str, str | None]:
@@ -1236,9 +1309,10 @@ def test_results_page_shows_the_adoption_paths_stages_and_one_step_option(
         before = {p.name: p.read_bytes() for p in assignment.iterdir() if p.is_file()}
         paths = {p["path_id"]: p for p in adoption["paths"]}
         summary = adoption["summary_path_ids"]
-        chips = panel.locator("[role=group] [data-path]")
-
-        assert [c.get_attribute("data-path") for c in chips.all()] == summary, r.db
+        # #2318: a segmented control, one segment per summary path, in the facts' order.
+        assert _selector_labels(panel) == [_path_label(adoption, p) for p in summary], r.db
+        assert panel.locator("[role=toolbar]").count() == 1, r.db
+        assert panel.locator("[role=group] [data-path]").count() == 0, r.db
         selected = panel.locator("[data-figure=selected-path]")
         # The full target opens selected, and nothing is greyed: the roadmap as before.
         assert selected.get_attribute("data-path") == adoption["default_path_id"], r.db
@@ -1250,7 +1324,7 @@ def test_results_page_shows_the_adoption_paths_stages_and_one_step_option(
         text = panel.inner_text()
         assert "tables migrat" not in text.lower(), r.db
         for path_id in summary:
-            _choose_path(panel, path_id)
+            _choose_path(panel, path_id, adoption)
             expect(selected).to_have_attribute("data-path", path_id)
             path = paths[path_id]
             want = _adoption_tiles(path, adoption)
@@ -1279,12 +1353,12 @@ def test_results_page_shows_the_adoption_paths_stages_and_one_step_option(
         show_all = panel.locator("[data-figure=adoption-show-all] button")
         if len(summary) < adoption["path_count"]:
             show_all.click()
-            assert [c.get_attribute("data-path") for c in chips.all()] == list(paths), r.db
+            assert _selector_labels(panel) == [_path_label(adoption, p) for p in paths], r.db
         else:
             assert show_all.count() == 0, r.db
         # Each wave states its steps and stages as the engineering report does; open,
         # the stages are the plan's, in run order.
-        _choose_path(panel, "full_target")
+        _choose_path(panel, "full_target", adoption)
         for phase in plan.get("wave_phases") or []:
             card = section.locator(f'[data-wave="{phase["phase_wave"]}"]')
             line = card.locator("[data-figure=wave-stages-line]").inner_text().strip()
@@ -1712,17 +1786,50 @@ def test_results_page_shows_the_headline_first(
         pairs = close_calls.get("engine_pairs") or []
         if pairs and close_calls.get("close_call_query_count"):
             _show_tab(page, "plan")
-            first = pairs[0]["query_ids"]
-            banner = page.locator("#close-calls-section")
-            opener = banner.get_by_role(
-                "button", name=f"Open the decision trace for query {first[0]}"
-            )
-            assert opener.inner_text().strip() == first[0][:6], r.db
-            shown = banner.get_by_role(
-                "button", name=re.compile("^Open the decision trace for query ")
-            )
-            assert shown.count() == sum(min(3, len(p["query_ids"])) for p in pairs), r.db
+            _assert_close_calls_table(page, report, pairs, r.db)
         assert ev == {"console": [], "pageerror": [], "failed": []}, (r.db, ev)
+
+
+def _assert_close_calls_table(page: Page, report: dict, pairs: list[dict], db: str) -> None:
+    """#2318: the close calls are one table of their own, a row per listed query: its id
+    as the routing table shows it (eight characters, never a negative-looking number), the
+    assigned engine, the runner-up, the report's gap and what settled it. An id opens the
+    query's decision trace."""
+    from src.shared.engine_names import display_engine
+
+    section = page.locator("#close-calls-section")
+    table = section.get_by_role("table", name="Close calls")
+    expect(table).to_be_visible(timeout=READY_MS)
+    digest = report["query_traces"]["close_calls"]
+    ordered = sorted(
+        digest, key=lambda c: (bool(c.get("settled_tie")), c["gap"], str(c["query_id"]))
+    )
+    rows = table.locator("tbody tr")
+    assert rows.count() == min(25, len(ordered)), db
+    first = ordered[0]
+    cells = [c.strip() for c in rows.first.locator("td").all_inner_texts()]
+    assert cells[0] == first["query_id"][:8], (db, cells)
+    assert cells[2] == display_engine(first["engine"]), (db, cells)
+    assert cells[3] == display_engine(first["alternative"]), (db, cells)
+    assert cells[4] == f"{first['gap']:.1f}", (db, cells)
+    settled = (
+        "Tie rule"
+        if first.get("settled_tie")
+        else "Group score" if first.get("basis") == "group_mean" else "Score"
+    )
+    assert cells[5] == settled, (db, cells)
+    # No explanation paragraphs, no "Closest:" lists and no "+N more" toggles around it.
+    assert "Closest:" not in section.inner_text(), db
+    assert section.get_by_role("button", name=re.compile(r"^\+\d+ more")).count() == 0, db
+    opener = section.get_by_role(
+        "button", name=f"Open the decision trace for query {first['query_id']}"
+    )
+    assert opener.count() == 1, db
+    assert section.get_by_role("link", name="Open the assignment review").count() == 1, db
+    heading = section.get_by_role("heading", name=re.compile("^Close calls"))
+    assert heading.count() == 1, db
+    # One count, of the table's rows: the close calls and the ties it lists.
+    assert f"({len(digest):,})" in heading.inner_text(), db
 
 
 def test_results_page_on_this_page_lists_the_open_tabs_sections(
@@ -1846,6 +1953,9 @@ def test_results_page_states_the_routine_outcomes(
         if not routines:
             assert section.count() == 0, r.db
             continue
+        # #2318: the routines are in wave 1 of the roadmap, not a section of their own.
+        first_wave = page.locator("#migration-roadmap-section [data-wave]").first
+        assert first_wave.locator("#routines-section").count() == 1, r.db
         line = section.locator("[data-figure=routines-line]")
         assert line.inner_text().strip() == routines["line"], r.db
         to_do = routines.get("migrate_yourself_line")
@@ -2373,7 +2483,7 @@ def test_results_page_has_no_accessibility_violations_with_an_earlier_path_picke
         _open_results(page, ui, r)
         _show_tab(page, "plan")
         panel = page.locator("#migration-roadmap-section [data-figure=adoption-paths]")
-        _choose_path(panel, earlier[0])
+        _choose_path(panel, earlier[0], adoption)
         expect(panel.locator("[data-figure=selected-path]")).to_have_attribute(
             "data-path", earlier[0]
         )
@@ -2498,6 +2608,14 @@ def test_results_page_states_the_pending_engine_choices(
         page, ev = loaded_results(r)
         _show_tab(page, "plan")
         note = page.locator("#engine-choices-note")
+        # #2318: in wave 1 of the roadmap, not a section of its own.
+        if note.count():
+            assert (
+                page.locator("#migration-roadmap-section [data-wave]")
+                .first.locator("#engine-choices-note")
+                .count()
+                == 1
+            ), r.db
         if n:
             tables = "table still ties" if n == 1 else "tables still tie"
             queries = "query" if q == 1 else "queries"

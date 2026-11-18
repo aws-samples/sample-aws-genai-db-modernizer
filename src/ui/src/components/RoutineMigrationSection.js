@@ -24,8 +24,10 @@ import { routineKey, routinesOf, routineToDoText } from "../utils/reportFacts";
  * formats the facts (ADR-032): every count,
  * list and sentence is stored. Never a routine's code: the facts hold none.
  *
- * The section's sub-headings are h3, under the expandable container's h2 header, so the
- * page's heading order never skips a level (axe heading-order; a regression from #2108).
+ * #2318: the section sits in wave 1's card (MigrationWavePlan), so its sub-headings are
+ * h4, under the wave's h3 title, and the page's heading order never skips a level (axe
+ * heading-order; a regression from #2108). The expandable part is a footer section, like
+ * the wave's tables.
  *
  * Rows are keyed on kind and id (routineKey). Callers pass `t` (the page's own
  * `useTranslation` function).
@@ -80,14 +82,14 @@ const RoutineMigrationSection = memo(({ synthesis, t }) => {
           {toDo && <div data-figure="routines-to-do-line">{toDo}</div>}
         </Box>
         <ExpandableSection
-          variant="container"
+          variant="footer"
           defaultExpanded={false}
           headerText={t('analysis-results.routines.header', { count: routines.routine_count })}
         >
           <SpaceBetween size="s">
             {toDo && toDoRoutines.length > 0 && (
               <Box data-figure="routines-to-do">
-                <Box variant="h3">{t('analysis-results.routines.to-do')}</Box>
+                <Box variant="h4">{t('analysis-results.routines.to-do')}</Box>
                 <ul>
                   {toDoRoutines.map(r => (
                     <li key={routineKey(r)}>
@@ -100,7 +102,7 @@ const RoutineMigrationSection = memo(({ synthesis, t }) => {
             )}
             {rows.length > 0 && (
               <Box data-figure="routines-table">
-                <Box variant="h3">{t('analysis-results.routines.each')}</Box>
+                <Box variant="h4">{t('analysis-results.routines.each')}</Box>
                 <div>{t('analysis-results.routines.intro')}</div>
                 <Table
                   items={rows}
@@ -114,7 +116,7 @@ const RoutineMigrationSection = memo(({ synthesis, t }) => {
             )}
             {interventions.length > 0 && (
               <Box data-figure="routines-interventions">
-                <Box variant="h3">{t('analysis-results.routines.interventions')}</Box>
+                <Box variant="h4">{t('analysis-results.routines.interventions')}</Box>
                 <div>{t('analysis-results.routines.interventions-intro')}</div>
                 <ul>
                   {interventions.map(i => (
@@ -132,7 +134,7 @@ const RoutineMigrationSection = memo(({ synthesis, t }) => {
             )}
             {notes.length > 0 && (
               <Box data-figure="routines-notes">
-                <Box variant="h3">{t('analysis-results.routines.carried')}</Box>
+                <Box variant="h4">{t('analysis-results.routines.carried')}</Box>
                 <ul>
                   {notes.map(n => (
                     <li key={`${n.note}:${n.rule_id}`} data-note={n.rule_id}>

@@ -58,10 +58,31 @@ jest.mock('@cloudscape-design/components/expandable-section', () => ({
   __esModule: true,
   default: ({ headerText, children }) => <details><summary>{headerText}</summary>{children}</details>,
 }));
-jest.mock('@cloudscape-design/components/toggle-button', () => ({
+// #2318: the path choice is a segmented control (a dropdown past six paths); both stand-ins
+// render one button per path, so the checks below read them the same way. The real
+// components are in RoadmapTab.test.js.
+jest.mock('@cloudscape-design/components/segmented-control', () => ({
   __esModule: true,
-  default: ({ children, pressed, onChange }) => (
-    <button type="button" aria-pressed={pressed} onClick={() => onChange({ detail: { pressed: !pressed } })}>{children}</button>
+  default: ({ options, selectedId, onChange }) => (
+    <div>
+      {options.map(o => (
+        <span key={o.id} data-path={o.id}>
+          <button type="button" aria-pressed={o.id === selectedId} onClick={() => onChange({ detail: { selectedId: o.id } })}>{o.text}</button>
+        </span>
+      ))}
+    </div>
+  ),
+}));
+jest.mock('@cloudscape-design/components/select', () => ({
+  __esModule: true,
+  default: ({ options, selectedOption, onChange }) => (
+    <div>
+      {options.map(o => (
+        <span key={o.value} data-path={o.value}>
+          <button type="button" aria-pressed={o.value === selectedOption.value} onClick={() => onChange({ detail: { selectedOption: o } })}>{o.label}</button>
+        </span>
+      ))}
+    </div>
   ),
 }));
 jest.mock('@cloudscape-design/components/button', () => ({
@@ -656,7 +677,8 @@ describe('the one-step option', () => {
   test('the roadmap heading points at the one-step option', () => {
     render(synthesis());
     expect(container.querySelector('.mock-description').textContent).toBe(
-      'This is one suggested adoption path. To modernize in one step instead, open the one-step option below.',
+      'This is one suggested adoption path. To modernize in one step instead, open the one-step option below. '
+        + 'The cutover is your responsibility.',
     );
   });
 });
@@ -672,7 +694,8 @@ describe('a report without adoption facts', () => {
     expect(container.textContent).not.toContain('Adoption paths');
     expect(container.querySelector('.mock-description').textContent).toBe(
       'This is one suggested adoption path. To modernize in one step instead, '
-      + 'adopt the target architecture in Executive summary above directly.',
+      + 'adopt the target architecture in Executive summary above directly. '
+      + 'The cutover is your responsibility.',
     );
   });
 

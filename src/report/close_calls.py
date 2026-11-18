@@ -21,9 +21,8 @@ from . import escaping
 from .facts import report_facts
 from .formatting import fmt_num, plural_noun, short_query_id
 
-# How a customer moves a close call: the engineering report. The UI
-# callout says the same, with its last sentence worded for the page it is on
-# (src/ui/src/locales/en.json, analysis-results.close-calls.override).
+# How a customer moves a close call, in the engineering report. The results page's
+# close calls table links to the assignment review instead of repeating it.
 CLOSE_CALL_OVERRIDE_TEXT = (
     "To move any of them, change its engine in the assignment review (a query in a "
     "co-dependency group moves with its group); that writes a new assignment version "

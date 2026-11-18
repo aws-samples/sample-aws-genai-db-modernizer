@@ -100,9 +100,20 @@ test('waveReadiness reads facts.waves[].readiness and readiness_line as stored',
     { wave: 3, readiness: 'not_designed', readiness_line: 'Not designed yet: run the DynamoDB schema design, then check the wave again.' },
     { wave: 4 },
   ] } };
-  expect(waveReadiness(synthesis, { wave: 1 })).toEqual({ readiness: 'suggested', line: 'Suggested: no check holds it.' });
-  expect(waveReadiness(synthesis, { wave: 2 })).toEqual({ readiness: 'held', line: 'Not suggested yet: x. Next step: y.' });
+  expect(waveReadiness(synthesis, { wave: 1 })).toEqual({ readiness: 'suggested', line: 'Suggested: no check holds it.', openWarnings: 0 });
+  expect(waveReadiness(synthesis, { wave: 2 })).toEqual({ readiness: 'held', line: 'Not suggested yet: x. Next step: y.', openWarnings: 0 });
   expect(waveReadiness(synthesis, { wave: 3 }).readiness).toBe('not_designed');
   expect(waveReadiness(synthesis, { wave: 4 })).toBeNull();
   expect(waveReadiness({}, { wave: 1 })).toBeNull();
+});
+
+// #2318: the open warning count the status shows, beside the line as stored.
+test('waveReadiness reads the open warning count and keeps the line whole', () => {
+  const synthesis = { facts: { waves: [{
+    wave: 1, readiness: 'suggested', readiness_line: 'Suggested, with 1 design review warning to accept: x.',
+    open_warning_count: 1,
+  }] } };
+  expect(waveReadiness(synthesis, { wave: 1 })).toEqual({
+    readiness: 'suggested', line: 'Suggested, with 1 design review warning to accept: x.', openWarnings: 1,
+  });
 });

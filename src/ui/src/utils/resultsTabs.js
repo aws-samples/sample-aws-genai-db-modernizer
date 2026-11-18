@@ -38,10 +38,8 @@ export const RESULTS_TABS = [
       section('step-gate-section', anchor('step-gate')),
       section('unservable-section', anchor('unservable')),
       section('close-calls-section', anchor('close-calls')),
-      // Two one-line notes on the assignment: on the tab, not in its navigation.
+      // A one-line note on the assignment: on the tab, not in its navigation.
       section('unreviewed-moves-note'),
-      section('engine-choices-note'),
-      section('routines-section', anchor('routines')),
     ],
   },
   {
@@ -78,6 +76,9 @@ const TAB_IDS = RESULTS_TABS.map(tab => tab.id);
 // Anchors inside a section that a link can name: they land on the section's tab.
 const NESTED_ANCHORS = {
   'target-engines': 'summary',
+  // #2318: in wave 1 of the roadmap, not sections of their own.
+  'routines-section': 'plan',
+  'engine-choices-note': 'plan',
   'no-open-risks-note': 'risks',
 };
 

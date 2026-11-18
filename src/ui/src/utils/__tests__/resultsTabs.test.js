@@ -39,7 +39,7 @@ test('each tab holds its sections, in the order of the decision', () => {
   ]);
   expect(tabSections('plan')).toEqual([
     'migration-roadmap-section', 'step-gate-section', 'unservable-section', 'close-calls-section',
-    'unreviewed-moves-note', 'engine-choices-note', 'routines-section',
+    'unreviewed-moves-note',
   ]);
   expect(tabSections('queries')).toEqual(['query-routing-section', 'access-patterns-section']);
   expect(tabSections('data-model')).toEqual([
@@ -83,6 +83,9 @@ describe('the tab a URL names', () => {
   test('an old anchor lands on its section\'s tab', () => {
     expect(resultsTabFromLocation('', '#sources-of-truth-section')).toBe('data-model');
     expect(resultsTabFromLocation('', '#close-calls-section')).toBe('plan');
+    // #2318: the routines and the engine choices are in wave 1 of the roadmap, on the Plan tab.
+    expect(resultsTabFromLocation('', '#routines-section')).toBe('plan');
+    expect(resultsTabFromLocation('', '#engine-choices-note')).toBe('plan');
     expect(resultsTabFromLocation('', '#cost-breakdown-section')).toBe('summary');
     expect(resultsTabFromLocation('', '#query-routing-section')).toBe('queries');
     expect(resultsTabFromLocation('', '#risk-assessment-section')).toBe('risks');

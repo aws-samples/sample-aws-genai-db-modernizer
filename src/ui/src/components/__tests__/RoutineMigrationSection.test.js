@@ -204,16 +204,16 @@ test('a report without routine facts shows nothing', () => {
 
 
 // The page's heading order (axe heading-order on the results page, a regression from #2108):
-// the expandable container's header is an h2, so each sub-heading inside is an h3, never h4.
-test('the sub-headings follow the page heading order: h3 under the h2 section header', () => {
+// the section sits in wave 1's card under its h3 title (#2318), so each sub-heading is an h4.
+test('the sub-headings follow the page heading order: h4 under the wave\'s h3 title', () => {
   render({ facts: { routines } });
   const section = container.querySelector('#routines-section');
   const headings = [...section.querySelectorAll('[data-box-variant^="h"]')].map(
     (el) => el.getAttribute('data-box-variant'),
   );
   expect(headings.length).toBeGreaterThan(0);
-  expect(headings.every((v) => v === 'h3')).toBe(true);
-  expect(section.querySelector('[data-figure="routines-to-do"] [data-box-variant="h3"]')).not.toBeNull();
+  expect(headings.every((v) => v === 'h4')).toBe(true);
+  expect(section.querySelector('[data-figure="routines-to-do"] [data-box-variant="h4"]')).not.toBeNull();
 });
 
 // #1941: what came of each model repair, in the facts' own words
@@ -222,7 +222,7 @@ test('the sub-headings follow the page heading order: h3 under the h2 section he
 test('lists each intervention with its line, and every attempt of one that needs attention', () => {
   render({ facts: { routines: withInterventions } });
   const box = container.querySelector('[data-figure="routines-interventions"]');
-  expect(box.querySelector('[data-box-variant="h3"]').textContent).toBe('Interventions');
+  expect(box.querySelector('[data-box-variant="h4"]').textContent).toBe('Interventions');
   const items = [...box.querySelectorAll(':scope > ul > li')];
   expect(items.map(li => li.getAttribute('data-intervention'))).toEqual(
     withInterventions.interventions.map(i => i.state),

@@ -111,7 +111,8 @@ test('the heading states the facts layer\'s wave count and the one-suggested-pat
   expect(container.querySelector('h2').textContent).toBe('Migration roadmap (5 waves)');
   expect(container.querySelector('.mock-description').textContent).toBe(
     'This is one suggested adoption path. To modernize in one step instead, '
-    + 'adopt the target architecture in Executive summary above directly.',
+    + 'adopt the target architecture in Executive summary above directly. '
+    + 'The cutover is your responsibility.',
   );
 });
 
@@ -372,13 +373,15 @@ function withReadiness(synthesis) {
 test('each card states the wave\'s readiness and the rule is stated once', () => {
   render(withReadiness(fixture.synthesis));
   const held = container.querySelector('[data-wave="3"] [data-figure="wave-readiness"]');
+  // #2318: a status ("Not suggested yet") under the label, with the facts' lists below it.
   expect(held.textContent).toBe(
-    'Readiness: Not suggested yet: an open high risk on DynamoDB (RISK-001, performance '
+    'ReadinessNot suggested yet'
+    + 'Not suggested yet: an open high risk on DynamoDB (RISK-001, performance '
     + 'degradation). Next step: run the DynamoDB schema design, then check the wave again.',
   );
   expect(held.getAttribute('data-readiness')).toBe('held');
   const one = container.querySelector('[data-wave="1"] [data-figure="wave-readiness"]');
-  expect(one.textContent).toBe('Readiness: Suggested: no check holds it.');
+  expect(one.textContent).toBe('ReadinessSuggestedSuggested: no check holds it.');
   expect(container.querySelectorAll('[data-figure="wave-readiness-rule"]')).toHaveLength(1);
 });
 
