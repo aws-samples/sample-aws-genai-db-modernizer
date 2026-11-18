@@ -176,6 +176,7 @@ with `--permission-mode dontAsk` and `.claude/settings.ci.json`.
   `Agent`, `TaskStop` (a hung subagent, #2175), and the dispatched skills; it denies web access, `git push`/`commit`,
   `rm`, `curl` and secret paths. A new script a command runs needs an allow
   rule there (rationale for each entry: ci/README.md).
+- Headless runs never load this file: `.claude/settings.ci.json` lists it in `claudeMdExcludes` (#2463), which saves about 9.5k tokens in every agent's context. A rule the pipeline must follow goes in the command, the dispatch text or the skill, never only here. <!-- claim: tests/unit/test_agents_md.py::test_headless_settings_exclude_agents_md, tests/unit/test_agents_md.py::test_interactive_settings_keep_agents_md -->
 - Subagents nest one level deep: only the orchestrator dispatches, and every
   dispatch says "Do not dispatch subagents yourself."
 - Waiting Rule (in `modernize.md`): never end a turn waiting unless a
