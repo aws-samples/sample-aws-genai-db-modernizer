@@ -10,61 +10,127 @@ import { displayTables } from './tableNames';
 
 const EXCERPT_CHARS = 120;
 
-// The start of a query's SQL, whitespace collapsed, about 120 characters (the
-// same length the engineering report's trace appendix prints).
-export function queryExcerpt(text) {
-  const flat = String(text || '').replace(/\s+/g, ' ').trim();
-  if (flat.length <= EXCERPT_CHARS) return flat;
-  return `${flat.slice(0, EXCERPT_CHARS).trimEnd()}…`;
+// The statement with its whitespace collapsed to single spaces.
+export function flattenSql(text) {
+  return String(text || '').replace(/\s+/g, ' ').trim();
 }
 
-export function buildQueryRoutingRows(journeys, kindsById, engineLabels) {
+// The start of a query's SQL, whitespace collapsed, about 120 characters (the
+// same length the engineering report's trace appendix prints). It stops at a
+// word boundary when there is one, so the cut never lands inside a token (#2319).
+export function queryExcerpt(text) {
+  const flat = flattenSql(text);
+  if (flat.length <= EXCERPT_CHARS) return flat;
+  const space = flat.slice(0, EXCERPT_CHARS + 1).lastIndexOf(' ');
+  const cut = space > EXCERPT_CHARS / 2 ? space : EXCERPT_CHARS;
+  return `${flat.slice(0, cut).trimEnd()}…`;
+}
+
+// #2319: which destination tables serve a query and which cache engine fronts
+// it, read from the schema design's access patterns (each lists the query ids it
+// serves). Pure membership: nothing is counted or scored. A run without schema
+// design has no patterns, so both maps are empty and the columns read as a dash.
+export function queryPatternLinks(ownerPatterns, cachePatterns) {
+  const destinationsById = new Map();
+  (ownerPatterns || []).forEach((p) => {
+    (p.queryIds || []).forEach((qid) => {
+      const list = destinationsById.get(qid) || [];
+      (p.destNames || []).forEach((name) => list.push({ engine: p.engine, name }));
+      destinationsById.set(qid, list);
+    });
+  });
+  const cacheEngineById = new Map();
+  (cachePatterns || []).forEach((p) => {
+    (p.queryIds || []).forEach((qid) => cacheEngineById.set(qid, p.engine));
+  });
+  return { destinationsById, cacheEngineById };
+}
+
+export function buildQueryRoutingRows(journeys, kindsById, engineLabels, links = {}) {
+  const destinationsById = links.destinationsById || new Map();
+  const cacheEngineById = links.cacheEngineById || new Map();
   return (journeys || []).filter(j => j && j.query_id).map((j) => {
     const engine = (j.assignment && j.assignment.assigned_engine) || null;
+    const statement = flattenSql(j.source && j.source.query_text);
+    const tables = displayTables(j.source && j.source.tables_accessed);
+    const destinations = (destinationsById.get(j.query_id) || [])
+      .filter((d, i, all) => all.findIndex(o => o.engine === d.engine && o.name === d.name) === i);
+    const engineName = engine ? (engineLabels[engine] || engine) : null;
+    const queryType = (j.source && j.source.query_type) || null;
     return {
       queryId: j.query_id,
-      excerpt: queryExcerpt(j.source && j.source.query_text),
-      tables: displayTables(j.source && j.source.tables_accessed, { short: false }),
-      queryType: (j.source && j.source.query_type) || null,
+      excerpt: queryExcerpt(statement),
+      statement,
+      tables,
+      destinations,
+      queryType,
       engine,
-      engineName: engine ? (engineLabels[engine] || engine) : null,
+      engineName,
+      cacheEngine: cacheEngineById.get(j.query_id) || null,
       kinds: kindsById.get(j.query_id) || null,
+      // Lower-cased once, so a filter over thousands of rows only compares strings.
+      search: [j.query_id, statement, queryType || '', engineName || '', ...tables, ...destinations.map(d => d.name)]
+        .join('\n').toLowerCase(),
     };
   });
 }
 
-// mode 'all': every query; 'listed': only the queries whose routing has a
-// story (the facts list them). The text matches the query id, its statement,
-// its query type, a table or the engine name, case-insensitively. `only`
-// narrows to one query type and/or one engine id (#1028); null means any.
-export function filterQueryRoutingRows(rows, text, mode, only = {}) {
-  const needle = String(text || '').trim().toLowerCase();
-  const { queryType = null, engine = null } = only || {};
-  return rows.filter((r) => {
-    if (mode === 'listed' && !r.kinds) return false;
-    if (queryType && r.queryType !== queryType) return false;
-    if (engine && r.engine !== engine) return false;
-    if (!needle) return true;
-    return [r.queryId, r.excerpt, r.queryType || '', r.engineName || '', ...r.tables]
-      .some(v => String(v).toLowerCase().includes(needle));
-  });
+// What a row holds for a filter property, as a list of values (a query reads
+// several tables). `cached` and `routing` are yes/no.
+function propertyValues(row, key) {
+  switch (key) {
+    case 'engine': return row.engine ? [row.engine] : [];
+    case 'operation': return row.queryType ? [row.queryType] : [];
+    case 'table': return row.tables;
+    case 'destination': return row.destinations.map(d => d.name);
+    case 'cached': return [row.cacheEngine ? 'yes' : 'no'];
+    case 'routing': return [row.kinds ? 'yes' : 'no'];
+    default: return [];
+  }
 }
 
-// The query types and engines the rows hold, for the filters' options (#1028):
-// each distinct value once, sorted, never a count.
-export function queryRoutingFilterOptions(rows) {
-  const types = new Set();
+const POSITIVE_OPERATOR = { '=': '=', '!=': '=', ':': ':', '!:': ':' };
+
+function tokenMatches(row, token) {
+  const { propertyKey, operator, value } = token;
+  const wanted = String(value === undefined || value === null ? '' : value).toLowerCase();
+  const negated = operator === '!=' || operator === '!:';
+  const values = propertyKey ? propertyValues(row, propertyKey).map(v => String(v).toLowerCase()) : null;
+  const exact = POSITIVE_OPERATOR[operator] === '=';
+  const hit = values === null
+    ? row.search.includes(wanted)
+    : values.some(v => (exact ? v === wanted : v.includes(wanted)));
+  return negated ? !hit : hit;
+}
+
+// A property filter query ({ tokens, operation }) over the rows: every token
+// ('and') or any token ('or'). No tokens keeps every row.
+export function filterQueryRows(rows, query) {
+  const tokens = (query && query.tokens) || [];
+  if (tokens.length === 0) return rows;
+  const some = query.operation === 'or';
+  return rows.filter(r => (some ? tokens.some(t => tokenMatches(r, t)) : tokens.every(t => tokenMatches(r, t))));
+}
+
+// The values each property offers in the filter: the distinct values the rows
+// hold, sorted, never a count. An engine's value is its id, its label the name.
+export function queryFilterOptions(rows) {
   const engines = new Map();
+  const sets = { operation: new Set(), table: new Set(), destination: new Set() };
   (rows || []).forEach((r) => {
-    if (r.queryType) types.add(r.queryType);
     if (r.engine) engines.set(r.engine, r.engineName || r.engine);
+    if (r.queryType) sets.operation.add(r.queryType);
+    r.tables.forEach(t => sets.table.add(t));
+    r.destinations.forEach(d => sets.destination.add(d.name));
   });
-  return {
-    queryTypes: [...types].sort(),
-    engines: [...engines.entries()]
-      .map(([engine, engineName]) => ({ engine, engineName }))
-      .sort((a, b) => a.engineName.localeCompare(b.engineName)),
-  };
+  const plain = key => [...sets[key]].sort().map(value => ({ propertyKey: key, value }));
+  return [
+    ...[...engines.entries()].sort((a, b) => a[1].localeCompare(b[1]))
+      .map(([value, label]) => ({ propertyKey: 'engine', value, label })),
+    ...plain('operation'),
+    ...plain('table'),
+    ...plain('destination'),
+  ];
 }
 
 // The label a query pinned to its engine shows instead of its fit (#1373): the

@@ -48,7 +48,7 @@ All of them are rendered from one `report.json` by `src/report`, so a changed fa
   3. **Banners**, when they apply: queries on a fallback engine, close calls (queries whose engine scored less than 5 points above another engine the plan keeps), the reality-check moves no model reviewed and the pending engine choices.
   4. **Routines**, collapsed: how the job's routines migrate, as both reports state them.
 - **Queries**:
-  1. **Query routing**, collapsed: every query and its engine, with search and filters; open a query to see its history and why it ended on its engine.
+  1. **Query routing**: every query in one open table, 25 rows a page, with a property filter over its engine, operation, tables, destination, cache and routing changes, and free text over the id and the statement. Select a query to open its detail in a panel beside the table: its figures, its statement, why it ended on its engine, and the raw record under Developer details. <!-- claim: src/ui/src/components/__tests__/QueryRoutingTable.test.js, src/ui/src/components/__tests__/QueryDetailPanel.test.js, tests/e2e/test_ui.py::test_a_selected_query_opens_in_a_split_panel_beside_the_table -->
   2. **Access pattern explorer**: the target data model, by access pattern or by source table, filtered by engine, operation or table (on a run with access patterns).
 - **Data model**:
   1. **Table owners**, collapsed: each mapped table's owner, the engines that also read it and the cache in front of it, as in the engineering report's Migration map.
