@@ -29,6 +29,7 @@ from src.shared.engines_in_use import retired_in_use_statement
 from src.shared.gate_facts import gate_block_facts
 from src.shared.placeholder_tables import NO_SOURCE_TABLE_LABEL
 from src.shared.risk_severity import severity_of, severity_rank
+from src.shared.severity_labels import severity_label, severity_word
 from src.shared.target_databases import engine_scope_statement, no_engine_in_scope_statement
 
 from . import escaping
@@ -313,7 +314,7 @@ def _risk_lines(report: Mapping[str, Any], facts: Mapping[str, Any]) -> list[str
     resolved_text = _severity_counts_text(facts.get("resolved_risks_by_severity") or {})
     lines: list[str] = []
     if level:
-        lines.append(f"Overall risk: {prose(level)}")
+        lines.append(f"Overall risk: {severity_word(level)}")
     note = rate_window_risk_note(dict(facts))
     if note:
         lines.append(f"{prose(note)}.")
@@ -335,7 +336,7 @@ def _risk_lines(report: Mapping[str, Any], facts: Mapping[str, Any]) -> list[str
         engine, body = _risk_engine_and_body(r.get("description"))
         label = engine if engine == "(general)" else display_engine(engine)
         rid = f" ({prose(r['risk_id'])})" if r.get("risk_id") else ""
-        lines.append(f"- {prose(severity_of(r))}, {prose(label)}{rid}: {prose(body)}")
+        lines.append(f"- {severity_label(severity_of(r))}, {prose(label)}{rid}: {prose(body)}")
         mitigation = r.get("mitigation")
         if mitigation and not _repeats(mitigation, body):
             lines.append(f"  - Mitigation: {prose(' '.join(str(mitigation).split()))}")

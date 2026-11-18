@@ -86,7 +86,7 @@ class TestBothReportsSayIt:
 
     def test_the_executive_report_tells_the_low_risk_story(self) -> None:
         text = executive_text(self._report())
-        assert "LOW Overall risk 0 Open risks 6 Resolved by the assignment 2 high, 4 medium" in text
+        assert "Low Overall risk 0 Open risks 6 Resolved by the assignment 2 high, 4 medium" in text
         assert "No open migration risks; 6 resolved by the assignment (2 high, 4 medium)." in text
         assert "Resolved by the assignment: 2 high, 4 medium" in text
 

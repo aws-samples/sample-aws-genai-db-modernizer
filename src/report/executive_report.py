@@ -73,6 +73,7 @@ from src.shared.engine_names import display_engine
 from src.shared.ranking import PIN_RULE_PREDATES_NOTE, report_predates_pin_rule
 from src.shared.report_facts import CACHE_LAYER
 from src.shared.risk_severity import severity_of
+from src.shared.severity_labels import severity_label
 from src.shared.target_databases import engine_scope_statement
 from src.shared.wave_readiness import READINESS_RULE_NOTE
 from src.shared.workload_fit_labels import CACHE_FIT_DEFINITION, WORKLOAD_FIT_DEFINITION
@@ -1445,14 +1446,19 @@ def _ways_to_adopt(report: dict[str, Any], st: dict[str, ParagraphStyle], names:
 def _risks(report: dict[str, Any], st: dict[str, ParagraphStyle], names: Any) -> list:
     facts = report_facts(report)
     risk = report.get("risk_assessment") or {}
-    level = str(risk.get("overall_risk_level") or "not assessed")
+    level = str(risk.get("overall_risk_level") or "")
     open_count = int(facts.get("open_risk_count") or 0)
     resolved_count = int(facts.get("resolved_risk_count") or 0)
     risks = filtered_risks(report)
     sev = _severity_counts_text(facts.get("open_risks_by_severity") or {})
     resolved_sev = _severity_counts_text(facts.get("resolved_risks_by_severity") or {})
     tiles = [
-        _tile(st, level, L_OVERALL, _severity_color(level)),
+        _tile(
+            st,
+            severity_label(level) if level else "Not assessed",
+            L_OVERALL,
+            _severity_color(level),
+        ),
         _tile(st, str(open_count), L_OPEN, BLUE, [sev]),
         _tile(st, str(resolved_count), L_RESOLVED, GREEN, [resolved_sev]),
     ]
@@ -1485,7 +1491,7 @@ def _risks(report: dict[str, Any], st: dict[str, ParagraphStyle], names: Any) ->
             x
             for x in (
                 str(r.get("risk_id") or "-"),
-                level_r,
+                severity_label(level_r),
                 display_engine(eng) if eng != "(general)" else eng,
                 rtype,
             )

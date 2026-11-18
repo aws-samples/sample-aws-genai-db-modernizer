@@ -39,11 +39,11 @@ def _report(risks: list[dict]) -> dict:
 def test_a_critical_risk_prints_as_critical_not_high() -> None:
     md = renderers.render_engineering_report_md(_report([_risk("RISK-001", "CRITICAL")]))
     assert "RISK-001" in md
-    assert "CRITICAL" in md
-    # The bullet carries the risk's own severity, never relabelled HIGH.
+    assert "Critical" in md
+    # The bullet carries the risk's own severity, never relabelled High.
     line = next(line for line in md.splitlines() if "RISK-001" in line)
-    assert "CRITICAL" in line
-    assert "HIGH" not in line
+    assert "Critical" in line
+    assert "High" not in line
 
 
 def test_a_mix_of_medium_and_low_risks_are_both_kept_and_counted() -> None:
@@ -53,6 +53,6 @@ def test_a_mix_of_medium_and_low_risks_are_both_kept_and_counted() -> None:
     for rid in ("RISK-001", "RISK-002", "RISK-003"):
         assert rid in md
     medium_line = next(line for line in md.splitlines() if "RISK-001" in line)
-    assert "MEDIUM" in medium_line
+    assert "Medium" in medium_line
     low_lines = [line for line in md.splitlines() if "RISK-002" in line or "RISK-003" in line]
-    assert all("LOW" in line for line in low_lines)
+    assert all("Low" in line for line in low_lines)

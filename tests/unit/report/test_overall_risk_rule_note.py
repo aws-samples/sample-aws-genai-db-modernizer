@@ -32,7 +32,7 @@ def test_rule_is_shown_next_to_the_level() -> None:
         "description": "[dynamodb] aggregation: DynamoDB has no native equivalent.",
     }
     text = engineering_text(_report([risk]))
-    assert "Overall risk: MEDIUM" in text
+    assert "Overall risk: medium" in text
     assert _NOTE in text
 
 
