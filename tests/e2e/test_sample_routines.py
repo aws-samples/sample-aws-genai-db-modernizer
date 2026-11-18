@@ -110,6 +110,16 @@ def test_each_synthetic_routine_gets_its_outcome(sample_run: PipelineResult) -> 
             assert failed == [FAILED[sample]], (kind, rid, row)
 
 
+def test_only_the_deliberate_routine_needs_attention(sample_run: PipelineResult) -> None:
+    """With the sample's routine set added, a trigger the collection lists with no source
+    text (and a table it does not hold) is no routine to migrate: the one that needs
+    attention is the one made to (#2425)."""
+    migration = _migration(sample_run)
+    needs = [r for r in migration["routines"] if r["status"] == "needs_attention"]
+    assert [(r["kind"], r["routine_id"]) for r in needs] == [_key(sample_run.db, "needs_attention")]
+    assert migration["total"] == len(EXPECTED[sample_run.db])
+
+
 def _rewrite_record(run: PipelineResult, migration: dict[str, Any]) -> Any:
     """The rewritten routine's rewrite, made again from the job's routine sources the way
     the phase makes it: the artifact keeps the rule, never a diff (ADR-034 Decision 4)."""
@@ -293,17 +303,13 @@ def test_no_routine_text_reaches_report_json_or_the_deliverables(
 def test_the_counts_hold_only_the_routines_with_code(sample_run: PipelineResult) -> None:
     """#2124: discourse's collection lists 266 extension functions and aggregates by name
     only (before #1652): none is a routine to carry or to migrate yourself. Its 3 old
-    triggers keep their action statement (code, no CREATE), so they are read and are
-    routines to migrate yourself."""
+    triggers carry an action statement, not a CREATE, and the sample's routine sources
+    hold none for them: with those sources present they are names only too (#2425)."""
     facts = _report(sample_run)["facts"]["routines"]
-    old_triggers = 3 if sample_run.db == "discourse" else 0
-    assert facts["routine_count"] == len(EXPECTED[sample_run.db]) + old_triggers
-    n = 1 + old_triggers
-    them = "it" if n == 1 else "them"
-    assert facts["migrate_yourself_count"] == n
+    assert facts["routine_count"] == len(EXPECTED[sample_run.db])
+    assert facts["migrate_yourself_count"] == 1
     assert facts["migrate_yourself_line"] == (
-        f"we could not translate {n} routine{'' if n == 1 else 's'} automatically; "
-        f"migrate {them} yourself before wave 1"
+        "we could not translate 1 routine automatically; migrate it yourself before wave 1"
     )
 
 

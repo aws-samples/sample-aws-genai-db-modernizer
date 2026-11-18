@@ -728,6 +728,16 @@ def run_routine_migration_deterministic(
             raise RoutineMigrationError(
                 f"{type(exc).__name__} while checking {found.kind} {found.routine_id}"
             ) from None
+    if read:
+        # #2425: with the job's routine sources present, a row with no body status and
+        # no source of its own (an old trigger's action statement) is a name only too.
+        routines = [
+            r
+            for r in routines
+            if r.source_text != "not_collected" or _text(_value(r.row.get("body_status")))
+        ]
+        if not routines:
+            return None
     schemas = {r.schema.lower() for r in routines if r.schema}
     for r in routines:
         if r.node is None:

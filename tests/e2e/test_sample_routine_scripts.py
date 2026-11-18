@@ -49,13 +49,6 @@ TARGET_DATABASE = {"wordpress": "wordpress", "discourse": "discourse"}
 # MySQL triggers and events are created by the triggers-enable script, never the deploy
 # (MySQL can't create a trigger disabled; an enabled event would run during CDC).
 DEFERRED_KINDS = {"wordpress": {"trigger", "event"}, "discourse": set()}
-# discourse's collection lists 3 triggers from before #1652: their action statement is
-# kept (code, no CREATE), so they are not carried, as test_sample_routines.py counts them.
-OLD_TRIGGER_REASONS = [
-    "postgresql-routine-dependency-not-moved",
-    "source_text_not_collected",
-    "depends_on_table_not_collected",
-]
 # A line of each sample's refused routine's body: it never reaches a step 1 script.
 REFUSED_BODY = {"wordpress": "innodb_flush_log_at_trx_commit", "discourse": "pg_backup_start("}
 # The tables the discourse routine set names, created on the stand-in target from
@@ -198,11 +191,7 @@ def test_each_routine_lands_in_its_step_1_bucket(step1: Step1) -> None:
         row = rows.pop((kind, rid))
         assert row["carry"] == _bucket(sample, kind, status), (kind, rid, row)
         assert row["reasons"] == ([FAILED[sample]] if status == "needs_attention" else [])
-    # What is left is discourse's old triggers, not carried for having no CREATE.
-    assert {k for k, _ in rows} <= {"trigger"}
-    assert all(r["carry"] == "not_carried" for r in rows.values())
-    assert all(r["reasons"] == OLD_TRIGGER_REASONS for r in rows.values())
-    assert len(rows) == (3 if sample == "discourse" else 0)
+    assert rows == {}  # discourse's 3 old triggers are names only here (#2425)
     carried = sum(r["carry"] == "carried" for r in section["routines"])
     deferred = sum(r["carry"] == "deferred_to_cutover" for r in section["routines"])
     assert (section["carried"], section["deferred"]) == (carried, deferred)
@@ -219,7 +208,7 @@ def test_each_routine_lands_in_its_step_1_bucket(step1: Step1) -> None:
     not_carried = {(r["kind"], r["routine_id"]): r["reasons"] for r in line["not_carried_routines"]}
     [(kind, rid)] = [k for k, s in EXPECTED[sample].items() if s == "needs_attention"]
     assert not_carried.pop((kind, rid)) == [FAILED[sample]]
-    assert all(reasons == OLD_TRIGGER_REASONS for reasons in not_carried.values())
+    assert not_carried == {}
 
 
 def _creates(sql: str) -> list[tuple[str, str]]:
@@ -288,12 +277,7 @@ def test_the_triggers_enable_script_turns_on_what_step_1_left_off(step1: Step1) 
             'ALTER TABLE "public"."posts" ENABLE TRIGGER "posts_bump_topic";'
         ]
         assert sql.count("BEGIN;") == 1 and sql.rstrip().endswith("COMMIT;")
-        assert (line["expected"], line["in_script"], line["excluded"]) == (1, 1, 3)
-        assert {r["routine_id"].rsplit(".", 1)[-1] for r in line["excluded_routines"]} == {
-            "category_settings_require_reply_approval_readonly",
-            "category_settings_require_topic_approval_readonly",
-            "topic_timers_topic_id_readonly",
-        }
+        assert (line["expected"], line["in_script"], line["excluded"]) == (1, 1, 0)
     assert REFUSED_BODY[sample] not in step1.text("triggers-enable.sql")
 
 
@@ -435,13 +419,9 @@ def test_the_postgresql_scripts_deploy_and_check_on_a_stand_in_target(
                 str(step1.step / "triggers-enable-check.tsv"))  # fmt: skip
     assert ran.returncode == 0, ran.stderr
     triggers = _script("scripts/run_dms_step.py", "triggers-check", *step1.common)
-    # The carried trigger is confirmed in its source state; the result still fails on the
-    # 3 old triggers step 1 does not carry, each named.
+    # The carried trigger is confirmed in its source state, and no trigger is left out.
     assert (triggers["expected"], triggers["confirmed"], triggers["mismatches"]) == (1, 1, [])
-    assert triggers["status"] == "fail" and triggers["not_carried"] == 3, triggers
-    assert {r["reasons"] == OLD_TRIGGER_REASONS for r in triggers["not_carried_routines"]} == {
-        True
-    }, triggers
+    assert triggers["status"] == "pass" and triggers["not_carried"] == 0, triggers
     # The check output holds no routine text.
     for name in ("routines-check.tsv", "triggers-enable-check.tsv"):
         assert "bumped_at" not in step1.text(name), name
