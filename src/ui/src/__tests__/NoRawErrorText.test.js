@@ -85,6 +85,12 @@ function offenders(code, rel = 'x.js') {
   const catchNames = new Set();
   walk(ast.program, (n) => {
     if (n.type === 'CatchClause' && n.param && n.param.type === 'Identifier') catchNames.add(n.param.name);
+    // p.catch((x) => ...) and p.then(ok, (x) => ...): the callback's parameter holds the failure.
+    if (n.type === 'CallExpression' && isMember(n.callee) && !n.callee.computed) {
+      const which = n.callee.property.name === 'catch' ? 0 : n.callee.property.name === 'then' ? 1 : -1;
+      const cb = which >= 0 ? n.arguments[which] : null;
+      if (cb && /^(ArrowFunctionExpression|FunctionExpression)$/.test(cb.type) && cb.params[0] && cb.params[0].type === 'Identifier') catchNames.add(cb.params[0].name);
+    }
   });
   const holds = (names) => names.length > 0 && (ERRORISH.test(names[0]) || catchNames.has(names[0]) || names.slice(0, -1).some((x) => ERRORISH.test(x)));
   // A value that is an error: a bare error variable, or its message, stack, error or detail.
@@ -105,7 +111,7 @@ function offenders(code, rel = 'x.js') {
         add(n, 'prints a request status');
       }
       // G. the API base URL in a template (the request URL itself)
-      if (last === 'baseUrl' && rel !== 'classes/ApiManager.js' && anc.some((a) => a.type === 'TemplateLiteral')) add(n, 'builds text from the API base URL');
+      if (last === 'baseUrl' && rel !== 'classes/ApiManager.js' && anc.some((a) => a.type === 'TemplateLiteral' || (a.type === 'BinaryExpression' && a.operator === '+'))) add(n, 'builds text from the API base URL');
     }
     // B. names that only exist to print a URL, status or message
     if ((n.type === 'Identifier' || n.type === 'JSXIdentifier') && BANNED_NAMES.has(n.name)) add(n, `uses ${n.name}`);
@@ -190,6 +196,15 @@ describe('the checker flags every form of printing an error', () => {
     flags('const u = `${ApiConfigurations.baseUrl}assessments`;', 'builds text from the API base URL');
     flags('const u = `Failed at ${config.baseUrl}`;', 'builds text from the API base URL', 'pages/X.js');
   });
+  test('a callback parameter of catch() or then() holds an error', () => {
+    flags('p.catch((reason) => add({ content: reason.message }));', 'reads an error message');
+    flags('p.then(ok, (x) => add({ content: x.message }));', 'reads an error message');
+    flags('p.catch(function (x) { add({ content: `Failed: ${x}` }); });', 'interpolates an error');
+  });
+  test('the API base URL joined with +', () => {
+    flags("const u = 'At ' + ApiConfigurations.baseUrl;", 'builds text from the API base URL');
+    flags('const u = config.baseUrl + path;', 'builds text from the API base URL', 'pages/X.js');
+  });
   test('the old names and lines', () => {
     flags('const apiUrl = 1;', 'uses apiUrl');
     flags('const statusCode = 1;', 'uses statusCode');
@@ -214,6 +229,8 @@ test('the checker leaves safe reads alone', () => {
   expect(offenders("const a = t('x', { count: 2, id: queryId });")).toEqual([]);
   expect(offenders('const c = `${e.classes} cross-wave`;')).toEqual([]);
   expect(offenders('const a = <b>{c.failure}</b>;')).toEqual([]);
+  expect(offenders('p.catch((x) => log(x.status)); p.then((v) => v.message);')).toEqual([]);
+  expect(offenders('const u = this.baseUrl + path;', 'classes/ApiManager.js')).toEqual([]);
   expect(offenders('const u = `${this.baseUrl}${path}`;', 'classes/ApiManager.js')).toEqual([]);
 });
 

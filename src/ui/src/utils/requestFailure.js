@@ -73,7 +73,11 @@ export function failureMessageKey(kind, variant) {
 const REASON_MAX = 300;
 const TLDS = new Set(['com', 'net', 'org', 'io', 'dev', 'app', 'cloud', 'corp', 'internal', 'intranet', 'local', 'localhost',
   'lan', 'home', 'example', 'test', 'invalid', 'edu', 'gov', 'mil', 'int', 'info', 'biz', 'co', 'me', 'us', 'uk', 'de',
-  'fr', 'jp', 'cn', 'ru', 'in', 'br', 'au', 'ca', 'aws', 'amazon', 'amazonaws', 'xyz', 'top', 'site', 'online', 'ws']);
+  'fr', 'jp', 'cn', 'ru', 'in', 'br', 'au', 'ca', 'aws', 'amazon', 'amazonaws', 'xyz', 'top', 'site', 'online', 'ws',
+  'ai', 'sh', 'zip', 'mov', 'ly', 'page', 'link', 'gg', 'to', 'tv', 'cc', 'nl', 'se', 'ch', 'pl', 'eu', 'asia', 'tech',
+  'store', 'shop', 'click', 'space', 'live', 'tk', 'ml', 'ga', 'cf', 'gq', 'cx', 'vc', 'fm', 'ink', 'icu', 'club', 'vip',
+  'win', 'bid', 'download', 'network', 'email']);
+const FIELDS_MAX = 150;
 
 /**
  * The text of an API sentence that is safe to show, or null. NFKC-normalised first, so a
@@ -92,6 +96,8 @@ export function safeSentence(value) {
   if (/^\s*$/.test(text) || text.length > REASON_MAX) return null;
   if (!/^[A-Za-z0-9 .,;:'"()_\-/]+$/.test(text)) return null;
   if (/\/\//.test(text) || /[A-Za-z0-9_]:\S/.test(text)) return null; // scheme, host:port
+  if (/[A-Za-z0-9_-]\s+:\s*\d/.test(text)) return null; // host : port, with spaces
+  if (/\b\d{8,10}\b|\b0x[0-9a-f]+\b/i.test(text)) return null; // IPv4 written as one decimal or hex number
   if (/Traceback|\bat\s+[\w$.]+\s*\(|\bFile\s*"|\.(py|js|ts|java|rb|go):\d+|\bline \d+, in\b/.test(text)) return null; // a stack line
   if (/::/.test(text) || /[0-9A-Fa-f]{1,4}(:[0-9A-Fa-f]{0,4}){2,}/.test(text)) return null; // IPv6
   if (/(^|\s)\/|[\w.-]\/[\w.-]+\/|\.\.?\//.test(text)) return null; // a path
@@ -131,7 +137,9 @@ export function failureReason(source, t) {
       (Array.isArray(loc) ? loc : []).forEach((part) => {
         if (typeof part !== 'string' || LOC_NOISE.has(part)) return;
         const name = safeSentence(part);
-        if (name && !/[\s:/,;'"()]/.test(name) && !names.includes(name)) names.push(name);
+        if (!name || /[\s:/,;'"()]/.test(name) || names.includes(name)) return;
+        // The whole list stays short: a name that would push it past the cap is left out.
+        if ([...names, name].join(', ').length <= FIELDS_MAX) names.push(name);
       });
     });
     return names.length ? t('errors.request.fields', { fields: names.slice(0, 5).join(', ') }) : null;

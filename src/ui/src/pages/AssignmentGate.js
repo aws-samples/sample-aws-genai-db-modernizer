@@ -234,7 +234,7 @@ const AssignmentGatePage = memo(() => {
 
     } catch (error) {
       console.error('Error loading gate data:', error);
-      addFailure(t('assignment-gate.flash.failed-to-load'), error, { id: 'gate-load-failed', onRetry: () => fetchData() });
+      addFailure(t('assignment-gate.flash.failed-to-load'), error, { id: 'gate-load-failed', variant: undefined, onRetry: () => fetchData() });
     } finally {
       setLoading(false);
     }
