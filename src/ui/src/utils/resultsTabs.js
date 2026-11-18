@@ -55,7 +55,6 @@ export const RESULTS_TABS = [
     labelKey: 'analysis-results.tabs.data-model',
     sections: [
       section('table-owners-section', anchor('table-owners')),
-      section('sources-of-truth-section', anchor('sources-of-truth')),
       section('table-design-section', anchor('table-design')),
     ],
   },
@@ -80,6 +79,8 @@ const NESTED_ANCHORS = {
   'routines-section': 'plan',
   'engine-choices-note': 'plan',
   'no-open-risks-note': 'risks',
+  // #2321: the section a link made before it joined Table owners named.
+  'sources-of-truth-section': 'data-model',
 };
 
 const TAB_OF_ANCHOR = RESULTS_TABS.reduce(
