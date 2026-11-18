@@ -53,6 +53,14 @@ class TargetColumn(BaseModel):
 
 class TargetTable(BaseModel):
     table_name: str = Field(..., description="Target Aurora PostgreSQL table name")
+    schema_name: str | None = Field(
+        default=None,
+        description=(
+            "The schema the table is created in, when the design's tables come from more "
+            "than one source schema (#2455); its statements then name the table "
+            "schema.table. None in a design of one schema, and in a design saved before."
+        ),
+    )
     columns: list[TargetColumn] = Field(
         ..., min_length=1, description="Translated column definitions"
     )

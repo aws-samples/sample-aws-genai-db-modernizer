@@ -101,7 +101,11 @@ def design_base(
     inputs: JobInputs, engine: str, collector: CollectorOutputContract
 ) -> AuroraDesignBase:
     """The Aurora DDL generator's input for every collector table: what the step 1
-    targets are generated from, and what step 1's DDL file is rendered from (#1798)."""
+    targets are generated from, and what step 1's DDL file is rendered from (#1798).
+
+    Step 1 keys its targets by the bare table name and blocks a name two schemas share
+    (``ambiguous_target``), so the base never keys tables ``schema.table`` (#2455):
+    ``schema_qualified=False`` whatever schemas the collector spans."""
     source = collector.metadata.source_database
     return AuroraDesignBase(
         engine=engine,
@@ -110,6 +114,7 @@ def design_base(
         source_engine=source.engine.value,
         tables=project_schema_design_tables(collector),
         source_data_types=source_data_types(dict(inputs.collector)),
+        schema_qualified=False,
     )
 
 

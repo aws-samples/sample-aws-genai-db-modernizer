@@ -75,7 +75,7 @@ from src.shared.risk_severity import (
 )
 from src.shared.signal_labels import SIGNAL_NOUNS
 from src.shared.source_cache import cost_basis_sentence
-from src.shared.table_keys import normalize_table_name
+from src.shared.table_keys import DesignTableKeys, normalize_table_name
 from src.shared.table_writer import table_writer
 from src.shared.target_databases import engine_scope_display_order
 from src.shared.trade_off_topics import (
@@ -2565,7 +2565,7 @@ def query_group_facts(report: dict[str, Any]) -> dict[str, Any] | None:
         "listed_group_indexes": listed,
         "relational_rows": rows,
         "relational_query_counts": query_counts,
-        "table_queries": _table_query_rows(indexed, engines),
+        "table_queries": _table_query_rows(indexed, engines, report),
         "ungrouped_queries": _ungrouped_query_rows(report, [g for _, g in indexed]),
         "procedure_internal_queries": _group_query_count(indexed, PROCEDURE_INTERNAL_GROUP_LABEL),
         # Every follower, on any engine, and per engine: a non-relational engine's groups
@@ -2575,14 +2575,38 @@ def query_group_facts(report: dict[str, Any]) -> dict[str, Any] | None:
     }
 
 
+def _design_table_keys(report: Mapping[str, Any], engine: str) -> DesignTableKeys | None:
+    """The keys of the engine's design tables when its design names their schemas (#2455:
+    its tables come from more than one schema), from the report's design summary; None
+    for a design of one schema, a report with no design, and one saved before."""
+    summary = (report.get("schema_designs") or {}).get(engine)
+    tables = summary.get("tables") if isinstance(summary, dict) else None
+    pairs = [
+        (t["table_name"], t.get("schema_name") if isinstance(t.get("schema_name"), str) else None)
+        for t in tables or []
+        if isinstance(t, dict) and isinstance(t.get("table_name"), str)
+    ]
+    database = report.get("database_name")
+    if not any(schema for _, schema in pairs):
+        return None
+    return DesignTableKeys(pairs, database if isinstance(database, str) else None)
+
+
 def _table_query_rows(
-    indexed: list[tuple[int, dict[str, Any]]], engines: list[str]
+    indexed: list[tuple[int, dict[str, Any]]],
+    engines: list[str],
+    report: Mapping[str, Any] | None = None,
 ) -> list[dict[str, Any]]:
     """Per relational engine and table (``table_keys``), the distinct queries the engine
     serves that touch it (``TableQueryRow``, #2325), from each group's ``source_queries``
-    and the engine's own access patterns. A query on two tables is in both rows."""
+    and the engine's own access patterns. A query on two tables is in both rows. When the
+    engine's design names its tables' schemas (#2455), a table is keyed ``schema.table``
+    as the design keys it, so two schemas' tables of one name are two rows; a bare name
+    two of them share is kept under its bare key, matching neither, and a name of a schema
+    the design lacks under its own ``schema.table`` key (``DesignTableKeys.row_key``)."""
     out: list[dict[str, Any]] = []
     for engine in engines:
+        keys = _design_table_keys(report or {}, engine)
         by_table: dict[str, dict[str, None]] = {}
         for _, g in indexed:
             served = {
@@ -2596,9 +2620,8 @@ def _table_query_rows(
                     continue
                 for name in sq.get("tables_accessed") or []:
                     if isinstance(name, str) and not is_placeholder_table(name):
-                        by_table.setdefault(normalize_table_name(name), {})[
-                            str(sq["query_id"])
-                        ] = None
+                        key = keys.row_key(name) if keys else normalize_table_name(name)
+                        by_table.setdefault(key, {})[str(sq["query_id"])] = None
         for table in sorted(by_table):
             ids = sorted(by_table[table])
             out.append(

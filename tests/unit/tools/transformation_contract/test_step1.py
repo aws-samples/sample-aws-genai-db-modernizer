@@ -154,6 +154,7 @@ def test_the_assignment_version_is_the_one_load_inputs_resolved():
     assert build_step1(resolved).assignment_version == 4
 
 
+@pytest.mark.passes_on_main  # main never qualified step 1; fails if step 1 does (#2479 review)
 def test_two_schemas_sharing_a_table_name_block_both_rules():
     tables = [_table("a", "users", [_col("id", "int", 1)]), _table("b", "users", [_col("id", "int", 1)]),
               _table("a", "solo", [_col("id", "int", 1)])]  # fmt: skip
@@ -163,7 +164,22 @@ def test_two_schemas_sharing_a_table_name_block_both_rules():
         rule = _rule(c, table_id)
         assert rule.status == "blocked" and [f.code for f in rule.findings] == ["ambiguous_target"]
         assert rule.findings[0].severity == "error" and rule.findings[0].table_id == table_id
-    assert _rule(c, "a.solo").status == "valid"
+    solo = _rule(c, "a.solo")
+    assert solo.status == "valid" and [f.target_type for f in solo.fields] == ["INT"]
+
+
+@pytest.mark.passes_on_main  # main never qualified step 1; this pins it (#2479 review)
+def test_two_schemas_with_no_shared_name_keep_their_rule_fields():
+    """Step 1 keys its targets by the bare table name (#2479 review): a collector with two
+    schemas must not switch the design base to ``schema.table`` keys, or every rule loses
+    its fields."""
+    tables = [
+        _table("a", "users", [_col("id", "int", 1)]),
+        _table("b", "orders", [_col("id", "int", 1)]),
+    ]
+    c = build_step1(_inputs(tables=tables))
+    assert [(r.source_table, r.status, [f.target_type for f in r.fields]) for r in c.rules] == [
+        ("a.users", "valid", ["INT"]), ("b.orders", "valid", ["INT"])]  # fmt: skip
 
 
 def test_the_input_is_not_changed():

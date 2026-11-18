@@ -24,7 +24,9 @@ script's work.
 
 You never see or rewrite the full draft: you return a **delta**
 (`AuroraDesignDeltaContract`) and the script merges it into the draft,
-regenerates the DDL and validates the full contract.
+regenerates the DDL and validates the full contract. When the design's tables
+come from more than one source schema, the view names each table `schema.table`
+(`sales.orders`), and the delta names it the same way. <!-- claim: tests/unit/tools/schema/aurora_common/test_schema_qualified_tables.py::test_the_design_view_names_each_table_with_its_schema, tests/unit/tools/schema/aurora_common/test_schema_qualified_tables.py::test_a_delta_names_one_schemas_table_and_a_bare_shared_name_is_refused -->
 
 ## Rules
 

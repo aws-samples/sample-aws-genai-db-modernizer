@@ -269,7 +269,8 @@ def schema_table_defs(engine: str, schema: dict) -> list[dict]:
     - ElastiCache: ``key_designs`` (one entry per key pattern)
     - Aurora: ``table_definitions`` without ``source_tables``, because tables
       carry over 1:1. Each maps back to ``<source_database>.<table_name>``, the
-      ``table_id`` form analysis uses.
+      ``table_id`` form analysis uses, or ``<schema_name>.<table_name>`` for a table
+      of a design of several schemas (#2455), its own table's id.
 
     Never mutates ``schema``.
     """
@@ -281,7 +282,13 @@ def schema_table_defs(engine: str, schema: dict) -> list[dict]:
             {
                 **t,
                 "source_tables": t.get("source_tables")
-                or [f"{source_db}.{t['table_name']}" if source_db else t["table_name"]],
+                or [
+                    (
+                        f"{t['schema_name']}.{t['table_name']}"
+                        if t.get("schema_name")
+                        else f"{source_db}.{t['table_name']}" if source_db else t["table_name"]
+                    )
+                ],
                 "aggregate_pattern": "relational_table",
             }
             for t in table_defs

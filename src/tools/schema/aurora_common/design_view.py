@@ -28,6 +28,7 @@ from src.contracts.schema_design_input import (
     AgentQueryPattern,
     AgentTable,
 )
+from src.shared.table_keys import DesignTableKeys
 from src.tools.schema.aurora_common.ddl_generator import (
     POSTGRES,
     DdlResult,
@@ -55,13 +56,18 @@ def _qps(q) -> float:
     return float(q.frequency_per_hour) / 3600.0
 
 
-def _table_rates(collector: AgentCollectorInput) -> dict[str, dict[str, float]]:
+def _table_rates(
+    collector: AgentCollectorInput, keys: DesignTableKeys | None = None
+) -> dict[str, dict[str, float]]:
+    """Read and write calls/s and query count per table key: ``keys.key_of`` of each name a
+    query spells (#2455: a design of several schemas keys ``schema.table``), else ``_key``."""
     rates: dict[str, dict[str, float]] = defaultdict(lambda: {"read": 0.0, "write": 0.0, "n": 0})
     for q in collector.queries.query_patterns:
         kind = "write" if (q.query_type and q.query_type.value in _WRITE_TYPES) else "read"
         for t in q.tables_accessed:
-            rates[_key(t)][kind] += _qps(q)
-            rates[_key(t)]["n"] += 1
+            key = (keys.key_of(t) if keys is not None else None) or _key(t)
+            rates[key][kind] += _qps(q)
+            rates[key]["n"] += 1
     return rates
 
 
@@ -286,7 +292,7 @@ def _column_line(base: AuroraDesignBase, table: AgentTable, col, ddl_col, residu
         parts.append(f"DEFAULT {default}")
     elif ddl_col.default_dropped:
         parts.append("(default dropped)")
-    raw = base.source_data_types.get((table.table_name, col.column_name))
+    raw = base.source_data_types.get((base.name_of(table), col.column_name))
     if residual:
         parts.append(f"(residual; source {raw or '?'})")
     elif raw and " ".join(raw.lower().split()) != ddl_col.aurora_type.lower():
@@ -332,13 +338,14 @@ def build_design_view(
     raw_collector = raw_collector or {}
     table_keys = {_key(t.table_name) for t in base.tables}
     draft = base.generate()
-    rates = _table_rates(collector)
+    rates = _table_rates(collector, base.table_keys())
     residual_cols = {(r["table"], r["column"]) for r in draft.residuals}
     tables = []
     for src, ddl in zip(base.tables, draft.tables, strict=True):
-        rate = rates.get(_key(src.table_name), {"read": 0.0, "write": 0.0, "n": 0})
+        rate = rates.get(base.key_of(src), {"read": 0.0, "write": 0.0, "n": 0})
         entry: dict = {
-            "table_name": src.table_name,
+            # The draft's name: ``<schema>.<table>`` in a design of several schemas (#2455).
+            "table_name": base.name_of(src),
             "row_count": src.row_count,
             "size_mb": src.size_mb,
             "read_qps": round(rate["read"], 4),
@@ -347,7 +354,11 @@ def build_design_view(
             "primary_key": src.primary_key or [],
             "columns": [
                 _column_line(
-                    base, src, col, ddl_col, (src.table_name, col.column_name) in residual_cols
+                    base,
+                    src,
+                    col,
+                    ddl_col,
+                    (base.name_of(src), col.column_name) in residual_cols,
                 )
                 for col, ddl_col in zip(src.columns, ddl.columns, strict=True)
             ],

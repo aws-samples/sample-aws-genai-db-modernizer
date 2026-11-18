@@ -101,6 +101,8 @@ describe('buildAuroraTables', () => {
     expect(tables).toHaveLength(2);
     expect(tables[0]).toEqual({
       tableName: 'wp_posts',
+      bareName: 'wp_posts',
+      schemaName: null,
       columns: [
         { name: 'ID', auroraType: 'BIGINT UNSIGNED', sourceType: 'integer' },
         { name: 'post_title', auroraType: 'VARCHAR(255)', sourceType: 'string' },

@@ -38,9 +38,12 @@ a separate field).
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from dataclasses import dataclass, field
 
 from src.contracts.schema_design_input import AgentQueryPattern, AgentTable
+from src.shared.table_keys import DesignTableKeys, table_key
+from src.tools.schema.aurora_common.ddl_generator import design_table_name
 from src.tools.sql.query_facts import query_facts
 
 # A query is reported as unserved rather than guessed at when no index leads
@@ -73,8 +76,9 @@ class DerivedPatterns:
 def _norm(name: str) -> str:
     """Fold an identifier for comparison only — never for emission.
 
-    Matches schema-insensitively, the same way ``delta_merge._table_key``
-    does (#157 review, C1): strip bracket/quote characters anywhere in the
+    Matches column names, and table names in a design of one schema
+    (``table_keys.DesignTableKeys`` keys a design of several, #2455), schema-insensitively
+    (#157 review, C1): strip bracket/quote characters anywhere in the
     name, fold case, and keep only the last ``.``-separated segment. A
     collector table name like ``wordpress.wp_posts`` therefore matches a
     design table named bare ``wp_posts`` — without this, every pattern on a
@@ -117,7 +121,9 @@ def _pk_index_name(table: AgentTable, engine: str) -> str:
 
 
 def _candidates_for(
-    query: AgentQueryPattern, tables_by_name: dict[str, AgentTable], engine: str
+    query: AgentQueryPattern,
+    find: Callable[[str], tuple[str, AgentTable] | None],
+    engine: str,
 ) -> list[IndexCandidate]:
     """Every index on the query's tables whose leading column the filter covers."""
     filter_cols = {_norm(c) for c in (query.filter_columns or [])}
@@ -126,9 +132,10 @@ def _candidates_for(
 
     found: list[IndexCandidate] = []
     for raw_name in query.tables_accessed:
-        table = tables_by_name.get(_norm(raw_name))
-        if table is None:
+        hit = find(raw_name)
+        if hit is None:
             continue
+        name, table = hit
 
         # The primary key is an index even when the collector does not list it
         # as one; a PK lookup is the single most common relational pattern and
@@ -152,7 +159,7 @@ def _candidates_for(
             if prefix > 0:
                 found.append(
                     IndexCandidate(
-                        table_name=table.table_name,
+                        table_name=name,
                         index_name=index_name,
                         columns=tuple(columns),
                         is_unique=is_unique,
@@ -337,6 +344,9 @@ def derive_access_patterns(
     engine: str = "aurora_mysql",
     source_engine: str | None = None,
     dropped_indexes: frozenset[tuple[str, str]] = frozenset(),
+    qualified: bool = False,
+    *,
+    source_database: str | None = None,
 ) -> DerivedPatterns:
     """Project observed queries onto Aurora access patterns.
 
@@ -358,8 +368,28 @@ def derive_access_patterns(
 
     ``dropped_indexes`` holds the ``(table, index)`` source indexes the target draft
     does not create: a pattern one of them serves needs judgment (#1597).
+
+    ``qualified``: the draft creates each table in its source schema (#2455), so a query's
+    table is found by schema and name (``table_keys.DesignTableKeys``) and named
+    ``<schema>.<table>`` as the draft names it, in ``dropped_indexes`` too. A qualified
+    name of a schema the design lacks finds no table, unless its prefix is
+    ``source_database`` (#2479 review).
     """
-    tables_by_name = {_norm(t.table_name): t for t in tables}
+    keys = DesignTableKeys(
+        ((t.table_name, t.schema_name if qualified else None) for t in tables), source_database
+    )
+    by_key = {
+        table_key(t.table_name, t.schema_name if qualified else None): (
+            design_table_name(t, qualified),
+            t,
+        )
+        for t in tables
+    }
+
+    def find(name: str) -> tuple[str, AgentTable] | None:
+        key = keys.key_of(name)
+        return by_key.get(key) if key is not None else None
+
     result = DerivedPatterns()
 
     for query, reads_rows in (_read_predicate(q, source_engine) for q in queries):
@@ -368,7 +398,7 @@ def derive_access_patterns(
         # not an assignment-scope one: there is nothing to resolve an index
         # against, but the query is still on this engine (see the docstring
         # above) -- in_scope stays true, only load_testable turns false.
-        designed = [t for t in query.tables_accessed if _norm(t) in tables_by_name]
+        designed = [t for t in query.tables_accessed if find(t) is not None]
         if not designed:
             reason = (
                 "None of this query's tables could be identified in the Aurora "
@@ -400,7 +430,7 @@ def derive_access_patterns(
             )
             continue
 
-        candidates = _candidates_for(query, tables_by_name, engine)
+        candidates = _candidates_for(query, find, engine)
         has_predicate = bool(query.filter_columns)
         predicate_known = query.filter_columns is not None
         index_used, needs_judgment, reason = _resolve_index(

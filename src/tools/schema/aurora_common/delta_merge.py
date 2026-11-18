@@ -45,6 +45,7 @@ from src.contracts.schema_design_input import (
     AgentQueryPattern,
     AgentTable,
 )
+from src.shared.table_keys import DesignTableKeys, spans_schemas, table_key
 from src.tools.schema.aurora_common.access_patterns import derive_access_patterns
 from src.tools.schema.aurora_common.ddl_generator import (
     MYSQL,
@@ -60,6 +61,7 @@ from src.tools.schema.aurora_common.ddl_generator import (
     assemble_full_ddl,
     carried_indexes,
     comment_text,
+    design_table_name,
     generate_mysql_ddl,
     generate_pg_ddl,
     mysql_key_plan,
@@ -89,12 +91,6 @@ _OUTPUT_CONTRACTS: dict[str, type[BaseModel]] = {
 }
 
 
-def _table_key(name: str) -> str:
-    """``discourse.users``, ``"users"`` and ``USERS`` all match draft table ``users``."""
-    cleaned = "".join(c for c in name if c not in '`"[]').strip().lower()
-    return cleaned.rsplit(".", 1)[-1].strip()
-
-
 def _schema_of(name: str) -> str | None:
     cleaned = "".join(c for c in name if c not in '`"[]').strip().lower()
     return cleaned.rsplit(".", 1)[0].strip() if "." in cleaned else None
@@ -122,10 +118,38 @@ class AuroraDesignBase:
     SQL (#2381 review 2) or another index of the table has it (#2402), by
     ``ddl_generator.quotable_tables``, kept across
     ``dataclasses.replace``. Never written into DDL; each becomes an app-layer note."""
+    schema_qualified: bool | None = None
+    """Whether the draft creates each table in its source schema (#2455): None decides it
+    from ``tables`` (more than one schema among them); step 1 passes False. With it, the
+    draft names each table ``<schema>.<table>`` (``name_of``), and ``source_data_types``
+    and the type overrides are keyed on that name."""
 
     def __post_init__(self) -> None:
-        self.tables, left_out = quotable_tables(self.tables, self.dialect)
+        if self.schema_qualified is None:
+            self.schema_qualified = spans_schemas(t.schema_name for t in self.tables)
+        self.tables, left_out = quotable_tables(self.tables, self.dialect, self.qualified)
         self.left_out = [*self.left_out, *left_out]
+
+    @property
+    def qualified(self) -> bool:
+        return bool(self.schema_qualified)
+
+    def name_of(self, table: AgentTable) -> str:
+        """The draft's name for ``table`` (``ddl_generator.design_table_name``)."""
+        return design_table_name(table, self.qualified)
+
+    def schema_of(self, table: AgentTable) -> str | None:
+        """The schema the draft creates ``table`` in, None in a design of one schema."""
+        return table.schema_name if self.qualified else None
+
+    def key_of(self, table: AgentTable) -> str:
+        """``table``'s key (``table_keys.table_key``)."""
+        return table_key(table.table_name, self.schema_of(table))
+
+    def table_keys(self) -> DesignTableKeys:
+        return DesignTableKeys(
+            ((t.table_name, self.schema_of(t)) for t in self.tables), self.source_database
+        )
 
     @property
     def migration_strategy(self) -> str:
@@ -143,18 +167,22 @@ class AuroraDesignBase:
         raw_collector: dict | None = None,
     ) -> AuroraDesignBase:
         """``agent_collector`` is the projected input; ``raw_collector`` supplies ``data_type``."""
+        qualified = spans_schemas(t.schema_name for t in agent_collector.tables)
         return cls(
             engine=engine,
             job_id=agent_collector.job_id,
             source_database=agent_collector.source_database_name,
             source_engine=agent_collector.source_database_engine,
             tables=list(agent_collector.tables),
-            source_data_types=source_data_types(raw_collector or {}),
+            source_data_types=source_data_types(raw_collector or {}, qualified=qualified),
             queries=list(agent_collector.queries.query_patterns),
+            schema_qualified=qualified,
         )
 
     def generate(self, type_overrides: TypeOverrides | None = None) -> DdlResult:
-        return _GENERATORS[self.engine](self.tables, type_overrides, self.source_engine)
+        return _GENERATORS[self.engine](
+            self.tables, type_overrides, self.source_engine, self.qualified
+        )
 
     def fingerprint(self) -> str:
         """Hash of everything the draft is built from.
@@ -170,9 +198,54 @@ class AuroraDesignBase:
             "source_data_types": sorted(
                 f"{t}.{c}={v}" for (t, c), v in self.source_data_types.items()
             ),
+            # Only when set, so a one-schema draft keeps the fingerprint it always had.
+            **({"schema_qualified": True} if self.qualified else {}),
         }
         digest = hashlib.sha256(json.dumps(payload, sort_keys=True).encode()).hexdigest()
         return f"sha256:{digest}"
+
+
+@dataclass
+class _Tables:
+    """The draft's tables under the draft's names (``AuroraDesignBase.name_of``), each found
+    by any spelling a delta uses: ``discourse.users``, ``"users"`` and ``USERS`` all find
+    draft table ``users``; in a design of several schemas (#2455) ``sales.orders`` finds
+    that schema's ``orders``, and a bare ``orders`` two schemas have finds none."""
+
+    named: list[AgentTable]
+    refs: dict[str, tuple[str, str | None]]  # draft name -> (table, schema) the SQL names
+    by_key: dict[str, AgentTable]
+    keys: DesignTableKeys
+
+    @classmethod
+    def of(cls, base: AuroraDesignBase) -> _Tables:
+        named: list[AgentTable] = []
+        refs: dict[str, tuple[str, str | None]] = {}
+        by_key: dict[str, AgentTable] = {}
+        for t in base.tables:
+            copy = t.model_copy(update={"table_name": base.name_of(t)})
+            named.append(copy)
+            refs[copy.table_name] = (t.table_name, base.schema_of(t))
+            by_key[base.key_of(t)] = copy
+        return cls(named, refs, by_key, base.table_keys())
+
+    def find(self, name: str) -> AgentTable | None:
+        key = self.keys.key_of(name)
+        return self.by_key.get(key) if key is not None else None
+
+
+def _unknown_table(name: str, tables: _Tables, hint: str = "") -> str:
+    """Why a delta's table name finds no draft table: none has it, or two schemas do."""
+    bare = name.replace('"', "").replace("`", "").rsplit(".", 1)[-1].strip().lower()
+    schemas = sorted(
+        str(schema) for table, schema in tables.refs.values() if schema and table.lower() == bare
+    )
+    if len(schemas) > 1:
+        return (
+            f"table '{name}' is in more than one schema ({', '.join(schemas)}); name it as "
+            "<schema>.<table>, as the design view does"
+        )
+    return f"unknown table '{name}'; the draft has no such table{hint}"
 
 
 def draft_index_names(table: AgentTable, dialect: Dialect) -> list[str]:
@@ -180,15 +253,20 @@ def draft_index_names(table: AgentTable, dialect: Dialect) -> list[str]:
     return [i.index_name for i in carried_indexes(table, dialect)]
 
 
-def source_data_types(raw_collector: dict) -> dict[tuple[str, str], str]:
-    """``(table_name, column_name) -> data_type`` from a raw collector output dict."""
+def source_data_types(
+    raw_collector: dict, *, qualified: bool = False
+) -> dict[tuple[str, str], str]:
+    """``(table_name, column_name) -> data_type`` from a raw collector output dict; with
+    ``qualified`` (#2455) a table with a schema is ``<schema>.<table>``, as the draft
+    names it."""
     types: dict[tuple[str, str], str] = {}
     for table in (raw_collector.get("database_schema") or {}).get("tables") or []:
+        name = str(table.get("table_name", ""))
+        if qualified and table.get("schema_name"):
+            name = f"{table['schema_name']}.{name}"
         for col in table.get("columns") or []:
             if col.get("data_type"):
-                types[(table.get("table_name", ""), col.get("column_name", ""))] = str(
-                    col["data_type"]
-                )
+                types[(name, col.get("column_name", ""))] = str(col["data_type"])
     return types
 
 
@@ -213,14 +291,14 @@ def _check_dialect_type(engine: str, aurora_type: str, where: str, errors: list[
 def _type_overrides(
     base: AuroraDesignBase,
     delta: AuroraDesignDeltaContract,
-    by_key: dict[str, AgentTable],
+    tables: _Tables,
     residuals: list[dict],
     errors: list[str],
     warnings: list[str],
 ) -> tuple[TypeOverrides, int]:
     overrides: TypeOverrides = {}
     for i, change in enumerate(delta.tables):
-        table = by_key.get(_table_key(change.table_name))
+        table = tables.find(change.table_name)
         if table is None:
             continue  # reported by the caller
         columns = [c.column_name for c in table.columns]
@@ -298,6 +376,7 @@ def _structured_index(
     column_ddls: list[ColumnDDL],
     *,
     modify: bool = False,
+    tables: _Tables,
 ) -> _Index:
     """Validate one delta index entry against the table, its merged column types
     (``column_ddls``) and the dialect. Raises SqlFragmentError.
@@ -309,7 +388,8 @@ def _structured_index(
     columns = [c.column_name for c in table.columns]
     if isinstance(entry, str):
         parsed = parse_index_statement(entry)
-        if _table_key(parsed.table) != _table_key(table.table_name):
+        spelled = f"{parsed.schema}.{parsed.table}" if parsed.schema else parsed.table
+        if tables.find(spelled) is not table:
             raise SqlFragmentError(
                 f"index '{parsed.index_name}' is not ON table '{table.table_name}'"
             )
@@ -407,10 +487,11 @@ def _structured_index(
     )
 
 
-def _render(base: AuroraDesignBase, table: AgentTable, index: _Index) -> str:
+def _render(base: AuroraDesignBase, ref: tuple[str, str | None], index: _Index) -> str:
+    """``index`` on the table ``ref`` names: its (table, schema), as ``_Tables.refs``."""
     return render_index(
         base.dialect,
-        table.table_name,
+        ref[0],
         index.name,
         index.columns,
         unique=index.unique,
@@ -418,6 +499,7 @@ def _render(base: AuroraDesignBase, table: AgentTable, index: _Index) -> str:
         include=index.include,
         where_sql=index.where_sql,
         prefix_lengths=index.prefix_lengths,
+        schema=ref[1],
     )
 
 
@@ -431,7 +513,7 @@ def _lookup(current: dict[str, str], name: str) -> str | None:
 def _apply_index_changes(
     base: AuroraDesignBase,
     delta: AuroraDesignDeltaContract,
-    by_key: dict[str, AgentTable],
+    tables: _Tables,
     table_ddls: dict[str, TableDDL],
     draft_indexes: dict[str, list[str]],
     errors: list[str],
@@ -439,9 +521,10 @@ def _apply_index_changes(
 ) -> dict[str, int]:
     counts = {"added": 0, "modified": 0, "removed": 0}
     for i, change in enumerate(delta.tables):
-        table = by_key.get(_table_key(change.table_name))
+        table = tables.find(change.table_name)
         if table is None:
             continue
+        ref = tables.refs[table.table_name]
         ddl = table_ddls[table.table_name]
         # name -> statement, in draft order (names come from the source, not the model)
         current: dict[str, str] = dict(
@@ -463,7 +546,9 @@ def _apply_index_changes(
         for j, entry in enumerate(change.modify_indexes):
             where = f"tables[{i}].modify_indexes[{j}]"
             try:
-                index = _structured_index(base, table, entry, ddl.columns, modify=True)
+                index = _structured_index(
+                    base, table, entry, ddl.columns, modify=True, tables=tables
+                )
             except (SqlFragmentError, ValidationError) as exc:
                 errors.append(f"{where}: {exc}")
                 continue
@@ -474,7 +559,7 @@ def _apply_index_changes(
                     "(modify_indexes is matched by index_name; use add_indexes for a new one)"
                 )
                 continue
-            current[existing] = _render(base, table, index)
+            current[existing] = _render(base, ref, index)
             _drop_index_notes(index_notes, table.table_name, existing)
             index_notes.extend({**n, "index": existing} for n in index.notes)
             counts["modified"] += 1
@@ -482,7 +567,7 @@ def _apply_index_changes(
         for j, entry in enumerate(change.add_indexes):
             where = f"tables[{i}].add_indexes[{j}]"
             try:
-                index = _structured_index(base, table, entry, ddl.columns)
+                index = _structured_index(base, table, entry, ddl.columns, tables=tables)
             except (SqlFragmentError, ValidationError) as exc:
                 errors.append(f"{where}: {exc}")
                 continue
@@ -491,7 +576,7 @@ def _apply_index_changes(
                     f"{where}: index '{index.name}' already exists on '{table.table_name}'"
                 )
                 continue
-            current[index.name] = _render(base, table, index)
+            current[index.name] = _render(base, ref, index)
             index_notes.extend(index.notes)
             counts["added"] += 1
 
@@ -667,16 +752,18 @@ def merge_design_delta(
 
     errors: list[str] = []
     warnings: list[str] = []
-    by_key = {_table_key(t.table_name): t for t in base.tables}
+    tables = _Tables.of(base)
     seen: set[str] = set()
     for i, change in enumerate(contract.tables):
-        key = _table_key(change.table_name)
-        table = by_key.get(key)
+        table = tables.find(change.table_name)
+        key = table.table_name if table is not None else change.table_name
         schema = _schema_of(change.table_name)
         if table is None:
             errors.append(
-                f"tables[{i}]: unknown table '{change.table_name}'; the draft has no such "
-                "table (use a table_name from the design view)"
+                f"tables[{i}]: "
+                + _unknown_table(
+                    change.table_name, tables, " (use a table_name from the design view)"
+                )
             )
         elif schema is not None and schema not in {
             s.lower() for s in (table.schema_name, base.source_database) if s
@@ -690,12 +777,12 @@ def merge_design_delta(
         seen.add(key)
 
     draft = base.generate()
-    overrides, by_rule = _type_overrides(base, contract, by_key, draft.residuals, errors, warnings)
+    overrides, by_rule = _type_overrides(base, contract, tables, draft.residuals, errors, warnings)
     ddl = base.generate(overrides)
     table_ddls = {t.table_name: t for t in ddl.tables}
-    draft_indexes = {t.table_name: draft_index_names(t, base.dialect) for t in base.tables}
+    draft_indexes = {t.table_name: draft_index_names(t, base.dialect) for t in tables.named}
     index_counts = _apply_index_changes(
-        base, contract, by_key, table_ddls, draft_indexes, errors, ddl.index_notes
+        base, contract, tables, table_ddls, draft_indexes, errors, ddl.index_notes
     )
 
     for note in ddl.index_notes:
@@ -717,11 +804,11 @@ def merge_design_delta(
     summary = {
         "tables_changed": len(
             {
-                _table_key(c.table_name)
+                found.table_name
                 for c in contract.tables
                 if c.add_indexes or c.modify_indexes or c.remove_indexes or c.column_types
+                if (found := tables.find(c.table_name)) is not None
             }
-            & set(by_key)
         ),
         "column_types_set": len(overrides) - by_rule,
         "residuals_resolved_by_rule": by_rule,
@@ -753,12 +840,18 @@ def merge_design_delta(
     # change rather than riding along here.
     dropped = frozenset(
         (t.table_name, i.index_name)
-        for t in base.tables
+        for t in tables.named
         for i in secondary_indexes(t)
         if i.index_name not in draft_indexes[t.table_name]
     )
     derived = derive_access_patterns(
-        base.queries, base.tables, base.engine, base.source_engine, dropped
+        base.queries,
+        base.tables,
+        base.engine,
+        base.source_engine,
+        dropped,
+        base.qualified,
+        source_database=base.source_database,
     )
     warnings.extend(_access_pattern_residual_warnings(derived.residuals))
     output = {
@@ -770,6 +863,8 @@ def merge_design_delta(
         "table_definitions": [
             {
                 "table_name": t.table_name,
+                # The schema it is created in, only in a design of several schemas (#2455).
+                **({"schema_name": t_ddl.schema_name} if t_ddl.schema_name else {}),
                 "columns": [
                     {
                         "name": c.name,
@@ -788,7 +883,7 @@ def merge_design_delta(
                 # The table's own cut of generated_ddl, so no reader has to split the script.
                 "ddl_statements": [t_ddl.create_sql, *t_ddl.index_sql, *t_ddl.fk_sql],
             }
-            for t, t_ddl in ((t, table_ddls[t.table_name]) for t in base.tables)
+            for t, t_ddl in ((t, table_ddls[base.name_of(t)]) for t in base.tables)
         ],
         "generated_ddl": assemble_full_ddl(ddl.tables),
         "access_patterns": derived.patterns,
@@ -855,7 +950,7 @@ def full_contract_to_delta(
     WHERE) are appended to ``warnings``.
     """
     errors: list[str] = []
-    by_key = {_table_key(t.table_name): t for t in base.tables}
+    found = _Tables.of(base)
     draft = base.generate()
     draft_types = {(t.table_name, c.name): c.aurora_type for t in draft.tables for c in t.columns}
     draft_indexes = {
@@ -873,12 +968,12 @@ def full_contract_to_delta(
     tables: list[dict] = []
     for i, table_def in enumerate(response.get("table_definitions") or []):
         name = str((table_def or {}).get("table_name", ""))
-        table = by_key.get(_table_key(name))
+        schema_name = (table_def or {}).get("schema_name")
+        table = found.find(f"{schema_name}.{name}" if schema_name else name)
         if table is None:
-            errors.append(
-                f"table_definitions[{i}]: unknown table '{name}'; the draft has no such table"
-            )
+            errors.append(f"table_definitions[{i}]: {_unknown_table(name, found)}")
             continue
+        ref = found.refs[table.table_name]
         change: dict = {"table_name": table.table_name, "column_types": [], "add_indexes": []}
         change["modify_indexes"] = []
         columns = [c.column_name for c in table.columns]
@@ -914,7 +1009,8 @@ def full_contract_to_delta(
             }
             if parsed.method:
                 entry["method"] = parsed.method
-            if _table_key(parsed.table) != _table_key(table.table_name):
+            spelled = f"{parsed.schema}.{parsed.table}" if parsed.schema else parsed.table
+            if found.find(spelled) is not table:
                 errors.append(
                     f"{where}: index '{parsed.index_name}' is not ON '{table.table_name}'"
                 )
@@ -924,7 +1020,7 @@ def full_contract_to_delta(
                 change["add_indexes"].append(entry)
             elif parsed.index_name and existing[draft_name] != _render(
                 base,
-                table,
+                ref,
                 _Index(parsed.index_name, parsed.columns, parsed.unique, parsed.method, [], None),
             ):
                 change["modify_indexes"].append({**entry, "index_name": draft_name})

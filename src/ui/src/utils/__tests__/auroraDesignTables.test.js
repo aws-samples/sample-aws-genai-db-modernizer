@@ -6,7 +6,7 @@
  * statements the design stores for it (never a re-split of the script), the query count the
  * facts state and the query rows those ids name; the list filters on the table name.
  */
-import { withTableDetails, filterAuroraTables, buildAuroraDesign, buildAuroraTables, tableKey } from '../auroraDesign';
+import { withTableDetails, filterAuroraTables, buildAuroraDesign, buildAuroraTables, tableKey, designTableKey } from '../auroraDesign';
 import { tableQueryRowsOf } from '../reportFacts';
 
 const table = (tableName, extra = {}) => ({ tableName, columns: [], primaryKey: [], indexes: [], foreignKeys: [], ddlStatements: null, ...extra });
@@ -76,4 +76,49 @@ test('the facts reader returns the rows, and [] without them', () => {
   expect(tableQueryRowsOf({ facts: { query_group_counts: { table_queries: rows } } })).toBe(rows);
   expect(tableQueryRowsOf({ facts: { query_group_counts: {} } })).toEqual([]);
   expect(tableQueryRowsOf(null)).toEqual([]);
+});
+
+// #2455: two schemas' tables of one name are two tables, each with its own queries.
+const designOf = (defs) => ({ content: { table_definitions: defs } });
+
+test('a table of a design of several schemas shows and keys as schema.table', () => {
+  const built = buildAuroraTables({ table_definitions: [{ table_name: 'orders', schema_name: 'Sales' }, { table_name: 'orders' }] });
+  expect(built.map(t => [t.tableName, t.schemaName])).toEqual([['Sales.orders', 'Sales'], ['orders', null]]);
+  expect(designTableKey('Orders', 'Sales')).toBe('sales.orders');
+  expect(designTableKey('Shop.`Orders`', null)).toBe('orders');
+});
+
+test('two schemas\' tables of one name each read their own row', () => {
+  const rows = [
+    { engine: 'aurora_postgresql', table: 'sales.orders', query_count: 2, query_ids: ['a', 'b'] },
+    { engine: 'aurora_postgresql', table: 'archive.orders', query_count: 1, query_ids: ['c'] },
+    { engine: 'aurora_postgresql', table: 'orders', query_count: 9, query_ids: ['a', 'b', 'c'] },
+  ];
+  const built = buildAuroraDesign('aurora_postgresql', designOf([
+    { table_name: 'orders', schema_name: 'sales' }, { table_name: 'orders', schema_name: 'archive' },
+  ]), [], rows);
+  expect(built.tables.map(t => [t.tableName, t.queryCount])).toEqual([['sales.orders', 2], ['archive.orders', 1]]);
+});
+
+test('a report written before #2455 lends its bare row only to a table no other schema shares', () => {
+  const rows = [
+    { engine: 'aurora_postgresql', table: 'orders', query_count: 3, query_ids: ['a', 'b', 'c'] },
+    { engine: 'aurora_postgresql', table: 'customers', query_count: 1, query_ids: ['d'] },
+  ];
+  const built = buildAuroraDesign('aurora_postgresql', designOf([
+    { table_name: 'orders', schema_name: 'sales' }, { table_name: 'orders', schema_name: 'archive' },
+    { table_name: 'customers', schema_name: 'sales' },
+  ]), [], rows);
+  expect(built.tables.map(t => [t.tableName, t.queryCount])).toEqual([['sales.orders', 0], ['archive.orders', 0], ['sales.customers', 1]]);
+});
+
+test('a design saved before #2455 reads its bare rows as before', () => {
+  const rows = [{ engine: 'aurora_postgresql', table: 'orders', query_count: 3, query_ids: ['a', 'b', 'c'] }];
+  const built = buildAuroraDesign('aurora_postgresql', designOf([{ table_name: 'orders' }, { table_name: 'orders' }]), [], rows);
+  expect(built.tables.map(t => [t.tableName, t.queryCount])).toEqual([['orders', 3], ['orders', 3]]);
+});
+
+test('the filter finds a table by its schema', () => {
+  const tables = buildAuroraTables({ table_definitions: [{ table_name: 'orders', schema_name: 'sales' }, { table_name: 'orders', schema_name: 'archive' }] });
+  expect(filterAuroraTables(tables, 'archive.').map(x => x.tableName)).toEqual(['archive.orders']);
 });

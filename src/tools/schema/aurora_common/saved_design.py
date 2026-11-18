@@ -27,6 +27,12 @@ shows them and the assess() result hands them on, so none is trusted as stored:
   ``generated_ddl``, ``indexes`` or ``foreign_keys`` without a list of table definitions,
   and a skipped design (``check_skipped_design``) that carries any of them or tables.
 
+A table definition with a ``schema_name`` (a design of several schemas, #2455) is created in
+that schema: its statements name ``"schema"."table"``, the script opens with one
+``CREATE SCHEMA IF NOT EXISTS`` per schema, and notes name it ``schema.table``. A design
+saved before that (two schemas' tables of one name sharing ``CREATE TABLE "orders"``) has
+no ``schema_name`` and is checked as it was written.
+
 Each table's ``ddl_statements`` (its own cut of that script, #2325) is checked against the
 rebuilt cut the same way. A string that does not come back identical is refused (:class:`SavedDesignError`, with
 its position and no stored text), so a design the generator wrote, in any release that
@@ -49,6 +55,8 @@ from src.tools.schema.aurora_common.ddl_generator import (
     SKIPPED_INDEX_PREFIX,
     SKIPPED_INDEX_SUFFIX,
     Dialect,
+    create_schema_sql,
+    quote_table,
     render_create_table,
     render_foreign_key,
     render_index,
@@ -111,12 +119,18 @@ def _names(dialect: Dialect, text: str, *, prefixes: bool = False) -> list[tuple
 _MYSQL_KINDS = {"FULLTEXT ": "fulltext", "SPATIAL ": "spatial"}
 
 
+def _table_name(dialect: Dialect) -> str:
+    """A table as ``quote_table`` writes it: ``"table"`` or ``"schema"."table"`` (#2455)."""
+    qid = _qid(dialect)
+    return rf"{qid}(?:\.{qid})?"
+
+
 def _index_shape(dialect: Dialect) -> re.Pattern[str]:
     qid = _qid(dialect)
     key = rf"{qid}(?:\(\d+\))?"
     return re.compile(
         r"CREATE (?P<kind>UNIQUE |FULLTEXT |SPATIAL )?INDEX "
-        rf"(?P<name>{qid}) ON (?P<table>{qid})(?: USING (?P<method>[a-z]+))? "
+        rf"(?P<name>{qid}) ON (?P<table>{_table_name(dialect)})(?: USING (?P<method>[a-z]+))? "
         rf"\((?P<cols>{key}(?:, {key})*)\)"
         rf"(?: INCLUDE \((?P<include>{qid}(?:, {qid})*)\))?"
         r"(?: WHERE (?P<where>[^\n]+))?;"
@@ -126,14 +140,21 @@ def _index_shape(dialect: Dialect) -> re.Pattern[str]:
 _INDEX_SHAPES = {name: _index_shape(d) for name, d in DIALECTS.items()}
 
 
-def check_index(dialect: Dialect, table: str, columns: list[str], statement: object) -> str:
-    """``statement`` re-rendered from its parsed parts; refused unless it comes back the same."""
+def check_index(
+    dialect: Dialect,
+    table: str,
+    columns: list[str],
+    statement: object,
+    schema: str | None = None,
+) -> str:
+    """``statement`` re-rendered from its parsed parts; refused unless it comes back the same.
+    ``schema``: the schema the table definition is created in (#2455), if any."""
     if not isinstance(statement, str):
         raise _Refused("is not a string")
     match = _INDEX_SHAPES[dialect.name].fullmatch(statement)
     if match is None:
         raise _Refused("is not a CREATE INDEX statement the DDL generator writes")
-    if _unquote(dialect, match["table"]) != table:
+    if match["table"] != _quoted_table(dialect, table, schema):
         raise _Refused("is not on the table it is listed under")
     kind = match["kind"] or ""
     keys = _names(dialect, match["cols"], prefixes=dialect is MYSQL)
@@ -164,6 +185,7 @@ def check_index(dialect: Dialect, table: str, columns: list[str], statement: obj
             include=include or None,
             where_sql=where_sql,
             prefix_lengths=[n for _, n in keys] if dialect is MYSQL else None,
+            schema=schema,
         )
     except SqlFragmentError as exc:
         raise _Refused("does not render as written") from exc
@@ -187,33 +209,62 @@ def _fk_shape(dialect: Dialect) -> re.Pattern[str]:
     names = rf"{qid}(?:, {qid})*"
     actions = "|".join(re.escape(a) for a in _ACTIONS)
     return re.compile(
-        rf"ALTER TABLE (?P<table>{qid}) ADD CONSTRAINT (?P<name>{qid}) "
-        rf"FOREIGN KEY \((?P<cols>{names})\) REFERENCES (?P<ref>{qid}) \((?P<refcols>{names})\)"
+        rf"ALTER TABLE (?P<table>{_table_name(dialect)}) ADD CONSTRAINT (?P<name>{qid}) "
+        rf"FOREIGN KEY \((?P<cols>{names})\) REFERENCES (?:(?P<refschema>{qid})\.)?(?P<ref>{qid}) "
+        rf"\((?P<refcols>{names})\)"
         rf"(?: ON DELETE (?P<action>{actions}))?;"
     )
+
+
+def _design_name(table: str, schema: str | None) -> str:
+    """The table as the design's notes and keys name it (``ddl_generator.design_table_name``)."""
+    return f"{schema}.{table}" if schema else table
+
+
+def _schema(table: Mapping[str, Any]) -> str | None:
+    """A table definition's ``schema_name`` (#2455): a non-empty string, or None."""
+    schema = table.get("schema_name")
+    return schema if isinstance(schema, str) and schema else None
+
+
+def _quoted_table(dialect: Dialect, table: str, schema: str | None) -> str:
+    """The table as its statements must name it; a name that cannot be quoted names none."""
+    try:
+        return quote_table(dialect, table, schema)
+    except ValueError as exc:
+        raise _Refused("belongs to a table whose name cannot be quoted") from exc
 
 
 _FK_SHAPES = {name: _fk_shape(d) for name, d in DIALECTS.items()}
 
 
 def check_foreign_key(
-    dialect: Dialect, table: str, columns: dict[str, list[str]], statement: object
+    dialect: Dialect,
+    table: str,
+    columns: dict[str, list[str]],
+    statement: object,
+    schema: str | None = None,
 ) -> str:
     """``statement`` re-rendered from its parsed parts; refused unless it comes back the same.
-    ``columns`` maps each table of the design to its columns: the key's own columns must be
-    the table's. Its referenced columns are not checked: the generator writes them as the
-    collector reports them, and the referenced table is often not in this design."""
+    ``columns`` maps each table of the design (by ``_design_name``) to its columns: the
+    key's own columns must be the table's. Its referenced columns are not checked: the
+    generator writes them as the collector reports them, and the referenced table is often
+    not in this design. ``schema`` as for ``check_index``: only a table created in a schema
+    references a table in one."""
     if not isinstance(statement, str):
         raise _Refused("is not a string")
     match = _FK_SHAPES[dialect.name].fullmatch(statement)
     if match is None:
         raise _Refused("is not a FOREIGN KEY statement the DDL generator writes")
-    if _unquote(dialect, match["table"]) != table:
+    if match["table"] != _quoted_table(dialect, table, schema):
         raise _Refused("is not on the table it is listed under")
+    if match["refschema"] is not None and schema is None:
+        raise _Refused("references a schema from a table in none")
     local = [n for n, _ in _names(dialect, match["cols"])]
     ref_table = _unquote(dialect, match["ref"])
+    ref_schema = _unquote(dialect, match["refschema"]) if match["refschema"] else None
     ref_columns = [n for n, _ in _names(dialect, match["refcols"])]
-    if not _all_in(local, columns.get(table, [])):
+    if not _all_in(local, columns.get(_design_name(table, schema), [])):
         raise _Refused("keys a column the table definition does not have")
     rebuilt = render_foreign_key(
         dialect,
@@ -223,6 +274,8 @@ def check_foreign_key(
         ref_table,
         ref_columns,
         _ACTIONS[match["action"]] if match["action"] else None,
+        schema=schema,
+        referenced_schema=ref_schema,
     )
     if rebuilt != statement:
         raise _Refused("does not render as written")
@@ -301,8 +354,8 @@ def _create_table(
     dialect: Dialect, table: Mapping[str, Any], text: str, pos: int
 ) -> tuple[str, int]:
     """The table's CREATE TABLE, rebuilt from its checked columns and the stored clauses."""
-    name = table["table_name"]
-    pos = _expect(text, pos, f"CREATE TABLE {dialect.q(name)} (\n")
+    name, schema = table["table_name"], table.get("schema_name")
+    pos = _expect(text, pos, f"CREATE TABLE {_quoted_table(dialect, name, schema)} (\n")
     fragments: list[str] = []
     for i, column in enumerate(table["columns"]):
         if i:
@@ -323,7 +376,7 @@ def _create_table(
         pos = _expect(text, keys.end(), ")")
     pos = _expect(text, pos, "\n);")
     try:
-        return render_create_table(dialect, name, fragments, primary_key), pos
+        return render_create_table(dialect, name, fragments, primary_key, schema=schema), pos
     except SqlFragmentError as exc:
         raise _Refused("has a PRIMARY KEY the DDL generator does not write") from exc
 
@@ -367,14 +420,11 @@ def skipped_comments(
         ):
             continue
         source = note["source_object"]
-        owners = [
-            (len(t["table_name"]), i)
-            for i, t in enumerate(tables)
-            if source.startswith(t["table_name"] + ".")
-        ]
+        names = [_design_name(t["table_name"], t.get("schema_name")) for t in tables]
+        owners = [(len(n), i) for i, n in enumerate(names) if source.startswith(n + ".")]
         if owners:
             _, i = max(owners)
-            name = tables[i]["table_name"]
+            name = names[i]
             index = source[len(name) + 1 :]
             if index not in made[i]:
                 today = skipped_index_comment(name, index)
@@ -425,6 +475,16 @@ def rebuild_ddl(
     foreign keys, in script order), ``fk_owners[k]`` naming the table of ``fks[k]``."""
     pieces: list[str] = []
     pos = 0
+    schemas = dict.fromkeys(t["schema_name"] for t in tables if t.get("schema_name"))
+    for schema in schemas:
+        if pieces:
+            pos = _expect(text, pos, _SEPARATOR)
+        try:
+            statement = create_schema_sql(dialect, schema)
+        except ValueError as exc:
+            raise _Refused("names a schema whose name cannot be quoted") from exc
+        pos = _expect(text, pos, statement)
+        pieces.append(statement)
     for i, table in enumerate(tables):
         if pieces:
             pos = _expect(text, pos, _SEPARATOR)
@@ -486,6 +546,8 @@ def _table_shape(table: object) -> Mapping[str, Any]:
     primary_key = table.get("primary_key", [])
     ok = (
         isinstance(table.get("table_name"), str)
+        and isinstance(table.get("schema_name"), str | None)
+        and table.get("schema_name") != ""
         and isinstance(columns, list)
         and bool(columns)
         and all(
@@ -540,7 +602,9 @@ def check_design_ddl(payload: Mapping[str, Any], engine: str) -> Mapping[str, An
                 )
         return payload
     columns = {
-        t["table_name"]: [c.get("name") for c in t["columns"] if isinstance(c, Mapping)]
+        _design_name(t["table_name"], _schema(t)): [
+            c.get("name") for c in t["columns"] if isinstance(c, Mapping)
+        ]
         for t in tables
         if isinstance(t, Mapping)
         and isinstance(t.get("table_name"), str)
@@ -556,6 +620,11 @@ def check_design_ddl(payload: Mapping[str, Any], engine: str) -> Mapping[str, An
         if not isinstance(table, Mapping):
             continue
         name = table.get("table_name")
+        schema = _schema(table)
+        if table.get("schema_name") is not None and schema is None:
+            raise SavedDesignError(
+                f"table_definitions[{i}].schema_name", None, "is not a schema name", kind=DDL_KIND
+            )
         for field, out in (("indexes", table_indexes), ("foreign_keys", fks)):
             kind = _KINDS[field]
             statements = table.get(field)
@@ -571,9 +640,10 @@ def check_design_ddl(payload: Mapping[str, Any], engine: str) -> Mapping[str, An
                     if not isinstance(name, str):
                         raise _Refused("belongs to a table with no name")
                     if field == "indexes":
-                        out.append(check_index(dialect, name, names.get(name, []), statement))
+                        own = names.get(_design_name(name, schema), [])
+                        out.append(check_index(dialect, name, own, statement, schema))
                     else:
-                        out.append(check_foreign_key(dialect, name, names, statement))
+                        out.append(check_foreign_key(dialect, name, names, statement, schema))
                         fk_owners.append(i)
                 except _Refused as exc:
                     raise SavedDesignError(where, None, str(exc), kind=kind) from None

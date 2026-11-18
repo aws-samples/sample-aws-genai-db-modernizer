@@ -14,6 +14,8 @@ import json
 import re
 from pathlib import Path
 
+import pytest
+
 from src.agents.collector.offline_ingest import build_offline_collector_output
 from src.storage.local_store import LocalArtifactStore
 from src.tools.data_movement.dms_control import CONTROL_SCHEMA
@@ -31,11 +33,11 @@ from src.tools.transformation_contract.write import write_step1
 TABLES = ("posts", "topics")
 
 
-def _collection() -> dict:
+def _collection(schemas: tuple[str, ...] = ("public", "public")) -> dict:
     return {
         "metadata": {"version": "PostgreSQL 16.4 on x86_64", "database_name": "forum"},
         "tables": [
-            {"table_name": t, "row_count": 10, "schema_name": "public"} for t in TABLES
+            {"table_name": t, "row_count": 10, "schema_name": s} for t, s in zip(TABLES, schemas, strict=True)
         ],
         "columns": [
             {"table_name": t, "column_name": c, "data_type": d, "is_nullable": "NO",
@@ -52,11 +54,14 @@ def _collection() -> dict:
     }
 
 
-def _job(root: Path) -> LocalArtifactStore:
+def _job(root: Path, schemas: tuple[str, ...] = ("public", "public")) -> LocalArtifactStore:
     """A finished job ``forum/job1`` (assignment v2) whose collector output is the
     offline builder's, with every table in wave 1 to Aurora PostgreSQL."""
     collector = build_offline_collector_output(
-        parse_offline_collection(_collection()), job_id="job1", database_name="forum", s3_key="k"
+        parse_offline_collection(_collection(schemas)),
+        job_id="job1",
+        database_name="forum",
+        s3_key="k",
     )
     ids = [t["table_id"] for t in collector["database_schema"]["tables"]]
     wave = {"wave": 1, "title": "Move to Aurora PostgreSQL", "engines": ["aurora_postgresql"],
@@ -88,3 +93,16 @@ def test_the_dms_task_selects_the_tables_schema_and_the_ddl_creates_them_there(t
     # DMS's control schema first (#2133), then the tables' own.
     assert re.findall(r'CREATE SCHEMA IF NOT EXISTS "([^"]+)"', ddl) == [CONTROL_SCHEMA, "public"]
     assert 'SCHEMA "forum"' not in ddl
+
+
+@pytest.mark.passes_on_main  # main never qualified step 1; this pins it (#2479 review)
+def test_tables_of_two_schemas_keep_step_1s_bare_keys(tmp_path):
+    """Step 1's rules are keyed by the bare table name, and the DDL its DMS step renders
+    reads the same base (#2479 review): two schemas with no shared table name still get
+    every contract type, with no schema-qualified design keys."""
+    inputs = load_step1(_job(tmp_path, ("public", "extra")), "forum", "job1")
+    assert {r.source_table: [f.target_type for f in r.fields] for r in inputs.contract.rules} == {
+        "public.posts": ["BIGINT", "TEXT"], "extra.topics": ["BIGINT", "TEXT"]}  # fmt: skip
+    # The step 1 DDL the bundle carries (render_files refuses two PostgreSQL schemas).
+    assert re.findall(r'CREATE TABLE "(\w+)"', inputs.ddl) == ["posts", "topics"]
+    assert "CREATE SCHEMA" not in inputs.ddl
