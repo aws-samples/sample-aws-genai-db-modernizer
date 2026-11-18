@@ -26,6 +26,7 @@ const AST = parse(SOURCE, { sourceType: 'module', plugins: ['jsx', 'optionalChai
 // A section is found by its component name (the component renders the id) or by its
 // id attribute on the page.
 const BY_COMPONENT = {
+  'executive-summary-section': 'ExecutiveSummary',
   'assumptions-panel': 'AssumptionsPanel',
   'cost-breakdown-section': 'CostBreakdown',
   'migration-roadmap-section': 'MigrationWavePlan',

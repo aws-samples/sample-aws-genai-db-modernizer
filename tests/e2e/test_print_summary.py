@@ -233,3 +233,16 @@ def test_the_gate_and_final_label_each_cache_figure(job: PipelineResult) -> None
     if sentences:
         assert f"{cache['candidate_read_count']} cache candidates" in sentences[0]
         assert f"{cache['designed_read_count']} designed" in sentences[0]
+
+
+def test_the_final_summary_leads_with_the_decision_the_facts_word(job: PipelineResult) -> None:
+    """#2315: the chat summary opens with the decision line the results page's summary
+    header states, facts.executive_brief.decision_headline, never a model's text."""
+    facts = report_facts(_report(job))
+    headline = facts["executive_brief"]["decision_headline"]
+    assert headline, job.db
+    lines = _print(job, "--final").splitlines()
+    assert lines[2] == f"**{prose(headline)}**", (job.db, lines[:4])
+    assert lines[4] == "### Executive summary", job.db
+    for word in ("cutover", "wait", "not ready", "collect"):
+        assert word not in headline.lower(), (job.db, headline)

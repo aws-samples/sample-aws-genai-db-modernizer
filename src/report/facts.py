@@ -19,6 +19,7 @@ from typing import Any
 from src.shared.adoption_facts import adoption_facts, slice_plan_facts
 from src.shared.cache_role import cache_role_sentence
 from src.shared.cutover_message import CUTOVER_MESSAGE
+from src.shared.decision_headline import decision_headline
 from src.shared.exposure_wording import group_exposures
 from src.shared.report_facts import (
     COST_CAVEAT,
@@ -230,6 +231,16 @@ def report_facts(report: dict[str, Any]) -> dict[str, Any]:
             grouped = group_exposures(brief["exposures"])
             if grouped != brief["exposures"]:
                 missing["executive_brief"] = {**brief, "exposures": grouped}
+        if isinstance(brief, dict) and not brief.get("decision_headline"):
+            # A block written before #2315: the summary's lead line, from the same
+            # function synthesis calls over the stored brief. The value decides, not the
+            # key: a block re-dumped through the contract reads it back as None.
+            headline = decision_headline(brief, report.get("database_name"))
+            if headline:
+                missing["executive_brief"] = {
+                    **missing.get("executive_brief", brief),
+                    "decision_headline": headline,
+                }
         if "trade_off_topics" not in facts:
             # A block written before #1221: the design trade-offs by topic, each saved
             # without one read as other, from the same function.

@@ -3867,6 +3867,14 @@ class ExecutiveBriefFacts(BaseModel):
             "so with each one's reason and next step"
         ),
     )
+    decision_headline: str | None = Field(
+        None,
+        description=(
+            "The executive summary's lead line (#2315): the decision wave and what it does "
+            "('Approve wave 1: move wordpress to Aurora MySQL'), or the plan when no wave is "
+            "suggested yet; from the waves above, never a model's text. None with no waves"
+        ),
+    )
 
 
 # --- Slice plan and adoption paths (#1128: #1129, #1130, #1698) -------------------------

@@ -141,3 +141,8 @@ test('a report written before the facts falls back to its TCO breakdown and tota
   expect(container.querySelector('[data-figure="cost-total-value"]').textContent).toBe('$507.39');
   expect([...container.querySelectorAll('tbody tr')].map((r) => r.querySelector('td').textContent)).toEqual(['Aurora MySQL', 'DynamoDB', 'Total']);
 });
+
+test('the table has its own name, so a phone-width scroll region is told apart (#2458)', () => {
+  render();
+  expect(container.querySelector('table').getAttribute('aria-label')).toBe('Cost breakdown');
+});

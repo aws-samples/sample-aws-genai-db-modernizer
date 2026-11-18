@@ -2099,7 +2099,8 @@ def test_results_page_states_the_distinct_query_patterns(
     loaded_results: OpenResults, all_runs: list[PipelineResult]
 ) -> None:
     """#1146: the results page prints "N queries in M distinct query patterns" from
-    facts.query_pattern_counts, the same figures the engineering report prints."""
+    facts.query_pattern_counts, the same figures the engineering report prints. #2315: on
+    the Queries tab, above the query table, not in the executive summary."""
     figure = re.compile(r"([\d,]+) quer(?:y|ies) in ([\d,]+) distinct query patterns?")
     for r in all_runs:
         facts = json.loads((r.artifact_root / r.report["report"]).read_text())["facts"]
@@ -2110,11 +2111,94 @@ def test_results_page_states_the_distinct_query_patterns(
         assert found and tuple(int(g.replace(",", "")) for g in found.groups()) == expected, r.db
         page, ev = loaded_results(r)
         _show_tab(page, "summary")
-        line = page.locator('[data-figure="query-patterns"]')
+        page.locator('[data-figure="decision-headline"]').wait_for(timeout=READY_MS)
+        assert (
+            page.locator('#executive-summary-section [data-figure="query-patterns"]').count() == 0
+        )
+        _show_tab(page, "queries")
+        line = page.locator('#query-routing-section [data-figure="query-patterns"]')
         line.wait_for(timeout=READY_MS)
         shown = figure.fullmatch(line.inner_text().strip())
         assert shown, (r.db, line.inner_text())
         assert tuple(int(g.replace(",", "")) for g in shown.groups()) == expected, r.db
+        assert ev == {"console": [], "pageerror": [], "failed": []}, (r.db, ev)
+
+
+def test_results_page_summary_leads_with_the_decision_and_five_figures(
+    loaded_results: OpenResults, all_runs: list[PipelineResult]
+) -> None:
+    """#2315: the executive summary's header is the decision line the facts word
+    (facts.executive_brief.decision_headline), the one the chat summary opens with, then one
+    row of five figures, each the fact formatted, then the summary's paragraphs under Why."""
+    from src.report.facts import report_facts
+    from src.report.printed_summary import prose, render_final_summary
+
+    for r in all_runs:
+        report = json.loads((r.artifact_root / r.report["report"]).read_text())
+        facts = report_facts(report)
+        headline = facts["executive_brief"]["decision_headline"]
+        assert headline, r.db
+        printed = render_final_summary(
+            report, database_name=r.db, job_id=r.job_id, deliverables_dir="d/", deliverables=[]
+        )
+        assert printed.splitlines()[2] == f"**{prose(headline)}**", r.db
+        page, ev = loaded_results(r)
+        _show_tab(page, "summary")
+        section = page.locator("#executive-summary-section")
+        shown = section.locator('[data-figure="decision-headline"]')
+        shown.wait_for(timeout=READY_MS)
+        assert shown.inner_text().strip() == headline, r.db
+        assert section.get_by_role("heading", level=2).first.inner_text().strip() == headline
+        tiles = section.locator("[data-tile]").evaluate_all(
+            "els => els.map(e => e.getAttribute('data-tile'))"
+        )
+        assert tiles == ["projected-cost", "overall-risk", "waves", "queries", "target-engines"]
+
+        def figure(name: str, section: Locator = section) -> str:
+            return str(section.locator(f'[data-figure="{name}"]').inner_text()).strip()
+
+        assert figure("projected-cost") == f"${facts['projected_monthly_cost_usd']:,.2f}/mo", r.db
+        assert figure("wave-count") == str(facts["migration_wave_count"]), r.db
+        assert figure("query-count") == f"{facts['query_total_count']:,}", r.db
+        level = facts["executive_brief"]["overall_risk_level"]
+        assert figure("overall-risk").lower() == level.lower(), r.db
+        assert figure("open-risks").startswith(f"{facts['open_risk_count']} open risk"), r.db
+        for name in ("access-patterns", "query-patterns", "database-name"):
+            assert section.locator(f'[data-figure="{name}"]').count() == 0, (r.db, name)
+        why = section.locator('[data-section="executive-summary-why"]')
+        assert why.is_visible(), r.db
+        assert ev == {"console": [], "pageerror": [], "failed": []}, (r.db, ev)
+
+
+@pytest.mark.parametrize("width", [1440, 390])
+def test_results_page_summary_figures_share_one_row_on_desktop(
+    page: Page, ui: str, all_runs: list[PipelineResult], width: int
+) -> None:
+    """#2315 (#2458 review): at 1440 px the five figures share one row, the same top edge,
+    left to right in order; at 390 px they stack, one per row. axe finds nothing blocking
+    on the Summary tab at either width, the tab list's scroll buttons and the tables' scroll
+    regions included."""
+    page.set_viewport_size({"width": width, "height": 900})
+    for r in all_runs:
+        ev = _open_results(page, ui, r)
+        _show_tab(page, "summary")
+        section = page.locator("#executive-summary-section")
+        section.locator('[data-tile="target-engines"]').wait_for(timeout=READY_MS)
+        boxes = section.locator("[data-tile]").evaluate_all(
+            "els => els.map(e => { const b = e.getBoundingClientRect();"
+            " return [Math.round(b.top), Math.round(b.left)]; })"
+        )
+        assert len(boxes) == 5, (r.db, boxes)
+        tops = [top for top, _ in boxes]
+        lefts = [left for _, left in boxes]
+        if width == 1440:
+            assert len(set(tops)) == 1, (r.db, boxes)
+            assert lefts == sorted(lefts) and len(set(lefts)) == 5, (r.db, boxes)
+        else:
+            assert tops == sorted(tops) and len(set(tops)) == 5, (r.db, boxes)
+        assert page.evaluate("document.documentElement.scrollWidth <= window.innerWidth + 1")
+        blocking, where, _ = _axe_blocking(page)
+        assert blocking == [], (r.db, width, blocking, where)
         assert ev == {"console": [], "pageerror": [], "failed": []}, (r.db, ev)
 
 

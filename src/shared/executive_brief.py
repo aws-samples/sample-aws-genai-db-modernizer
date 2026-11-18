@@ -33,6 +33,7 @@ from collections.abc import Mapping
 from typing import Any
 
 from src.shared.cutover_message import CUTOVER_MESSAGE
+from src.shared.decision_headline import wave_adds_engines
 from src.shared.engine_names import SOURCE_ENGINE_DISPLAY_NAMES, display_engine
 from src.shared.engines_in_use import retired_in_use_statement
 from src.shared.exposure_wording import EXPOSURE_PHRASES
@@ -482,8 +483,16 @@ def _decision_head(facts: Mapping[str, Any], brief: Mapping[str, Any]) -> str:
             "keeps the current data model."
             + (" The SQL compatibility check lists what to rewrite first." if gaps else "")
         )
-    elif kind == "cache" and names:
-        does = f"It adds {_join(names)} and moves no data."
+    elif wave_adds_engines(kind) and names:
+        # The decision headline names the same wave with "add" (one rule, #2315).
+        if kind == "read_model":
+            # A read model is fed from the tables' owners (waves.py, engineering report).
+            does = (
+                f"It adds {_join(names)}, synced from the tables' owners. "
+                "No table changes owner."
+            )
+        else:
+            does = f"It adds {_join(names)} and moves no data."
     else:
         return f"{head} {CUTOVER_MESSAGE}"
     return f"{head} {does} {CUTOVER_MESSAGE}"

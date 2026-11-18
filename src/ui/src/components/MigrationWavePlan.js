@@ -15,8 +15,8 @@ import WaveStages from "./WaveStages";
 import RoutineMigrationSection from "./RoutineMigrationSection";
 import EngineChoicesNote from "./EngineChoicesNote";
 import {
-  heterogeneousNote, migrationWaves, waveCount, waveGaps, waveHeadline, waveMovesNothing, waveReadiness,
-  waveTitle,
+  heterogeneousNote, migrationWaves, readinessText, readinessType, waveCount, waveGaps, waveHeadline,
+  waveMovesNothing, waveReadiness, waveTitle,
 } from "../utils/migrationWaves";
 import { cutoverResponsibilityOf } from "../utils/reportFacts";
 import {
@@ -75,23 +75,6 @@ const INLINE_TOGGLE_STYLE = {
   cursor: 'pointer',
   textDecoration: 'underline dotted',
 };
-
-// #1992, #2318: a suggested wave is a success unless a warning is still to accept; a held
-// one is a warning; a wave not designed or not reviewed yet is pending.
-function readinessType(view) {
-  if (view.readiness === 'suggested') return view.openWarnings > 0 ? 'warning' : 'success';
-  if (view.readiness === 'held') return 'warning';
-  return view.readiness ? 'pending' : 'info';
-}
-
-function readinessText(view, t) {
-  if (view.readiness === 'suggested') {
-    return view.openWarnings > 0
-      ? t('analysis-results.waves.readiness-status.suggested-warnings', { count: view.openWarnings })
-      : t('analysis-results.waves.readiness-status.suggested');
-  }
-  return view.readiness ? t(`analysis-results.waves.readiness-status.${view.readiness}`) : null;
-}
 
 // The wave's readiness: a status, and the facts' line whole beside it, as every report
 // prints it. The status never replaces or trims the line.

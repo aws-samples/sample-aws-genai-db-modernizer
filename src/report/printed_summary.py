@@ -363,12 +363,17 @@ def render_final_summary(
     summary_url: str | None = None,
     results_url: str | None = None,
 ) -> str:
-    """The completion summary, as the results page opens: the executive summary, the headline
-    figures, the engines, the risks and where to look next."""
+    """The completion summary, as the results page opens: the decision line, the executive
+    summary, the headline figures, the engines, the risks and where to look next."""
     facts = report_facts(dict(report))
     tco = report.get("tco_analysis") or {}
     names = _names_pattern(table_names(dict(report)))
     lines = [f"## Assessment: {prose(database_name)} (job {job_id})", ""]
+    # #2315: the decision first, as the results page's summary header states it.
+    brief = facts.get("executive_brief")
+    headline = brief.get("decision_headline") if isinstance(brief, Mapping) else None
+    if isinstance(headline, str) and headline.strip():
+        lines += [f"**{prose(headline.strip())}**", ""]
 
     lines += ["### Executive summary", ""]
     paragraphs, withheld = summary_paragraphs(dict(report))

@@ -291,7 +291,7 @@ _BACKFILLED = {
 }
 
 
-@pytest.mark.passes_on_main  # #1221 only lets the recorded run lack the newer facts
+@pytest.mark.passes_on_main  # #1221, #2315: only let the recorded run lack the newer facts
 @pytest.mark.parametrize("figure", sorted(_BACKFILLED))
 def test_backfill_gives_an_older_report_the_figures_this_run_stored(figure: str) -> None:
     report = _committed_report()
@@ -319,6 +319,8 @@ _NEWER_FIELDS_THAN_THE_RECORDING = {
 _NEWER_OWNER_LINE_FIELDS_THAN_THE_RECORDING = ("replica_read_count",)
 # Fields added to each executive-summary exposure, filled in the same way (#2324).
 _NEWER_EXPOSURE_FIELDS_THAN_THE_RECORDING: tuple[str, ...] = ()
+# Fields added to the executive brief, filled in the same way (#2315).
+_NEWER_BRIEF_FIELDS_THAN_THE_RECORDING = ("decision_headline",)
 # Fields added to each engine row, filled in the same way (#2162).
 _NEWER_ENGINE_FIELDS_THAN_THE_RECORDING: tuple[str, ...] = ()
 
@@ -348,7 +350,7 @@ def _recorded(facts: dict[str, Any]) -> dict[str, Any]:
     brief = out.get("executive_brief")
     if isinstance(brief, dict) and isinstance(brief.get("exposures"), list):
         out["executive_brief"] = {
-            **brief,
+            **{k: v for k, v in brief.items() if k not in _NEWER_BRIEF_FIELDS_THAN_THE_RECORDING},
             "exposures": [
                 (
                     {

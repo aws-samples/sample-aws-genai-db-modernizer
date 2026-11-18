@@ -673,3 +673,37 @@ export function tableQueryRowsOf(synthesis) {
   const rows = factsOf(synthesis) && factsOf(synthesis).query_group_counts;
   return Array.isArray(rows && rows.table_queries) ? rows.table_queries : [];
 }
+
+// #2315: what the executive summary leads with, read as the facts state it: the decision
+// line (facts.executive_brief.decision_headline) and the wave its status is for (the
+// decision wave, else the first wave), the overall risk level with the open and the
+// critical or high risk counts, the wave count with each wave's engines, and the query
+// and source table totals. Null for a figure a report does not state (one saved before
+// it; the /results API fills the headline in for a real report). Nothing is counted.
+export function executiveSummaryOf(synthesis) {
+  const f = factsOf(synthesis) || {};
+  const brief = (f.executive_brief && typeof f.executive_brief === 'object') ? f.executive_brief : {};
+  const num = v => (typeof v === 'number' && Number.isFinite(v) ? v : null);
+  const briefWaves = Array.isArray(brief.waves) ? brief.waves.filter(w => w && typeof w === 'object') : [];
+  const waveRows = Array.isArray(f.waves) ? f.waves.filter(w => w && typeof w === 'object') : [];
+  const headline = typeof brief.decision_headline === 'string' && brief.decision_headline.trim()
+    ? brief.decision_headline.trim()
+    : null;
+  let statusWave = num(brief.decision_wave);
+  if (statusWave === null && briefWaves.length > 0) statusWave = num(briefWaves[0].wave);
+  const level = brief.overall_risk_level
+    || (synthesis && synthesis.risk_assessment && synthesis.risk_assessment.overall_risk_level)
+    || null;
+  return {
+    headline,
+    statusWave,
+    riskLevel: level ? String(level).toUpperCase() : null,
+    openRiskCount: num(f.open_risk_count),
+    criticalHighRiskCount: num(f.critical_high_risk_count),
+    waveCount: num(f.migration_wave_count),
+    waveEngines: (briefWaves.length > 0 ? briefWaves : waveRows)
+      .map(w => (Array.isArray(w.engines) ? w.engines.filter(Boolean) : [])),
+    queryCount: num(f.query_total_count),
+    sourceTableCount: num(f.source_table_count),
+  };
+}

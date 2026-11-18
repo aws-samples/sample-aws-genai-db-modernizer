@@ -144,6 +144,9 @@ const GUARDED_UI_FILES = [
   'components/TradeOffDecision.js',
   // #2322: one open risk.
   'components/RiskCard.js',
+  // #2315: the executive summary: the decision and its five figures.
+  'components/ExecutiveSummary.js',
+  'components/ExecutiveSummaryStats.js',
   // #308: every experimental graph explorer file (EXPLORER_UI_FILES below).
   'pages/GraphExplorer.js',
   'components/ExploreGraphButton.js',

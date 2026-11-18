@@ -4,46 +4,41 @@
 import { memo } from 'react';
 import Box from "@cloudscape-design/components/box";
 import ColumnLayout from "@cloudscape-design/components/column-layout";
+import KeyValuePairs from "@cloudscape-design/components/key-value-pairs";
+import Link from "@cloudscape-design/components/link";
+import Popover from "@cloudscape-design/components/popover";
+import SpaceBetween from "@cloudscape-design/components/space-between";
+import StatusIndicator from "@cloudscape-design/components/status-indicator";
 import { displayEngine } from '../utils/engineNames';
 import { formatMoney, formatMonthlyMoney } from '../utils/format';
+import { riskSeverityLabel, riskSeverityStatus } from '../utils/riskAssessment';
 
 /**
- * The executive summary's tiles on the results page (#1028).
+ * The executive summary's five figures on the results page (#2315, after #1028): one
+ * row, one headline figure per item with its unit, in this order: Monthly cost, Overall
+ * risk, Waves, Queries, Target engines. KeyValuePairs lays out four columns at most, so
+ * the row is a five-column ColumnLayout with a minimum column width (it wraps on a narrow
+ * screen), each cell a KeyValuePairs of one item. It only formats the figures it is
+ * given (ADR-032): `summary` is executiveSummaryOf(synthesis) (utils/reportFacts.js), every
+ * figure read from report.json's facts.
  *
- * The access-pattern (query) count sits just below the database name. A cost
- * tile is shown only when its figure is available: the projected cost when the
- * report has one (0 included; only a missing figure hides it), the current monthly cost and the savings when the cost
- * baseline is known (costBaselineStats in utils/tcoAnalysis.js); otherwise the
- * tile is left out instead of saying the figure is missing. It only formats
- * the figures it is given (ADR-032).
+ * - Monthly cost: the projected cost (0 included; only a missing figure shows a dash),
+ *   with the cost scope label, the list prices' source, region and date (`priceList`,
+ *   facts.price_list, #1196), the queries it leaves out (#1329), the current cost and
+ *   saving when the cost baseline is known (costBaselineStats in utils/tcoAnalysis.js), and
+ *   each retired engine the customer runs today with its counted saving (#1076).
+ * - Overall risk: the level as a StatusIndicator, with the open and the critical or high
+ *   risk counts.
+ * - Waves: the wave count, with each wave's engines in order.
+ * - Queries: every collected query, with the source tables, and the queries no engine in
+ *   the customer's engine scope serves (`noEngineInScope`, #1329).
+ * - Target engines: the page's engine badges (`targetEngines`) and the cache layer's line
+ *   (`cacheLayerLine`), the cache change as a warning (`cacheChange`, #1252: the executive
+ *   report prints it in its body, so the summary shows it too), the customer's engine
+ *   scope (#1328), and an Info link whose popover holds the longer notes
+ *   (`targetEngineNotes`: the cache layer's role, the routines' temporary objects).
  *
- * `retiredEngines` is the facts layer's `retired_in_use_engines` (#1076): the engines the
- * customer runs today that the plan retires, each stated once with its counted saving (or
- * "no saving counted") and the consolidation reason; none shows without one.
- *
- * `accessPatternCount` is the facts layer's owned access-pattern total (0
- * without schema design), `ownerQueryCount` the queries the plan owns and
- * `cachePatternCount` the cache layer's own patterns; `targetEngines` is the
- * page's own engine badges and notes. Callers pass `t` (the page's own
- * `useTranslation` function), like QueryRoutingTable. `queryPatterns` is
- * facts.query_pattern_counts as `{ queries, patterns }` (queryPatternCountsOf),
- * or null for a report written before it (#1146): "1,654 queries in 1,045 distinct
- * query patterns", the line the executive and engineering reports print.
- *
- * `engineScope` is facts.engine_scope (#1328): the customer's engine scope, engine ids
- * already in the order the reports name them, shown under the target engines as
- * "Engines in scope: Aurora PostgreSQL, DynamoDB (customer's choice)"; nothing shows
- * for a job with no scope (null) or a report written before it.
- *
- * `noEngineInScope` (#1329) is `{ count, placed, total }` from facts
- * (no_engine_in_scope_query_count, in_scope_query_count, query_total_count): "65 of
- * 107 queries placed on an engine; 42 have no engine in scope", and the projected cost
- * says it excludes them; nothing shows when count is 0 or absent.
- *
- * `priceList` is the report's `facts.price_list` (#1196): the projected-cost tile
- * states the list prices' source, region and retrieval date under the figure (each
- * engine's date when the estimates were priced from different tables), and nothing
- * for a report written before it.
+ * The query patterns and the access-pattern counts are on the Queries tab.
  */
 // The price date(s) as the facts layer stated them; it only formats (ADR-032).
 // A retired engine's reason as the PDF and the engineering report word it (src/report/formatting.py
@@ -53,7 +48,7 @@ function retiredReason(row) {
   return reason ? `${reason}.` : '';
 }
 
-function priceListLine(t, priceList) {
+export function priceListLine(t, priceList) {
   if (!priceList) return null;
   const dates = Object.entries(priceList.engine_dates || {});
   let when = priceList.retrieved_on;
@@ -68,113 +63,71 @@ function priceListLine(t, priceList) {
   }) + (undated ? t('analysis-results.executive-summary.price-list-undated', { engines: undated }) : '');
 }
 
+// The narrowest a figure's column gets before the row wraps (px).
+const SUMMARY_COLUMN_MIN_WIDTH = 170;
+
+function Note({ figure, children }) {
+  return (
+    <Box fontSize="body-s" color="text-body-secondary">
+      {figure ? <span data-figure={figure}>{children}</span> : children}
+    </Box>
+  );
+}
+
+function Headline({ figure, children }) {
+  return <Box fontSize="heading-l" fontWeight="bold"><span data-figure={figure}>{children}</span></Box>;
+}
+
+function riskCountsLine(t, summary) {
+  if (summary.openRiskCount === null) return null;
+  const open = t('analysis-results.executive-summary.open-risks', { count: summary.openRiskCount });
+  if (summary.criticalHighRiskCount === null || summary.openRiskCount === 0) return open;
+  return summary.criticalHighRiskCount > 0
+    ? t('analysis-results.executive-summary.open-risks-critical-high', { open, count: summary.criticalHighRiskCount })
+    : t('analysis-results.executive-summary.open-risks-none-critical-high', { open });
+}
+
 const ExecutiveSummaryStats = memo(({
-  t, databaseName, accessPatternCount, ownerQueryCount, cachePatternCount,
-  targetEngines, projectedCost, costBaseline, retiredEngines, queryPatterns, engineScope,
-  noEngineInScope,
-  priceList, costScopeLabel,
+  t, summary, targetEngines, cacheLayerLine, cacheChange, targetEngineNotes, projectedCost, costBaseline,
+  retiredEngines, engineScope, noEngineInScope, priceList, costScopeLabel,
 }) => {
-  let patterns = '—';
-  if (accessPatternCount > 0) patterns = accessPatternCount;
-  else if (ownerQueryCount > 0) patterns = ownerQueryCount;
-  const showOfQueries = accessPatternCount > 0 && ownerQueryCount > 0 && accessPatternCount !== ownerQueryCount;
   const baselineKnown = Boolean(costBaseline && costBaseline.known);
-  // Missing (null, as resolveCostBreakdown reports it) hides the tile; a real
-  // $0.00 projection is a figure and shows.
+  // Missing (null, as resolveCostBreakdown reports it) shows a dash; a real $0.00
+  // projection is a figure and shows.
   const hasProjectedCost = typeof projectedCost === 'number' && Number.isFinite(projectedCost);
   const retiredList = Array.isArray(retiredEngines) ? retiredEngines : [];
   const priceLine = priceListLine(t, priceList);
-  return (
-    <ColumnLayout columns={4} variant="text-grid">
-      <div data-tile="database">
-        <Box variant="awsui-key-label">{t('analysis-results.executive-summary.database')}</Box>
-        <Box fontSize="heading-m" fontWeight="bold"><span data-figure="database-name">{databaseName || '—'}</span></Box>
-        <Box variant="awsui-key-label" padding={{ top: 's' }}>{t('analysis-results.executive-summary.access-patterns')}</Box>
-        <Box fontSize="heading-m" fontWeight="bold"><span data-figure="access-patterns">{patterns}</span></Box>
-        {/* #361: access patterns and the Query flow's query count don't always
-            match (relational engines model as tables, not patterns; several
-            queries can converge into one pattern) -- say so. */}
-        {showOfQueries && (
-          <Box fontSize="body-s" color="text-body-secondary" padding={{ top: 'xxs' }}>
-            {t('analysis-results.executive-summary.access-patterns-of-queries', { count: ownerQueryCount })}
-          </Box>
-        )}
-        {/* #1146: the queries and the distinct query patterns they make. */}
-        {queryPatterns && (
-          <Box fontSize="body-s" color="text-body-secondary" padding={{ top: 'xxs' }}>
-            <span data-figure="query-patterns">
-              {t('analysis-results.executive-summary.query-patterns', {
-                count: queryPatterns.patterns,
-                patterns: queryPatterns.patterns.toLocaleString('en-US'),
-                queries: t('analysis-results.executive-summary.query-patterns-queries', {
-                  count: queryPatterns.queries,
-                  queries: queryPatterns.queries.toLocaleString('en-US'),
-                }),
-              })}
-            </span>
-          </Box>
-        )}
-        {/* #361: the cache layer's own patterns are real, but never owned
-            workload -- called out separately. */}
-        {cachePatternCount > 0 && (
-          <Box fontSize="body-s" color="text-body-secondary" padding={{ top: 'xxs' }}>
-            {t('analysis-results.executive-summary.cache-patterns-note', { count: cachePatternCount })}
-          </Box>
-        )}
-      </div>
-      <div data-tile="target-engines" id="target-engines">
-        <Box variant="awsui-key-label">{t('analysis-results.executive-summary.target-engines')}</Box>
-        {targetEngines}
-        {Array.isArray(engineScope) && engineScope.length > 0 && (
-          <Box fontSize="body-s" color="text-body-secondary" padding={{ top: 'xxs' }}>
-            <span data-figure="engine-scope">
-              {t('analysis-results.executive-summary.engine-scope', {
-                engines: engineScope.map(displayEngine).join(', '),
-              })}
-            </span>
-          </Box>
-        )}
-        {noEngineInScope && noEngineInScope.count > 0 && (
-          <Box fontSize="body-s" color="text-body-secondary" padding={{ top: 'xxs' }}>
-            <span data-figure="no-engine-in-scope">
-              {t('analysis-results.executive-summary.no-engine-in-scope', {
-                count: noEngineInScope.count,
-                placed: noEngineInScope.placed,
-                total: noEngineInScope.total,
-              })}
-            </span>
-          </Box>
-        )}
-      </div>
-      {hasProjectedCost && (
+  const notes = (targetEngineNotes || []).filter(Boolean);
+  const riskLine = riskCountsLine(t, summary);
+  const waveLine = summary.waveEngines
+    .map(engines => engines.map(displayEngine).join(' + '))
+    .filter(Boolean)
+    .join(', ');
+  const noEngine = noEngineInScope && noEngineInScope.count > 0 ? noEngineInScope : null;
+
+  const items = [
+    {
+      label: t('analysis-results.executive-summary.monthly-cost'),
+      value: (
         <div data-tile="projected-cost">
-          <Box variant="awsui-key-label">{t('analysis-results.executive-summary.projected-cost')}</Box>
-          <Box fontSize="heading-m" fontWeight="bold">{formatMonthlyMoney(projectedCost)}</Box>
-          {noEngineInScope && noEngineInScope.count > 0 && (
-            <Box fontSize="body-s" color="text-body-secondary">
-              <span data-figure="cost-excludes-no-engine">
-                {t('analysis-results.executive-summary.cost-excludes-no-engine', { count: noEngineInScope.count })}
-              </span>
-            </Box>
+          <Headline figure="projected-cost">{hasProjectedCost ? formatMonthlyMoney(projectedCost) : '—'}</Headline>
+          {costScopeLabel && <Note figure="cost-scope">{costScopeLabel}</Note>}
+          {priceLine && <Note figure="price-list">{priceLine}</Note>}
+          {noEngine && (
+            <Note figure="cost-excludes-no-engine">
+              {t('analysis-results.executive-summary.cost-excludes-no-engine', { count: noEngine.count })}
+            </Note>
           )}
-          {costScopeLabel && (
-            <Box fontSize="body-s" color="text-body-secondary">
-              <span data-figure="cost-scope">{costScopeLabel}</span>
-            </Box>
+          {baselineKnown && (
+            <Note figure="current-cost">
+              {t('analysis-results.executive-summary.current-cost-line', {
+                current: costBaseline.currentCostStat, savings: costBaseline.savingsStat,
+              })}
+            </Note>
           )}
-          {priceLine && (
-            <Box fontSize="body-s" color="text-body-secondary" padding={{ top: 'xxs' }}>
-              <span data-figure="price-list">{priceLine}</span>
-            </Box>
-          )}
-        </div>
-      )}
-      {retiredList.length > 0 && (
-        <div data-tile="retired-engines">
-          <Box variant="awsui-key-label">{t('analysis-results.executive-summary.retired-engines')}</Box>
           {retiredList.map((row) => (
             <div key={row.engine} data-retired-engine={row.engine}>
-              <Box fontSize="heading-s" fontWeight="bold">
+              <Note>
                 {typeof row.monthly_cost_usd === 'number'
                   ? t('analysis-results.executive-summary.retired-engine-saving', {
                     engine: displayEngine(row.engine), cost: formatMoney(row.monthly_cost_usd),
@@ -185,26 +138,114 @@ const ExecutiveSummaryStats = memo(({
                     engine: displayEngine(row.engine),
                     reason: row.no_saving_reason,
                   })}
-              </Box>
-              {retiredReason(row) && (
-                <Box fontSize="body-s" color="text-body-secondary">{retiredReason(row)}</Box>
-              )}
+                {retiredReason(row) ? ` ${retiredReason(row)}` : ''}
+              </Note>
             </div>
           ))}
         </div>
-      )}
-      {baselineKnown && (
-        <div data-tile="current-cost">
-          <Box variant="awsui-key-label">{t('analysis-results.executive-summary.current-cost')}</Box>
-          <Box fontSize="heading-m" fontWeight="bold">{costBaseline.currentCostStat}</Box>
+      ),
+    },
+    {
+      label: t('analysis-results.executive-summary.overall-risk'),
+      value: (
+        <div data-tile="overall-risk">
+          <Box fontSize="heading-m" fontWeight="bold">
+            <span data-figure="overall-risk" data-level={summary.riskLevel || ''}>
+              {summary.riskLevel
+                ? <StatusIndicator type={riskSeverityStatus(summary.riskLevel)}>{riskSeverityLabel(summary.riskLevel, t)}</StatusIndicator>
+                : '—'}
+            </span>
+          </Box>
+          {riskLine && <Note figure="open-risks">{riskLine}</Note>}
         </div>
-      )}
-      {baselineKnown && (
-        <div data-tile="savings">
-          <Box variant="awsui-key-label">{t('analysis-results.executive-summary.savings')}</Box>
-          <Box fontSize="heading-m" fontWeight="bold">{costBaseline.savingsStat}</Box>
+      ),
+    },
+    {
+      label: t('analysis-results.executive-summary.waves'),
+      value: (
+        <div data-tile="waves">
+          <Headline figure="wave-count">{summary.waveCount ?? '—'}</Headline>
+          {waveLine && <Note figure="wave-engines">{waveLine}</Note>}
         </div>
-      )}
+      ),
+    },
+    {
+      label: t('analysis-results.executive-summary.queries'),
+      value: (
+        <div data-tile="queries">
+          <Headline figure="query-count">
+            {summary.queryCount === null ? '—' : summary.queryCount.toLocaleString('en-US')}
+          </Headline>
+          {summary.sourceTableCount !== null && summary.sourceTableCount > 0 && (
+            <Note figure="source-tables">
+              {t('analysis-results.executive-summary.across-source-tables', {
+                count: summary.sourceTableCount,
+                tables: summary.sourceTableCount.toLocaleString('en-US'),
+              })}
+            </Note>
+          )}
+          {noEngine && (
+            <Note figure="no-engine-in-scope">
+              {t('analysis-results.executive-summary.no-engine-in-scope', {
+                count: noEngine.count,
+                placed: noEngine.placed,
+                total: noEngine.total,
+              })}
+            </Note>
+          )}
+        </div>
+      ),
+    },
+    {
+      label: t('analysis-results.executive-summary.target-engines'),
+      info: notes.length > 0 ? (
+        <Popover
+          triggerType="custom"
+          size="large"
+          header={t('analysis-results.executive-summary.target-engines-info-header')}
+          content={(
+            <SpaceBetween size="xs">
+              {notes.map((note, i) => <Box key={i} variant="p">{note}</Box>)}
+            </SpaceBetween>
+          )}
+        >
+          <span data-figure="target-engines-info">
+            <Link variant="info" ariaLabel={t('analysis-results.executive-summary.target-engines-info-label')}>
+              {t('analysis-results.executive-summary.info')}
+            </Link>
+          </span>
+        </Popover>
+      ) : undefined,
+      value: (
+        <div data-tile="target-engines" id="target-engines">
+          {targetEngines}
+          {cacheLayerLine && <Note figure="cache-layer-line">{cacheLayerLine}</Note>}
+          {cacheChange && (
+            <Box fontSize="body-s">
+              <span data-figure="cache-change">
+                <StatusIndicator type="warning">{cacheChange}</StatusIndicator>
+              </span>
+            </Box>
+          )}
+          {Array.isArray(engineScope) && engineScope.length > 0 && (
+            <Note figure="engine-scope">
+              {t('analysis-results.executive-summary.engine-scope', {
+                engines: engineScope.map(displayEngine).join(', '),
+              })}
+            </Note>
+          )}
+        </div>
+      ),
+    },
+  ];
+
+  // One row of five on a desktop page; a narrower container drops to an even column
+  // count (Cloudscape's flexible ColumnLayout), then to one column on a phone.
+  return (
+    <ColumnLayout columns={items.length} minColumnWidth={SUMMARY_COLUMN_MIN_WIDTH}>
+      {items.map(item => (
+        <KeyValuePairs key={item.label} columns={1} items={[item]} />
+      ))}
     </ColumnLayout>
   );
 });
