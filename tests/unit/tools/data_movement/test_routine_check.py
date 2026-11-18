@@ -77,7 +77,7 @@ def test_every_carried_routine_confirmed_still_fails_on_the_one_not_carried():
     assert (result.status, result.proof, result.label) == (
         "fail",
         "static",
-        "checked, not load-tested",
+        "checked, not tested yet",
     )
 
 

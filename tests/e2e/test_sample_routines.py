@@ -186,7 +186,7 @@ def test_the_facts_count_each_outcome(sample_run: PipelineResult) -> None:
     assert facts["as_is_count"] == migration["counts"]["as_is"]
     assert facts["rewritten_count"] == migration["counts"]["rewritten"]
     assert facts["as_is_count"] >= 3 and facts["rewritten_count"] >= 1
-    assert facts["proof"] == "checked, not load-tested"
+    assert facts["proof"] == "checked, not tested yet"
     for (kind, rid), status in EXPECTED[sample].items():
         rows = [r for r in facts["routines"] if (r["kind"], r["routine_id"]) == (kind, rid)]
         if status == "as_is" and not rows:

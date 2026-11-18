@@ -71,7 +71,7 @@ def test_the_report_counts_the_artifacts_routines(run, request) -> None:
                            "opted_out_count", "not_readable_count")
     )  # fmt: skip
     assert not_carried == artifact["counts"]["needs_attention"]
-    assert facts["proof"] == "checked, not load-tested"
+    assert facts["proof"] == "checked, not tested yet"
 
 
 def _routine_risks(report: dict[str, Any]) -> list[dict[str, Any]]:

@@ -43,7 +43,11 @@ def test_a_deployed_repair_is_carried_repaired_and_its_line_says_step_1_deploys_
     assert (row["status"], row["category"], row["status_text"]) == (
         "model_repaired", "repaired", "Carried, repaired")  # fmt: skip
     assert row["risk_classes"] == ["carried_review"] and "model_repaired" in row["severity_basis"]
-    (carried,) = [r for r in routine_risks(facts) if r["rule"] == "routines.carried"]
+    # #2429: the test found no difference on it, so it no longer holds the carried risk.
+    assert [r for r in routine_risks(facts) if r["rule"] == "routines.carried"] == []
+    assert row["held_back"] is None
+    (carried,) = [r for r in routine_risks(_facts(rf.job(tmp_path / "before")))
+                  if r["rule"] == "routines.carried"]  # fmt: skip
     assert "1 was repaired by a model" in carried["description"]
 
 

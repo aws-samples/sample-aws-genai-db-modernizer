@@ -1153,7 +1153,9 @@ def test_the_commands_run_print_summary_only_with_its_documented_flags() -> None
     for path in sorted(COMMANDS_DIR.glob("*.md")):
         for match in re.finditer(r"scripts/print_summary\.py ([^\n`]*)", path.read_text()):
             args = match.group(1).split()
-            assert args[:4] == ["--job-id", "{job_id}", "--db", "{database_name}"], (
+            # /test-routines names the job's database {db}, as its other commands do (#2429).
+            db = "{db}" if path.name == "test-routines.md" else "{database_name}"
+            assert args[:4] == ["--job-id", "{job_id}", "--db", db], (
                 path.name,
                 args,
             )
@@ -1163,8 +1165,10 @@ def test_the_commands_run_print_summary_only_with_its_documented_flags() -> None
                 ["--final", "--mode", "{experience_mode}"],
             ), (path.name, args)
             runs.append(f"{path.name} {args[4]}")
-    # The gate block and the completion summary in /modernize, and /synthesize's report step.
-    assert sorted(runs) == ["modernize.md --final", "modernize.md --gate", "synthesize.md --final"]
+    # The gate block and the completion summary in /modernize, /synthesize's report step and
+    # /test-routines' refresh after the test (#2429).
+    assert sorted(runs) == ["modernize.md --final", "modernize.md --gate", "synthesize.md --final",
+                            "test-routines.md --final"]  # fmt: skip
 
 
 # Issue #354: the DynamoDB groups showed up as "DynamoDB group 0 draft" and the

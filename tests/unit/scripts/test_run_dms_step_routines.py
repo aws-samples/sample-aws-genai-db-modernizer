@@ -86,7 +86,7 @@ def test_routines_after_the_full_load_write_the_scripts_and_print_no_routine_tex
     code, line = base._run(tmp_path, "routines", clients=base._clients(cred), capsys=capsys)
     assert code == 0, line
     assert (line["status"], line["carried"], line["in_script"], line["label"]) == (
-        "ready", 1, 1, "checked, not load-tested")  # fmt: skip
+        "ready", 1, 1, "tested on a test Aurora")  # fmt: skip
     assert SENTINEL in (tmp_path / STEP / "routines-deploy.sql").read_text()
     assert SENTINEL not in json.dumps(line)
 
@@ -231,3 +231,48 @@ def test_routines_after_a_test_deploy_only_what_it_proved(tmp_path, capsys):
     assert [(r["routine_id"], r["reason"]) for r in line["held_back_routines"]] == [
         ("shop.other", "not_proved")]  # fmt: skip
     assert SENTINEL in (tmp_path / STEP / "routines-deploy.sql").read_text()
+
+
+def test_a_held_routine_is_listed_once_as_held_back_with_its_reason(tmp_path, capsys):
+    """#2429: the real MySQL run listed the held routine under both ``held_back_routines``
+    and ``refused_routines`` (``refused: 1``). It is held back, with its reason, once."""
+    rows = [row("shop.place_order", "procedure", schema="shop", status="rewritten", signature="IN int",
+                specific="place_order"),
+            row("shop.other", "procedure", schema="shop", status="as_is", signature="IN int",
+                specific="other")]  # fmt: skip
+    _job(tmp_path, rows, tested=False,
+         extra=[mysql_source("other", "CREATE DEFINER=`app`@`%` PROCEDURE `other`(IN p INT)\n"
+                             "BEGIN SELECT p; END", schema="shop")])  # fmt: skip
+    mark_tested(LocalArtifactStore(base_dir=str(tmp_path)), {"shop.other": "not_proved"})
+    cred = StubbedCredMgr()
+    _loaded(cred, 100)
+    code, line = base._run(tmp_path, "routines", clients=base._clients(cred), capsys=capsys)
+    assert code == 0, line
+    assert (line["held_back"], line["refused"], line["refused_routines"]) == (1, 0, [])
+    [held] = line["held_back_routines"]
+    assert (held["routine_id"], held["reason"]) == ("shop.other", "not_proved") and held["why"]
+
+
+def test_the_routines_label_is_the_facts_words_for_the_test_state(tmp_path, capsys):
+    """#2429: one label per state. ``routines`` and ``routines-check`` print the words
+    ``facts.routines.proof`` holds: checked, not tested yet, until a test on this routines
+    file; tested on a test Aurora after one."""
+    from src.shared.routine_facts import NOT_TESTED_STATE, TESTED_STATE
+
+    for tested, words in ((False, NOT_TESTED_STATE), (True, TESTED_STATE)):
+        sha = _job(tmp_path, tested=tested)
+        (tmp_path / STEP / "routines-check.tsv").unlink(missing_ok=True)
+        cred = StubbedCredMgr()
+        _loaded(cred, 100)
+        code, line = base._run(tmp_path, "routines", clients=base._clients(cred), capsys=capsys)
+        assert (code, line["label"]) == (0, words), line
+        code, line = base._run(tmp_path, "routines-check", capsys=capsys)
+        assert (line["status"], line["label"]) == ("no_output", words), line
+        code, line = base._run(tmp_path, "triggers-scripts", capsys=capsys)
+        assert (code, line["label"]) == (0, words), line
+        # The stored check result records the same words, which the gate reads.
+        (tmp_path / STEP / "routines-check.tsv").write_text(
+            _output(sha, [["procedure", "shop", "", "place_order", "IN int", "", ""]]))  # fmt: skip
+        code, line = base._run(tmp_path, "routines-check", capsys=capsys)
+        stored = json.loads((tmp_path / STEP / "routines-check.json").read_text())
+        assert (code, line["label"], stored["label"]) == (0, words, words), line

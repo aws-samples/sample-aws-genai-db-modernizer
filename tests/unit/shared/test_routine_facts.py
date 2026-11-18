@@ -204,7 +204,7 @@ def test_each_routine_is_in_one_headline_count_and_the_counts_split_the_total() 
         "source_text_not_collected": 2,
         "source_text_not_exact": 1,
     }
-    assert facts["proof"] == PROOF_LABEL == "checked, not load-tested"
+    assert facts["proof"] == PROOF_LABEL == "checked, not tested yet"
     RoutineFacts.model_validate(facts)
 
 

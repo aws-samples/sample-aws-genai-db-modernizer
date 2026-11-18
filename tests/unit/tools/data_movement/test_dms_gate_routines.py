@@ -63,14 +63,21 @@ def test_no_routines_passes():
     assert (check.status, check.summary) == ("pass", "routines: none in the collection")
 
 
-def test_every_carried_routine_confirmed_passes_labelled_static():
+def test_every_carried_routine_confirmed_passes_labelled_with_the_test_state():
     inputs = _inputs(_CARRIED)
     check = routines_check(inputs, _result(inputs))
     assert check.status == "pass" and check.reasons == []
     assert (check.evidence["proof"], check.evidence["label"]) == (
-        "static",
-        "checked, not load-tested",
+        "not_run",
+        "checked, not tested yet",
     )
+    # #2429: after a test on this routines file, the facts' words for it.
+    tested = routines_check(inputs, _result(inputs), proof="current")
+    assert (tested.evidence["proof"], tested.evidence["label"]) == (
+        "current",
+        "tested on a test Aurora",
+    )
+    assert tested.summary.endswith("; tested on a test Aurora")
     cred = StubbedCredMgr()
     g.queue(cred, inputs.contract_sha256)
     gate = run_gate(inputs, g.request(), g.clients(cred), now=g.NOW, routines=_result(inputs))
@@ -176,7 +183,7 @@ def test_the_gate_reads_what_the_deploy_gate_held_back(tmp_path):
 
     mark_tested(store, {"public.later(integer)": "not_proved"})
     held = _routines_held(store, "shop", "job1", dataclasses.replace(INPUTS, contract=contract))
-    assert held == {("function", "public.later(integer)"): "not_proved"}
+    assert held == ({("function", "public.later(integer)"): "not_proved"}, "current")
 
 
 def test_write_gate_passes_what_the_deploy_gate_held_back(tmp_path, monkeypatch):
@@ -200,3 +207,4 @@ def test_write_gate_passes_what_the_deploy_gate_held_back(tmp_path, monkeypatch)
     with pytest.raises(RuntimeError):
         dms_gate.write_gate(store, "shop", "job1", g.request(), g.clients(StubbedCredMgr()))
     assert seen["routines_held"] == {("function", "public.later(integer)"): "not_proved"}
+    assert seen["routines_proof"] == "current"  # #2429: the label reads the test's state

@@ -197,7 +197,7 @@ def test_each_routine_lands_in_its_step_1_bucket(step1: Step1) -> None:
     assert (section["carried"], section["deferred"]) == (carried, deferred)
     # The command's line says the same, and names each routine it does not carry.
     line = step1.routines
-    assert line["status"] == "ready" and line["label"] == "checked, not load-tested"
+    assert line["status"] == "ready" and line["label"] == "tested on a test Aurora"
     assert (line["carried"], line["deferred"]) == (carried, deferred)
     assert line["in_script"] == carried and line["refused"] == 0
     assert (line["proof"], line["held_back"]) == ("current", 0)
@@ -205,6 +205,7 @@ def test_each_routine_lands_in_its_step_1_bucket(step1: Step1) -> None:
     before = step1.untested
     assert (before["in_script"], before["proof"], before["held_back"]) == (0, "not_run", carried)
     assert {r["reason"] for r in before["held_back_routines"]} == {"not_tested"}
+    assert (before["label"], before["refused"]) == ("checked, not tested yet", 0)  # #2429
     not_carried = {(r["kind"], r["routine_id"]): r["reasons"] for r in line["not_carried_routines"]}
     [(kind, rid)] = [k for k, s in EXPECTED[sample].items() if s == "needs_attention"]
     assert not_carried.pop((kind, rid)) == [FAILED[sample]]
@@ -425,3 +426,190 @@ def test_the_postgresql_scripts_deploy_and_check_on_a_stand_in_target(
     # The check output holds no routine text.
     for name in ("routines-check.tsv", "triggers-enable-check.tsv"):
         assert "bumped_at" not in step1.text(name), name
+
+
+# --- After /test-routines: the reports state the test's result (#2429) --------------------
+
+# The outcomes of the real runs on #2411 (2026-11-17): on Aurora PostgreSQL every carried
+# routine showed no difference; on Aurora MySQL the rewritten procedure could not be tested
+# (its original names another DEFINER, #2426), so step 1 holds it back.
+TESTED_OUTCOMES = {
+    "discourse": {},
+    "wordpress": {"wordpress.wp_refresh_comment_count": "not_proved"},
+}
+
+
+@dataclass
+class Tested:
+    run: PipelineResult
+    report: dict[str, Any]  # report.json after synthesis ran again
+    engineering: str  # engineering-report.md, plain
+    executive: str  # executive-report.pdf, its page text
+    routines: dict[str, Any]  # run_dms_step.py routines' line after the test
+    results: dict[str, Any]  # the results page's payload, GET /assessments/{job}/results
+
+
+_TESTED: dict[str, Tested | str] = {}
+
+
+@pytest.fixture(params=sorted(TESTED_OUTCOMES))
+def tested(request: pytest.FixtureRequest, tmp_path_factory: pytest.TempPathFactory) -> Tested:
+    """A copy of the sample's job after /test-routines with the real runs' outcomes, then
+    the scripts its Step 8 lists: synthesis again and the deliverables."""
+    sample: str = request.param
+    if sample not in _TESTED:
+        try:
+            _TESTED[sample] = _build_tested(request, tmp_path_factory, sample)
+        except Exception as exc:  # noqa: BLE001 -- kept as text, so each test fails on it once
+            _TESTED[sample] = f"{type(exc).__name__}: {exc}"
+            raise
+    built = _TESTED[sample]
+    if isinstance(built, str):
+        pytest.fail(f"the tested copy of {sample} failed to build earlier in this session: {built}")
+    return built
+
+
+def _build_tested(
+    request: pytest.FixtureRequest, tmp_path_factory: pytest.TempPathFactory, sample: str
+) -> Tested:
+    from src.storage.local_store import LocalArtifactStore
+    from tests.e2e.deliverable_figures import md_plain, pdf_page_texts
+    from tests.unit.tools.aws.dms_move_stubs import INPUTS
+    from tests.unit.tools.data_movement.routine_fixtures import mark_tested
+
+    run: PipelineResult = request.getfixturevalue(f"{sample}_run")
+    root = tmp_path_factory.mktemp(f"tested-{sample}") / "artifacts"
+    shutil.copytree(run.job_dir(), root / run.db / run.job_id)
+    meta = run.artifact_root / ".meta" / f"{run.job_id}.json"
+    if meta.exists():  # the results route finds the job by it
+        (root / ".meta").mkdir(parents=True, exist_ok=True)
+        shutil.copy2(meta, root / ".meta" / meta.name)
+    common = ["--job-id", run.job_id, "--db", run.db, "--artifact-root", str(root)]
+    for prepare in PREPARE_SCRIPTS:
+        _script(prepare, *common)
+    step = root / run.db / run.job_id / "data-movement" / "step-1"
+    (step / "inputs.json").write_text(
+        json.dumps({**INPUTS, "target_database_name": TARGET_DATABASE[sample]})
+    )
+    [path] = sorted((root / run.db / run.job_id / "transformation-contract").glob("v*/step-1.json"))
+    version = json.loads(path.read_text())["routines"]["routine_migration_version"]
+    mark_tested(LocalArtifactStore(base_dir=str(root)), TESTED_OUTCOMES[sample], db=run.db,
+                job_id=run.job_id, version=version)  # fmt: skip
+    routines = _routines_after_the_full_load(root, run)
+    # /test-routines Step 8, deterministic here (the e2e runs use --llm-mode none).
+    synthesis = _script("scripts/run_synthesis.py", *common)
+    assert synthesis["status"] == "complete", synthesis
+    rendered = _script("scripts/run_report.py", *common)
+    assert rendered["status"] == "complete", rendered
+    files = {p.rsplit("/", 1)[-1]: Path(p) for p in rendered["deliverables"]}
+    return Tested(
+        run=run,
+        report=json.loads((root / str(rendered["report"])).read_text()),
+        engineering=" ".join(md_plain(files["engineering-report.md"].read_text()).split()),
+        executive=" ".join(" ".join(pdf_page_texts(str(files["executive-report.pdf"]))).split()),
+        routines=routines,
+        results=_results_payload(root, run.job_id),
+    )
+
+
+def _results_payload(root: Path, job_id: str) -> dict[str, Any]:
+    """What the results page reads: the local API's results route on ``root``."""
+    from fastapi.testclient import TestClient
+
+    from src.api.main import app
+    from src.api.routes import results
+    from src.api.services.local_execution import LocalExecutionService
+    from src.api.services.local_s3 import LocalS3Service
+    from src.storage.local_store import LocalArtifactStore
+
+    store = LocalArtifactStore(base_dir=str(root))
+    saved = (results.sfn_service, results.s3_service)
+    results.sfn_service, results.s3_service = LocalExecutionService(store), LocalS3Service(store)
+    try:
+        response = TestClient(app).get(f"/api/v1/assessments/{job_id}/results")
+    finally:
+        results.sfn_service, results.s3_service = saved
+    assert response.status_code == 200, response.text
+    payload: dict[str, Any] = response.json()
+    return payload
+
+
+PREPARE_SCRIPTS = (
+    "scripts/run_transformation_contract.py",
+    "scripts/run_data_movement_plan.py",
+    "scripts/render_dms_step.py",
+)
+
+
+def _carried_risks(report: dict[str, Any]) -> list[dict[str, Any]]:
+    return [r for r in report["risk_assessment"]["risks"] if r.get("rule") == "routines.carried"]
+
+
+def test_after_the_test_every_report_states_its_result(tested: Tested) -> None:
+    facts = tested.report["facts"]["routines"]
+    assert facts["proof"] == "tested on a test Aurora" == tested.routines["label"]
+    assert facts["line"] in tested.engineering
+    assert facts["executive_line"] in tested.executive
+    for text in (tested.engineering, tested.executive, facts["line"], facts["executive_line"]):
+        assert "not tested yet" not in text and "/test-routines command" not in text
+    if tested.run.db == "discourse":
+        assert facts["line"].endswith(
+            "On a test Aurora, of 4 carried routines: 4 showed no difference on the calls made."
+        )
+        assert facts["executive_line"].endswith(
+            "Tested on a throwaway Aurora: step 1 deploys all 4."
+        )
+    else:
+        assert facts["line"].endswith(
+            "On a test Aurora, of 4 carried routines: 3 showed no difference on the calls made; "
+            "1 could not be tested. Step 1 deploys only those 3; the other one is held back."
+        )
+        assert facts["executive_line"].endswith(
+            "Tested on a throwaway Aurora: step 1 deploys 3; 1 is held back."
+        )
+
+
+def test_after_the_test_the_risk_and_the_gate_ask_only_for_what_is_held(tested: Tested) -> None:
+    risks = _carried_risks(tested.report)
+    gate = tested.report["migration_waves"][0]["gate"]
+    assert "Test the carried routines on a throwaway Aurora" not in tested.engineering
+    if tested.run.db == "discourse":  # all 4 showed no difference: nothing left to close
+        assert risks == [] and "carried routines to check" not in gate
+        return
+    [risk] = risks
+    assert risk["description"].endswith(
+        "1 of the 4 routines carried to Aurora MySQL (1 procedure) is held back after the test on a test Aurora, so "
+        "step 1 does not deploy it. Why: the test could not run or compare it, or a call failed (1)."
+    )
+    assert f"Close {risk['risk_id']} before this gate (carried routines to check)" in gate
+    # The engineering report's risk card says the same, with no ask to test it before.
+    held = "1 of the 4 routines carried to Aurora MySQL (1 procedure) is held back after the test on a test Aurora"
+    assert held in tested.engineering
+    assert "Fix what /test-routines reported for it" in tested.engineering
+
+
+def test_after_the_test_the_results_page_reads_the_same(tested: Tested) -> None:
+    """The results page renders the payload as it is (renderers only format): it carries
+    the same routine sentences and, on wordpress, the held risk; on discourse no carried
+    risk."""
+    synthesis = tested.results["synthesis"]
+    facts = tested.report["facts"]["routines"]
+    assert synthesis["facts"]["routines"]["line"] == facts["line"]
+    assert synthesis["facts"]["routines"]["executive_line"] == facts["executive_line"]
+    assert _carried_risks(synthesis) == _carried_risks(tested.report)
+    if tested.run.db == "discourse":
+        assert _carried_risks(synthesis) == []
+    else:
+        [risk] = _carried_risks(synthesis)
+        assert "held back after the test on a test Aurora" in risk["description"]
+
+
+def test_after_the_test_a_held_routine_is_listed_once(tested: Tested) -> None:
+    line = tested.routines
+    held = [(r["routine_id"], r["reason"]) for r in line["held_back_routines"]]
+    assert (line["refused"], line["refused_routines"]) == (0, [])
+    if tested.run.db == "discourse":
+        assert (line["in_script"], held) == (4, [])
+    else:
+        assert held == [("wordpress.wp_refresh_comment_count", "not_proved")]
+        assert line["in_script"] == 1 and line["held_back"] == 1

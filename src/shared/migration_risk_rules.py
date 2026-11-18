@@ -78,7 +78,13 @@ from src.shared.report_facts import (
     scope_unservable_rows,
 )
 from src.shared.risk_severity import overall_risk_level, severity_rank
-from src.shared.routine_facts import CUTOVER_SENTENCE, ROUTINE_DETAILS_LISTED, ROUTINE_RISK_SEVERITY
+from src.shared.routine_facts import (
+    CUTOVER_SENTENCE,
+    HELD_WORDS,
+    ROUTINE_DETAILS_LISTED,
+    ROUTINE_RISK_SEVERITY,
+    TEST_COMMAND,
+)
 from src.shared.wave_readiness import NON_HOLDING_RULES
 
 # A wave-gate strategy line names its risk ids up to this many, else counts them.
@@ -576,6 +582,26 @@ def _causes(rows: list[Mapping[str, Any]]) -> str:
     return " Why: " + listed_items([f"{w} ({n})" for w, n in counts.items()]) + "."
 
 
+def _of_carried(k: int, routines: Mapping[str, Any], name: str) -> str:
+    """The carried routines a LOW risk counts, out of every carried routine (#2429): the
+    count is ``facts.routines.carried_count``, the one the headline gives. "1 of the 4
+    routines carried to Aurora MySQL", "The routine carried to ...", "All 3 routines ..."."""
+    carried = max(k, int(routines.get("carried_count") or 0))
+    if k < carried:
+        return f"{k} of the {carried} routines carried to {name}"
+    return f"The routine carried to {name}" if k == 1 else f"All {k} routines carried to {name}"
+
+
+def _held_causes(rows: list[Mapping[str, Any]]) -> str:
+    """Why step 1 holds the carried routines back after a test (#2429), each reason in
+    plain words with how many routines it applies to."""
+    counts: dict[str, int] = {}
+    for r in rows:
+        word = HELD_WORDS.get(str(r.get("held_back")), str(r.get("held_back")))
+        counts[word] = counts.get(word, 0) + 1
+    return " Why: " + listed_items([f"{w} ({n})" for w, n in counts.items()]) + "."
+
+
 def _routine_mitigation(action: str, wave: int | None) -> str:
     """A routine risk's next step: with a wave, a pointer to its gate; without one, no
     timing advice, only the cutover sentence (maintainer rule), as :func:`by_gate` says."""
@@ -611,8 +637,13 @@ def routine_risks(
         if isinstance(r, Mapping) and r.get("risk_classes"):
             by_class.setdefault(str(r["risk_classes"][0]), []).append(r)
     out: list[dict[str, Any]] = []
+    # After a current test (#2429), the carried routines to check are only those step 1
+    # holds back: a routine with no difference on the calls made leaves the risk.
+    tested = isinstance(routines.get("proof_counts"), Mapping)
     for cls, severity in ROUTINE_RISK_SEVERITY.items():
         rows = by_class.get(cls) or []
+        if cls == "carried_review" and tested:
+            rows = [r for r in rows if r.get("held_back")]
         if not rows:
             continue
         k = len(rows)
@@ -655,6 +686,19 @@ def routine_risks(
                 "included; otherwise migrate them yourself",
                 wave,
             )
+        elif tested:
+            description = (
+                f"{_of_carried(k, routines, name)} ({_kinds(rows)}) "
+                f"{'is' if k == 1 else 'are'} held back after the test on a test Aurora, so "
+                f"step 1 does not deploy {they}." + _held_causes(rows)
+            )
+            mitigation = _routine_mitigation(
+                f"Fix what {TEST_COMMAND} reported for {'it' if k == 1 else 'each one'}, test "
+                f"{'it' if k == 1 else 'them'} again with {TEST_COMMAND}, then write the step "
+                "1 routine scripts again",
+                wave,
+            )
+            details = None
         else:
             rewritten = int(routines.get("rewritten_carried_count") or 0)
             unknown = int(routines.get("unknown_checks_count") or 0)
@@ -671,11 +715,11 @@ def routine_risks(
                 (f"{n_of(repaired, 'was', 'were')} repaired by a model" if repaired else ""),
             ]
             description = (
-                f"{n_of(k, 'routine is', 'routines are')} carried to {name} and need a "
-                "check on the target: " + "; ".join(p for p in parts if p) + "."
+                f"{_of_carried(k, routines, name)} {'needs' if k == 1 else 'need'} a check on "
+                "the target: " + "; ".join(p for p in parts if p) + "."
             )
             mitigation = _routine_mitigation(
-                "Test the carried routines on a throwaway Aurora with /test-routines before "
+                f"Test the carried routines on a throwaway Aurora with {TEST_COMMAND} before "
                 "step 1 deploys them, and check the target user's privileges cover what each "
                 "rewritten one does",
                 wave,

@@ -26,6 +26,7 @@ from tests.unit.scripts.test_modernize_command import (
 REPO_ROOT = Path(__file__).resolve().parents[3]
 COMMAND = REPO_ROOT / ".claude" / "commands" / "test-routines.md"
 PREPARE = ("run_transformation_contract.py", "run_data_movement_plan.py", "render_dms_step.py")
+REFRESH = ("scripts/run_synthesis.py", "scripts/run_report.py", "scripts/print_summary.py")
 
 
 def _text() -> str:
@@ -57,7 +58,7 @@ def test_it_carries_the_tool_use_rule_and_names_only_real_scripts() -> None:
     scripts = [shlex.split(c)[3] for c in _bash_commands()]
     assert scripts[:3] == [f"scripts/{s}" for s in PREPARE]
     assert set(scripts) == {*(f"scripts/{s}" for s in PREPARE), "scripts/run_dms_step.py",
-                            "scripts/run_routine_repair.py"}  # fmt: skip
+                            "scripts/run_routine_repair.py", *REFRESH}  # fmt: skip
 
 
 def test_it_runs_every_test_cluster_command_and_each_write_only_with_approve() -> None:
@@ -216,3 +217,45 @@ def test_the_repair_rounds_are_asked_before_the_test_and_never_under_auto() -> N
     assert "go to Step 5b" in _flat(_section("Step 5: Deploy"))
     assert "Run the routine repair rounds" not in whole  # the script's question, never here
     assert "Run no command at all" in _flat(_section("Arguments"))
+
+
+def test_after_the_test_it_refreshes_the_facts_and_every_deliverable() -> None:
+    """#2429: the test is recorded in the routine-migration artifact, but the reports read
+    ``facts.routines``, which synthesis computes. After the test, the command runs synthesis
+    again the way ``/synthesize`` does (the executive summary included), then renders the
+    deliverables, so every report states the test's result."""
+    step = _section("Step 8: Refresh the reports")
+    commands = _bash_commands(step)
+    assert [shlex.split(c)[3] for c in commands] == [REFRESH[0], REFRESH[0], *REFRESH[1:]]
+    assert commands[-1].endswith("--final")
+    assert commands[0].endswith("--llm-mode external") and commands[1].endswith("--finalize")
+    flat = _flat(step)
+    assert "whenever Step 6's test ran" in flat
+    assert "`src/skills/executive-summary.md`" in flat and "`llm_response`" in flat
+    assert "Never rewrite a second time" in flat
+    assert "`schema_design_status.case`" in flat and "Quote its stdout verbatim" in flat
+    # It runs after the teardown (the cluster bills until then) and before the result line.
+    text = _text()
+    assert text.index("## Step 7: Teardown") < text.index("## Step 8: Refresh the reports")
+    assert text.index("## Step 8: Refresh the reports") < text.index("## Result line")
+
+
+def test_a_failed_teardown_after_the_test_refreshes_the_reports_then_stops() -> None:
+    """Review of #2445: one rule. A teardown that fails after the test runs Step 8 first,
+    then ends with the one ``stopped stage=teardown`` line naming the stack left and that it
+    bills; Step 8 names no other line for it."""
+    teardown = _flat(_section("Step 7: Teardown"))
+    rule = teardown[teardown.index("One exception, a teardown that fails") :]
+    assert rule.index("run Step 8 first") < rule.index("then end with")
+    assert (
+        "`TEST_ROUTINES_RESULT: stopped stage=teardown reason=test ran, teardown did not finish: "
+        "stack <stack_name> is left and bills until torn down; run /test-routines again to tear "
+        "it down`" in rule
+    )
+    refresh = _flat(_section("Step 8: Refresh the reports"))
+    assert "after a failed one (Step 7 names its result line)" in refresh
+    assert (
+        "the `stopped stage=teardown` line of a failed teardown, otherwise the `complete` line"
+        in refresh
+    )
+    assert "as the test made it" not in refresh

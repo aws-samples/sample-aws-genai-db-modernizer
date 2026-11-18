@@ -45,7 +45,12 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
-from src.contracts.routine_check import RoutineCheckResult, RoutineMismatch, RoutineNotCarried
+from src.contracts.routine_check import (
+    STATIC_LABEL,
+    RoutineCheckResult,
+    RoutineMismatch,
+    RoutineNotCarried,
+)
 from src.contracts.transformation_contract import StepContract, StepRoutine, StepRoutines
 from src.tools.data_movement.routine_scripts import (
     CHECK_FIELDS,
@@ -324,9 +329,11 @@ def check_routines(
     target_database: str | None,
     rows_read: int = 0,
     now: datetime | None = None,
+    label: str = STATIC_LABEL,
 ) -> RoutineCheckResult:
     """The result for ``section`` from the parsed output ``rows`` (None when there was
-    nothing to check: no routine carried or deferred)."""
+    nothing to check: no routine carried or deferred), labelled with the routine test's
+    state (``label``, #2429)."""
     rows = rows or {}
     names: dict[tuple[str, ...], list[StepRoutine]] = {}
     for r in section.routines:
@@ -366,6 +373,7 @@ def check_routines(
         rows_read=rows_read,
         mismatches=mismatches,
         not_carried=not_carried,
+        label=label,  # type: ignore[arg-type]
     )
 
 
@@ -378,9 +386,11 @@ def read_check(
     contract_sha: str,
     target_database: str | None,
     now: datetime | None = None,
+    label: str = STATIC_LABEL,
 ) -> RoutineCheckResult | None:
     """The result from the output file at ``path``; None when the section asks for a
-    check and the file is not there yet. A section with nothing to check needs no file."""
+    check and the file is not there yet. A section with nothing to check needs no file.
+    ``label`` is the routine test's state the result records (#2429)."""
     section = contract.routines
     if section is None:
         raise RoutineCheckOutputError(
@@ -413,4 +423,5 @@ def read_check(
         target_database=target_database,
         rows_read=count,
         now=now,
+        label=label,
     )
