@@ -93,7 +93,7 @@ Each candidate is rebuilt onto the exact text, checked again, and compared side 
 uv run python scripts/run_routine_repair.py --job-id {job_id} --db {db} --finalize --proof test-cluster --approve
 ```
 
-While it prints `awaiting_llm` with a next `round` (at most 3), read the new request and answer it the same way; never reuse an earlier response, and never edit `loop_state.json` or `routine_repair.json`. On `"status": "complete"`, show its `counts`: a `model_repaired` routine is carried, repaired, and the test in Step 6 runs it side by side; `/move` deploys it only when that test finds no difference on that same repair. `"status": "skipped"` (no routine to repair): go to Step 6. An error line: quote its `message` and go to Step 6; the routines it names stay as they are.
+While it prints `awaiting_llm` with a next `round` (at most 3), read the new request and answer it the same way; never reuse an earlier response, and never edit `loop_state.json` or `routine_repair.json`. On `"status": "complete"`, show its `counts` and its `refused_candidates` (the candidates a round refused, a routine that then got no answer included): a `model_repaired` routine is carried, repaired, and the test in Step 6 runs it side by side; `/move` deploys it only when that test finds no difference on that same repair. `"status": "skipped"` (no routine to repair): go to Step 6. An error line: quote its `message` and go to Step 6; the routines it names stay as they are.
 
 ## Step 6: The test
 

@@ -472,6 +472,29 @@ def verifier_for_job(
     )
 
 
+def routine_headers(
+    store: Any,
+    database_name: str,
+    job_id: str,
+    migration: RoutineMigrationContract,
+    collector: Mapping[str, Any],
+) -> dict[tuple[str, str], str]:
+    """The redacted header of each MySQL function and procedure the job's routines file
+    holds (``repair_text.mysql_headers``, #2444), read one chunk at a time and redacted
+    with the collection's string settings; empty for PostgreSQL. The exact text stays in
+    memory: only the redacted headers are returned, for the repair request and
+    :func:`seen_texts` (ADR-034 Decision 4)."""
+    from src.agents.collector.routine_sources import read_routine_sources
+    from src.shared.sql_spans import span_settings_of
+    from src.tools.routines.repair_text import mysql_headers
+
+    if migration.source_engine != "mysql":
+        return {}
+    return mysql_headers(
+        migration, read_routine_sources(store, database_name, job_id), span_settings_of(collector)
+    )
+
+
 def seen_texts(
     store: Any, database_name: str, job_id: str, migration: RoutineMigrationContract
 ) -> dict[tuple[str, str], str]:
@@ -479,14 +502,15 @@ def seen_texts(
     collection read for models, #1625), keyed ``(kind, routine_id)``: what a candidate is
     rebuilt against. A routine whose body was not collected has none."""
     from src.agents.collector.routine_sources import collection_includes_bodies
-    from src.agents.routine_repair.source_text import redacted_create
     from src.storage.collector_for_models import read_collector_for_models
     from src.tools.routines.migration import collection_routines
+    from src.tools.routines.repair_text import redacted_create, signature_mismatch
 
     collector = read_collector_for_models(store, database_name, job_id, missing_ok=True)
     if not collection_includes_bodies(collector):
         return {}  # the customer opted out of bodies: nothing to rebuild on (#1933)
     rows = collection_routines(collector)
+    headers = routine_headers(store, database_name, job_id, migration, collector)
     out: dict[tuple[str, str], str] = {}
     for row in migration.routines:
         found = rows.get((row.kind, row.routine_id))
@@ -495,9 +519,13 @@ def seen_texts(
         status = found.get("body_status")
         if str(getattr(status, "value", status) or "") in _NO_BODY:
             continue
-        text = redacted_create(found, migration.source_engine, row.kind)
-        if text is not None:
-            out[(row.kind, row.routine_id)] = text
+        engine = migration.source_engine
+        text = redacted_create(found, engine, row.kind, headers.get((row.kind, row.routine_id)))
+        if text is None or signature_mismatch(
+            text, row, engine, str(found.get("sql_mode") or "") or None
+        ):
+            continue  # never sent to a model (#2444): no repair to rebuild on it
+        out[(row.kind, row.routine_id)] = text
     return out
 
 

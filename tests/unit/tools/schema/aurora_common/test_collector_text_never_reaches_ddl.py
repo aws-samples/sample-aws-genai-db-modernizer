@@ -347,7 +347,7 @@ DDL_WRITERS = {
     # data; it never runs anywhere, and a candidate built from it is refused unless it keeps
     # the routine's name and schemas (tests/unit/agents/routine_repair/
     # test_routine_repair_seam.py::test_a_candidate_that_breaks_a_rule_is_refused).
-    "src/agents/routine_repair/source_text.py",
+    "src/tools/routines/repair_text.py",
     # The local graph store's own Cypher schema (table names from a fixed list), not SQL.
     "src/graph/store.py",
     # Disposable source engines (#1943): the DDL and routine text it runs is the customer's

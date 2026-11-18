@@ -218,6 +218,7 @@ def _repair_gone(store, how: str) -> None:
                attention_detail="every one of 3 attempts failed",
                attempts=[{"attempt": 1, "stage": "proof", "outcome": "failed"}])  # fmt: skip
     data["counts"].update(model_repaired=0, needs_attention=1)
+    data["refused_candidates"] = 1  # the one failed attempt (#2444)
     store.write_json(path, data)
 
 

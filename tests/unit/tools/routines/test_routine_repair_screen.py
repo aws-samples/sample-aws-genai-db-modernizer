@@ -916,3 +916,109 @@ def test_a_parenthesised_condition_keeps_the_blocks_variables_in_scope(compound)
     end = "END IF;" if "IF" in compound else "END CASE;"
     candidate = candidate.replace(end, end + "\n  SET rnk = 1;")
     assert _screen().refusal_of(_my(original), candidate, "mysql") is None
+
+
+# --------------------------------------------------------------------------- signature
+# #2444: a repair keeps the routine's whole signature: its name, each parameter's name, mode
+# and type, and the return type. A parameter renamed in the header and the body alike, or
+# dropped, is refused, on MySQL and on PostgreSQL.
+
+PG_PARAMS = (
+    "CREATE OR REPLACE FUNCTION public.wal_pos(p integer, INOUT q text)\n LANGUAGE plpgsql\n"
+    "AS $function$\nBEGIN\n  q := pg_current_xlog_location()::text || p || '?';\nEND\n$function$\n"
+)
+PG_PARAMS_FIXED = PG_PARAMS.replace("pg_current_xlog_location()", "pg_current_wal_lsn()")
+
+
+@pytest.mark.parametrize(
+    ("edit", "code"),
+    [
+        (lambda t: t.replace("(p integer", "(n integer").replace("|| p ||", "|| n ||"),
+         "signature_changed"),
+        (_sub("INOUT q text", "OUT q text"), "signature_changed"),
+        (_sub("p integer,", "p bigint,"), "signature_changed"),
+        (_sub("p integer, ", ""), "signature_changed"),
+        (_sub("public.wal_pos(", "public.wal_pos2("), "renamed"),
+    ],
+    ids=["parameter-renamed", "mode-changed", "type-changed", "parameter-dropped", "name"],
+)  # fmt: skip
+def test_a_postgresql_repair_keeps_the_whole_signature(edit, code):
+    refusal = _screen().refusal_of(_pg(PG_PARAMS), edit(PG_PARAMS_FIXED), "postgresql")
+    assert refusal is not None and refusal[0] == code, refusal
+    assert _screen().refusal_of(_pg(PG_PARAMS), PG_PARAMS_FIXED, "postgresql") is None
+
+
+@pytest.mark.parametrize(
+    ("edit", "code"),
+    [
+        (lambda t: t.replace("IN `p`", "IN `pw`").replace("(p, ", "(pw, "), "signature_changed"),
+        (_sub("IN `p`", "INOUT `p`"), "signature_changed"),
+        (_sub("IN `p` varchar(64)", "IN `p` varchar(32)"), "signature_changed"),
+        (_sub("IN `p` varchar(64), ", ""), "signature_changed"),
+        (_sub("`hashpw`(", "`hashpw2`("), "renamed"),
+    ],
+    ids=["parameter-renamed", "mode-changed", "type-changed", "parameter-dropped", "name"],
+)
+def test_a_mysql_repair_keeps_the_whole_signature(edit, code):
+    refusal = _screen().refusal_of(_my(MYSQL), edit(MYSQL_FIXED), "mysql")
+    assert refusal is not None and refusal[0] == code, refusal
+
+
+@pytest.mark.passes_on_main  # the control: a name in another case is the same name
+def test_a_parameter_name_differs_only_in_case_on_mysql():
+    """MySQL reads parameter names case-insensitively: P and `p` are the same name."""
+    fixed = MYSQL_FIXED.replace("IN `p`", "IN P")
+    assert _screen().refusal_of(_my(MYSQL), fixed, "mysql") is None
+
+
+# A parameter's DEFAULT is part of the signature too (#2444 review): callers that leave the
+# argument out get it, and the side-by-side proof never sees that path. Literals compare as
+# the redacted text has them ('?').
+
+#: Defaults PostgreSQL accepts: once one input has a default, every later one has one.
+PG_DEFAULTS = PG_PARAMS_FIXED.replace("(p integer,", "(p integer DEFAULT 0,").replace(
+    "INOUT q text", "INOUT q text DEFAULT NULL"
+)
+
+
+def _original(text: str) -> str:
+    return text.replace("pg_current_wal_lsn()", "pg_current_xlog_location()")
+
+
+@pytest.mark.parametrize(
+    ("base", "edit"),
+    [
+        (PG_DEFAULTS, _sub("DEFAULT 0", "DEFAULT 1")),
+        (PG_PARAMS_FIXED, _sub("INOUT q text", "INOUT q text DEFAULT 7")),
+        (PG_DEFAULTS, lambda t: t.replace(" DEFAULT 0", "").replace(" DEFAULT NULL", "")),
+        (PG_DEFAULTS, _sub("DEFAULT 0", "DEFAULT (SELECT 1)")),
+    ],
+    ids=["changed", "added", "dropped", "subquery"],
+)
+def test_a_postgresql_repair_keeps_each_default(base, edit):
+    refusal = _screen().refusal_of(_pg(_original(base)), edit(base), "postgresql")
+    assert refusal is not None and refusal[0] == "signature_changed", refusal
+    assert _screen().refusal_of(_pg(_original(base)), base, "postgresql") is None
+
+
+@pytest.mark.parametrize(
+    "edit",
+    [
+        _sub("varchar(64), OUT", "varchar(64) DEFAULT 0, OUT"),
+        _sub("varchar(64), OUT", "varchar(64) DEFAULT (SELECT 1), OUT"),
+    ],
+    ids=["added", "subquery"],
+)
+@pytest.mark.passes_on_main  # main's signature read the DEFAULT as part of the type
+def test_a_mysql_repair_adds_no_default(edit):
+    """MySQL parameters take no DEFAULT: one written in a candidate is a signature change."""
+    refusal = _screen().refusal_of(_my(MYSQL), edit(MYSQL_FIXED), "mysql")
+    assert refusal is not None and refusal[0] == "signature_changed", refusal
+
+
+@pytest.mark.passes_on_main  # the control: main compared no default at all
+def test_a_default_string_compares_as_its_placeholder():
+    """A default's string literal reads '?' in the redacted text: '?' and '?' are the same,
+    whatever the exact values are (the rebuild and the proof see those)."""
+    with_text = PG_DEFAULTS.replace("DEFAULT NULL", "DEFAULT '?'")
+    assert _screen().refusal_of(_pg(_original(with_text)), with_text, "postgresql") is None

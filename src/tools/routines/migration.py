@@ -64,6 +64,7 @@ routine sources in memory at a time, the per-routine records small and text-free
 
 from __future__ import annotations
 
+import json
 import logging
 from collections.abc import Iterable, Mapping, Sequence
 from dataclasses import dataclass, field
@@ -118,6 +119,8 @@ __all__ = [
     "ensure_routine_migration",
     "read_routine_migration",
     "routine_migration_path",
+    "mysql_header_text",
+    "routine_parameters",
     "routine_signature",
     "run_routine_migration_deterministic",
     "write_routine_migration",
@@ -355,19 +358,26 @@ def _pg_type(node: Mapping[str, Any]) -> str:
     return ("SETOF " if node.get("setof") else "") + text
 
 
+def _pg_create_function(definition: object) -> Mapping[str, Any] | None:
+    """The ``CreateFunctionStmt`` of a PostgreSQL ``CREATE FUNCTION`` / ``PROCEDURE``, or
+    None when there is no text or it is not one such statement."""
+    if not isinstance(definition, str) or not definition.strip():
+        return None
+    try:
+        tree = pgparse.parse(definition)
+        stmt = (tree[0].get("stmt") or {}).get("CreateFunctionStmt") if len(tree) == 1 else None
+    except Exception:  # noqa: BLE001 -- text that does not parse has no signature
+        return None
+    return stmt if isinstance(stmt, Mapping) else None
+
+
 def _pg_signature(definition: object, kind: str) -> tuple[str | None, str | None]:
     """The identity argument types of a PostgreSQL ``CREATE FUNCTION`` / ``PROCEDURE``
     and its return type, from PostgreSQL's parser; types only, never a default. Read from
     the collection's text (its literals are redacted, its types are not). ``(None, None)``
     when there is no text or it does not parse."""
-    if not isinstance(definition, str) or not definition.strip():
-        return None, None
-    try:
-        tree = pgparse.parse(definition)
-        stmt = (tree[0].get("stmt") or {}).get("CreateFunctionStmt") if len(tree) == 1 else None
-    except Exception:  # noqa: BLE001 -- text that does not parse has no signature
-        return None, None
-    if not isinstance(stmt, Mapping):
+    stmt = _pg_create_function(definition)
+    if stmt is None:
         return None, None
     skipped = {"FUNC_PARAM_TABLE"} | ({"FUNC_PARAM_OUT"} if kind == "function" else set())
     args = []
@@ -401,14 +411,41 @@ def _mysql_signature(routine: MySqlRoutine) -> tuple[str | None, str | None]:
     type, from its header's tokens; every string literal (an ``ENUM`` value) is ``?``."""
     if routine.kind not in ("function", "procedure"):
         return None, None
+    found = _mysql_parameter_tokens(routine)
+    if found is None:
+        return None, None
+    params, after = found
+    rendered = []
+    for param in params:
+        mode = (
+            param[0].text.upper()
+            if param and param[0].text.upper() in ("IN", "OUT", "INOUT")
+            else ""
+        )
+        rest = param[1:] if mode else param
+        rendered.append((mode + " " if mode else "") + _render(rest[1:]))
+    returns = None
+    if after and after[0].text.upper() == "RETURNS":
+        kept = []
+        for tok in after[1:]:
+            if tok.text.upper() in _MYSQL_CHARACTERISTICS:
+                break
+            kept.append(tok)
+        returns = _render(kept) or None
+    return ", ".join(rendered), returns
+
+
+def _mysql_parameter_tokens(routine: MySqlRoutine) -> tuple[list[list[Any]], list[Any]] | None:
+    """A MySQL routine header's parameters, each as its tokens, and the header's tokens
+    after the parameter list; None when the header does not read."""
     header = mysql_header(routine)
     if header is None:
-        return None, None
+        return None
     toks = [t for t in header.tokens if t.start < header.body_start]
     try:
         opening = next(i for i, t in enumerate(toks) if t.kind == "L_PAREN")
     except StopIteration:
-        return None, None
+        return None
     depth, closing = 0, None
     params: list[list[Any]] = []
     current: list[Any] = []
@@ -427,28 +464,10 @@ def _mysql_signature(routine: MySqlRoutine) -> tuple[str | None, str | None]:
         else:
             current.append(tok)
     if closing is None:
-        return None, None
+        return None
     if current:
         params.append(current)
-    rendered = []
-    for param in params:
-        mode = (
-            param[0].text.upper()
-            if param and param[0].text.upper() in ("IN", "OUT", "INOUT")
-            else ""
-        )
-        rest = param[1:] if mode else param
-        rendered.append((mode + " " if mode else "") + _render(rest[1:]))
-    returns = None
-    after = toks[closing + 1 :]
-    if after and after[0].text.upper() == "RETURNS":
-        kept = []
-        for tok in after[1:]:
-            if tok.text.upper() in _MYSQL_CHARACTERISTICS:
-                break
-            kept.append(tok)
-        returns = _render(kept) or None
-    return ", ".join(rendered), returns
+    return params, toks[closing + 1 :]
 
 
 # --------------------------------------------------------------------------- checks
@@ -948,6 +967,102 @@ def routine_signature(
         sql_mode=sql_mode or "",
     )
     return _mysql_signature(routine)
+
+
+def mysql_header_text(create_statement: str, kind: str, sql_mode: str | None) -> str | None:
+    """The header of a MySQL ``CREATE PROCEDURE`` / ``CREATE FUNCTION`` (every token before
+    its body, parameters and characteristics included), exactly as written, or None when
+    the text does not read as one (#2444)."""
+    try:
+        routine = MySqlRoutine(
+            routine_id="repair.header",
+            kind=kind,  # type: ignore[arg-type]
+            create_sql=create_statement,
+            sql_mode=sql_mode or "",
+        )
+    except ValueError:
+        return None
+    found = mysql_header(routine)
+    if found is None or not found.tokens:
+        return None
+    head = create_statement[found.tokens[0].start : found.body_start].rstrip()
+    return head or None
+
+
+def _pg_default(node: object) -> object:
+    """A PostgreSQL parameter default's parse tree with no positions and every string
+    constant ``?`` (literals compared as the redacted text has them), for comparison only."""
+    if isinstance(node, Mapping):
+        const = node.get("A_Const")
+        if isinstance(const, Mapping) and ("sval" in const or "bsval" in const):
+            return {"A_Const": "?"}
+        return {k: _pg_default(v) for k, v in node.items() if k != "location"}
+    if isinstance(node, list | tuple):
+        return [_pg_default(v) for v in node]
+    return node
+
+
+def routine_parameters(
+    text: str, engine: str, kind: str, sql_mode: str | None = None
+) -> tuple[tuple[str, str, str, str], ...] | None:
+    """A function's or procedure's parameters as ``(mode, name, type, default)``, in order,
+    every one of them (a PostgreSQL ``OUT`` or ``TABLE`` column too), read from ``text``
+    (#2444): what a repair keeps besides the artifact's ``signature``. A name is compared
+    as the engine resolves it (PostgreSQL's parser folds it; MySQL's are
+    case-insensitive), a MySQL type as its tokens with every string literal ``?``. A
+    default is PostgreSQL's parse tree of it with every string constant ``?``, or ``""``
+    for none; MySQL parameters have no default, so a ``DEFAULT`` written after a MySQL type
+    is read as its tokens, literals ``?``, and any change of it differs too. ``()`` for a
+    trigger or event; None for a text that does not read."""
+    if kind not in ("function", "procedure"):
+        return ()
+    if engine == "postgresql":
+        stmt = _pg_create_function(text)
+        if stmt is None:
+            return None
+        out = []
+        for item in stmt.get("parameters") or ():
+            param = item.get("FunctionParameter") if isinstance(item, Mapping) else None
+            if not isinstance(param, Mapping):
+                return None
+            mode = str(param.get("mode") or "").removeprefix("FUNC_PARAM_")
+            default = param.get("defexpr")
+            out.append(
+                (
+                    "IN" if mode in ("", "DEFAULT") else mode,
+                    str(param.get("name") or ""),
+                    _pg_type(param["argType"]),
+                    "" if default is None else json.dumps(_pg_default(default), sort_keys=True),
+                )
+            )
+        return tuple(out)
+    routine = MySqlRoutine(
+        routine_id="repair.routine",
+        kind=kind,  # type: ignore[arg-type]
+        create_sql=text,
+        sql_mode=sql_mode or "",
+    )
+    found = _mysql_parameter_tokens(routine)
+    if found is None:
+        return None
+    rows = []
+    for param in found[0]:
+        mode = param[0].text.upper() if param else ""
+        rest = param[1:] if mode in ("IN", "OUT", "INOUT") else param
+        if not rest:
+            return None
+        name = rest[0].text.strip("`").replace("``", "`").casefold()
+        typed = rest[1:]
+        cut = next((i for i, t in enumerate(typed) if t.text.upper() == "DEFAULT"), len(typed))
+        rows.append(
+            (
+                mode if mode in ("OUT", "INOUT") else "IN",
+                name,
+                _render(typed[:cut]),
+                _render(typed[cut:]),
+            )
+        )
+    return tuple(rows)
 
 
 # --------------------------------------------------------------------------- the store

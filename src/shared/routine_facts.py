@@ -749,7 +749,7 @@ def intervention_line(item: Mapping[str, Any]) -> str:
             "but no side-by-side proof has accepted it, so it is not carried."
         )
     detail = _sentence(str(item.get("attention_detail") or ""))
-    if item.get("attention") == "not_rebuildable":
+    if item.get("attention") in ("not_rebuildable", "signature_mismatch"):
         return f"It was not sent for a model repair: {detail}"
     n = len(item.get("attempts") or [])
     return (

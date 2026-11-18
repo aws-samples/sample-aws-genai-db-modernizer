@@ -136,7 +136,7 @@ class _State:
 
 def _load(
     store: Any, database_name: str, job_id: str, assignment_version: int | None
-) -> tuple[RoutineMigrationContract, dict[str, Any]] | None:
+) -> tuple[RoutineMigrationContract, dict[str, Any], dict[Ref, str]] | None:
     from src.storage.assignment_versioning import resolve_downstream_assignment_version
     from src.storage.routine_migration_store import latest_routine_migration
 
@@ -146,7 +146,9 @@ def _load(
     found = latest_routine_migration(store, database_name, job_id, version)
     if found is None:
         return None
-    return found[1], read_collector_for_models(store, database_name, job_id)
+    collector = read_collector_for_models(store, database_name, job_id)
+    headers = seam.routine_headers(store, database_name, job_id, found[1], collector)
+    return found[1], collector, headers
 
 
 def _verifier(
@@ -198,7 +200,10 @@ def _begin(det: seam.RoutineRepairPlan, verifier: Any, llm_mode: str, proof: str
 
 
 def _round_plan(
-    migration: RoutineMigrationContract, collector: Mapping[str, Any], state: _State
+    migration: RoutineMigrationContract,
+    collector: Mapping[str, Any],
+    state: _State,
+    headers: Mapping[Ref, str],
 ) -> seam.RoutineRepairPlan:
     return seam.run_routine_repair_deterministic(
         collector,
@@ -206,6 +211,7 @@ def _round_plan(
         previous_failures=state.previous_failures(),
         only=set(state.open),
         attempt=state.round + 1,
+        headers=headers,
     )
 
 
@@ -339,6 +345,7 @@ def _result(det: seam.RoutineRepairPlan, state: _State) -> RoutineRepairContract
             settled = {"state": "no_answer", "attempts": state.open.get(c.ref, [])}
         rows.append({"kind": c.kind, "routine_id": c.routine_id, "reasons": list(c.reasons),
                      **settled})  # fmt: skip
+    rows.extend(u.row() for u in det.unsent)  # never sent: signature mismatch (#2444)
     counts = dict.fromkeys(REPAIR_STATES, 0)
     for row in rows:
         counts[row["state"]] += 1
@@ -374,6 +381,7 @@ def _status(status: str, result: RoutineRepairContract, key: str) -> dict[str, A
         "rounds": result.rounds,
         "proof": result.proof,
         "counts": dict(result.counts),
+        "refused_candidates": result.refused_candidates,
         "artifact": key,
     }
     if result.skipped_reason:
@@ -461,8 +469,8 @@ def run_repair_loop(
     loaded = _load(store, database_name, job_id, assignment_version)
     if loaded is None:
         return {"status": "skipped", "reason": "the job has no routine-migration artifact"}
-    migration, collector = loaded
-    det = seam.run_routine_repair_deterministic(collector, migration)
+    migration, collector, headers = loaded
+    det = seam.run_routine_repair_deterministic(collector, migration, headers=headers)
     if llm_mode == "none":
         result = seam.run_without_repair(det)
         return _status("skipped", result, _write(store, result))
@@ -471,9 +479,9 @@ def run_repair_loop(
     verifier = _verifier(store, migration, [c.ref for c in det.candidates], proof, proof_options)
     state = _begin(det, verifier, llm_mode, proof)
     if llm_mode == "external" and state.open:
-        return _awaiting(store, det, _round_plan(migration, collector, state), state)
+        return _awaiting(store, det, _round_plan(migration, collector, state, headers), state)
     while state.open and state.round < MAX_ATTEMPTS:
-        plan = _round_plan(migration, collector, state)
+        plan = _round_plan(migration, collector, state, headers)
         answer = seam._ask_bedrock(seam.prepare_routine_repair_llm_input(plan))
         _apply_round(state, plan, answer, verifier)  # every repair settled in this process
     result = _result(det, state)
@@ -500,7 +508,7 @@ def finalize_repair_loop(
     loaded = _load(store, database_name, job_id, assignment_version)
     if loaded is None:
         raise FileNotFoundError("the job has no routine-migration artifact")
-    migration, collector = loaded
+    migration, collector, headers = loaded
     db, version = database_name, migration.assignment_version
     paths = (
         routine_repair_request_path(db, job_id, version),
@@ -512,8 +520,8 @@ def finalize_repair_loop(
             raise FileNotFoundError(f"{path} not found")
     saved = store.read_json(paths[2])
     state = _State(saved)
-    det = seam.run_routine_repair_deterministic(collector, migration)
-    plan = _round_plan(migration, collector, state)
+    det = seam.run_routine_repair_deterministic(collector, migration, headers=headers)
+    plan = _round_plan(migration, collector, state, headers)
     if (
         saved.get("seal") != state.seal(db, job_id, store.read_json(paths[0]))
         or state.assignment_version != version
@@ -534,7 +542,7 @@ def finalize_repair_loop(
     verifier = _verifier(store, migration, [*state.open, *carried], state.proof, proof_options)
     fresh = _apply_round(state, plan, answer, verifier)
     if state.open and state.round < MAX_ATTEMPTS:
-        return _awaiting(store, det, _round_plan(migration, collector, state), state)
+        return _awaiting(store, det, _round_plan(migration, collector, state, headers), state)
     _reverify(state, det, verifier, fresh)
     result = _result(det, state)
     store.write_json(routine_repair_state_path(db, job_id, version), state.dump())
