@@ -59,6 +59,14 @@ class TargetTable(BaseModel):
     primary_key: list[str] = Field(default_factory=list, description="Primary key column names")
     indexes: list[str] = Field(default_factory=list, description="CREATE INDEX statements")
     foreign_keys: list[str] = Field(default_factory=list, description="FK ALTER TABLE statements")
+    ddl_statements: list[str] | None = Field(
+        default=None,
+        description=(
+            "This table's statements of generated_ddl, as the DDL generator wrote them: its "
+            "CREATE TABLE, its index statements (a comment for an index the key limit rules out "
+            "included), then its foreign keys. None in a design saved before the field existed."
+        ),
+    )
 
     model_config = ConfigDict(extra="ignore")
 

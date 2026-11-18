@@ -427,6 +427,12 @@ def write_aurora_mysql_design(
                     "indexes": [
                         "CREATE INDEX `type_status_date` ON `wp_posts` (`ID`, `post_title`(191));"
                     ],
+                    # The table's own cut of generated_ddl below (#2325).
+                    "ddl_statements": [
+                        "CREATE TABLE `wp_posts` (\n  `ID` BIGINT UNSIGNED NOT NULL,\n"
+                        "  `post_title` TEXT,\n  PRIMARY KEY (`ID`)\n);",
+                        "CREATE INDEX `type_status_date` ON `wp_posts` (`ID`, `post_title`(191));",
+                    ],
                 },
                 # A second table: two tables (and their query groups) render two
                 # embedded tables, which must carry distinct names (landmark-unique).
@@ -445,6 +451,11 @@ def write_aurora_mysql_design(
                         },
                     ],
                     "primary_key": ["comment_ID"],
+                    "ddl_statements": [
+                        "CREATE TABLE `wp_comments` (\n  `comment_ID` BIGINT UNSIGNED NOT NULL,\n"
+                        "  `comment_post_ID` BIGINT UNSIGNED NOT NULL,\n"
+                        "  PRIMARY KEY (`comment_ID`)\n);"
+                    ],
                 },
             ],
             # The script as the DDL generator writes it: a saved design's DDL is rebuilt

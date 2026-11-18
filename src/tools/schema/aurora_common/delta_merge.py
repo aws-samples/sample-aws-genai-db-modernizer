@@ -785,6 +785,8 @@ def merge_design_delta(
                 # generated_ddl only, so no deliverable counts an index that is not created.
                 "indexes": [i for i in t_ddl.index_sql if not i.startswith("--")],
                 "foreign_keys": list(t_ddl.fk_sql),
+                # The table's own cut of generated_ddl, so no reader has to split the script.
+                "ddl_statements": [t_ddl.create_sql, *t_ddl.index_sql, *t_ddl.fk_sql],
             }
             for t, t_ddl in ((t, table_ddls[t.table_name]) for t in base.tables)
         ],

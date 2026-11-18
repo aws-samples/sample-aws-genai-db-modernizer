@@ -2786,6 +2786,123 @@ def test_the_designed_job_renders_the_schema_design_panels(
         assert ev == {"console": [], "pageerror": [], "failed": []}, (r.job_id, ev)
 
 
+def _aurora_design_tables(r: PipelineResult) -> list[str]:
+    """The table names of the job's Aurora design, as its schema_output.json lists them."""
+    names: list[str] = []
+    for path in real_designs(r.job_dir()):
+        if path.parent.parent.name.startswith("schema-aurora_"):
+            design = json.loads(path.read_text())
+            names += [t["table_name"] for t in design.get("table_definitions") or []]
+    return names
+
+
+def test_the_aurora_design_is_a_table_with_a_filter_and_a_detail_panel(
+    page: Page, ui: str, all_runs: list[PipelineResult]
+) -> None:
+    """#2325: the Table design lists the design's tables in one table with a text filter,
+    fixed column widths and no nested toggle per table. Picking a row opens its columns,
+    keys, queries and DDL in the split panel beside the list, as text; axe finds nothing
+    blocking with the panel open, and closing it leaves the list as it was."""
+    checked = 0
+    for r in _designed_runs(all_runs):
+        names = _aurora_design_tables(r)
+        if not names:
+            continue
+        ev = _watch(page)
+        _goto_results(page, ui, r, "data-model")
+        design = page.locator("#table-design-section")
+        expect(design).to_be_visible(timeout=READY_MS)
+        tables = design.locator("#aurora-design-tables")
+        expect(tables).to_be_visible(timeout=READY_MS)
+        shown = tables.locator("tbody tr")
+        expect(shown).to_have_count(min(len(names), 25), timeout=READY_MS)
+        headers = [h.strip() for h in tables.locator("thead th").all_inner_texts()]
+        assert headers[-6:] == [
+            "Table",
+            "Columns",
+            "Primary key",
+            "Indexes",
+            "Foreign keys",
+            "Queries",
+        ], headers
+        # One list, not a toggle per table: no nested section carries a table's name.
+        assert design.get_by_role("button", name=names[0], exact=True).count() == 0
+
+        design.get_by_role("searchbox", name="Find a table by name").fill(names[0])
+        expect(shown).to_have_count(1, timeout=READY_MS)
+        design.get_by_role("button", name=f"Open {names[0]} in the detail panel").click()
+        panel = page.get_by_role("region", name=f"Table {names[0]}").first
+        expect(panel).to_be_visible(timeout=READY_MS)
+        assert page.get_by_role("dialog").count() == 0
+        expect(panel).to_contain_text("CREATE TABLE", timeout=READY_MS)
+        expect(panel).to_contain_text("Primary key")
+        blocking, where, _ = _axe_blocking(page)
+        assert blocking == [], (r.db, blocking, where)
+
+        page.get_by_role("button", name="Close the table details").click()
+        expect(panel).to_be_hidden(timeout=READY_MS)
+        expect(tables).to_be_visible()
+
+        # The keyboard opens it too: focus the name button, press Enter, then Tab reaches
+        # the panel's close button and Enter closes it.
+        opener = design.get_by_role("button", name=f"Open {names[0]} in the detail panel")
+        opener.focus()
+        page.keyboard.press("Enter")
+        panel = page.get_by_role("region", name=f"Table {names[0]}").first
+        expect(panel).to_be_visible(timeout=READY_MS)
+        label = "Close the table details"
+        for _ in range(120):
+            if page.evaluate("document.activeElement?.getAttribute('aria-label')") == label:
+                break
+            page.keyboard.press("Tab")
+        assert page.evaluate("document.activeElement?.getAttribute('aria-label')") == label
+        page.keyboard.press("Enter")
+        expect(panel).to_be_hidden(timeout=READY_MS)
+        assert ev == {"console": [], "pageerror": [], "failed": []}, (r.job_id, ev)
+        checked += 1
+    assert checked or any(r.external for r in all_runs), "no job with an Aurora design"
+
+
+def test_the_aurora_table_panel_closes_when_the_design_tab_changes(
+    page: Page, ui: str, all_runs: list[PipelineResult]
+) -> None:
+    """#2325: the panel shows one engine's table, so switching to another engine's design
+    tab closes it. A second Aurora design is added to the served schema designs."""
+    checked = 0
+    for r in _designed_runs(all_runs):
+        names = _aurora_design_tables(r)
+        if not names:
+            continue
+
+        def add_second_design(route: playwright.sync_api.Route) -> None:
+            response = route.fetch()
+            body = response.json()
+            body["schema_designs"].append(
+                {
+                    "target_type": "aurora_postgresql",
+                    "content": {
+                        "table_definitions": [{"table_name": "second_design", "columns": []}]
+                    },
+                }
+            )
+            route.fulfill(response=response, json=body)
+
+        page.route("**/schema-designs", add_second_design)
+        try:
+            _goto_results(page, ui, r, "data-model")
+            design = page.locator("#table-design-section")
+            design.get_by_role("tab", name=re.compile("Aurora MySQL")).click()
+            design.get_by_role("button", name=f"Open {names[0]} in the detail panel").click()
+            panel = page.get_by_role("region", name=f"Table {names[0]}").first
+            expect(panel).to_be_visible(timeout=READY_MS)
+            design.get_by_role("tab", name=re.compile("Aurora PostgreSQL")).click()
+            expect(panel).to_be_hidden(timeout=READY_MS)
+        finally:
+            page.unroute("**/schema-designs")
+        checked += 1
+    assert checked or any(r.external for r in all_runs), "no job with an Aurora design"
+
+
 def test_the_trade_offs_tabs_list_each_topic_with_the_facts_label_and_count(
     page: Page, ui: str, all_runs: list[PipelineResult]
 ) -> None:

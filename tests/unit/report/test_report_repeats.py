@@ -370,6 +370,7 @@ def test_query_group_facts_cover_every_group() -> None:
         "listed_group_indexes": [],
         "relational_rows": [],
         "relational_query_counts": {},
+        "table_queries": [],
         "ungrouped_queries": [],
         "procedure_internal_queries": 0,
         "procedure_internal_routine_queries": 0,
@@ -434,6 +435,8 @@ def test_query_group_facts_cover_every_group() -> None:
             {"engine": pg, "group_index": 6, "query_count": 1, "calls_per_second": 5.0},
         ],
         "relational_query_counts": {pg: 7},
+        # These groups carry no source_queries, so no table has a query (#2325).
+        "table_queries": [],
         # No query_pattern_groups: no in-scope query list to check against.
         "ungrouped_queries": [],
         # The procedure-internal group's queries, each once (#1876), and every statement

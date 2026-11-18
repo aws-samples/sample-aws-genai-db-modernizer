@@ -605,6 +605,8 @@ def test_a_long_script_of_comments_is_checked_in_linear_time() -> None:
     def make_text(n: int) -> str:
         copies = max(1, n // len(COMMENT))
         design = _forms()
+        for table in design["table_definitions"]:
+            table.pop("ddl_statements", None)  # the long script is not any table's cut
         note = next(
             x for x in design["app_layer_notes"]
             if str(x.get("recommendation")).startswith("Index not created")
@@ -1050,6 +1052,9 @@ def _main_written(name: str) -> dict:
     for note in design["app_layer_notes"]:
         if note.get("source_object") == old:
             note["source_object"] = f"accounts.{name}"
+    # A design main wrote has no per-table statements (#2325).
+    for table in design["table_definitions"]:
+        table.pop("ddl_statements", None)
     return design
 
 
@@ -1158,3 +1163,123 @@ def test_the_generator_now_writes_one_index_per_name_and_the_design_loads(
             if n["feature"] == "duplicate_index_name"] == ["zq9x.zq9x"]  # fmt: skip
     store, key = _store(tmp_path, "aurora_mysql", design)
     assert store.read_json(key) == json.loads(json.dumps(design))
+
+
+# --- Each table's own statements (#2325) ---------------------------------------------
+
+
+def _table(name: str, table_id: str | None = None, *, wide_index: bool = False) -> AgentTable:
+    columns = [
+        AgentColumn(column_name="id", data_type="int", nullable=False),
+        AgentColumn(column_name="note", data_type="text", nullable=True),
+        AgentColumn(column_name="code", data_type="varchar", max_length=753, nullable=True),
+    ]
+    indexes = [AgentIndex(index_name="by_id", columns=["id"], is_unique=False)]
+    if wide_index:
+        indexes.append(AgentIndex(index_name="wide", columns=["note", "code"], is_unique=False))
+    return AgentTable(
+        table_id=table_id or f"s.{name}", table_name=name, row_count=1, columns=columns,
+        indexes=indexes, primary_key=["id"],
+    )  # fmt: skip
+
+
+def _cut(design: dict) -> list[list[str]]:
+    return [t["ddl_statements"] for t in design["table_definitions"]]
+
+
+def test_a_new_design_stores_each_tables_statements_and_loads(tmp_path: Path) -> None:
+    design = _merged("aurora_mysql", [_table("a"), _table("b")])
+    first, second = _cut(design)
+    assert first[0].startswith("CREATE TABLE `a`") and first[1].startswith("CREATE INDEX `by_id`")
+    assert second[0].startswith("CREATE TABLE `b`")
+    store, key = _store(tmp_path, "aurora_mysql", design)
+    assert store.read_json(key) == design
+
+
+def test_a_note_with_no_semicolon_stays_with_its_own_table(tmp_path: Path) -> None:
+    """The index the key limit rules out is a comment line with no semicolon: it belongs to
+    its table and is not glued onto the next table's statement."""
+    design = _merged("aurora_mysql", [_table("a", wide_index=True), _table("b")])
+    first, second = _cut(design)
+    notes = [s for s in first if s.startswith("--")]
+    assert len(notes) == 1 and not notes[0].endswith(";")
+    assert not any(s.startswith("--") for s in second)
+    store, key = _store(tmp_path, "aurora_mysql", design)
+    assert store.read_json(key) == design
+
+
+def test_a_trailing_note_is_stored_as_written(tmp_path: Path) -> None:
+    """The last table's note ends the script: nothing is appended to it."""
+    design = _merged("aurora_mysql", [_table("a"), _table("b", wide_index=True)])
+    last = _cut(design)[-1][-1]
+    assert last.startswith("--") and not last.endswith(";")
+    assert design["generated_ddl"].endswith(last)
+    store, key = _store(tmp_path, "aurora_mysql", design)
+    assert store.read_json(key) == design
+
+
+@pytest.mark.parametrize("engine", sorted(MODELS))
+def test_a_quoted_name_with_a_space_keeps_its_statements(tmp_path: Path, engine: str) -> None:
+    design = _merged(engine, [_table("Order Details"), _table("plain")])
+    quote = "`" if engine == "aurora_mysql" else '"'
+    first, second = _cut(design)
+    assert first[0].startswith(f"CREATE TABLE {quote}Order Details{quote}")
+    assert not any("Order Details" in s for s in second)
+    store, key = _store(tmp_path, engine, design)
+    assert store.read_json(key) == design
+
+
+def test_two_tables_with_the_same_name_each_store_a_cut_and_load(tmp_path: Path) -> None:
+    """Two schemas can share a bare table name. The cut is stored on each table definition,
+    by position, so a reader never looks a table up by its name in the script."""
+    design = _merged(
+        "aurora_postgresql",
+        [_table("orders", "sales.orders"), _table("orders", "archive.orders")],
+    )
+    tables = design["table_definitions"]
+    assert [t["table_name"] for t in tables] == ["orders", "orders"]
+    assert all(t["ddl_statements"][0].startswith('CREATE TABLE "orders"') for t in tables)
+    store, key = _store(tmp_path, "aurora_postgresql", design)
+    assert store.read_json(key) == design
+
+
+@pytest.mark.parametrize(
+    "edit",
+    [
+        lambda s: [*s, "DROP TABLE users;"],
+        lambda s: [s[0].replace("CREATE TABLE", "CREATE TABLE IF NOT EXISTS"), *s[1:]],
+        lambda s: s[:1],
+        lambda s: list(reversed(s)),
+    ],
+    ids=["extra", "rewritten", "dropped", "reordered"],
+)
+def test_a_hand_edited_table_statement_is_refused(tmp_path: Path, edit: Callable) -> None:
+    design = _merged("aurora_mysql", [_table("a"), _table("b")])
+    stored = design["table_definitions"][0]["ddl_statements"]
+    design["table_definitions"][0]["ddl_statements"] = edit(stored)
+    _refused(tmp_path, "aurora_mysql", design, "table_definitions[0].ddl_statements", "DROP TABLE")
+
+
+def test_table_statements_swapped_between_tables_are_refused(tmp_path: Path) -> None:
+    design = _merged("aurora_mysql", [_table("a"), _table("b")])
+    tables = design["table_definitions"]
+    tables[0]["ddl_statements"], tables[1]["ddl_statements"] = (
+        tables[1]["ddl_statements"],
+        tables[0]["ddl_statements"],
+    )
+    _refused(tmp_path, "aurora_mysql", design, "table_definitions[0].ddl_statements", "CREATE")
+
+
+def test_table_statements_with_no_script_are_refused(tmp_path: Path) -> None:
+    design = _merged("aurora_mysql", [_table("a")])
+    del design["generated_ddl"]
+    _refused(tmp_path, "aurora_mysql", design, "table_definitions[0].ddl_statements", "CREATE")
+
+
+@pytest.mark.passes_on_main
+def test_a_design_saved_without_the_field_loads_unchanged(tmp_path: Path) -> None:
+    design = _merged("aurora_mysql", [_table("a")])
+    for table in design["table_definitions"]:
+        table.pop("ddl_statements", None)
+    store, key = _store(tmp_path, "aurora_mysql", design)
+    assert store.read_json(key) == design

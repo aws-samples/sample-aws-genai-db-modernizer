@@ -99,6 +99,8 @@ INPUT_KEYS = frozenset(
         "ranking",
         "trade_offs",
         "query_traces",
+        # #2325: the per-table query rows the Table design shows.
+        "table_queries",
     }
 )
 # report.json inputs that are records of lists (#339 review): every field read
