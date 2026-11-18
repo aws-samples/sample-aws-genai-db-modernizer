@@ -72,6 +72,8 @@ const INPUT_KEYS = new Set([
   'cost_breakdown', 'monthly_cost_usd', 'workload_percent', 'cache_overlay_queries',
   'cache_call_share_percent', 'tied_queries', 'risks', 'resolved_risks',
   'table_mappings', 'post_schema_reroutes', 'ranking', 'trade_offs', 'query_traces',
+  // #2325: the per-table query rows the Table design shows.
+  'table_queries',
 ]);
 // Fields of the engine analysis artifact (#1312; the pattern analysis page that read them was removed in #2300). Kept apart from
 // INPUT_KEYS, which the Python guard (src/report) must mirror exactly.
@@ -127,6 +129,9 @@ const GUARDED_UI_FILES = [
   'utils/workloadFitLabels.js',
   'utils/optimizationLabels.js',
   'utils/auroraDesign.js',
+  // #2325: the Table design's table of tables and its panel.
+  'components/AuroraDesignTables.js',
+  'components/AuroraTableDetailPanel.js',
   'utils/sectionStates.js',
   'utils/summaryFallback.js',
   'components/ChartSankey.js',
@@ -1096,6 +1101,24 @@ function render(synthesis, wave) {
       const mutated = real.replace('number: formatCount(n)', 'number: formatCount(n + 1)');
       expect(mutated).not.toBe(real);
       expect(violationsIn(mutated, 'src/ui/src/utils/resultsTabs.js').join(' ')).toMatch('n + 1');
+    });
+
+    // #2325: a table's query figure is the fact's: counting the rows is flagged, reading them is not.
+    test('counting the per-table query rows is flagged, reading them is not', () => {
+      const flagged = `
+function figure(synthesis) {
+  const rows = synthesis.facts.query_group_counts.table_queries;
+  return rows.length;
+}`;
+      expect(violationsIn(flagged, 'probe').join(' ')).toMatch('rows.length');
+      const read = `
+function rowsOf(synthesis) {
+  const rows = synthesis.facts.query_group_counts.table_queries;
+  return rows.filter((r) => r.engine === 'aurora_mysql');
+}`;
+      expect(violationsIn(read, 'probe')).toEqual([]);
+      const real = fs.readFileSync(`${UI_SRC}/utils/reportFacts.js`, 'utf8');
+      expect(violationsIn(real, 'src/ui/src/utils/reportFacts.js')).toEqual([]);
     });
 
     const flaggedLines = (code) => new Set(violationsIn(code, 'probe').map(v => Number(v.split(':')[1])));

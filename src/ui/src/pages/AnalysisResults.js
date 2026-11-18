@@ -75,6 +75,8 @@ import TradeOffDecisions from "../components/TradeOffDecisions";
 import TradeOffsEmptyNote from "../components/TradeOffsEmptyNote";
 import { buildQueryRoutingRows, queryPatternLinks } from "../utils/queryRouting";
 import QueryDetailPanel from "../components/QueryDetailPanel";
+import AuroraDesignTables from "../components/AuroraDesignTables";
+import AuroraTableDetailPanel from "../components/AuroraTableDetailPanel";
 import { getCacheOverlay, ownerDistribution, formatCacheLayerLine, cacheChangeSentence, targetEngineEntries, resolveCostBreakdown, ownerSchemaDesigns, cacheAccessPatternCount, addCacheOverlayNode, cacheLayerAccessPatterns } from "../utils/cacheLayer";
 import { summaryFallbackInfo } from "../utils/summaryFallback";
 import { fallbackWithheldReason } from "../utils/fallbackWithheldReason";
@@ -94,7 +96,7 @@ import DestinationTables from "../components/DestinationTables";
 import { destinationOf, destinationKey } from "../utils/destinations";
 import { optimizationLabel } from "../utils/optimizationLabels";
 import { displayTables } from "../utils/tableNames";
-import { accessPatternTotals, assumptionItemsOf, cacheLayerFactsOf, costScopeLabelOf, defaultRiskSeverity, derivedCopySyncOf, finalEngineCounts, noEngineInScopeOf, openRiskCountAt, overallRiskLevelOf, placedQueryCountOf, procedureInternalQueryCountOf, procedureInternalRoutineCountOn, procedureInternalRoutineCountsOf, queryPatternCountsOf, rateWindowRiskNoteOf, resolvedRiskCountOf, resolvedRisksBySeverityText, routingHistoryRecorded, routingKindsById, targetEngineEntriesOf, tradeOffsByTab, tradeOffTabLabel, tradeOffTabsShown, tradeOffTopicGroupsOf } from "../utils/reportFacts";
+import { accessPatternTotals, assumptionItemsOf, cacheLayerFactsOf, costScopeLabelOf, defaultRiskSeverity, derivedCopySyncOf, finalEngineCounts, noEngineInScopeOf, openRiskCountAt, overallRiskLevelOf, placedQueryCountOf, procedureInternalQueryCountOf, procedureInternalRoutineCountOn, procedureInternalRoutineCountsOf, queryPatternCountsOf, rateWindowRiskNoteOf, resolvedRiskCountOf, resolvedRisksBySeverityText, routingHistoryRecorded, routingKindsById, tableQueryRowsOf, targetEngineEntriesOf, tradeOffsByTab, tradeOffTabLabel, tradeOffTabsShown, tradeOffTopicGroupsOf } from "../utils/reportFacts";
 
 // ============================================
 // Constants
@@ -280,6 +282,8 @@ const AnalysisResultsPage = memo(() => {
   // #339: the journey's "Why this engine" section (graph/queries/{id}/trace)
   const [queryTrace, setQueryTrace] = useState({ data: null, error: null });
   const [selectedQueryId, setSelectedQueryId] = useState(null);
+  // #2325: the Table design row shown in the split panel ({ engine, tableName }), or null.
+  const [designSelection, setDesignSelection] = useState(null);
   // #822: every query's journey (the query-journeys list), for the query
   // routing table that opens a trace without schema design.
   const [queryJourneyList, setQueryJourneyList] = useState({ items: [], loading: true, error: null, truncated: false });
@@ -717,9 +721,15 @@ const AnalysisResultsPage = memo(() => {
   // list -- and keeps showing the full design (DDL, indexes, optimizations)
   // the generic explorer above does not.
   const auroraDesigns = useMemo(
-    () => buildAuroraDesigns(activeDesigns, synthesis?.query_groups),
+    () => buildAuroraDesigns(activeDesigns, synthesis?.query_groups, tableQueryRowsOf(synthesis)),
     [activeDesigns, synthesis]
   );
+  // #2325: the design table the split panel shows, with its engine's display name.
+  const designTable = useMemo(() => {
+    const design = designSelection && auroraDesigns.find(d => d.engine === designSelection.engine);
+    const table = design?.tables.find(tb => tb.key === designSelection.key);
+    return table ? { table, engineName: design.displayName } : null;
+  }, [designSelection, auroraDesigns]);
 
   // Query details lookup: query_id → { query_text, query_type, tables_accessed, calls_per_second }
   const queryLookup = useMemo(() => {
@@ -1140,6 +1150,7 @@ const AnalysisResultsPage = memo(() => {
   }, [goToSection]);
 
   const fetchQueryJourney = useCallback(async (queryId) => {
+    setDesignSelection(null);
     setSelectedQueryId(queryId);
     setSplitPanelOpen(true);
     setQueryJourneyLoading(true);
@@ -1176,6 +1187,20 @@ const AnalysisResultsPage = memo(() => {
       setQueryJourneyLoading(false);
     }
   }, [jobId, t]);
+
+  const closeDesignDetail = useCallback(() => {
+    setDesignSelection(null);
+    setSplitPanelOpen(false);
+  }, []);
+
+  // One split panel serves the page: a table opens it in place of a query, and back.
+  const selectDesignTable = useCallback((engine, key) => {
+    setSelectedQueryId(null);
+    setQueryJourneyData(null);
+    setQueryTrace({ data: null, error: null });
+    setDesignSelection({ engine, key });
+    setSplitPanelOpen(true);
+  }, []);
 
   const handleCloseQueryDetail = useCallback(() => {
     setSplitPanelOpen(false);
@@ -2392,7 +2417,11 @@ const AnalysisResultsPage = memo(() => {
           >
             <Tabs
               activeTabId={activeDesignEngine(designTab, auroraDesigns.map(d => d.engine))}
-              onChange={({ detail }) => setDesignTab(detail.activeTabId)}
+              onChange={({ detail }) => {
+                // The panel shows one engine's table: it closes when the engine changes.
+                if (designSelection && designSelection.engine !== detail.activeTabId) closeDesignDetail();
+                setDesignTab(detail.activeTabId);
+              }}
               tabs={auroraDesigns.map(design => {
                 const queryCount = design.queryGroups.reduce((sum, g) => sum + g.queries.length, 0);
                 // #2308: the tab and the body read one count, and say why a design is empty.
@@ -2452,71 +2481,19 @@ const AnalysisResultsPage = memo(() => {
                       )}
 
                       {designState.state !== 'none' && designState.state !== 'unavailable' && (
-                      <ExpandableSection
-                        headerText={t('analysis-results.aurora-design.tables-header', { count: designState.count })}
-                        defaultExpanded={false}
-                      >
+                      <>
                         {design.tables.length === 0 ? (
                           <Box color="text-body-secondary" fontSize="body-s">{t('analysis-results.aurora-design.no-tables')}</Box>
                         ) : (
-                          <SpaceBetween size="s">
-                            {design.tables.map(table => (
-                              <ExpandableSection
-                                key={table.tableName}
-                                headerText={table.tableName}
-                                variant="footer"
-                                defaultExpanded={false}
-                              >
-                                <SpaceBetween size="s">
-                                  <Table
-                                    variant="embedded"
-                                    columnDefinitions={[
-                                      { id: 'name', header: t('analysis-results.aurora-design.col-column'), cell: c => c.name },
-                                      { id: 'type', header: t('analysis-results.aurora-design.col-aurora-type'), cell: c => c.auroraType },
-                                    ]}
-                                    items={table.columns}
-                                    ariaLabels={{
-                                      tableLabel: t('analysis-results.aurora-design.columns-table-label', {
-                                        engine: design.displayName,
-                                        table: table.tableName,
-                                      }),
-                                    }}
-                                  />
-                                  <KeyValuePairs
-                                    columns={1}
-                                    items={[
-                                      {
-                                        label: t('analysis-results.aurora-design.primary-key'),
-                                        value: table.primaryKey.join(', ') || '—',
-                                      },
-                                      ...(table.indexes.length > 0 ? [{
-                                        label: t('analysis-results.aurora-design.indexes', { count: table.indexes.length }),
-                                        value: (
-                                          <SpaceBetween size="xxs">
-                                            {table.indexes.map((ix, idx) => (
-                                              <Box key={idx} fontFamily="monospace" fontSize="body-s">{ix}</Box>
-                                            ))}
-                                          </SpaceBetween>
-                                        ),
-                                      }] : []),
-                                      ...(table.foreignKeys.length > 0 ? [{
-                                        label: t('analysis-results.aurora-design.foreign-keys', { count: table.foreignKeys.length }),
-                                        value: (
-                                          <SpaceBetween size="xxs">
-                                            {table.foreignKeys.map((fk, idx) => (
-                                              <Box key={idx} fontFamily="monospace" fontSize="body-s">{fk}</Box>
-                                            ))}
-                                          </SpaceBetween>
-                                        ),
-                                      }] : []),
-                                    ]}
-                                  />
-                                </SpaceBetween>
-                              </ExpandableSection>
-                            ))}
-                          </SpaceBetween>
+                          <AuroraDesignTables
+                            design={design}
+                            count={designState.count}
+                            selectedKey={designSelection?.engine === design.engine ? designSelection.key : null}
+                            onSelect={(key) => selectDesignTable(design.engine, key)}
+                            t={t}
+                          />
                         )}
-                      </ExpandableSection>
+                      </>
                       )}
 
                       {design.ddl && (
@@ -2609,23 +2586,28 @@ const AnalysisResultsPage = memo(() => {
                                       id: 'excerpt',
                                       header: t('analysis-results.aurora-design.col-query'),
                                       cell: q => <Box fontFamily="monospace" fontSize="body-s">{q.excerpt}</Box>,
+                                      minWidth: 240,
                                     },
                                     {
                                       id: 'type',
                                       header: t('analysis-results.aurora-design.col-type'),
                                       cell: q => q.queryType || '—',
+                                      width: 100,
                                     },
                                     {
                                       id: 'rps',
                                       header: t('analysis-results.aurora-design.col-calls-per-second'),
                                       cell: q => formatRate(q.callsPerSecond),
+                                      width: 100,
                                     },
                                     {
                                       id: 'reason',
                                       header: t('analysis-results.aurora-design.col-reason'),
                                       cell: q => (q.reason ? <ProseText text={q.reason} /> : '—'),
+                                      minWidth: 240,
                                     },
                                   ]}
+                                  wrapLines
                                   items={group.queries}
                                   ariaLabels={{
                                     tableLabel: t('analysis-results.aurora-design.queries-table-label', {
@@ -2937,7 +2919,9 @@ const AnalysisResultsPage = memo(() => {
         toolsOpen={toolsOpen && !toolsHidden}
         onToolsChange={({ detail }) => setToolsOpen(detail.open)}
         toolsHide={toolsHidden}
-        splitPanel={selectedQueryId ? (
+        splitPanel={designTable ? (
+          <AuroraTableDetailPanel table={designTable.table} engineName={designTable.engineName} t={t} />
+        ) : selectedQueryId ? (
           <QueryDetailPanel
             queryId={selectedQueryId}
             journey={queryJourneyData}
@@ -2946,9 +2930,10 @@ const AnalysisResultsPage = memo(() => {
             t={t}
           />
         ) : undefined}
-        splitPanelOpen={splitPanelOpen && Boolean(selectedQueryId)}
+        splitPanelOpen={splitPanelOpen && Boolean(designTable || selectedQueryId)}
         onSplitPanelToggle={({ detail }) => {
           if (detail.open) setSplitPanelOpen(true);
+          else if (designTable) closeDesignDetail();
           else handleCloseQueryDetail();
         }}
       />

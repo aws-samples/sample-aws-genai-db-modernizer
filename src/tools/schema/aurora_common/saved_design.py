@@ -27,7 +27,8 @@ shows them and the assess() result hands them on, so none is trusted as stored:
   ``generated_ddl``, ``indexes`` or ``foreign_keys`` without a list of table definitions,
   and a skipped design (``check_skipped_design``) that carries any of them or tables.
 
-A string that does not come back identical is refused (:class:`SavedDesignError`, with
+Each table's ``ddl_statements`` (its own cut of that script, #2325) is checked against the
+rebuilt cut the same way. A string that does not come back identical is refused (:class:`SavedDesignError`, with
 its position and no stored text), so a design the generator wrote, in any release that
 wrote this format, loads unchanged, and an edited one never reaches a deliverable.
 """
@@ -413,21 +414,29 @@ def rebuild_ddl(
     text: str,
     comments: list[list[str]] | None = None,
     legacy: list[dict[str, str]] | None = None,
+    per_table: list[list[str]] | None = None,
+    fk_owners: list[int] | None = None,
 ) -> str:
     """``generated_ddl`` as ``assemble_full_ddl`` writes it for ``tables``: every CREATE
     TABLE, then each table's indexes (``indexes[i]``, with, on Aurora MySQL, at most one of
     each of ``comments[i]`` for an index the key limit ruled out), then the foreign keys.
-    Refused unless the stored ``text`` is exactly that script."""
+    Refused unless the stored ``text`` is exactly that script. When ``per_table`` is given
+    it receives each table's statements (its CREATE TABLE, its indexes and comments, its
+    foreign keys, in script order), ``fk_owners[k]`` naming the table of ``fks[k]``."""
     pieces: list[str] = []
     pos = 0
-    for table in tables:
+    for i, table in enumerate(tables):
         if pieces:
             pos = _expect(text, pos, _SEPARATOR)
         statement, pos = _create_table(dialect, table, text, pos)
         pieces.append(statement)
+        if per_table is not None:
+            per_table[i].append(statement)
     allowed = comments if comments is not None and dialect is MYSQL else [[] for _ in tables]
     aliases = legacy if legacy is not None else [{} for _ in tables]
-    for table_indexes, table_comments, table_aliases in zip(indexes, allowed, aliases, strict=True):
+    for t_i, (table_indexes, table_comments, table_aliases) in enumerate(
+        zip(indexes, allowed, aliases, strict=True)
+    ):
         queue = deque(table_indexes)
         notes = Counter(table_comments)  # each comment at most as often as its note
         left = len(table_comments)
@@ -445,14 +454,18 @@ def rebuild_ddl(
                 left -= 1
                 piece = line
             pieces.append(piece)
+            if per_table is not None:
+                per_table[t_i].append(piece)
             pos = start + len(piece)
         if queue:
             raise _Refused("does not list the table definitions' indexes")
-    for fk in fks:
+    for k, fk in enumerate(fks):
         start = _expect(text, pos, _SEPARATOR)
         if not _statement_at(text, start, fk):
             raise _Refused("does not list the table definitions' foreign keys")
         pieces.append(fk)
+        if per_table is not None and fk_owners is not None:
+            per_table[fk_owners[k]].append(fk)
         pos = start + len(fk)
     rebuilt = _SEPARATOR.join(pieces)
     if pos != len(text) or rebuilt != text:
@@ -536,6 +549,7 @@ def check_design_ddl(payload: Mapping[str, Any], engine: str) -> Mapping[str, An
     names = {table: [c for c in cols if isinstance(c, str)] for table, cols in columns.items()}
     indexes: list[list[str]] = []
     fks: list[str] = []
+    fk_owners: list[int] = []
     for i, table in enumerate(tables):
         table_indexes: list[str] = []
         indexes.append(table_indexes)
@@ -560,12 +574,21 @@ def check_design_ddl(payload: Mapping[str, Any], engine: str) -> Mapping[str, An
                         out.append(check_index(dialect, name, names.get(name, []), statement))
                     else:
                         out.append(check_foreign_key(dialect, name, names, statement))
+                        fk_owners.append(i)
                 except _Refused as exc:
                     raise SavedDesignError(where, None, str(exc), kind=kind) from None
     for field in ("indexes", "foreign_keys"):
         if _carried(payload.get(field)):
             raise SavedDesignError(field, None, "is not a design field", kind=_KINDS[field])
     if "generated_ddl" not in payload:
+        for i, table in enumerate(tables):
+            if isinstance(table, Mapping) and _carried(table.get("ddl_statements")):
+                raise SavedDesignError(
+                    f"table_definitions[{i}].ddl_statements",
+                    None,
+                    "has no script to be a part of",
+                    kind=DDL_KIND,
+                )
         return payload
     try:
         text = payload["generated_ddl"]
@@ -574,7 +597,19 @@ def check_design_ddl(payload: Mapping[str, Any], engine: str) -> Mapping[str, An
         shaped = [_table_shape(t) for t in tables]
         legacy: list[dict[str, str]] = [{} for _ in shaped]
         comments = skipped_comments(payload, shaped, indexes, legacy)
-        rebuild_ddl(dialect, shaped, indexes, fks, text, comments, legacy)
+        per_table: list[list[str]] = [[] for _ in shaped]
+        rebuild_ddl(dialect, shaped, indexes, fks, text, comments, legacy, per_table, fk_owners)
     except _Refused as exc:
         raise SavedDesignError("generated_ddl", None, str(exc), kind=DDL_KIND) from None
+    # A table's stored statements (``ddl_statements``) are the script's own cut of it: a
+    # design saved before the field existed has none; one that has it must match exactly.
+    for i, table in enumerate(tables):
+        stored = table.get("ddl_statements") if isinstance(table, Mapping) else None
+        if stored is not None and stored != per_table[i]:
+            raise SavedDesignError(
+                f"table_definitions[{i}].ddl_statements",
+                None,
+                "is not the part of the script the DDL generator writes for this table",
+                kind=DDL_KIND,
+            )
     return payload

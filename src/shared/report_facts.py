@@ -2564,6 +2564,7 @@ def query_group_facts(report: dict[str, Any]) -> dict[str, Any] | None:
         "listed_group_indexes": listed,
         "relational_rows": rows,
         "relational_query_counts": query_counts,
+        "table_queries": _table_query_rows(indexed, engines),
         "ungrouped_queries": _ungrouped_query_rows(report, [g for _, g in indexed]),
         "procedure_internal_queries": _group_query_count(indexed, PROCEDURE_INTERNAL_GROUP_LABEL),
         # Every follower, on any engine, and per engine: a non-relational engine's groups
@@ -2571,6 +2572,38 @@ def query_group_facts(report: dict[str, Any]) -> dict[str, Any] | None:
         "procedure_internal_routine_queries": sum(follower_counts.values()),
         "procedure_internal_routine_counts": follower_counts,
     }
+
+
+def _table_query_rows(
+    indexed: list[tuple[int, dict[str, Any]]], engines: list[str]
+) -> list[dict[str, Any]]:
+    """Per relational engine and table (``table_keys``), the distinct queries the engine
+    serves that touch it (``TableQueryRow``, #2325), from each group's ``source_queries``
+    and the engine's own access patterns. A query on two tables is in both rows."""
+    out: list[dict[str, Any]] = []
+    for engine in engines:
+        by_table: dict[str, dict[str, None]] = {}
+        for _, g in indexed:
+            served = {
+                str(q)
+                for ap in g.get("access_patterns") or []
+                if isinstance(ap, dict) and ap.get("engine") == engine
+                for q in ap.get("query_ids") or []
+            }
+            for sq in g.get("source_queries") or []:
+                if not isinstance(sq, dict) or str(sq.get("query_id")) not in served:
+                    continue
+                for name in sq.get("tables_accessed") or []:
+                    if isinstance(name, str) and not is_placeholder_table(name):
+                        by_table.setdefault(normalize_table_name(name), {})[
+                            str(sq["query_id"])
+                        ] = None
+        for table in sorted(by_table):
+            ids = sorted(by_table[table])
+            out.append(
+                {"engine": engine, "table": table, "query_count": len(ids), "query_ids": ids}
+            )
+    return out
 
 
 def routine_follower_counts(report: Mapping[str, Any]) -> dict[str, int]:

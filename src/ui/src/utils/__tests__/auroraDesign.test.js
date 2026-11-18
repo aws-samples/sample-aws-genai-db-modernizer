@@ -108,6 +108,7 @@ describe('buildAuroraTables', () => {
       primaryKey: ['ID'],
       indexes: ['CREATE INDEX type_status_date ON wp_posts (post_type, post_status)'],
       foreignKeys: [],
+      ddlStatements: null,
     });
     expect(tables[1].foreignKeys).toEqual([
       'ALTER TABLE wp_postmeta ADD FOREIGN KEY (post_id) REFERENCES wp_posts(ID)',

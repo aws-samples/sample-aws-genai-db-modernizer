@@ -666,3 +666,10 @@ export function stepGateOf(synthesis) {
   const gate = factsOf(synthesis) && factsOf(synthesis).step_gate;
   return gate && typeof gate === 'object' && gate.status ? gate : null;
 }
+
+// #2325: the queries each relational engine serves on each table (facts.query_group_counts.table_queries),
+// as `{ engine, table, query_count, query_ids }` rows; [] when the facts state none.
+export function tableQueryRowsOf(synthesis) {
+  const rows = factsOf(synthesis) && factsOf(synthesis).query_group_counts;
+  return Array.isArray(rows && rows.table_queries) ? rows.table_queries : [];
+}

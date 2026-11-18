@@ -2940,6 +2940,22 @@ class RelationalGroupRow(BaseModel):
     calls_per_second: float = Field(0.0, ge=0, description="Their design calls/s, summed")
 
 
+class TableQueryRow(BaseModel):
+    """The queries one relational engine serves on one table (#2325): the figure a table
+    of the design's tables shows next to each table."""
+
+    engine: str = Field(..., description="The relational engine (id)")
+    table: str = Field(
+        ..., description="The table's canonical key (table_keys): lower case, no schema"
+    )
+    query_count: int = Field(
+        0, ge=0, description="The engine's distinct queries that touch the table"
+    )
+    query_ids: list[str] = Field(
+        default_factory=list, description="Those queries' ids, each once, in order"
+    )
+
+
 class UngroupedQueryRow(BaseModel):
     """An owner engine's in-scope queries that no query group of its own serves (#226)."""
 
@@ -2972,6 +2988,14 @@ class QueryGroupFacts(BaseModel):
     )
     relational_query_counts: dict[str, int] = Field(
         default_factory=dict, description="Each relational engine's queries over its rows"
+    )
+    table_queries: list[TableQueryRow] = Field(
+        default_factory=list,
+        description=(
+            "Per relational engine and table, the distinct queries the engine serves that "
+            "touch the table (#2325). A query on two tables is in both rows and once in the "
+            "engine's total, relational_query_counts"
+        ),
     )
     ungrouped_queries: list[UngroupedQueryRow] = Field(
         default_factory=list,

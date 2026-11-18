@@ -130,13 +130,26 @@ test('the old deliverables section lower on the page is gone', () => {
   expect(panel).not.toMatch(/components\/container/);
 });
 
-test('the Table design opens with every section collapsed', () => {
+test('the Table design opens with every section collapsed, and has exactly these sections', () => {
   const elements = openingElements(AST.program, []);
   const design = elements.find(el => el.id === 'table-design-section');
   // The Container element whose opening tag carries the id spans the whole section.
   const container = findElement(AST.program, design.node);
   const sections = openingElements(container, []).filter(el => el.name === 'ExpandableSection');
-  expect(sections.length).toBeGreaterThanOrEqual(5);
+  // #2325: the design's tables are one table (AuroraDesignTables), not a section. Four
+  // sections remain, in this order: the whole script, the optimizations, the queries on
+  // Aurora, and one per source table inside the queries.
+  const headers = sections.map((el) => {
+    const attr = el.node.attributes.find(a => a.type === 'JSXAttribute' && a.name.name === 'headerText');
+    const call = attr.value.expression;
+    return call.arguments[0].value;
+  });
+  expect(headers).toEqual([
+    'analysis-results.aurora-design.ddl-header',
+    'analysis-results.aurora-design.optimizations-header',
+    'analysis-results.aurora-design.queries-header',
+    'analysis-results.aurora-design.source-table-header',
+  ]);
   sections.forEach((el) => {
     const attr = el.node.attributes.find(a => a.type === 'JSXAttribute' && a.name.name === 'defaultExpanded');
     expect([el.start, attr && attr.value.expression && attr.value.expression.type]).toEqual([el.start, 'BooleanLiteral']);

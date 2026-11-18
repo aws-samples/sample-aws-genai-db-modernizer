@@ -71,6 +71,7 @@ export function buildAuroraTables(content) {
     primaryKey: t.primary_key || [],
     indexes: t.indexes || [],
     foreignKeys: t.foreign_keys || [],
+    ddlStatements: Array.isArray(t.ddl_statements) ? t.ddl_statements : null,
   }));
 }
 
@@ -162,6 +163,44 @@ export function buildAuroraQueryGroups(engine, queryGroups) {
   });
 }
 
+// A table name as the facts key it (src/shared/table_keys.py): unquoted, lower case, no schema.
+export const tableKey = (name) => String(name || '').replace(/[`"[\]]/g, '').trim().toLowerCase().split('.').pop().trim();
+
+/**
+ * Each table with the queries the facts say the engine serves on it
+ * (`facts.query_groups.table_queries`: ids and a count) and its own stored statements
+ * (`ddl_statements`, null for a design saved before the field). The count is the fact's;
+ * `queries` is the same ids joined to the query rows the page already holds. `key` is the
+ * row's position, because two schemas can share a table name.
+ */
+export function withTableDetails(tables, tableQueryRows, queryGroups, fallbackDdl) {
+  const byQueryId = {};
+  (queryGroups || []).forEach((g) => g.queries.forEach((q) => { byQueryId[q.queryId] = q; }));
+  const byTable = {};
+  (tableQueryRows || []).forEach((row) => { byTable[row.table] = row; });
+  return tables.map((table, i) => {
+    const row = byTable[tableKey(table.tableName)] || null;
+    const queries = row
+      ? row.query_ids.map((id) => byQueryId[id]).filter(Boolean)
+        .sort((a, b) => b.callsPerSecond - a.callsPerSecond)
+      : [];
+    return {
+      ...table,
+      key: String(i),
+      queryCount: row ? row.query_count : 0,
+      queries,
+      fallbackDdl,
+    };
+  });
+}
+
+/** The rows whose name contains the text, ignoring case; every row for blank text. */
+export function filterAuroraTables(tables, text) {
+  const needle = String(text || '').trim().toLowerCase();
+  if (!needle) return tables;
+  return tables.filter((t) => String(t.tableName).toLowerCase().includes(needle));
+}
+
 /**
  * One Aurora design, ready for the "Aurora design" section: display name,
  * table list, DDL, optimizations, migration strategy and queries-on-Aurora.
@@ -173,8 +212,9 @@ export function buildAuroraQueryGroups(engine, queryGroups) {
  * the design-dependent fields below -- tables, DDL, optimizations,
  * migration strategy -- are empty in that case, not the whole section).
  */
-export function buildAuroraDesign(engine, design, queryGroups) {
+export function buildAuroraDesign(engine, design, queryGroups, tableQueryRows = []) {
   const content = design?.content || {};
+  const groupsOnEngine = buildAuroraQueryGroups(engine, queryGroups);
   return {
     engine,
     displayName: displayEngine(engine),
@@ -184,8 +224,13 @@ export function buildAuroraDesign(engine, design, queryGroups) {
     ddl: content.generated_ddl || '',
     optimizations: content.optimizations || [],
     appLayerNotes: content.app_layer_notes || [],
-    tables: buildAuroraTables(content),
-    queryGroups: buildAuroraQueryGroups(engine, queryGroups),
+    tables: withTableDetails(
+      buildAuroraTables(content),
+      (tableQueryRows || []).filter((r) => r.engine === engine),
+      groupsOnEngine,
+      content.generated_ddl || '',
+    ),
+    queryGroups: groupsOnEngine,
   };
 }
 
@@ -198,7 +243,7 @@ export function buildAuroraDesign(engine, design, queryGroups) {
  * schema design must not gate visibility -- the UI and export disagreed
  * with the engineering report here before this fix).
  */
-export function buildAuroraDesigns(schemaDesigns, queryGroups) {
+export function buildAuroraDesigns(schemaDesigns, queryGroups, tableQueryRows = []) {
   const designsByEngine = {};
   (schemaDesigns || []).forEach((d) => {
     if (isAuroraEngine(d?.target_type) && d?.content) {
@@ -216,5 +261,5 @@ export function buildAuroraDesigns(schemaDesigns, queryGroups) {
   const engines = new Set([...Object.keys(designsByEngine), ...enginesWithQueries]);
   return [...engines]
     .sort()
-    .map((engine) => buildAuroraDesign(engine, designsByEngine[engine] || null, queryGroups));
+    .map((engine) => buildAuroraDesign(engine, designsByEngine[engine] || null, queryGroups, tableQueryRows));
 }
