@@ -29,6 +29,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import re
 from typing import Any, cast
 
 import pytest
@@ -43,6 +44,7 @@ from scripts.contract_schema_snapshot import (
 )
 from src.assessment import CONTRACT_VERSION, AssessmentRequest, AssessmentResult
 from src.assessment.models import RETIRED_CONTRACT_VERSIONS, RetiredContractVersionError
+from tests.released_record import versions_note
 
 #: The historical snapshot's bytes, as v0.4.0-beta.1's release step recorded them
 #: (commit 4b3032d28). It is the record of what shipped: never regenerated or edited.
@@ -86,6 +88,7 @@ def test_the_historical_snapshot_is_kept_as_it_shipped() -> None:
     }
 
 
+@pytest.mark.passes_on_main
 @pytest.mark.parametrize("key", ["assessment.AssessmentRequest", "assessment.AssessmentResult"])
 def test_every_version_the_historical_snapshot_records_is_now_refused(key: str) -> None:
     entry = _historical()["contracts"][key]
@@ -95,7 +98,7 @@ def test_every_version_the_historical_snapshot_records_is_now_refused(key: str) 
     for version in named:
         with pytest.raises(
             RetiredContractVersionError,
-            match=r"this code reads contracts 1\.3 and 1\.4 \(read only when pinned\)",
+            match=re.escape(f"this code reads contracts {versions_note()}. Pin"),
         ):
             AssessmentRequest.model_validate(
                 {"contract_version": version, "database_name": "shop", "collection": {"a": 1}}

@@ -52,7 +52,8 @@ from src.assessment import (
 from src.assessment.models import (
     LABEL_BY_PHASE,
     MODEL_PHASES,
-    default_contract_version,
+    SUPPORTED_CONTRACT_VERSIONS,
+    pinned_only_contract_versions,
     result_label,
 )
 from tests.assess_models import MODEL_ENTRY_POINTS, models_patched
@@ -344,8 +345,12 @@ def test_the_fixtures_cover_a_sql_server_source_and_an_engine_scope() -> None:
 @pytest.mark.passes_on_main
 @pytest.mark.parametrize("name", sorted(FIXTURES))
 def test_every_fixture_is_pinned_to_1_3_and_gets_1_3(name: str) -> None:
-    """The fixtures pin the only version this release supports (#1641)."""
-    assert FIXTURES[name]["contract_version"] == default_contract_version() == "1.3"
+    """The fixtures are a 1.3 caller's requests: pinned to 1.3, a released version this
+    code still reads (#1641), whatever the default is. A request pinned to 1.3 gets a
+    1.3 result after 1.4 is recorded as the default too (#2461)."""
+    assert FIXTURES[name]["contract_version"] == "1.3"
+    assert "1.3" in SUPPORTED_CONTRACT_VERSIONS
+    assert "1.3" not in pinned_only_contract_versions()
     assert _run(name, "analysis", True)["contract_version"] == "1.3"
 
 

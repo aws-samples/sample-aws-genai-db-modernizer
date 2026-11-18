@@ -119,8 +119,8 @@ RETIRED_IN = "v0.4.0-beta.3"
 class RetiredContractVersionError(ValueError):
     """A request or a result names a retired contract version (1.0, 1.1 or 1.2).
 
-    This code reads contracts 1.3 and 1.4 (1.4 only when pinned, until a release step
-    records it): the earlier versions were beta development versions, removed in
+    This code reads contracts 1.3 and 1.4 (a version newer than the release record's is
+    read only when pinned): the earlier versions were beta development versions, removed in
     v0.4.0-beta.3. Pin ``contract_version`` "1.3" or "1.4" (or send none, for the newest
     recorded version);
     docs/contracts/assess.md's "Removed: 1.0, 1.1 and 1.2" says how to migrate. An

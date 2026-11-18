@@ -8,8 +8,10 @@ Those versions were initial development versions during the beta, and the releas
 ships 1.3 (v0.4.0-beta.3) supports 1.3 only. A request naming one is refused, before
 anything runs, with ``RetiredContractVersionError`` (a ``ValueError``), whose message
 names the versions this code reads, and says why; so is a result document naming one when it
-is read back. A request with no version gets 1.3 (1.4 is read only when pinned until
-a release step records it), and an unknown version keeps the refusal any invalid field gets
+is read back. A request with no version gets the version the release record names
+(``tests/released_record.py``: 1.3 until v0.5.0-beta.1's record step, 1.4 since; a
+version newer than the record is read only when pinned, and the message marks it so),
+and an unknown version keeps the refusal any invalid field gets
 (``pydantic.ValidationError``). The published schemas describe 1.3 and 1.4
 only.
 """
@@ -39,6 +41,7 @@ from src.assessment import (
 from src.assessment.models import RETIRED_CONTRACT_VERSIONS
 from src.storage.local_store import LocalArtifactStore
 from tests.assess_models import models_patched
+from tests.released_record import RECORDED_VERSION, recorded_as, versions_note
 
 REPO = Path(__file__).resolve().parents[2]
 RETIRED = ("1.0", "1.1", "1.2")
@@ -79,8 +82,8 @@ def _schema(name: str) -> dict[str, Any]:
 def _check_message(exc: RetiredContractVersionError, version: str) -> None:
     text = str(exc)
     assert f"contract_version {version!r} is no longer supported" in text
-    assert "this code reads contracts 1.3 and 1.4 (read only when pinned)" in text
-    assert 'Pin contract_version "1.3", or send none' in text
+    assert f"this code reads contracts {versions_note()}. Pin" in text
+    assert f'Pin contract_version "{RECORDED_VERSION}", or send none' in text
     assert "1.0, 1.1 and 1.2 were beta development versions, removed in v0.4.0-beta.3" in text
     assert "docs/contracts/assess.md, 'Removed: 1.0, 1.1 and 1.2'" in text
     assert exc.version == version
@@ -204,12 +207,12 @@ def test_assess_refuses_an_unvalidated_request_before_anything_runs(
         assert not (tmp_path / str(i)).exists() or not any((tmp_path / str(i)).iterdir())
 
 
+@pytest.mark.passes_on_main
 def test_assess_refuses_an_unvalidated_unknown_version() -> None:
     for request in _unvalidated("2.0"):
-        with pytest.raises(
-            ValueError, match=r"this code reads contracts 1\.3 and 1\.4 \(read only when pinned\)"
-        ) as raised:
+        with pytest.raises(ValueError) as raised:
             assess(request)
+        assert str(raised.value).endswith(f"this code reads contracts {versions_note()}")
         assert not isinstance(raised.value, RetiredContractVersionError)
 
 
@@ -230,12 +233,30 @@ def test_an_unknown_version_keeps_the_invalid_field_refusal(version: Any) -> Non
     assert [e["loc"] for e in raised.value.errors()] == [("contract_version",)]
 
 
+@pytest.mark.passes_on_main
 @pytest.mark.parametrize("version", ["1.3", "1.4", None])
-def test_a_supported_request_keeps_its_version_and_none_gets_1_3(version: str | None) -> None:
-    expected = version or "1.3"
+def test_a_supported_request_keeps_its_version_and_none_gets_the_recorded_one(
+    version: str | None,
+) -> None:
+    expected = version or RECORDED_VERSION
     assert AssessmentRequest.model_validate(_request(version)).contract_version == expected
     if version is None:
-        assert json.loads(_result_json())["contract_version"] == "1.3"
+        assert json.loads(_result_json())["contract_version"] == RECORDED_VERSION
+
+
+@pytest.mark.passes_on_main
+@pytest.mark.parametrize("recorded", ["1.3", "1.4"])
+def test_the_refusal_names_the_versions_as_the_record_leaves_them(
+    recorded: str, tmp_path: Path
+) -> None:
+    """Before 1.4 is recorded the message marks it read only when pinned and says to pin
+    1.3; once it is recorded, it names both plainly and says to pin 1.4."""
+    with recorded_as(recorded, tmp_path), pytest.raises(RetiredContractVersionError) as raised:
+        AssessmentRequest.model_validate({"contract_version": "1.1", "database_name": "shop"})
+    text = str(raised.value)
+    assert f"this code reads contracts {versions_note(recorded)}. Pin" in text
+    assert f'Pin contract_version "{recorded}", or send none' in text
+    assert ("1.4 (read only when pinned)" in text) == (recorded == "1.3")
 
 
 def test_a_request_with_a_retired_version_is_refused_by_the_published_schema() -> None:
@@ -252,10 +273,11 @@ def test_a_request_with_a_retired_version_is_refused_by_the_published_schema() -
 # --------------------------------------------------------------------------- results
 
 
+@pytest.mark.passes_on_main
 @pytest.mark.parametrize("version", RETIRED)
 def test_a_result_naming_a_retired_version_is_refused(version: str) -> None:
     document = json.loads(_result_json())
-    assert document["contract_version"] == "1.3"
+    assert document["contract_version"] == RECORDED_VERSION
     AssessmentResult.model_validate(document)
     document["contract_version"] = version
     with pytest.raises(RetiredContractVersionError) as raised:

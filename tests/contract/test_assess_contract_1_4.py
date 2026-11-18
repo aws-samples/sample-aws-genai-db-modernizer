@@ -7,12 +7,13 @@
 unchanged. The version a request naming none gets is derived, never kept by hand: the
 newest version a release recorded (``src/assessment/released_contract.json``, written
 with ``tests/contract/assess_released_since_1_3.json`` by the release step's
-``--write-released <tag>``, run after the tag is pushed). Today that is v0.4.0-beta.3's
-1.3, so 1.4 is read only when pinned, also in the release that first ships it; once the
-record step after that release's tag records it, it is the default with no code change.
+``--write-released <tag>``, run after the tag is pushed). Before that record (v0.4.0-beta.3's
+1.3) 1.4 is read only when pinned, also in the release that first ships it; the record
+step after v0.5.0-beta.1's tag records it, so it is the default with no code change.
 
-- the default is the recorded version; before the record 1.4 is read only when pinned,
-  and after a simulated record it is the default;
+- the default is the version the record names (``tests/released_record.py``), whatever
+  it is; both states are simulated, so each stays covered: with a 1.3 record 1.4 is read
+  only when pinned, and with a 1.4 record it is the default;
 - a 1.3 request and its result validate against the schemas v0.4.0-beta.3 shipped
   (``tests/fixtures/assess_{request,result}_v1_3.schema.json``, the tag's bytes);
 - a 1.3 request that names a 1.4 field is refused.
@@ -53,6 +54,7 @@ from src.assessment.models import (
     default_contract_version,
     pinned_only_contract_versions,
 )
+from tests.released_record import RECORDED_VERSION, recorded_as
 from tests.unit.assessment.conftest import sample_collection
 
 REPO = Path(__file__).resolve().parents[2]
@@ -100,7 +102,8 @@ def test_the_default_is_the_version_the_release_recorded() -> None:
     record = json.loads(RELEASED_VERSION_PATH.read_text(encoding="utf-8"))
     assert models.RELEASED_VERSION_PATH == RELEASED_VERSION_PATH
     # The record agrees with the released snapshot (--write-released writes both).
-    assert record["contract_version"] == released_version_of(released) == "1.3"
+    assert record["contract_version"] == released_version_of(released) == RECORDED_VERSION
+    assert record["contract_version"] in SUPPORTED_CONTRACT_VERSIONS
     assert record["released"] == released["released"]
     assert default_contract_version() == record["contract_version"]
     for model in (AssessmentRequest, AssessmentResult):
@@ -122,7 +125,16 @@ def recorded_1_4(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Iterator[di
     models.released_contract_version.cache_clear()
 
 
-def test_before_the_record_1_4_is_read_only_when_pinned() -> None:
+@pytest.fixture
+def recorded_1_3(tmp_path: Path) -> Iterator[None]:
+    """Before the record: v0.4.0-beta.3's record, which names 1.3."""
+    with recorded_as("1.3", tmp_path, released="v0.4.0-beta.3"):
+        yield
+
+
+@pytest.mark.passes_on_main
+def test_before_the_record_1_4_is_read_only_when_pinned(recorded_1_3: None) -> None:
+    assert default_contract_version() == "1.3"
     assert pinned_only_contract_versions() == ("1.4",)
     assert AssessmentRequest.model_validate(_request(None)).contract_version == "1.3"
     assert AssessmentRequest.model_validate(_request("1.4")).contract_version == "1.4"
@@ -132,6 +144,7 @@ def test_before_the_record_1_4_is_read_only_when_pinned() -> None:
     assert {e["version"] for e in build_public_snapshot().values()} == {"1.4"}
 
 
+@pytest.mark.passes_on_main
 def test_once_a_release_records_1_4_it_is_the_default(recorded_1_4: dict[str, Any]) -> None:
     assert released_version_of(recorded_1_4) == "1.4"
     assert default_contract_version() == "1.4"
@@ -140,16 +153,26 @@ def test_once_a_release_records_1_4_it_is_the_default(recorded_1_4: dict[str, An
     assert assess(_request(None)).contract_version == "1.4"
     with pytest.raises(ValueError) as caught:
         models.check_contract_version("1.5")
+    assert str(caught.value).endswith("this code reads contracts 1.3 and 1.4")
     assert "read only when pinned" not in str(caught.value)
+    # A request naming no version may set a 1.4 field: it is a 1.4 request.
+    AssessmentRequest.model_validate({**_request(None), "routine_sources": []})
     # A 1.3 caller is still served as before, and may not set a 1.4 field.
     assert AssessmentRequest.model_validate(_request("1.3")).contract_version == "1.3"
     with pytest.raises(RoutineSourcesError, match=r"field of contract 1\.4: pin"):
         AssessmentRequest.model_validate({**_request("1.3"), "routine_sources": []})
 
 
-def test_a_request_naming_no_version_gets_1_3() -> None:
+@pytest.mark.passes_on_main
+def test_a_request_naming_no_version_gets_the_recorded_version() -> None:
+    assert AssessmentRequest.model_validate(_request(None)).contract_version == RECORDED_VERSION
+    assert json.loads(_result(None, "analysis"))["contract_version"] == RECORDED_VERSION
+
+
+@pytest.mark.passes_on_main
+def test_before_the_record_a_request_naming_no_version_gets_1_3(recorded_1_3: None) -> None:
     assert AssessmentRequest.model_validate(_request(None)).contract_version == "1.3"
-    assert json.loads(_result(None, "analysis"))["contract_version"] == "1.3"
+    assert json.loads(assess(_request(None)).model_dump_json())["contract_version"] == "1.3"
 
 
 # --------------------------------------------------------------------------- 1.3 callers
@@ -171,12 +194,19 @@ def test_a_1_4_request_gets_the_1_3_values_stamped_1_4(run_through: str) -> None
 @pytest.mark.parametrize("version", ["1.3", None])
 @pytest.mark.parametrize("run_through", ["analysis", "reality_check"])
 def test_a_1_3_caller_validates_with_the_schemas_1_3_shipped(
-    version: str | None, run_through: str
+    version: str | None, run_through: str, tmp_path: Path
 ) -> None:
     """The guard for 1.3 callers: their request and their result validate against the
-    schemas v0.4.0-beta.3 shipped, unchanged, pinned or not."""
+    schemas v0.4.0-beta.3 shipped, unchanged, pinned, or unpinned while 1.3 is the
+    default (a 1.3 record: once 1.4 is recorded, a request naming none is a 1.4 one)."""
     _shipped("assess_request.v1.schema.json").validate(_request(version, run_through))
-    _shipped("assess_result.v1.schema.json").validate(json.loads(_result(version, run_through)))
+    if version is None:
+        with recorded_as("1.3", tmp_path, released="v0.4.0-beta.3"):
+            result = json.loads(assess(_request(None, run_through)).model_dump_json())
+        assert result["contract_version"] == "1.3"
+    else:
+        result = json.loads(_result(version, run_through))
+    _shipped("assess_result.v1.schema.json").validate(result)
 
 
 @pytest.mark.passes_on_main
@@ -194,7 +224,8 @@ def test_the_shipped_1_3_schemas_are_the_tags_bytes(name: str) -> None:
     assert json.loads(data)["x-contract-version"] == "1.3"
 
 
-def test_a_1_3_request_naming_routine_sources_is_refused() -> None:
+@pytest.mark.passes_on_main
+def test_a_1_3_request_naming_routine_sources_is_refused(tmp_path: Path) -> None:
     request = {**_request("1.3"), "routine_sources": []}
     # From the field's own validator: the input-free RoutineSourcesError.
     with pytest.raises(
@@ -202,8 +233,10 @@ def test_a_1_3_request_naming_routine_sources_is_refused() -> None:
         match=r"routine_sources is a field of contract 1\.4: pin",
     ):
         AssessmentRequest.model_validate(request)
-    with pytest.raises(RoutineSourcesError, match="field of contract 1.4"):
-        AssessmentRequest.model_validate({**_request(None), "routine_sources": []})
+    # A request naming none is a 1.3 one while 1.3 is the default (a 1.3 record).
+    with recorded_as("1.3", tmp_path, released="v0.4.0-beta.3"):
+        with pytest.raises(RoutineSourcesError, match="field of contract 1.4"):
+            AssessmentRequest.model_validate({**_request(None), "routine_sources": []})
     AssessmentRequest.model_validate({**_request("1.4"), "routine_sources": []})
 
 

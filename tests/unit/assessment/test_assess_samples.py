@@ -18,6 +18,7 @@ from src.assessment import AssessmentResult, assess
 from src.assessment.result_builder import load_run_state
 from src.shared.report_facts import assignment_table_usage, table_owner_line
 from src.storage.local_store import LocalArtifactStore
+from tests.released_record import RECORDED_VERSION
 from tests.unit.assessment.conftest import SAMPLES, assessed, placed_run, sample_collection
 
 JOB = "assess01"
@@ -232,11 +233,12 @@ def test_unique_delta_threshold_is_the_reality_checks(placed: Any) -> None:
     assert result.summary.unique_delta_threshold == UNIQUE_DELTA_THRESHOLD
 
 
+@pytest.mark.passes_on_main
 def test_versions_are_reported(placed: Any) -> None:
     from src.shared.package_version import get_package_version
 
     _, result, _ = placed
-    assert result.contract_version == "1.3"
+    assert result.contract_version == RECORDED_VERSION  # unpinned: the recorded version
     assert result.library_version == get_package_version()
     assert result.ruleset_version == result.library_version
     assert result.ruleset_hash.startswith("sha256:") and len(result.ruleset_hash) == 71

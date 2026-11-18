@@ -11,6 +11,7 @@ import pytest
 from pydantic import ValidationError
 
 from src.assessment import AssessmentOptions, AssessmentRequest, assess
+from tests.released_record import RECORDED_VERSION
 
 RAW = {"metadata": {"database_name": "db", "engine": "mysql"}, "queries": [], "tables": []}
 
@@ -19,9 +20,10 @@ def _request(**overrides: Any) -> dict[str, Any]:
     return {"database_name": "shop", "collection": RAW, **overrides}
 
 
+@pytest.mark.passes_on_main
 def test_defaults() -> None:
     req = AssessmentRequest.model_validate(_request())
-    assert req.contract_version == "1.3"
+    assert req.contract_version == RECORDED_VERSION  # the release record's version
     assert req.options == AssessmentOptions(
         target_engines=None,
         run_through="reality_check",

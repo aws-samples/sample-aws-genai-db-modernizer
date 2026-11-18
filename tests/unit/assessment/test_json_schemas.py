@@ -20,7 +20,6 @@ from jsonschema.exceptions import ValidationError as SchemaError
 
 from scripts import render_contract_schemas as rcs
 from src.assessment import CONTRACT_VERSION, AssessmentRequest, AssessmentResult
-from src.assessment.models import default_contract_version
 from tests.unit.assessment.conftest import REPO, assessed
 
 DOC = REPO / "docs" / "contracts" / "assess.md"
@@ -137,6 +136,7 @@ def test_a_result_with_artifacts_validates() -> None:
     _validator("assess_result").validate(json.loads(result.model_dump_json()))
 
 
+@pytest.mark.passes_on_main
 def test_the_documented_samples_validate() -> None:
     request = _doc_sample("Sample request")
     result = _doc_sample("Sample result")
@@ -145,7 +145,9 @@ def test_the_documented_samples_validate() -> None:
     # And the models agree (the rules a schema does not state, such as the label).
     AssessmentRequest.model_validate(request)
     parsed = AssessmentResult.model_validate(result)
-    assert parsed.contract_version == default_contract_version()
+    # The sample request pins its version, and the sample result is written for it. It
+    # never relies on the default: the release record moves that with no docs edit (#2461).
+    assert parsed.contract_version == request["contract_version"] == "1.3"
     assert parsed.label == "recommendation"
 
 
