@@ -83,6 +83,7 @@ const t = require('@babel/types');
 
 const PAGES = {
   'AnalysisResults.js': fs.readFileSync(path.join(__dirname, '../../pages/AnalysisResults.js'), 'utf8'),
+  'RiskCard.js': fs.readFileSync(path.join(__dirname, '../RiskCard.js'), 'utf8'),
   'AssignmentGate.js': fs.readFileSync(path.join(__dirname, '../../pages/AssignmentGate.js'), 'utf8'),
 };
 const PROSE = {
@@ -91,8 +92,6 @@ const PROSE = {
     'ap.description',
     'ap.patternDescription',
     'body',
-    'risk.mitigation',
-    'detail',
     'tradeOff.description',
     'tradeOff.impact',
     'opt.recommendation',
@@ -101,6 +100,8 @@ const PROSE = {
     'item.description',
     'ap.outOfScopeReason',
   ],
+  // #2322: the risk card renders the description, mitigation, design notes and copy-sync lines.
+  'RiskCard.js': ['body', 'risk.mitigation', 'detail', 'line', 'copySync.basis'],
   'AssignmentGate.js': ['executiveSummary', 'c.reason'],
 };
 

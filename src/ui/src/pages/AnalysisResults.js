@@ -84,7 +84,7 @@ import { summaryFallbackInfo } from "../utils/summaryFallback";
 import { fallbackWithheldReason } from "../utils/fallbackWithheldReason";
 import { PROCEDURE_INTERNAL_GROUP, buildAuroraDesigns, isAuroraEngine, reasonTextFor } from "../utils/auroraDesign";
 import { codeEditorI18nStrings } from "../utils/codeEditorI18n";
-import { RISK_SEVERITIES, UNRATED, filterRisksWithContent, groupRisksBySeverity, mitigationRepeatsDescription, riskSeverityStatus, sharedMitigationRef, splitRiskDescription } from "../utils/riskAssessment";
+import { RISK_SEVERITIES, UNRATED, filterRisksWithContent, groupRisksBySeverity, riskKey, riskSeverityLabel, riskSeverityStatus, sharedMitigationRef, splitRiskDescription } from "../utils/riskAssessment";
 import { costBaselineStats } from "../utils/tcoAnalysis";
 // #358: engine display names come from the shared mapping (checked against
 // src/shared/engine_names.py by tests/unit/report/test_engine_names_js_sync.py)
@@ -93,6 +93,7 @@ import { ENGINE_LABELS, displayEngine } from "../utils/engineNames";
 import { formatMoney, formatRate } from "../utils/format";
 import { engineHex } from "../utils/engineColors";
 import EngineBadge from "../components/EngineBadge";
+import RiskCard from "../components/RiskCard";
 import DestinationTables from "../components/DestinationTables";
 import { destinationOf, destinationKey } from "../utils/destinations";
 import { WORKLOAD_FIT_DEFINITION } from "../utils/workloadFitLabels";
@@ -237,6 +238,9 @@ const AnalysisResultsPage = memo(() => {
   // #2300: the Table design tab a link names, read before the first render so the tabs
   // are controlled from the start.
   const [riskTab, setRiskTab] = useState(null);
+  // #2322: which risks the reader opened, by risk key; it lives here so a tab switch keeps it.
+  const [riskOpen, setRiskOpen] = useState({});
+  const onToggleRisk = useCallback((id, expanded) => setRiskOpen((o) => ({ ...o, [id]: expanded })), []);
   const [designTab, setDesignTab] = useState(() => engineFromSearch(locationSearch));
   const [navigationOpen, setNavigationOpen] = useState(false);
   // The experimental graph explorer (#308): its entry shows only when the server flag is on.
@@ -2827,7 +2831,7 @@ const AnalysisResultsPage = memo(() => {
               <SpaceBetween size="m">
                 {overallRiskLevel && (
                   <StatusIndicator type={riskSeverityStatus(overallRiskLevel)}>
-                    {t('analysis-results.risk-assessment.overall-risk')}: {overallRiskLevel}
+                    {t('analysis-results.risk-assessment.overall-risk', { severity: riskSeverityLabel(overallRiskLevel, t).toLowerCase() })}
                   </StatusIndicator>
                 )}
                 {/* #1991: the rate-driven risks rest on a window that is not representative */}
@@ -2851,10 +2855,9 @@ const AnalysisResultsPage = memo(() => {
                   tabs={riskTabIds.map((severity) => {
                     const risksAtSeverity = risksBySeverity[severity] || [];
                     const severityCount = openRiskCountAt(synthesis, severity, risksAtSeverity);
-                    const status = riskSeverityStatus(severity);
                     return {
                       id: severity,
-                      label: t('analysis-results.risk-assessment.tab-label', { severity, count: severityCount }),
+                      label: t('analysis-results.risk-assessment.tab-label', { severity: riskSeverityLabel(severity, t), count: severityCount }),
                       content: risksAtSeverity.length === 0 ? (
                         <Box color="text-body-secondary" padding="s">
                           {t('analysis-results.risk-assessment.no-risks-at-severity')}
@@ -2862,59 +2865,21 @@ const AnalysisResultsPage = memo(() => {
                       ) : (
                         <SpaceBetween size="s">
                           {risksAtSeverity.map((risk, idx) => {
-                            const { engine, body } = splitRiskDescription(risk.description);
-                            const showMitigation = risk.mitigation
-                              && !mitigationRepeatsDescription(risk.mitigation, body);
-                            const mitigationRef = sharedMitigationRef(resultsData?.mitigation_refs, risk);
-                            const affectedTables = Array.isArray(risk.affected_tables) ? risk.affected_tables : [];
-                            const copySync = derivedCopySyncOf(synthesis, risk.risk_id);
+                            const key = riskKey(severity, risk, idx);
                             return (
-                              <CardBox key={risk.risk_id || idx} tone={status}>
-                                <SpaceBetween size="xxs">
-                                  <SpaceBetween direction="horizontal" size="xs" alignItems="center">
-                                    <StatusIndicator type={status}>{severity}</StatusIndicator>
-                                    {engine !== '(general)' && (
-                                      <EngineBadge engine={engine}>
-                                        {ENGINE_LABELS[engine] || engine}
-                                      </EngineBadge>
-                                    )}
-                                    {risk.risk_id && (
-                                      <Box fontSize="body-s" color="text-body-secondary">{risk.risk_id}</Box>
-                                    )}
-                                  </SpaceBetween>
-                                  <Box fontSize="body-s"><ProseText text={body} /></Box>
-                                  {showMitigation && (
-                                    <Box fontSize="body-s" color="text-body-secondary">
-                                      <b>{t('analysis-results.risk-assessment.mitigation')}:</b>{' '}
-                                      {mitigationRef
-                                        ? t('analysis-results.risk-assessment.mitigation-as-for', { risk: mitigationRef })
-                                        : <ProseText text={risk.mitigation} />}
-                                    </Box>
-                                  )}
-                                  {affectedTables.length > 0 && (
-                                    <Box fontSize="body-s" color="text-body-secondary">
-                                      {t('analysis-results.risk-assessment.affected-tables')}: {affectedTables.join(', ')}
-                                    </Box>
-                                  )}
-                                  {copySync && (
-                                    <ul className="risk-details" style={{ margin: 0, paddingLeft: '1.25em' }}>
-                                      {copySync.lines.map((line, i) => (
-                                        <li key={i}><Box fontSize="body-s" color="text-body-secondary"><ProseText text={line} /></Box></li>
-                                      ))}
-                                      {copySync.basis && (
-                                        <li><Box fontSize="body-s" color="text-body-secondary">{t('analysis-results.risk-assessment.sync-basis')}: <ProseText text={copySync.basis} /></Box></li>
-                                      )}
-                                    </ul>
-                                  )}
-                                  {Array.isArray(risk.details) && risk.details.length > 0 && (
-                                    <ul className="risk-details" style={{ margin: 0, paddingLeft: '1.25em' }}>
-                                      {risk.details.map((detail, i) => (
-                                        <li key={i}><Box fontSize="body-s" color="text-body-secondary"><ProseText text={detail} /></Box></li>
-                                      ))}
-                                    </ul>
-                                  )}
-                                </SpaceBetween>
-                              </CardBox>
+                              <RiskCard
+                                key={key}
+                                id={key}
+                                risk={risk}
+                                severity={severity}
+                                expanded={riskOpen[key] ?? false}
+                                onToggle={onToggleRisk}
+                                headingLevel="h3"
+                                engineLabel={ENGINE_LABELS[splitRiskDescription(risk.description).engine]}
+                                mitigationRef={sharedMitigationRef(resultsData?.mitigation_refs, risk)}
+                                copySync={derivedCopySyncOf(synthesis, risk.risk_id)}
+                                t={t}
+                              />
                             );
                           })}
                         </SpaceBetween>
@@ -2937,7 +2902,7 @@ const AnalysisResultsPage = memo(() => {
                           <Box key={risk.risk_id || idx} padding={{ vertical: 'xs', horizontal: 's' }}>
                             <SpaceBetween size="xxs">
                               <SpaceBetween direction="horizontal" size="xs" alignItems="center">
-                                <StatusIndicator type={riskSeverityStatus(risk.severity)}>{risk.severity}</StatusIndicator>
+                                <StatusIndicator type={riskSeverityStatus(risk.severity)}>{riskSeverityLabel(risk.severity, t)}</StatusIndicator>
                                 {risk.resolved_on ? (
                                   <Box fontSize="body-s" color="text-body-secondary">
                                     {t('analysis-results.risk-assessment.resolved-where', { from: fromEngine, to: toEngine })}

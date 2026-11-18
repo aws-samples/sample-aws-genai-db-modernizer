@@ -36,6 +36,46 @@ export const RISK_SEVERITIES = ['CRITICAL', 'HIGH', 'MEDIUM', 'LOW'];
 /** A risk whose severity is none of `RISK_SEVERITIES`, mirroring the executive report's UNRATED. */
 export const UNRATED = 'UNRATED';
 
+/**
+ * The translation key of a severity's sentence-case label (#2322): "Critical", "High",
+ * "Medium", "Low", and "Unrated" for anything else. The report stores upper-case ids
+ * ("CRITICAL"); the screen says the label, from the locale file, so a screen reader
+ * reads a word and no CSS text-transform is involved.
+ */
+export function riskSeverityLabelKey(severity) {
+  const sev = String(severity || '').toUpperCase();
+  const known = RISK_SEVERITIES.includes(sev) ? sev.toLowerCase() : 'unrated';
+  return `analysis-results.risk-assessment.severity.${known}`;
+}
+
+/** The sentence-case label of a severity, through `t` (#2322). */
+export function riskSeverityLabel(severity, t) {
+  return t(riskSeverityLabelKey(severity));
+}
+
+const TITLE_MAX = 140;
+
+/**
+ * A one-line title for a risk (#2322): its description's first sentence (after the `[engine]` tag), cut at a word
+ * boundary with an ellipsis when it runs past 140 characters. It only shortens the
+ * stored text for a header; the full description stays in the risk's body.
+ */
+export function riskTitle(risk) {
+  const whole = String(risk?.description ?? '');
+  const text = whole.replace(/^\[[^\]]*\]\s*/, '').replace(/\s+/g, ' ').trim();
+  const sentence = /^(.+?[.!?])(?:\s|$)/.exec(text);
+  const first = sentence ? sentence[1] : text;
+  if (first.length <= TITLE_MAX) return first;
+  const cut = first.slice(0, TITLE_MAX);
+  const space = cut.lastIndexOf(' ');
+  return `${(space > 40 ? cut.slice(0, space) : cut).replace(/[\s,;:.]+$/, '')}\u2026`;
+}
+
+/** The key a risk keeps its open or closed state under: its id, else its place in its severity (#2322). */
+export function riskKey(severity, risk, index) {
+  return risk && risk.risk_id ? `risk-${risk.risk_id}` : `risk-${severity}-${index}`;
+}
+
 /** `"[dynamodb] some text"` -> `{ engine: 'dynamodb', body: 'some text' }`. */
 export function splitRiskDescription(description) {
   const text = String(description ?? '').trim();

@@ -1931,7 +1931,7 @@ def test_results_page_shows_the_same_risks_as_report_json(
         _goto_results(page, ui, r, "risks")
         for severity in ("CRITICAL", "HIGH", "MEDIUM", "LOW"):
             n = int(by_severity.get(severity) or 0)
-            tab = page.get_by_role("tab", name=f"{severity} ({n})", exact=True)
+            tab = page.get_by_role("tab", name=f"{severity.capitalize()} ({n})", exact=True)
             assert tab.count() == 1, (r.db, severity, n)
             if not n:
                 continue
@@ -1943,8 +1943,11 @@ def test_results_page_shows_the_same_risks_as_report_json(
                     # #1510: a mitigation an earlier risk states is "as for" it, as in
                     # both reports (one computation, ``shared_mitigation_refs``).
                     if risk["risk_id"] in refs:
+                        # #2322: the sentence is in the card's body, so open the cards
+                        # and check the reader can see it, not that a hidden node has it.
+                        _expand_every_section(page)
                         same = page.get_by_text(f"as for {refs[risk['risk_id']]}.")
-                        assert same.count() >= 1, (r.db, risk["risk_id"])
+                        expect(same.first).to_be_visible(timeout=READY_MS)
         assert ev == {"console": [], "pageerror": [], "failed": []}, (r.db, ev)
 
 
@@ -1966,12 +1969,17 @@ def test_results_page_states_the_sync_risks_cdc_copy_of_unwritten_tables(
             continue
         _goto_results(page, ui, r, "risks")
         for risk in sync:
-            page.get_by_role("tab", name=re.compile(rf"^{risk['severity']} \(")).click()
+            page.get_by_role(
+                "tab", name=re.compile(rf"^{risk['severity'].capitalize()} \(")
+            ).click()
             sentence = re.search(
                 r"CDC keeps (?:its copy|their copies) current", risk["description"]
             )
             assert sentence, (r.db, risk["description"])
-            assert page.get_by_text(sentence.group(0)).count() >= 1, (r.db, risk["risk_id"])
+            # #2322: the lines sit in a card's nested Design notes; open them, then the
+            # reader must be able to see the sentence.
+            _expand_every_section(page)
+            expect(page.get_by_text(sentence.group(0)).first).to_be_visible(timeout=READY_MS)
             assert page.get_by_text("one-time copy").count() == 0, (r.db, risk["risk_id"])
             checked += 1
     assert checked, "no sample's sync risk names an unwritten table"
@@ -2057,6 +2065,25 @@ def test_results_page_text_is_clean(
             assert _leaked_forbidden_text(text) == [], (r.db, tab)
             findings = scan_text(text, f"results-page:{r.db}:{tab}")
             assert findings == [], (r.db, tab, [(f.kind, f.text, f.excerpt) for f in findings])
+        assert ev == {"console": [], "pageerror": [], "failed": []}, (r.db, ev)
+
+
+def test_results_page_risk_text_is_clean(
+    page: Page, ui: str, all_runs: list[PipelineResult]
+) -> None:
+    """#2322: a risk card's description, mitigation and design notes sit in collapsed
+    sections. The shared page above reads them closed, so this test opens its own page,
+    opens the Risks tab's sections and scans what a reader can open."""
+    from src.tools.validation.customer_text_guard import scan_text
+
+    for r in all_runs:
+        ev = _watch(page)
+        _goto_results(page, ui, r, "risks")
+        _expand_every_section(page)
+        text = page.inner_text("body")
+        assert _leaked_forbidden_text(text) == [], r.db
+        findings = scan_text(text, f"results-page:{r.db}:risks")
+        assert findings == [], (r.db, [(f.kind, f.text, f.excerpt) for f in findings])
         assert ev == {"console": [], "pageerror": [], "failed": []}, (r.db, ev)
 
 
