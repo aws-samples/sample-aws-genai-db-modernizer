@@ -83,10 +83,10 @@
       "wordpress.wp_users"
     ],
     "single_engine_table_count": 1,
-    "shared_risk_sentence": "Every other replicated table above has this risk. Eventually consistent: a read on a replica reads a copy kept current from DynamoDB via CDC, so it sees a write only after CDC applies it, behind by the replication lag; a read that must see its own write should read from DynamoDB."
+    "shared_risk_sentence": "Every other replicated table above has this risk. Eventually consistent: a read on a replica reads a copy kept current from the table's owner (its source of truth) via CDC, so it sees a write only after CDC applies it, behind by the replication lag; a read that must see its own write should read from the owner."
   },
   "expected": {
-    "shared": "Every other replicated table above has this risk. Eventually consistent: a read on a replica reads a copy kept current from DynamoDB via CDC, so it sees a write only after CDC applies it, behind by the replication lag; a read that must see its own write should read from DynamoDB.",
+    "shared": "Every other replicated table above has this risk. Eventually consistent: a read on a replica reads a copy kept current from the table's owner (its source of truth) via CDC, so it sees a write only after CDC applies it, behind by the replication lag; a read that must see its own write should read from the owner.",
     "own_risk": {
       "table": "wordpress.wp_options",
       "risk": "Eventually consistent: 2 reads on Aurora MySQL (q1, q2) read a copy kept in sync from DynamoDB via CDC, so a read can miss a write until it replicates."

@@ -932,9 +932,10 @@ class TestTheSourceOfTruth:
             # #2321: the one sentence both renderers print for the listed rows.
             "shared_risk_sentence": (
                 "Every replicated table above has this risk. Eventually consistent: a read on "
-                "a replica reads a copy kept current from DynamoDB via CDC, so it sees a write "
-                "only after CDC applies it, behind by the replication lag; a read that must "
-                "see its own write should read from DynamoDB."
+                "a replica reads a copy kept current from the table's owner (its source of "
+                "truth) via CDC, so it sees a write only after CDC applies it, behind by the "
+                "replication lag; a read that must see its own write should read from the "
+                "owner."
             ),
             "more_replicated_count": 0,
             "single_engine_tables": ["db.other"],

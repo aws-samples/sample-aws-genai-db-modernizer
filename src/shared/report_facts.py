@@ -2856,20 +2856,18 @@ def replica_risk_text(source: str, replicas: list[str], read_count: int) -> str:
     )
 
 
-def shared_replica_risk_text(sources: list[str]) -> str:
-    """The same risk, once for every replicated table whose source of truth is one
-    of ``sources``: the engineering report's table gives each table's source, its
-    replicas and its read count, so the sentence names none of them (#1170)."""
-    names = [display_engine(s) for s in sources]
-    if len(names) == 1:
-        source, mitigation = names[0], names[0]
-    else:
-        listed = ", ".join(names[:-1]) + f" or {names[-1]}"
-        source, mitigation = f"its source of truth ({listed})", "the source of truth"
+def shared_replica_risk_text() -> str:
+    """The same risk, once for every replicated table: the engineering report's table
+    gives each table's source of truth, its replicas and its read count, and the
+    results page's Table owners table gives each table's owner, so the sentence names
+    none of them (#1170). #2321 review: it names no engine either. The results page
+    prints it under every row with a CDC to engine, also a table nothing writes, whose
+    owner is the relational step, so a named source would be wrong for some row."""
     return (
-        f"Eventually consistent: a read on a replica reads a copy kept current from {source} "
-        "via CDC, so it sees a write only after CDC applies it, behind by the replication "
-        f"lag; a read that must see its own write should read from {mitigation}."
+        "Eventually consistent: a read on a replica reads a copy kept current from the "
+        "table's owner (its source of truth) via CDC, so it sees a write only after CDC "
+        "applies it, behind by the replication lag; a read that must see its own write "
+        "should read from the owner."
     )
 
 
@@ -2897,22 +2895,21 @@ def shares_replica_risk(row: dict[str, Any]) -> bool:
 def shared_risk_sentence(rows: Iterable[Mapping[str, Any]]) -> str | None:
     """The one sentence every deliverable prints for the listed replicated tables whose
     risk is the standard one (``shares_replica_risk``), or None when none is (#1170,
-    #2321). It names the replicated tables, so it reads true under the engineering
-    report's table of replicated tables and under the results page's Table owners table,
-    which lists every mapped table. "other" when some listed row keeps its own risk."""
-    sources: list[str] = []
-    own = False
+    #2321). It names the replicated tables and no engine, so it reads true under the
+    engineering report's table of replicated tables and under every row with a CDC to
+    engine in the results page's Table owners table, which lists every mapped table
+    (a table nothing writes too, and past the 25 rows listed here). "other" when some
+    listed row keeps its own risk."""
+    shared = own = False
     for row in rows:
         if row.get("shares_replica_risk") is True:
-            source = str(row.get("source_of_truth", ""))
-            if source not in sources:
-                sources.append(source)
+            shared = True
         else:
             own = True
-    if not sources:
+    if not shared:
         return None
     lead = "Every other replicated table above" if own else "Every replicated table above"
-    return f"{lead} has this risk. {shared_replica_risk_text(sources)}"
+    return f"{lead} has this risk. {shared_replica_risk_text()}"
 
 
 # The replica risk's copy phrase, and how a report written before #2167 stored it.

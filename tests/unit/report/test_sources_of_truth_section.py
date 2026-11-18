@@ -24,6 +24,7 @@ from src.report.escaping import md_text
 from src.report.facts import report_facts
 from src.report.renderers import render_engineering_report_md
 from src.report.sources_of_truth import SOURCES_OF_TRUTH_INTRO, sources_of_truth_md
+from src.shared.engine_names import ENGINE_DISPLAY_NAMES, SOURCE_DATABASE_NAME, display_engine
 from src.shared.report_facts import (
     TABLE_SOURCES_SHOWN,
     compute_report_facts,
@@ -44,7 +45,9 @@ def _row(table: str, source: str, replicas: dict[str, list[str]]) -> dict[str, A
     }
 
 
-def _report(rows: list[dict[str, Any]] | None) -> dict[str, Any]:
+def _report(
+    rows: list[dict[str, Any]] | None, mappings: list[dict[str, Any]] | None = None
+) -> dict[str, Any]:
     report: dict[str, Any] = {
         "database_name": "trailgear",
         "job_id": "job-1",
@@ -59,6 +62,8 @@ def _report(rows: list[dict[str, Any]] | None) -> dict[str, Any]:
     }
     if rows is not None:
         report["table_sources"] = rows
+    if mappings is not None:
+        report["table_mappings"] = mappings
     report["facts"] = compute_report_facts(report)
     return report
 
@@ -96,8 +101,7 @@ def test_the_engineering_report_states_each_tables_source_replicas_cdc_and_risk(
     assert row == "| `trailgear.Shipment` | DynamoDB | DynamoDB → Aurora PostgreSQL | 2 |"
     # #1170: one source of truth, so the risk is stated once for every table.
     assert (
-        "Every replicated table above has this risk. "
-        + md_text(shared_replica_risk_text(["dynamodb"]))
+        "Every replicated table above has this risk. " + md_text(shared_replica_risk_text())
         in section.splitlines()
     )
     assert report["facts"]["table_sources"]["replicated_tables"][0]["risk"] == RISK
@@ -242,7 +246,7 @@ def _ui_strings() -> dict[str, str]:
 
 
 def test_the_shared_risk_sentence_names_the_replicated_tables_once_in_the_facts() -> None:
-    risk = shared_replica_risk_text(["dynamodb"])
+    risk = shared_replica_risk_text()
     one = _report([_shipment()])["facts"]["table_sources"]
     assert one["shared_risk_sentence"] == f"Every replicated table above has this risk. {risk}"
     mixed = _report([_shipment(), _row("trailgear.Order", "dynamodb", {"documentdb": ["r9"]})])
@@ -279,3 +283,67 @@ def test_the_results_page_keeps_no_copy_of_the_shared_risk_words() -> None:
 
 def _shipment() -> dict[str, Any]:
     return _row("trailgear.Shipment", "dynamodb", {"aurora_postgresql": ["r1", "r2"]})
+
+
+def _mapping(table: str, owner: str, basis: str, readers: list[str], reads: int) -> dict[str, Any]:
+    return {
+        "source_table": table,
+        "recommended_database": owner,
+        "owner": owner,
+        "owner_basis": basis,
+        "also_read_by": readers,
+        "cached_by": None,
+        "replica_read_count": reads,
+    }
+
+
+def _named_sources(text: str) -> set[str]:
+    """Every engine (or the source database) a sentence names."""
+    names = [*ENGINE_DISPLAY_NAMES.values(), SOURCE_DATABASE_NAME]
+    return {n for n in names if n.casefold() in text.casefold()}
+
+
+def test_the_shared_risk_sentence_is_true_under_every_row_with_a_cdc_copy() -> None:
+    """#2321 review: the results page prints the shared sentence under every Table owners
+    row, and a row with a CDC to engine is a replicated table there. A table nothing
+    writes is owned by the relational step and can still have CDC to DynamoDB, so a
+    sentence that names the written tables' source (DynamoDB) is false for it. The
+    sentence names no source: each copy is kept current from the table's owner."""
+    report = _report(
+        [_shipment()],
+        [
+            _mapping("trailgear.Shipment", "dynamodb", "writes", ["aurora_postgresql"], 2),
+            _mapping("trailgear.Region", "aurora_postgresql", "retained", ["dynamodb"], 1),
+        ],
+    )
+    facts = report_facts(report)
+    sentence = facts["table_sources"]["shared_risk_sentence"]
+    lines = facts["table_owner_lines"]["table_lines"]
+    written = {r["table"] for r in report["table_sources"]}
+    unwritten = [r for r in lines if r["table"] not in written and r["also_read_by"]]
+    assert [(r["owner"], r["also_read_by"]) for r in unwritten] == [
+        ("aurora_postgresql", ["dynamodb"])
+    ]
+    for line in lines:
+        if line["also_read_by"]:
+            named = _named_sources(sentence)
+            assert named <= {display_engine(line["owner"])}, (line["table"], named)
+    assert "kept current from the table's owner" in sentence
+    lines_md = _section_md(render_engineering_report_md(report)).splitlines()
+    assert md_text(sentence) in lines_md
+
+
+def test_the_shared_risk_sentence_is_the_same_for_any_sources_and_any_number_of_rows() -> None:
+    """Past the 25 listed rows, or with several sources of truth, the sentence still
+    names no source, so it holds for a row the engineering report does not list."""
+    one = _report([_shipment()])["facts"]["table_sources"]["shared_risk_sentence"]
+    many = _report(
+        [
+            _row(
+                f"db.t{i:03d}", "documentdb" if i % 2 else "dynamodb", {"aurora_postgresql": ["r"]}
+            )
+            for i in range(TABLE_SOURCES_SHOWN + 3)
+        ]
+    )["facts"]["table_sources"]["shared_risk_sentence"]
+    assert many == one
+    assert _named_sources(one) == set()

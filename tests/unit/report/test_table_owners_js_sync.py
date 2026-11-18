@@ -25,11 +25,17 @@ EN = json.loads((REPO / "src/ui/src/locales/en.json").read_text())
 
 
 # #2321: the results page's table has its own columns (CDC to and Replica reads where
-# the Migration map has Also read by), so its rule ends by naming them. The rule itself
-# is the engineering report's, word for word.
+# the Migration map has Also read by), so its rule ends by naming them, by the headers
+# en.json gives them (a header renamed without the rule fails here). The rule itself is
+# the engineering report's, word for word.
+def _header(column: str) -> str:
+    header: str = EN[f"analysis-results.table-owners.col-{column}"]
+    return header
+
+
 RESULTS_PAGE_COLUMNS = (
-    " CDC to names those engines; Replica reads counts the reads a replica serves; Cached by "
-    "names the cache in front of the table's reads."
+    f" {_header('cdc-to')} names those engines; {_header('replica-reads')} counts the reads "
+    f"a replica serves; {_header('cached-by')} names the cache in front of the table's reads."
 )
 
 
