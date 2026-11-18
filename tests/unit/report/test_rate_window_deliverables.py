@@ -22,12 +22,12 @@ from tests.executive_pdf import executive_text
 
 STATEMENT = (
     "execution counts are divided by each statement's own observed window (1 statement), "
-    "the server uptime (0), or an assumed 24 hours (2); costs assume that rate runs "
+    "the server uptime (0 statements), or an assumed 24 hours (2 statements); costs assume that rate runs "
     "continuously"
 )
 OBSERVED_ONLY = (
     "execution counts are divided by each statement's own observed window (2 statements), "
-    "the server uptime (1), or an assumed 24 hours (0); costs assume that rate runs "
+    "the server uptime (1 statement), or an assumed 24 hours (0 statements); costs assume that rate runs "
     "continuously"
 )
 
@@ -105,8 +105,8 @@ def test_a_report_without_the_collection_says_nothing() -> None:
 
 SAMPLED_STATEMENT = (
     "execution counts are divided by the time between two snapshots of the counters "
-    "(2 statements), each statement's own observed window (1), the server uptime (0), or "
-    "an assumed 24 hours (0); 1 statement made no calls between the snapshots and is "
+    "(2 statements), each statement's own observed window (1 statement), the server uptime (0 statements), or "
+    "an assumed 24 hours (0 statements); 1 statement made no calls between the snapshots and is "
     "rated at most one call over the interval; costs assume that rate runs continuously"
 )
 

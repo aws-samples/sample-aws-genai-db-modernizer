@@ -27,6 +27,7 @@ const AST = parse(SOURCE, { sourceType: 'module', plugins: ['jsx', 'optionalChai
 // id attribute on the page.
 const BY_COMPONENT = {
   'assumptions-panel': 'AssumptionsPanel',
+  'cost-breakdown-section': 'CostBreakdown',
   'migration-roadmap-section': 'MigrationWavePlan',
   'step-gate-section': 'StepGateEvidence',
   'unservable-section': 'UnservableQueriesCallout',

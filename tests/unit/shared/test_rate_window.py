@@ -232,7 +232,7 @@ def test_the_facts_count_each_basis_and_state_them_once():
     assert facts["unrecorded_count"] == 0
     assert facts["statement"] == (
         "execution counts are divided by each statement's own observed window "
-        "(2 statements), the server uptime (1), or an assumed 24 hours (1); costs assume "
+        "(2 statements), the server uptime (1 statement), or an assumed 24 hours (1 statement); costs assume "
         "that rate runs continuously"
     )
 
@@ -241,7 +241,7 @@ def test_the_facts_state_the_bases_even_with_no_24_hour_rate():
     facts = rate_window_facts([_pattern(OBSERVED)] * 156 + [_pattern(UPTIME)] * 82)
     assert facts["statement"] == (
         "execution counts are divided by each statement's own observed window "
-        "(156 statements), the server uptime (82), or an assumed 24 hours (0); costs "
+        "(156 statements), the server uptime (82 statements), or an assumed 24 hours (0 statements); costs "
         "assume that rate runs continuously"
     )
 
@@ -251,8 +251,8 @@ def test_the_facts_name_the_stats_reset_only_when_a_rate_used_it():
     assert facts["stats_reset_count"] == 1
     assert facts["statement"] == (
         "execution counts are divided by each statement's own observed window "
-        "(0 statements), the server uptime (0), the time since the statement statistics "
-        "were reset (1), or an assumed 24 hours (1); costs assume that rate runs "
+        "(0 statements), the server uptime (0 statements), the time since the statement statistics "
+        "were reset (1 statement), or an assumed 24 hours (1 statement); costs assume that rate runs "
         "continuously"
     )
 
@@ -264,7 +264,7 @@ def test_the_facts_state_the_statements_that_recorded_no_window():
     assert (facts["statement_count"], facts["unrecorded_count"]) == (2, 2)
     assert facts["statement"] == (
         "execution counts are divided by each statement's own observed window "
-        "(0 statements), the server uptime (0), or an assumed 24 hours (0); 2 statements "
+        "(0 statements), the server uptime (0 statements), or an assumed 24 hours (0 statements); 2 statements "
         "recorded no window (an older collector output, whose rates assumed 24 hours, or "
         "a Performance Insights rate); costs assume that rate runs continuously"
     )

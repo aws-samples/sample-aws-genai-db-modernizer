@@ -478,3 +478,32 @@ def test_the_library_refuses_a_traversing_job_before_any_path(tmp_path) -> None:
                 _Orchestrator(store), store, db, job, {"growth_multiplier": 3.0}, str(tmp_path)
             )
     assert list(tmp_path.iterdir()) == []
+
+
+def test_the_panel_names_each_refusal_as_a_kind_the_ui_words_itself(wired, monkeypatch) -> None:
+    """#2316: the UI maps a kind to fixed copy; it never picks the reason itself."""
+    store, _, _, _ = wired
+    assert {r["refusal_kind"] for r in client.get(URL).json()["assumptions"]} == {"no_results"}
+    _report(store, summary_source="llm", designs=True)
+    growth, peak = client.get(URL).json()["assumptions"]
+    assert (growth["refusal_kind"], peak["refusal_kind"]) == (
+        "needs_model_summary",
+        "needs_model_designs",
+    )
+    monkeypatch.setattr(route, "sfn_service", _Execution("RUNNING"))
+    assert {r["refusal_kind"] for r in client.get(URL).json()["assumptions"]} == {"not_finished"}
+
+
+def test_a_setting_this_server_can_change_has_no_refusal_kind(wired) -> None:
+    store, _, _, _ = wired
+    _report(store)
+    assert [r["refusal_kind"] for r in client.get(URL).json()["assumptions"]] == [None, None]
+
+
+def test_one_refused_setting_is_named_beside_one_that_can_change(wired) -> None:
+    """The peak needs schema designs redone (a model); growth reaches no design."""
+    store, _, _, _ = wired
+    _report(store, designs=True)
+    growth, peak = client.get(URL).json()["assumptions"]
+    assert (growth["available"], growth["refusal_kind"]) == (True, None)
+    assert (peak["available"], peak["refusal_kind"]) == (False, "needs_model_designs")

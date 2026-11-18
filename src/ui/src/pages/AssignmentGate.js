@@ -9,6 +9,7 @@ import { useTranslation } from 'react-i18next';
 //##-- Cloudscape
 import AppLayoutToolbar from "@cloudscape-design/components/app-layout";
 import useLayoutAriaLabels from '../hooks/useLayoutAriaLabels';
+import AssumptionsTable from '../components/AssumptionsTable';
 import ProseText from '../components/ProseText';
 import { CardBox } from '../components/StyledBlocks';
 import BreadcrumbGroup from "@cloudscape-design/components/breadcrumb-group";
@@ -366,7 +367,7 @@ const AssignmentGatePage = memo(() => {
   const cacheOverlay = useMemo(() => getCacheOverlay(assignmentData?.assignment), [assignmentData]);
   const cacheReads = assignmentData?.cache_reads || null;
   // #1990: the assumptions block the chat gate prints too (src/shared/assumptions.py).
-  const gateAssumptions = assignmentData?.assumptions || [];
+  const gateAssumptions = assignmentData?.assumption_items || [];
   // #381 review round 2: never offer the losing Aurora engine as a per-query
   // override target -- the server rejects it (LosingAuroraEngineOverride) with no
   // warning here otherwise.
@@ -915,11 +916,9 @@ const AssignmentGatePage = memo(() => {
           <Box color="text-body-secondary" fontSize="body-s">
             {t('assignment-gate.assumptions.note')}
           </Box>
-          <ul data-figure="gate-assumptions">
-            {gateAssumptions.map(line => (
-              <li key={line}>{line}.</li>
-            ))}
-          </ul>
+          <div data-figure="gate-assumptions">
+            <AssumptionsTable items={gateAssumptions} t={t} />
+          </div>
         </Container>
       )}
 

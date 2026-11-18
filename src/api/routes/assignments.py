@@ -29,7 +29,11 @@ from src.contracts.assignment_models import (
     PendingEngineChoice,
     ValidationResult,
 )
-from src.shared.assumptions import gate_assumption_lines, read_assumptions
+from src.shared.assumptions import (
+    assumption_lines,
+    gate_assumption_items,
+    read_assumptions,
+)
 from src.shared.contract_versioning import load_contract
 from src.shared.gate_facts import cache_candidate_reads
 from src.storage.artifact_store import ArtifactStore
@@ -119,6 +123,20 @@ class AssignmentOverrideRequest(BaseModel):
     )
 
 
+class GateAssumptionItem(BaseModel):
+    """One assumption the gate states (#2316); the items of ``src.shared.assumptions``."""
+
+    key: str = Field(..., description="growth, peak, rate_window, rate_window_check or pricing")
+    setting: float | str | None = Field(
+        None, description="Its value (a growth or peak multiple, a window length, a Region)"
+    )
+    origin: str = Field(..., description="default, collected, customer, flag, file or ui")
+    basis: str | None = Field(
+        None, description="What the value rests on: the peak's source, the rate window's basis"
+    )
+    line: str = Field(..., description="The sentence the chat gate prints")
+
+
 class AssignmentResponse(BaseModel):
     """Response wrapper for assignment data with validation info."""
 
@@ -142,6 +160,13 @@ class AssignmentResponse(BaseModel):
             "The assumptions block the gate states (#1990, src.shared.assumptions): growth, "
             "peak source, rate window, region and prices, each with its origin; approving "
             "the assignment approves them"
+        ),
+    )
+    assumption_items: list[GateAssumptionItem] = Field(
+        default_factory=list,
+        description=(
+            "The same assumptions as items (#2316): key, setting, origin, basis and line "
+            "each, for the gate's assumptions table; `assumptions` holds their lines"
         ),
     )
     pending_choices: list[PendingEngineChoice] = Field(
@@ -182,10 +207,10 @@ def _cache_reads(store: ArtifactStore, db: str, job_id: str, assignment: Assignm
     )
 
 
-def _gate_assumptions(store: ArtifactStore, db: str, job_id: str) -> list[str]:
-    """The assumptions block the gate states, the lines the chat gate prints (#1990)."""
+def _gate_assumption_items(store: ArtifactStore, db: str, job_id: str) -> list[dict]:
+    """The assumptions block the gate states (#1990); its lines are the chat gate's."""
     collector = read_collector_for_models(store, db, job_id, missing_ok=True)
-    return gate_assumption_lines(collector, read_assumptions(store, db, job_id))
+    return gate_assumption_items(collector, read_assumptions(store, db, job_id))
 
 
 # ---------------------------------------------------------------------------
@@ -212,11 +237,13 @@ async def get_assignments(
 
     assignment = _read_assignment(store, database_name, job_id, version)
     choices, _ = pending_choices_for_job(store, database_name, job_id, version)
+    items = _gate_assumption_items(store, database_name, job_id)
     return AssignmentResponse(
         assignment=assignment,
         pending_choices=choices,
         cache_reads=_cache_reads(store, database_name, job_id, assignment),
-        assumptions=_gate_assumptions(store, database_name, job_id),
+        assumptions=assumption_lines(items),
+        assumption_items=[GateAssumptionItem(**i) for i in items],
     )
 
 

@@ -105,6 +105,9 @@ const PINNED_EXEMPTIONS = new Set([]);
 // Files not listed here must not read an owned key (checked below).
 const GUARDED_UI_FILES = [
   'pages/AnalysisResults.js',
+  'components/CostBreakdown.js',
+  'components/AssumptionsTable.js',
+  'components/AssumptionsPanel.js',
   'pages/JobMonitoringSummary.js',
   'utils/reportFacts.js',
   'utils/resultsTabs.js',

@@ -73,6 +73,7 @@ import SourcesOfTruthCallout from "../components/SourcesOfTruthCallout";
 import TableOwnersCallout from "../components/TableOwnersCallout";
 import DeliverablesPanel from "../components/DeliverablesPanel";
 import AssumptionsPanel from "../components/AssumptionsPanel";
+import CostBreakdown from "../components/CostBreakdown";
 import TradeOffDecisions from "../components/TradeOffDecisions";
 import TradeOffsEmptyNote from "../components/TradeOffsEmptyNote";
 import { buildQueryRoutingRows, queryPatternLinks } from "../utils/queryRouting";
@@ -88,7 +89,7 @@ import { costBaselineStats } from "../utils/tcoAnalysis";
 // src/shared/engine_names.py by tests/unit/report/test_engine_names_js_sync.py)
 // rather than this page's own hand-kept copy.
 import { ENGINE_LABELS } from "../utils/engineNames";
-import { formatMoney, formatRate } from "../utils/format";
+import { formatRate } from "../utils/format";
 import { engineHex } from "../utils/engineColors";
 import EngineBadge from "../components/EngineBadge";
 import RiskCard from "../components/RiskCard";
@@ -96,8 +97,7 @@ import DestinationTables from "../components/DestinationTables";
 import { destinationOf, destinationKey } from "../utils/destinations";
 import { optimizationLabel } from "../utils/optimizationLabels";
 import { displayTables } from "../utils/tableNames";
-import { accessPatternTotals, assumptionLinesOf, cacheLayerFactsOf, costAssumptionsOf, rateWindowRiskNoteOf, rateWindowScenarioOf, rateWindowStatementOf, rowCountStatementOf, derivedCopySyncOf, costCaveatOf, costScopeLabelOf, costSizingOf, costSizingText, defaultRiskSeverity, finalEngineCounts, noEngineInScopeOf, openRiskCountAt, procedureInternalQueryCountOf, procedureInternalRoutineCountOn, procedureInternalRoutineCountsOf, queryPatternCountsOf, resolvedRiskCountOf, resolvedRisksBySeverityText, routingHistoryRecorded, routingKindsById, targetEngineEntriesOf, tradeOffsByTab, tradeOffTabLabel, tradeOffTabsShown, tradeOffTopicGroupsOf } from "../utils/reportFacts";
-
+import { accessPatternTotals, assumptionItemsOf, cacheLayerFactsOf, costScopeLabelOf, defaultRiskSeverity, derivedCopySyncOf, finalEngineCounts, noEngineInScopeOf, openRiskCountAt, procedureInternalQueryCountOf, procedureInternalRoutineCountOn, procedureInternalRoutineCountsOf, queryPatternCountsOf, rateWindowRiskNoteOf, resolvedRiskCountOf, resolvedRisksBySeverityText, routingHistoryRecorded, routingKindsById, targetEngineEntriesOf, tradeOffsByTab, tradeOffTabLabel, tradeOffTabsShown, tradeOffTopicGroupsOf } from "../utils/reportFacts";
 
 // ============================================
 // Constants
@@ -1890,7 +1890,6 @@ const AnalysisResultsPage = memo(() => {
               queryPatterns={queryPatternCountsOf(synthesis)}
               priceList={synthesis?.facts?.price_list}
               costScopeLabel={costScopeLabelOf(synthesis)}
-              costCaveat={costCaveatOf(synthesis)}
               targetEngines={(
                 <>
                   <Box fontSize="heading-m">
@@ -1954,84 +1953,15 @@ const AnalysisResultsPage = memo(() => {
           </SpaceBetween>
         </Container>
 
-        {/* Cost Breakdown */}
+        {/* Cost Breakdown (#2316: total first, engines in a table, notes in one expandable) */}
         {costBreakdown.length > 0 && (
-          <Container id="cost-breakdown-section" header={<Header variant="h2" description={t('analysis-results.cost-breakdown.description')}>{t('analysis-results.cost-breakdown.title')}</Header>}>
-            <SpaceBetween size="m">
-              <Box fontSize="body-s" color="text-body-secondary">
-                <span data-figure="cost-scope">{costScopeLabelOf(synthesis)}</span>
-              </Box>
-              <ColumnLayout columns={costBreakdown.length} variant="text-grid">
-                {costBreakdown.map((cb, idx) => {
-                  // #358: the cache layer's card is labeled the same way
-                  // as its "Target engines" badge, so the two sections
-                  // agree on what ElastiCache is here.
-                  const isCacheLayer = cb.database === cacheOverlay?.engine;
-                  return (
-                    <Box key={idx} textAlign="center">
-                      <EngineBadge engine={cb.database}>
-                        {ENGINE_LABELS[cb.database] || cb.database}
-                        {isCacheLayer ? t('cache-layer.engine-badge-suffix', { defaultValue: ' (cache layer)' }) : ''}
-                      </EngineBadge>
-                      <Box fontSize="display-l" fontWeight="bold" margin={{ top: 'xs' }}>
-                        {formatMoney(cb.monthly_cost_usd)}
-                      </Box>
-                      <Box fontSize="body-s" color="text-body-secondary">/month · {cb.pricing_mode}</Box>
-                      {costSizingText(t, costSizingOf(synthesis, cb.database)) && (
-                        <Box fontSize="body-s" color="text-body-secondary">
-                          <span data-figure="cost-sizing" data-engine={cb.database}>
-                            {costSizingText(t, costSizingOf(synthesis, cb.database))}
-                          </span>
-                        </Box>
-                      )}
-                    </Box>
-                  );
-                })}
-              </ColumnLayout>
-              {costAssumptionsOf(synthesis).length > 0 && (
-                <Box fontSize="body-s" color="text-body-secondary">
-                  <span data-figure="cost-assumptions">{costAssumptionsOf(synthesis).join(' · ')}</span>
-                </Box>
-              )}
-              {/* #1636: the tables with no row count, and the sizing assumption (a report fact) */}
-              {rowCountStatementOf(synthesis) && (
-                <Box fontSize="body-s" color="text-body-secondary">
-                  <span data-figure="row-counts">{t('analysis-results.cost-breakdown.row-counts')}: {rowCountStatementOf(synthesis)}.</span>
-                </Box>
-              )}
-              {/* #1893: what the call rates rest on (a report fact) */}
-              {rateWindowStatementOf(synthesis) && (
-                <Box fontSize="body-s" color="text-body-secondary">
-                  <span data-figure="rate-windows">{t('analysis-results.cost-breakdown.rate-windows')}: {rateWindowStatementOf(synthesis)}.</span>
-                </Box>
-              )}
-              {/* #1991: a rate window that is not representative makes the costs a scenario */}
-              {rateWindowScenarioOf(synthesis) && (
-                <Box fontSize="body-s" color="text-status-warning">
-                  <span data-figure="rate-window-scenario">{rateWindowScenarioOf(synthesis)}.</span>
-                </Box>
-              )}
-              {/* #1990: the assumptions block and the growth scenario (report facts) */}
-              {assumptionLinesOf(synthesis).length > 0 && (
-                <Box fontSize="body-s" color="text-body-secondary" data-figure="assumptions">
-                  <ul>
-                    {assumptionLinesOf(synthesis).map((line) => (
-                      <li key={line}>{line}.</li>
-                    ))}
-                  </ul>
-                </Box>
-              )}
-              <Box fontSize="body-s" color="text-body-secondary">
-                <span data-figure="cost-caveat">{costCaveatOf(synthesis)}</span>
-              </Box>
-              {/* #1197: the read I/O basis a figure rests on, a report fact (ADR-032) */}
-              {(synthesis?.facts?.cost_basis_notes || []).map((note, idx) => (
-                <Box key={`cost-basis-${idx}`} fontSize="body-s" color="text-body-secondary">
-                  <span data-figure="cost-basis">{note}</span>
-                </Box>
-              ))}
-            </SpaceBetween>
-          </Container>
+          <CostBreakdown
+            synthesis={synthesis}
+            costBreakdown={costBreakdown}
+            projectedCost={projectedCost}
+            cacheEngine={cacheOverlay?.engine}
+            t={t}
+          />
         )}
 
         {/* Query Flow (Sankey) */}
@@ -2051,7 +1981,7 @@ const AnalysisResultsPage = memo(() => {
 
         {/* #1991: the assumptions a customer can change, re-running only what a
             change affects (the server checks and records it). */}
-        <AssumptionsPanel jobId={jobId} t={t} onChanged={reloadAfterAssumptionChange} />
+        <AssumptionsPanel jobId={jobId} t={t} onChanged={reloadAfterAssumptionChange} items={assumptionItemsOf(synthesis)} />
       </SpaceBetween>
     ),
     plan: (
