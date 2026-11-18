@@ -305,8 +305,8 @@ def test_the_facts_name_the_sampled_basis_and_why_statements_fell_back():
     assert facts["sample_fallback_count"] == 1
     assert facts["statement"] == (
         "execution counts are divided by the time between two snapshots of the counters "
-        "(6 statements), each statement's own observed window (2), the server uptime (1), "
-        "or an assumed 24 hours (0); 2 statements made no calls between the snapshots and "
+        "(6 statements), each statement's own observed window (2 statements), the server uptime (1 statement), "
+        "or an assumed 24 hours (0 statements); 2 statements made no calls between the snapshots and "
         "are rated at most one call over the interval; 1 statement kept a single-snapshot "
         "rate (1 whose count went down); costs assume that rate runs continuously"
     )
@@ -319,8 +319,8 @@ def test_the_facts_say_when_the_interval_could_not_be_measured():
     assert facts["sampled_count"] == 0
     assert facts["statement"] == (
         "execution counts are divided by the time between two snapshots of the counters "
-        "(0 statements), each statement's own observed window (1), the server uptime (0), "
-        "or an assumed 24 hours (1); 2 statements kept a single-snapshot rate (1 after a "
+        "(0 statements), each statement's own observed window (1 statement), the server uptime (0 statements), "
+        "or an assumed 24 hours (1 statement); 2 statements kept a single-snapshot rate (1 after a "
         "counter reset between the snapshots, 1 whose interval was not measured); costs "
         "assume that rate runs continuously"
     )
@@ -331,7 +331,7 @@ def test_a_collection_without_sampling_states_the_rates_as_before():
     assert facts["sampled_count"] == 0 and facts["sample_fallback_count"] == 0
     assert facts["statement"] == (
         "execution counts are divided by each statement's own observed window "
-        "(1 statement), the server uptime (1), or an assumed 24 hours (0); costs assume "
+        "(1 statement), the server uptime (1 statement), or an assumed 24 hours (0 statements); costs assume "
         "that rate runs continuously"
     )
 

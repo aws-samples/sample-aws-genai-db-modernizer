@@ -354,6 +354,23 @@ def _times(n: float) -> str:
     return f"{n:g}×"
 
 
+_RATE_WINDOW_BASIS_COUNTS = (
+    ("sampled", "sampled_count"),
+    ("observed", "observed_count"),
+    ("uptime", "uptime_count"),
+    ("stats_reset", "stats_reset_count"),
+    ("assumed_24h", "assumed_24h_count"),
+)
+
+
+def _rate_window_basis(windows: Mapping[str, Any]) -> str | None:
+    """What the rates were divided by (#2316): sampled, observed, uptime, stats_reset or
+    assumed_24h when every statement with a recorded window used that one, ``mixed`` when
+    several did, None when none recorded one (an older collector output)."""
+    used = [name for name, field in _RATE_WINDOW_BASIS_COUNTS if windows.get(field)]
+    return used[0] if len(used) == 1 else ("mixed" if used else None)
+
+
 def assumption_items(
     collector: Mapping[str, Any] | None,
     *,
@@ -418,7 +435,7 @@ def assumption_items(
                 "key": "rate_window",
                 "setting": windows.get("typical_window_seconds"),
                 "origin": "collected",
-                "basis": None,
+                "basis": _rate_window_basis(windows),
                 "line": f"Rate window: {divisor}"
                 + (f"; {detail}" if detail else "")
                 + " (collected)",
@@ -474,6 +491,7 @@ __all__ = [
     "assumption_items",
     "SETTABLE",
     "assumption_lines",
+    "gate_assumption_items",
     "check_value",
     "design_context",
     "growth_assumption",
@@ -604,11 +622,12 @@ def growth_scenario_facts(
     }
 
 
-def gate_assumption_lines(
+def gate_assumption_items(
     collector: Mapping[str, Any] | None, decision: Mapping[str, Any] | None
-) -> list[str]:
-    """The assumptions block as the approval gate states it, before any cost exists: the
-    same items synthesis states (today's price table, the collection's rate windows)."""
+) -> list[dict[str, Any]]:
+    """The assumptions block's items as the approval gate states them, before any cost
+    exists: the same items synthesis states (today's price table, the collection's rate
+    windows)."""
     from src.shared.catalog.prices import price_basis
     from src.shared.rate_window import collection_rate_window_facts
 
@@ -616,18 +635,23 @@ def gate_assumption_lines(
         return []
     growth, origin = growth_assumption(decision)
     windows = collection_rate_window_facts(collector) or {}
-    return assumption_lines(
-        assumption_items(
-            collector,
-            growth=growth,
-            growth_origin=origin,
-            price_basis=price_basis(),
-            rate_window_statement=windows.get("statement"),
-            rate_windows=windows,
-            context=peak_context(decision),
-            notes=out_of_range_notes(decision),
-        )
+    return assumption_items(
+        collector,
+        growth=growth,
+        growth_origin=origin,
+        price_basis=price_basis(),
+        rate_window_statement=windows.get("statement"),
+        rate_windows=windows,
+        context=peak_context(decision),
+        notes=out_of_range_notes(decision),
     )
+
+
+def gate_assumption_lines(
+    collector: Mapping[str, Any] | None, decision: Mapping[str, Any] | None
+) -> list[str]:
+    """The lines of :func:`gate_assumption_items`, as the chat gate prints them."""
+    return assumption_lines(gate_assumption_items(collector, decision))
 
 
 def record_assumptions(

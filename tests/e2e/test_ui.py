@@ -1617,9 +1617,10 @@ def test_results_page_states_the_price_date(
 def test_results_page_states_what_each_engine_was_sized_for(
     loaded_results: OpenResults, all_runs: list[PipelineResult]
 ) -> None:
-    """#1195: each cost card states what its figure was sized for, as report.json's
-    facts.engines[].cost_sizing holds it (the reports' "Sized for" column)."""
-    from src.report.formatting import cost_sizing_text
+    """#1195: each cost row states what its figure was sized for, as report.json's
+    facts.engines[].cost_sizing holds it (the reports' "Sized for" column): its query
+    count and call rate in their columns, and the basis in the last."""
+    from src.report.formatting import fmt_num
 
     for r in all_runs:
         report = json.loads((r.artifact_root / r.report["report"]).read_text())
@@ -1633,11 +1634,12 @@ def test_results_page_states_what_each_engine_was_sized_for(
         _show_tab(page, "summary")
         page.locator("[data-figure=cost-sizing]").first.wait_for(timeout=READY_MS)
         for engine, basis in sizing.items():
-            shown = page.locator(f"[data-figure=cost-sizing][data-engine={engine}]")
-            assert shown.inner_text().strip() == f"Sized for {cost_sizing_text(basis)}", (
-                r.db,
-                engine,
-            )
+            # #2316: the row names the basis; the queries and the call rate have columns.
+            row = page.locator(f"#cost-breakdown-section tr:has([data-engine-badge={engine}])")
+            cells = [c.strip() for c in row.locator("td").all_inner_texts()]
+            assert cells[2] == fmt_num(basis.get("sized_query_count") or 0), (r.db, engine, cells)
+            assert cells[3] == fmt_num(basis.get("calls_per_second") or 0), (r.db, engine, cells)
+            assert cells[4] and not cells[4].startswith("Sized for"), (r.db, engine, cells)
         assert ev == {"console": [], "pageerror": [], "failed": []}, (r.db, ev)
 
 
@@ -1908,6 +1910,8 @@ def test_results_page_states_the_cost_basis_the_deliverables_state(
         pdf = " ".join(" ".join(pdf_page_texts(str(r.deliverable("executive-report.pdf")))).split())
         page, ev = loaded_results(r)
         _show_tab(page, "summary")
+        # #2316: the cost notes sit in one expandable that starts closed.
+        page.get_by_text("How these costs are estimated").click()
         lines = page.locator('[data-figure="cost-basis"]')
         lines.first.wait_for(timeout=READY_MS)
         assert [t.strip() for t in lines.all_inner_texts()] == notes, r.db

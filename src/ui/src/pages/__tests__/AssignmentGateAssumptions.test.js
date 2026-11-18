@@ -34,7 +34,21 @@ jest.mock('@cloudscape-design/components/status-indicator', () => ({ __esModule:
 jest.mock('@cloudscape-design/components/badge', () => ({ __esModule: true, default: mockPassThrough }));
 jest.mock('@cloudscape-design/components/spinner', () => ({ __esModule: true, default: () => null }));
 jest.mock('@cloudscape-design/components/alert', () => ({ __esModule: true, default: mockPassThrough }));
-jest.mock('@cloudscape-design/components/table', () => ({ __esModule: true, default: () => null }));
+// A stand-in table that renders each cell, so the assumptions table can be read.
+jest.mock('@cloudscape-design/components/table', () => ({
+  __esModule: true,
+  default: ({ items = [], columnDefinitions = [] }) => (
+    <table><tbody>
+      {items.map((item) => (
+        <tr key={item.key}>{columnDefinitions.map((c) => <td key={c.id} data-col={c.id}>{c.cell(item)}</td>)}</tr>
+      ))}
+    </tbody></table>
+  ),
+}));
+jest.mock('@cloudscape-design/components/link', () => ({
+  __esModule: true,
+  default: ({ children, onFollow }) => <a href="#info" onClick={(e) => { e.preventDefault(); onFollow && onFollow(); }}>{children}</a>,
+}));
 jest.mock('@cloudscape-design/components/property-filter', () => ({ __esModule: true, default: () => null }));
 jest.mock('@cloudscape-design/components/pagination', () => ({ __esModule: true, default: () => null }));
 jest.mock('@cloudscape-design/components/modal', () => ({ __esModule: true, default: () => null }));
@@ -69,13 +83,14 @@ jest.mock('react-i18next', () => {
 
 global.IS_REACT_ACT_ENVIRONMENT = true;
 
-function payloads(assumptions) {
+function payloads(assumptionItems) {
   return {
     job: { database_name: 'wordpress' },
     assignments: {
       success: true,
       cache_reads: null,
-      assumptions,
+      assumptions: (assumptionItems || []).map((i) => i.line),
+      assumption_items: assumptionItems,
       assignment: {
         version: 1,
         query_assignments: [
@@ -122,15 +137,30 @@ async function render(assumptions) {
   return container.querySelector('[data-figure="gate-assumptions"]');
 }
 
-test('states each assumption line, as the chat gate prints it', async () => {
-  const list = await render([
-    'Growth: 5× (default), shown as a separate what-if scenario',
-    'Peak: not measured (the collection has no CloudWatch metrics covering 7 to 14 days)',
+const ITEMS = [
+  { key: 'growth', setting: 5, origin: 'default', basis: null, line: 'Growth: 5× (default), shown as a separate what-if scenario' },
+  { key: 'peak', setting: null, origin: 'default', basis: 'not_measured', line: 'Peak: not measured (the collection has no CloudWatch metrics covering 7 to 14 days)' },
+  { key: 'pricing', setting: 'us-east-1', origin: 'default', basis: null, line: 'Region and prices: us-east-1, on-demand prices from the AWS Price List (default)' },
+];
+
+test('shows each assumption as a row with its value and origin (#2316)', async () => {
+  const block = await render(ITEMS);
+  const rows = [...block.querySelectorAll('tr')];
+  expect(rows.map((r) => r.querySelector('[data-col="assumption"] span').textContent)).toEqual([
+    'growth', 'peak', 'pricing',
   ]);
-  expect([...list.querySelectorAll('li')].map((li) => li.textContent)).toEqual([
-    'Growth: 5× (default), shown as a separate what-if scenario.',
-    'Peak: not measured (the collection has no CloudWatch metrics covering 7 to 14 days).',
+  expect(rows.map((r) => r.querySelector('[data-figure="assumption-value"]').textContent)).toEqual([
+    '5×', 'analysis-results.assumptions-panel.value.not-measured', 'us-east-1',
   ]);
+  expect(rows[0].querySelector('[data-col="origin"]').textContent).toBe('default');
+});
+
+test('the long sentence is the same line the chat gate prints, behind Info (#2316)', async () => {
+  const block = await render(ITEMS);
+  expect(block.querySelector('[data-figure="assumption-line"]')).toBeNull();
+  await act(async () => { block.querySelector('a').click(); });
+  expect(block.querySelector('[data-figure="assumption-line"]').textContent)
+    .toBe('Growth: 5× (default), shown as a separate what-if scenario.');
 });
 
 test('shows no block for a response written before the assumptions', async () => {

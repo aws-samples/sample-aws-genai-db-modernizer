@@ -72,7 +72,7 @@ const ExecutiveSummaryStats = memo(({
   t, databaseName, accessPatternCount, ownerQueryCount, cachePatternCount,
   targetEngines, projectedCost, costBaseline, retiredEngines, queryPatterns, engineScope,
   noEngineInScope,
-  priceList, costScopeLabel, costCaveat,
+  priceList, costScopeLabel,
 }) => {
   let patterns = '—';
   if (accessPatternCount > 0) patterns = accessPatternCount;
@@ -165,11 +165,6 @@ const ExecutiveSummaryStats = memo(({
           {priceLine && (
             <Box fontSize="body-s" color="text-body-secondary" padding={{ top: 'xxs' }}>
               <span data-figure="price-list">{priceLine}</span>
-            </Box>
-          )}
-          {costCaveat && (
-            <Box fontSize="body-s" color="text-body-secondary" padding={{ top: 'xxs' }}>
-              <span data-figure="cost-caveat">{costCaveat}</span>
             </Box>
           )}
         </div>

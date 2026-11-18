@@ -433,6 +433,27 @@ export function costSizingText(t, sizing) {
     : text;
 }
 
+// #2316: what an engine's cost was sized for, in a few words for the table's "Sized for"
+// column (the queries and call rate have columns of their own); '' with no sizing.
+export function costSizingBasisText(t, sizing) {
+  if (!sizing || !sizing.basis) return '';
+  const base = t(`analysis-results.cost-breakdown.basis.${sizing.basis}`, { defaultValue: '' });
+  const unread = Number(sizing.unqueried_table_count) || 0;
+  return unread
+    ? base + t('analysis-results.cost-breakdown.sized-unqueried', { count: unread, formatted: formatFigure(unread) })
+    : base;
+}
+
+// #2316: the cost table's rows and total as every report prints them: facts.engines (one
+// row per engine, in the reports' order) and facts.engine_cost_total_usd. A report written
+// before the facts has neither (null), and the page falls back to its TCO breakdown.
+export function costTableOf(synthesis) {
+  const facts = factsOf(synthesis);
+  const rows = facts && Array.isArray(facts.engines) ? facts.engines.filter((e) => e && e.engine) : [];
+  const total = facts && typeof facts.engine_cost_total_usd === 'number' ? facts.engine_cost_total_usd : null;
+  return rows.length ? { rows, total } : null;
+}
+
 // #1474: what every cost figure is, and the one caveat printed where costs appear
 // (facts.cost_scope_label, facts.cost_caveat). A report written before them gets the
 // same words (the Python constants COST_SCOPE_LABEL and COST_CAVEAT; a test keeps them equal).
@@ -447,6 +468,16 @@ export function costScopeLabelOf(synthesis) {
 export function costCaveatOf(synthesis) {
   const caveat = factsOf(synthesis) && factsOf(synthesis).cost_caveat;
   return typeof caveat === 'string' && caveat ? caveat : COST_CAVEAT;
+}
+
+// #2316: the caveat split around its calculator reference so the page can make the
+// address a real link: { before, label, href, after }. A caveat with no address
+// ("... AWS Pricing Calculator (https://...)") is all `before`.
+export function costCaveatPartsOf(synthesis) {
+  const caveat = costCaveatOf(synthesis);
+  const match = /^([\s\S]*?)(AWS Pricing Calculator) \((https:\/\/[^\s)]+)\)([\s\S]*)$/.exec(caveat);
+  if (!match) return { before: caveat, label: '', href: '', after: '' };
+  return { before: match[1], label: match[2], href: match[3], after: match[4] };
 }
 
 // #2107: the one sentence every wave plan says about the cutover (facts.cutover_responsibility).
@@ -502,6 +533,57 @@ export function rateWindowRiskNoteOf(synthesis) {
   const fact = factsOf(synthesis) && factsOf(synthesis).rate_windows;
   const note = fact && fact.scenario_risk_note;
   return typeof note === 'string' && note ? note : null;
+}
+
+// #2316: the assumption items behind those lines (facts.assumptions.assumptions: key,
+// setting, origin and line each), for the assumptions table. Empty for a report written
+// before them.
+export function assumptionItemsOf(synthesis) {
+  const facts = factsOf(synthesis);
+  const items = (facts && facts.assumptions && facts.assumptions.assumptions) || [];
+  return items.filter((item) => item && typeof item.key === 'string' && typeof item.line === 'string');
+}
+
+// #2316: the growth scenario's lines (cost and busiest partition key value at each
+// growth), as the facts state them.
+export function growthScenarioLinesOf(synthesis) {
+  const facts = factsOf(synthesis);
+  const lines = (facts && facts.growth_scenarios && facts.growth_scenarios.lines) || [];
+  return lines.filter((line) => typeof line === 'string' && line);
+}
+
+// #2316: the price list the costs use (facts.price_list: region, pricing model and the
+// date the prices were retrieved), or null for a report written before it.
+export function priceListOf(synthesis) {
+  const fact = factsOf(synthesis) && factsOf(synthesis).price_list;
+  return fact && typeof fact === 'object' ? fact : null;
+}
+
+// #2316: an engine's role as the facts name it ("Migration target", "Cache layer"), or ''.
+export function engineRoleOf(synthesis, engine) {
+  const rows = (factsOf(synthesis) && factsOf(synthesis).engines) || [];
+  const row = Array.isArray(rows) ? rows.find((r) => r && r.engine === engine) : null;
+  return (row && typeof row.role === 'string' && row.role) || '';
+}
+
+// #2316: one assumption's value in a few words, from its item's setting (the long
+// sentence stays in the item's line). Formatting only: nothing here is computed.
+export function assumptionValueText(t, item) {
+  const setting = item && item.setting;
+  const number = typeof setting === 'number' && Number.isFinite(setting);
+  switch (item && item.key) {
+    case 'growth':
+      return number ? `${formatFigure(setting)}×` : '';
+    case 'peak':
+      return number ? `${formatFigure(setting)}×` : t('analysis-results.assumptions-panel.value.not-measured');
+    case 'rate_window':
+      // The facts' own basis (what the rates were divided by); none recorded: no value.
+      return item.basis ? t(`analysis-results.assumptions-panel.value.rate-${item.basis}`, { defaultValue: '' }) : '';
+    case 'rate_window_check':
+      return t(`analysis-results.assumptions-panel.value.window-${setting}`, { defaultValue: '' });
+    default:
+      return typeof setting === 'string' ? setting : '';
+  }
 }
 
 // #1990: the assumptions block's lines (growth, peak, rate window, region and prices,

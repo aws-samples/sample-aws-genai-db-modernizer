@@ -40,3 +40,16 @@ def test_the_chat_gate_prints_the_same_lines_once() -> None:
     assert "Assumptions (approving the assignment approves them;" in text
     for line in lines:
         assert text.count(f"- {prose(line)}.") == 1, line
+
+
+def test_the_gate_response_carries_the_items_behind_its_lines(tmp_path, monkeypatch) -> None:
+    """#2316: the gate's assumptions table reads the items (key, setting, origin, line),
+    and each line is the one in `assumptions`."""
+    _store(tmp_path, monkeypatch, cached=False)
+    body = client.get(_url()).json()
+    items = body["assumption_items"]
+    assert [i["line"] for i in items] == body["assumptions"]
+    assert (
+        items[0]["key"] == "growth" and items[0]["setting"] == 5 and items[0]["origin"] == "default"
+    )
+    assert set(items[-1]) == {"key", "setting", "origin", "basis", "line"}

@@ -23,6 +23,14 @@ import {
   rateWindowScenarioOf,
   rateWindowRiskNoteOf,
   assumptionLinesOf,
+  assumptionItemsOf,
+  assumptionValueText,
+  costSizingBasisText,
+  costTableOf,
+  costCaveatPartsOf,
+  engineRoleOf,
+  growthScenarioLinesOf,
+  priceListOf,
   rowCountStatementOf,
   tradeOffsByTab,
   tradeOffTabLabel,
@@ -413,7 +421,7 @@ describe('assumptionLinesOf (#1990)', () => {
 
 describe('rateWindowStatementOf (#1893)', () => {
   const statement =
-    "execution counts are divided by each statement's own observed window (156 statements), the server uptime (82), or an assumed 24 hours (0); costs assume that rate runs continuously";
+    "execution counts are divided by each statement's own observed window (156 statements), the server uptime (82 statements), or an assumed 24 hours (0 statements); costs assume that rate runs continuously";
 
   test('is the facts sentence as it is', () => {
     expect(rateWindowStatementOf({ facts: { rate_windows: { observed_count: 156, statement } } })).toBe(statement);
@@ -501,5 +509,58 @@ describe('defaultRiskSeverity (#2303)', () => {
 
   it('skips an empty higher severity', () => {
     expect(defaultRiskSeverity(null, { CRITICAL: [], HIGH: [], MEDIUM: [{}] }, order)).toBe('MEDIUM');
+  });
+});
+
+describe('the cost and assumptions helpers (#2316)', () => {
+  const t = (key) => key;
+
+  test('the caveat is split around the calculator address, and a custom caveat is left whole', () => {
+    const parts = costCaveatPartsOf({ facts: { cost_caveat: 'Check prices in the AWS Pricing Calculator (https://calculator.aws/).' } });
+    expect(parts).toEqual({ before: 'Check prices in the ', label: 'AWS Pricing Calculator', href: 'https://calculator.aws/', after: '.' });
+    expect(costCaveatPartsOf({ facts: { cost_caveat: 'Prices are estimates.' } })).toEqual({ before: 'Prices are estimates.', label: '', href: '', after: '' });
+    expect(costCaveatPartsOf({}).href).toBe('https://calculator.aws/');
+  });
+
+  test('the facts supply the role, the price list, the growth lines and the assumption items', () => {
+    const synthesis = { facts: {
+      engines: [{ engine: 'dynamodb', role: 'Migration target' }],
+      price_list: { region: 'us-east-1' },
+      growth_scenarios: { lines: ['Cost at 5× growth: $1', ''] },
+      assumptions: { assumptions: [{ key: 'growth', setting: 5, origin: 'default', line: 'Growth: 5×' }, { bad: true }] },
+    } };
+    expect(engineRoleOf(synthesis, 'dynamodb')).toBe('Migration target');
+    expect(engineRoleOf(synthesis, 'redis')).toBe('');
+    expect(priceListOf(synthesis)).toEqual({ region: 'us-east-1' });
+    expect(growthScenarioLinesOf(synthesis)).toEqual(['Cost at 5× growth: $1']);
+    expect(assumptionItemsOf(synthesis)).toHaveLength(1);
+    expect(assumptionItemsOf({})).toEqual([]);
+    expect(priceListOf({})).toBeNull();
+  });
+
+  test('a value is formatted from the setting, never counted', () => {
+    expect(assumptionValueText(t, { key: 'growth', setting: 5 })).toBe('5×');
+    expect(assumptionValueText(t, { key: 'peak', setting: 2.5 })).toBe('2.5×');
+    expect(assumptionValueText(t, { key: 'peak', setting: null })).toBe('analysis-results.assumptions-panel.value.not-measured');
+    expect(assumptionValueText(t, { key: 'pricing', setting: 'us-east-1' })).toBe('us-east-1');
+    expect(assumptionValueText(t, { key: 'rate_window', setting: 3600, basis: 'uptime' })).toBe('analysis-results.assumptions-panel.value.rate-uptime');
+    expect(assumptionValueText(t, { key: 'rate_window', setting: 3600, basis: null })).toBe('');
+    expect(assumptionValueText(t, { key: 'rate_window_check', setting: 'representative' })).toBe('analysis-results.assumptions-panel.value.window-representative');
+  });
+
+  test('the cost table is the facts engines and their total, or null before them', () => {
+    const facts = { engines: [{ engine: 'dynamodb', monthly_cost_usd: 1 }, null], engine_cost_total_usd: 1 };
+    expect(costTableOf({ facts })).toEqual({ rows: [{ engine: 'dynamodb', monthly_cost_usd: 1 }], total: 1 });
+    expect(costTableOf({ facts: {} })).toBeNull();
+    expect(costTableOf(null)).toBeNull();
+  });
+
+  test('the sized-for cell names the basis only, never repeating the queries or the rate', () => {
+    const t2 = (key, o = {}) => `${key}${o.formatted ? `|${o.formatted}` : ''}`;
+    expect(costSizingBasisText(t2, { basis: 'assigned_queries', sized_query_count: 67, calls_per_second: 9 }))
+      .toBe('analysis-results.cost-breakdown.basis.assigned_queries');
+    expect(costSizingBasisText(t2, { basis: 'assigned_queries', unqueried_table_count: 28 }))
+      .toBe('analysis-results.cost-breakdown.basis.assigned_queries' + 'analysis-results.cost-breakdown.sized-unqueried|28');
+    expect(costSizingBasisText(t2, null)).toBe('');
   });
 });

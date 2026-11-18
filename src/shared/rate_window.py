@@ -699,10 +699,7 @@ def rate_window_facts(
             for b in RATE_WINDOW_BASES
             if (b != STATS_RESET or counts[b]) and (b != SAMPLED or counts[b] or any_sample)
         ]
-        parts = [
-            f"{_PHRASES[b]} ({_counted(counts[b]) if i == 0 else counts[b]})"
-            for i, b in enumerate(shown)
-        ]
+        parts = [f"{_PHRASES[b]} ({_counted(counts[b])})" for b in shown]
         listed = ", ".join(parts[:-1]) + ", or " + parts[-1]
         statement = f"execution counts are divided by {listed}"
         if unrecorded:

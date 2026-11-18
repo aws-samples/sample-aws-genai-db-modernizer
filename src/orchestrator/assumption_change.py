@@ -86,6 +86,9 @@ class ChangePlan:
 
     phases: tuple[str, ...]
     refusal: str | None = None
+    # #2316: why, as a kind the UI words itself: no_results, not_finished,
+    # needs_model_designs (a schema redesign) or needs_model_summary (a model's summary).
+    refusal_kind: str | None = None
     notes: list[str] = field(default_factory=list)
     skipped: tuple[str, ...] = ()
 
@@ -136,6 +139,7 @@ def change_plan(
     if report is None:
         return ChangePlan(
             phases,
+            refusal_kind="no_results",
             refusal=(
                 "The job has no results yet, so there is nothing to re-run. Nothing was "
                 "changed. " + NEW_RUN
@@ -144,6 +148,7 @@ def change_plan(
     if job_status != "SUCCEEDED":
         return ChangePlan(
             phases,
+            refusal_kind="not_finished",
             refusal=(
                 f"The job is not finished (its status is {job_status.lower()}), so its "
                 "assumptions can't change now. Nothing was changed."
@@ -153,6 +158,7 @@ def change_plan(
     if without_model and "schema_design" in phases and _has_schema_designs(store, db, job_id):
         return ChangePlan(
             phases,
+            refusal_kind="needs_model_designs",
             refusal=(
                 f"Changing the {_names(keys)} means redesigning the schemas, and only a model "
                 f"can do that; {NO_MODEL}. Nothing was changed. " + NEW_RUN
@@ -168,6 +174,7 @@ def change_plan(
         )
         return ChangePlan(
             phases,
+            refusal_kind="needs_model_summary",
             refusal=(
                 f"Changing the {_names(keys)} re-runs synthesis, and {why}; {NO_MODEL}, so "
                 "it can't re-run that synthesis as it ran. Nothing was changed. " + NEW_RUN
@@ -205,6 +212,7 @@ def panel_state(
                 "line": item.get("line"),
                 "available": plan.refusal is None,
                 "unavailable_reason": plan.refusal,
+                "refusal_kind": plan.refusal_kind,
                 "notes": plan.notes,
             }
         )

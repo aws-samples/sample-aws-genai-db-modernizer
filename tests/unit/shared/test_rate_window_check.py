@@ -282,3 +282,40 @@ def test_an_assumed_24_hours_is_no_measured_window() -> None:
         "not checked: the window's length (no statement's window was measured)"
     )
     assert facts["flags"] == [] and facts["representative"] is None
+
+
+def _rate_window_item(**basis_counts: int) -> dict:
+    """The assumptions block's rate window item for statements rated on the given bases."""
+    from src.shared.rate_window import collection_rate_window_facts
+
+    rows = [
+        {"query_id": f"{basis}{i}", "calls_per_second": 1.0, "rate_window_basis": basis}
+        for basis, n in basis_counts.items()
+        for i in range(n)
+    ]
+    collector = {"queries": {"query_patterns": rows}}
+    windows = collection_rate_window_facts(collector) or {}
+    items = assumption_items(
+        collector,
+        growth=5,
+        growth_origin="default",
+        price_basis=None,
+        rate_window_statement=windows.get("statement"),
+        rate_windows=windows,
+    )
+    return next((i for i in items if i["key"] == "rate_window"), None)
+
+
+def test_the_rate_window_item_states_the_one_basis_the_rates_used() -> None:
+    """#2316: the table's value is the facts' own, never a label the UI picks."""
+    assert _rate_window_item(uptime=3)["basis"] == "uptime"
+    assert _rate_window_item(assumed_24h=2)["basis"] == "assumed_24h"
+    assert _rate_window_item(observed=4)["basis"] == "observed"
+
+
+def test_the_rate_window_item_says_mixed_when_the_rates_used_several_bases() -> None:
+    assert _rate_window_item(observed=4, uptime=1)["basis"] == "mixed"
+
+
+def test_a_collection_with_no_statements_has_no_rate_window_item() -> None:
+    assert _rate_window_item() is None

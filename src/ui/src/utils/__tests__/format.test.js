@@ -126,7 +126,7 @@ describe('the audited spots use the formatter (#2309)', () => {
   it('the executive tiles and cost breakdown print money through formatMoney', () => {
     expect(read('components/ExecutiveSummaryStats.js')).toMatch(/formatMonthlyMoney\(projectedCost\)/);
     expect(read('components/ExecutiveSummaryStats.js')).toMatch(/formatMoney\(row\.monthly_cost_usd\)/);
-    expect(read('pages/AnalysisResults.js')).toMatch(/formatMoney\(cb\.monthly_cost_usd\)/);
+    expect(read('components/CostBreakdown.js')).toMatch(/formatMoney\(item\.cost\)/);
   });
 
   it('the query journey prints rates through formatRate and the engine by its display name', () => {
