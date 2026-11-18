@@ -30,6 +30,13 @@ What a target does, in the order the comparison calls it:
 2. ``create(routine)``, once per ``CREATE`` statement: None when it loads, else the
    engine's SQLSTATE (``"?????"`` when it gave none); :class:`CreateRefused` for a text
    it refuses. The engine's message is never returned, because it can quote the text.
+   On a disposable MySQL engine, a ``DEFINER`` naming another account is created signed in
+   as that account, made for the run with the scratch database only
+   (:func:`~src.tools.database.disposable_engine.load_as_definer`, #2426), the way a
+   PostgreSQL original is owned by the role that creates it there. A name the engine must
+   not make is :class:`DefinerRefused`. A routine that then runs as its definer (``SQL
+   SECURITY DEFINER``, the default, and every trigger and event) gets a note in
+   ``routine_notes`` (:data:`DEFINER_NOTE`), which the comparison adds to its reason.
 3. ``prepare_calls()``: create the sentinel table, record every counter a rollback does
    not undo (sequences, ``AUTO_INCREMENT``), and find out whether the random seed is
    taken (``random_seeded``).
@@ -81,6 +88,7 @@ from collections.abc import Callable, Mapping, Sequence
 from typing import Any, Protocol
 
 from src.tools.database import disposable_engine as de
+from src.tools.routines import mysql_checks
 from src.tools.routines.proof_inputs import ProofCall, ProofSetup, run_call
 from src.tools.routines.proof_screen import create_refusal
 
@@ -88,7 +96,9 @@ __all__ = [
     "CALL_TIMEOUT_S",
     "SENTINEL_TABLE",
     "SESSION_TIME_ZONE",
+    "DEFINER_NOTE",
     "CreateRefused",
+    "DefinerRefused",
     "DisposableEngineTarget",
     "ProofTarget",
     "ProofTargetError",
@@ -153,6 +163,25 @@ class RoleChanged(ProofTargetError):
 
 class CreateRefused(ValueError):
     """A ``CREATE`` the target refuses before running it; the message names no text."""
+
+    #: The comparison's reason code for the refusal.
+    reason_code = "outside_namespace"
+
+
+class DefinerRefused(CreateRefused):
+    """A MySQL ``CREATE`` whose ``DEFINER`` names an account a disposable engine does not
+    make for a run (#2426); the message names no part of it."""
+
+    reason_code = "definer_refused"
+
+
+#: Added to the reason of a routine whose original ran as an account made for its
+#: ``DEFINER`` (#2426): what it may do with the definer's privileges was not compared.
+DEFINER_NOTE = (
+    "the original ran as the user its DEFINER names, made for the test with the scratch "
+    "database's privileges only, so what it may do outside that database with the "
+    "definer's privileges on the source was not compared"
+)
 
 
 class ProofTarget(Protocol):
@@ -238,6 +267,8 @@ class DisposableEngineTarget:
         self.random_seeded = self.engine == "postgresql"
         self.named_time_zones = de.time_zones_loaded(self._handle)
         self.notes: tuple[str, ...] = ()
+        #: A note per ``CREATE`` text that the comparison adds to that routine's reason.
+        self.routine_notes: dict[str, str] = {}
         self._timeout = call_timeout_s
         self._counters: tuple[tuple[str, Any, Any], ...] = ()
         self._open = False
@@ -275,8 +306,20 @@ class DisposableEngineTarget:
         )
         if why is not None:
             raise CreateRefused(why)
+        # Only on this module's own disposable MySQL engine: the Aurora test cluster's target
+        # (``DataApiTarget``) inherits this method and creates every routine as its runner.
+        account = (
+            named_definer(routine)
+            if self.engine == "mysql" and de.makes_definers(self._handle)
+            else None
+        )
         try:
-            de.load(self._handle, (), {}, [routine])
+            if account is None:
+                de.load(self._handle, (), {}, [routine])
+            elif de.load_as_definer(self._handle, routine, *account) and runs_as_definer(routine):
+                self.routine_notes[routine.create_sql] = DEFINER_NOTE
+        except de.DefinerRefused as exc:
+            raise DefinerRefused(str(exc)) from None
         except de.EngineError as exc:
             return exc.sqlstate or UNKNOWN_SQLSTATE
         return None
@@ -414,6 +457,32 @@ class DisposableEngineTarget:
     def close(self) -> None:
         with contextlib.suppress(Exception):
             de.stop(self._handle)
+
+
+def _header(routine: de.SourceRoutine) -> mysql_checks.MySqlHeader | None:
+    return mysql_checks.mysql_header(
+        mysql_checks.MySqlRoutine(
+            routine_id="proof.routine", kind=routine.kind, create_sql=routine.create_sql
+        )
+    )
+
+
+def named_definer(routine: de.SourceRoutine) -> tuple[str, str | None] | None:
+    """The ``(user, host)`` a MySQL ``CREATE``'s own ``DEFINER`` clause names (host None
+    when the clause gives none), or None: no clause, a ``CURRENT_USER`` form, or a text
+    whose header does not read (it then loads as the runner, as before #2426)."""
+    header = _header(routine)
+    account = header.account if header is not None else None
+    return account if isinstance(account, tuple) else None
+
+
+def runs_as_definer(routine: de.SourceRoutine) -> bool:
+    """Whether a MySQL routine runs with its definer's privileges: every trigger and event,
+    and a procedure or function unless it says ``SQL SECURITY INVOKER``."""
+    if routine.kind in ("trigger", "event"):
+        return True
+    header = _header(routine)
+    return header is None or header.security != "INVOKER"
 
 
 def disposable_target(

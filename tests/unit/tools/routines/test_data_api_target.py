@@ -1187,3 +1187,23 @@ def test_a_postgresql_runner_past_its_valid_until_cannot_sign_in():
                           admin_database="routine_proof", tags=[], engine="postgresql",
                           now=long_ago)  # fmt: skip
     assert not client.roles and not client.secrets_store.secrets
+
+
+def test_a_mysql_routine_naming_the_runner_as_definer_loads_on_the_test_cluster_as_on_main():
+    """Review of #2433: the carried MySQL routines name the run's runner as their DEFINER.
+    The test cluster creates them as the runner, as it always did; making an account for a
+    DEFINER is the disposable source engine's alone."""
+    client = FakeDataApi("mysql")
+    runner = _runner()
+    t = _factory(client, engine="mysql", runner=runner)()
+    t.load_setup(
+        ProofSetup(dialect="mysql", ddl=("CREATE TABLE `t` (`id` int PRIMARY KEY)",), rows=())
+    )
+    user = runner.definer.split("@")[0]
+    text = f"CREATE DEFINER=`{user}`@`%` FUNCTION f() RETURNS int RETURN 1"
+    assert t.create(de.SourceRoutine("f", "function", text)) is None
+    assert getattr(t, "routine_notes", {}) == {}  # no note: it ran as the runner
+    t.close()
+    sent = [s for s in client.sent if s.op in ("execute", "batch") and s.sql == text]
+    assert sent and all(s.secret == RUNNER_ARN for s in sent)
+    assert not any("CREATE USER" in s.sql for s in client.sent if s.op == "execute")
