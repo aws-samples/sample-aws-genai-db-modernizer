@@ -28,6 +28,10 @@ Version History:
 - 1.1 (2026-11-09, #2023): RoutineSource.kind event_trigger and origin pg_event_trigger:
   a PostgreSQL event trigger's CREATE, rebuilt from pg_event_trigger with the server's
   own quoting. Backward compatible: new values only
+- 1.2 (2026-11-18, #2082): RoutineSource.kind ``view`` and origin ``pg_get_viewdef``: a
+  PostgreSQL or MySQL view's CREATE OR REPLACE VIEW, which step 1 creates again;
+  RoutineSession.search_path (a PostgreSQL view's collection search path). Backward
+  compatible: new values and an optional field only
 """
 
 from __future__ import annotations
@@ -165,7 +169,7 @@ class RoutineSourcesChunk(BaseModel):
     """One chunk file: up to ``MAX_CHUNK_SOURCES`` routines."""
 
     contract_version: str = Field(
-        default="1.1", pattern=r"^\d+\.\d+$", description="Contract version (MAJOR.MINOR)"
+        default="1.2", pattern=r"^\d+\.\d+$", description="Contract version (MAJOR.MINOR)"
     )
     part: int = Field(..., ge=1, description="The chunk's number, from 1")
     sources: list[RoutineSource] = Field(
@@ -258,10 +262,12 @@ class RoutineSourcesContract(BaseModel):
       credential_kinds and address_kinds): what the repository's credential scan found in
       the bodies, each flagged routine with the kinds found, never a value. Backward
       compatible: defaults to None
+    - 1.2 (2026-11-18, #2082): RoutineSecretFlag.kind ``view``: a view whose CREATE the
+      credential scan flagged. Backward compatible: a new value only
     """
 
     contract_version: str = Field(
-        default="1.1", pattern=r"^\d+\.\d+$", description="Contract version (MAJOR.MINOR)"
+        default="1.2", pattern=r"^\d+\.\d+$", description="Contract version (MAJOR.MINOR)"
     )
     job_id: str = Field(..., description="The job the collection belongs to")
     source_engine: Literal["postgresql", "mysql", "mariadb"] | None = Field(

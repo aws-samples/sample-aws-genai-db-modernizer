@@ -135,6 +135,26 @@ Version History:
 - 5.18 (2026-11-11, #2145): Added optional ``QueryCapture.query_shapes``: the query
   shapes held after literal variants merged; ``captured`` keeps the script's row count
   (additive, defaults to None).
+- 5.19 (2026-11-18, #2082, #2227, #2276): Added optional ``Index.included_columns``: the
+  columns a SQL Server index stores but does not key (``sys.index_columns.key_ordinal``
+  0 on both the live and the offline path: INCLUDE columns, and the partitioning column
+  SQL Server adds), kept out of ``columns`` so no key length counts them; and the
+  ``IndexType`` value ``columnstore`` (SQL Server clustered and nonclustered
+  columnstore, sys.indexes.type 5 and 6), which was read as btree. Backward compatible:
+  included_columns defaults to None, and a collection saved before listed those columns
+  in ``columns``; release notes: re-ingest the raw collection to split them. Added
+  optional ``View.columns`` (``ViewColumn``: name and source type, in order),
+  ``View.body_status`` (whether the view's CREATE went to the routine sources) and
+  ``View.extension_owned`` and ``View.security_type`` (MySQL), read by the offline
+  scripts and the live collectors alike, which step 1 reads to create the views again on
+  Aurora (#2082). Backward compatible: all default to None (not read), and step 1 then
+  creates no view. Added optional ``SourceDatabase.default_character_set`` and
+  ``default_collation`` (MySQL family: the collected database's defaults,
+  information_schema.SCHEMATA) and ``Column.character_set`` and ``Column.collation``
+  (recorded only where a column's collation differs from its table's), in the offline
+  script and the live collector alike, which step 1 carries into Aurora MySQL (#2276).
+  Backward compatible: all default to None (not read), and step 1 then keeps the server
+  defaults.
 """
 
 import re
@@ -1931,7 +1951,7 @@ class CollectorOutputContract(BaseModel):
     """
 
     contract_version: str = Field(
-        default="5.18",
+        default="5.19",
         pattern=r"^\d+\.\d+$",
         description="Contract version (MAJOR.MINOR format)",
     )

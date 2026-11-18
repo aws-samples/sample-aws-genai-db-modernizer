@@ -707,6 +707,81 @@ Version History:
 - 1.99 (2026-11-12, #2122): Added optional ``WaveRedesignRound.stopped_by`` (ceiling or
   closed): a round the run closes before its design is checked is recorded stopped and
   ends the loop.
+- 1.100 (2026-11-18, #1130, #1699, #1801, #1940, #1941, #1945, #2082, #2162, #2166,
+  #2170, #2321, #2324, #2345, #2358, #2363, #2384, #2411, #2429): Added optional
+  ``EngineFacts.kept_in_sync_counted_under``: the earlier wave engine under which a
+  kept-current table both wave engines read is counted once, so the Scope rows add up to
+  the wave's figures (#2162). Added optional
+  ``TableOwnershipFacts.unwritten_owner_rule``: the rule the owner lines give a table
+  nothing writes (the relational step's engine, or the most-queries engine of a report
+  saved before #2166), so every deliverable prints the rule sentence its own lines
+  follow (#2166). Relaxed: on a cross-engine source, ``facts.adoption``'s
+  relational_only path ends on ``facts.no_migration``'s engines plus the relational
+  step's engine, itself a migration target there (``check_plan_against_facts``); added
+  optional ``facts.adoption.summary_path_ids`` (the paths a view capped at five rows
+  shows), ``cost_basis`` and ``cost_basis_note`` (every path's cost rests on each
+  engine's full-target estimate, #2170); ``AdoptionPathFacts.cost_is_upper_bound`` now
+  defaults to false; ``check_adoption_against_plan`` also checks ``not_offered`` against
+  the plan; the adoption paths are now computed. Added optional ``SliceStep.why`` (why
+  the step sits where it does, one sentence from a fixed template filled with the plan's
+  own figures), ``SliceStep.ties`` (``StepTies``: the figures it states, counted once
+  from the plan's dependencies and steps, with a moving step's cut cost) and
+  ``SlicePlanFacts.metric_labels`` (the plain name of each order metric; a subset of the
+  metric fields loads, so a plan saved before a metric is added still loads). A plan
+  stored before them loads unchanged; the reader fills what it lacks from the same
+  function (#1699). Added optional facts.step_gate (StepGateFacts with
+  StepGateTableFact, StepGateExceptionFact and StepGateFinding): step 1's gate result,
+  the time of the read, the full load, lag and validation evidence, each table, the
+  named exceptions with their reasons, the findings, the brief result and validation
+  lines a deliverable without the lists prints, and the cutover message, from the saved
+  gate file, attached when the report is read. Added optional RoutineFacts.interventions
+  (RoutineInterventionFact: kind, routine_id, state repaired_pending_proof, reasons,
+  change_note): the routines that needed an intervention and what changed, from the
+  routine repair seam's result. Backward compatible: defaults to an empty list
+  RoutineInterventionFact.state takes model_repaired and needs_attention as well as
+  repaired_pending_proof; change_note is optional; added RoutineAttemptFact and the
+  optional proof_source, attention, attention_detail, attempts, line and attempt_lines:
+  what came of each routine the repair loop worked on, in the words the deliverables
+  print (#1941). Backward compatible: new values and optional fields; a block stored
+  before gets its line when read RoutineFacts.proof takes 'load-tested on a test Aurora'
+  once the routine proof ran, and optional RoutineFacts.proof_counts (carried routines
+  per proof outcome). Backward compatible: new value, and the new field defaults to None
+  Added the ``views`` value to ``StepGateFinding.check``: the step 1 gate's views check
+  (#2082), which the gate contract now names. Backward compatible: a new value only
+  Added optional TableMapping.replica_read_count and
+  facts.table_owner_lines.table_lines[].replica_read_count: the in-scope reads the
+  also_read_by engines serve, for every mapped table (0: none; None for a report saved
+  before that cannot give it). Added optional facts.table_sources.shared_risk_sentence:
+  the one sentence every deliverable prints for the replicated tables that share the
+  replica risk. Filled in at read time for older reports. Added optional
+  ``facts.target_engines``: the engines that own queries in the final assignment
+  version, then the cache layer engine, which the results page and the assessments list
+  both name (#2345). Backward compatible: None in a report written before. Added
+  optional ``facts.results_tab_counts``: the count each results-page tab shows in its
+  label (queries, plan, risks), counted once in the facts layer (#2363). Backward
+  compatible: None in a report written before. Added optional
+  facts.routines.interventions[].deploy_gate: whether step 1 deploys a model-repaired
+  routine, or why it holds it back. Added optional ``facts.routines.executive_line``:
+  the executive report's short routines sentence, naming /test-routines before a test
+  and what step 1 deploys and holds back after one. Added optional
+  ``AdoptionPathFacts.engine_costs`` (each of a path's engines, sized for the queries
+  the path places on it, with its ``sizing``) and
+  ``AdoptionFacts.relational_monthly_cost_usd`` (the relational move only's cost, each
+  path's difference measured from it, stated only when the plan has a relational step);
+  added the ``per_path_sizing`` value to ``facts.adoption.cost_basis`` with its
+  sentence; ``check_adoption_against_plan`` checks the full target's engine costs
+  against the plan's. A report written with ``full_target_estimates`` loads unchanged
+  (#2170). Added optional ``facts.executive_brief.exposures[].count``, ``risk_ids`` and
+  ``waves``: open risks the executive summary would name the same way are one exposure,
+  counted, so the summary names each once (#2324). Backward compatible: an exposure
+  without them stands for one risk in its own ``wave``. Added optional
+  ``facts.engine_query_counts``: each owner engine's final query count, from the final
+  assignment version, which the results page reads instead of the reality check's
+  after_distribution (#2358). Backward compatible: None in a report written before.
+  Added optional ``facts.routines.routines[].held_back`` (why step 1 holds a carried
+  routine back after a current test) and the labels ``checked, not tested yet`` and
+  ``tested on a test Aurora`` for ``facts.routines.proof``, the same words as step 1's
+  lines; the old labels are read as these.
 """
 
 import re
@@ -5733,7 +5808,7 @@ class SynthesisOutputContract(BaseModel):
     """
 
     contract_version: str = Field(
-        default="1.99",
+        default="1.100",
         pattern=r"^\d+\.\d+$",
         description="Contract version (MAJOR.MINOR format)",
     )

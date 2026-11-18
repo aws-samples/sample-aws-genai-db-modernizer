@@ -1,6 +1,0 @@
-# A pending contract version bump (ADR-008 Decision 8). The number is assigned by
-# uv run python scripts/resolve_contract_versions.py --release at release (a MAJOR: in its pull request).
-contract = "synthesis_output.SynthesisOutputContract"
-kind = "minor"
-reason = "Added optional facts.step_gate (StepGateFacts with StepGateTableFact, StepGateExceptionFact and StepGateFinding): step 1's gate result, the time of the read, the full load, lag and validation evidence, each table, the named exceptions with their reasons, the findings, the brief result and validation lines a deliverable without the lists prints, and the cutover message, from the saved gate file, attached when the report is read."
-issue = 1801

@@ -43,6 +43,15 @@ and exact; a routine is carried only from exact text.
 
 Version History:
 - 1.0 (2026-11-09, #1934): First version.
+- 1.1 (2026-11-18, #1945, #2384, #2411): Optional RoutineMigration.proof
+  (RoutineProofEntry: mode, outcome, reason, calls, differences, error states, strict
+  check) and RoutineMigrationContract.proof_run (RoutineProofRun: target, source, strict
+  check, when, how long, counts per outcome, coverage limits): the routine proof on the
+  throwaway Aurora test cluster. Backward compatible: both default to None Added
+  optional RoutineProofEntry.repair_sha256: the digest of the redacted repair candidate
+  a test ran, so step 1 deploys a repaired routine only when it is the repair the test
+  ran. Added optional ``proof_run.routine_sources_sha256``: the digest of the routines
+  file the proof ran on, so the step 1 deploy gate counts a stale proof as not tested.
 """
 
 from __future__ import annotations
@@ -381,7 +390,7 @@ class RoutineMigrationContract(BaseModel):
     """How a job's routines migrate, for one assignment version."""
 
     contract_version: str = Field(
-        default="1.0", pattern=r"^\d+\.\d+$", description="Contract version (MAJOR.MINOR)"
+        default="1.1", pattern=r"^\d+\.\d+$", description="Contract version (MAJOR.MINOR)"
     )
     job_id: str = Field(..., min_length=1, description="The job")
     database_name: str = Field(..., min_length=1, description="The job's database name")
