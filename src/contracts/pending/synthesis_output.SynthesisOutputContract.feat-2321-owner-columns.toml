@@ -1,0 +1,6 @@
+# A pending contract version bump (ADR-008 Decision 8). The number is assigned by
+# uv run python scripts/resolve_contract_versions.py --release at release (a MAJOR: in its pull request).
+contract = "synthesis_output.SynthesisOutputContract"
+kind = "minor"
+reason = "Added optional TableMapping.replica_read_count and facts.table_owner_lines.table_lines[].replica_read_count: the in-scope reads the also_read_by engines serve, for every mapped table (0: none; None for a report saved before that cannot give it). Added optional facts.table_sources.shared_risk_sentence: the one sentence every deliverable prints for the replicated tables that share the replica risk. Filled in at read time for older reports."
+issue = 2321

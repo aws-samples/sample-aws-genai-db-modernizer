@@ -120,11 +120,10 @@ def test_the_guards_find_what_they_look_for() -> None:
 # --- Sources of truth and replicas ---------------------------------------------
 
 
-@pytest.mark.passes_on_main
 def test_the_risk_is_stated_once_for_every_table(md: str, saved) -> None:
     body = section(md, "Sources of truth and replicas")
     risk = md_text(shared_replica_risk_text(["dynamodb"]))
-    assert f"Every table above has this risk. {risk}" in body.splitlines()
+    assert f"Every replicated table above has this risk. {risk}" in body.splitlines()
     assert body.count("Eventually consistent") == 1
     # No "Tables:" line repeating the rows of the table above.
     assert "Tables:" not in body and "The risk of each" not in body
@@ -155,7 +154,9 @@ def test_a_risk_worded_otherwise_is_printed_as_stored(report) -> None:
     rows[2]["risk"] = "Stored risk for this table only."
     body = section(render_engineering_report_md(report), "Sources of truth and replicas")
     lines = body.splitlines()
-    assert any(line.startswith("Every other table above has this risk. ") for line in lines)
+    assert any(
+        line.startswith("Every other replicated table above has this risk. ") for line in lines
+    )
     assert "The risk of each table below:" in lines
     assert f"- `{rows[2]['table']}`: Stored risk for this table only." in lines
 

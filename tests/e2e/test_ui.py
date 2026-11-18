@@ -1486,10 +1486,10 @@ def test_results_page_states_each_tables_source_of_truth_and_replicas(
     facts.table_sources lists (the rows the engineering report states): each row's owner
     is its source of truth, its CDC to cell the replicas the CDC runs to and its Replica
     reads cell the reads a replica serves. #1232: the eventual-consistency risk is stated
-    once, in the engineering report's words, behind the Info link. There is no section of
-    its own."""
+    once, in the sentence the engineering report prints (facts.table_sources.
+    shared_risk_sentence), behind the Info link. There is no section of its own; an old
+    #sources-of-truth-section link lands inside Table owners."""
     from src.shared.engine_names import display_engine
-    from src.shared.report_facts import shared_replica_risk_text
 
     for r in all_runs:
         report = json.loads((r.artifact_root / r.report["report"]).read_text())
@@ -1500,7 +1500,8 @@ def test_results_page_states_each_tables_source_of_truth_and_replicas(
         _goto_results(page, ui, r, "data-model")
         section = page.locator("#table-owners-section")
         section.wait_for(timeout=READY_MS)
-        assert page.locator("#sources-of-truth-section").count() == 0, r.db
+        assert page.locator("#sources-of-truth-section").count() == 1, r.db
+        assert section.locator("#sources-of-truth-section").count() == 1, r.db
         assert "Sources of truth and replicas" not in page.locator("body").inner_text(), r.db
         first = rows[0]["table"]
         assert not section.locator(f'[data-table="{first}"]').is_visible(), r.db
@@ -1532,8 +1533,8 @@ def test_results_page_states_each_tables_source_of_truth_and_replicas(
         assert "Eventually consistent: " not in text, r.db
         section.get_by_role("button", name="Info about the consistency of replica reads").click()
         text = section.inner_text()
-        sources = list(dict.fromkeys(row["source_of_truth"] for row in rows))
-        assert text.count(shared_replica_risk_text(sources)) == 1, r.db
+        assert facts["shared_risk_sentence"].startswith("Every replicated table above"), r.db
+        assert text.count(facts["shared_risk_sentence"]) == 1, r.db
         assert text.count("Eventually consistent: ") == 1, r.db
         assert ev == {"console": [], "pageerror": [], "failed": []}, (r.db, ev)
 
@@ -1599,8 +1600,12 @@ def test_results_page_states_each_tables_owner_cdc_replicas_and_cache(
             assert text.startswith(f"{k} {'table is' if k == 1 else 'tables are'} cached by"), text
         else:
             assert cached.count() == 0, r.job_id
+        # A listed replicated table whose source and replicas are the line's owner and CDC
+        # engines counts the same reads (#2321).
         replica_reads = {
-            x["table"]: x["replica_read_count"]
+            (x["table"], x["source_of_truth"], tuple(sorted(x["replica_engines"]))): x[
+                "replica_read_count"
+            ]
             for x in (report["facts"].get("table_sources") or {}).get("replicated_tables") or []
         }
         for line in facts["table_lines"]:
@@ -1614,12 +1619,13 @@ def test_results_page_states_each_tables_owner_cdc_replicas_and_cache(
                 readers or ["—"]
             ), line
             assert row.locator('[data-cell="cached-by"]').inner_text() == cache, line
-            # #2321: the reads a replica serves, from facts.table_sources (a dash for a
-            # table with none listed).
-            reads = replica_reads.get(line["table"])
-            assert row.locator('[data-cell="replica-reads"]').inner_text() == (
-                "—" if reads is None else str(reads)
-            ), line
+            # #2321: the reads a replica serves, the line's own count for every mapped
+            # table (0: none), the same as facts.table_sources for a table it lists.
+            reads = line["replica_read_count"]
+            assert isinstance(reads, int), line
+            key = (line["table"], line["owner"], tuple(sorted(line["also_read_by"])))
+            assert replica_reads.get(key, reads) == reads, line
+            assert row.locator('[data-cell="replica-reads"]').inner_text() == str(reads), line
         # #2321: the filter narrows the rows to the tables whose name or engines match.
         wanted = facts["table_lines"][0]["table"]
         section.get_by_placeholder("Find a table").fill(wanted)
@@ -1814,11 +1820,17 @@ def test_results_page_shows_the_headline_first(
         assert routing.get_by_role("table", name="Query routing").is_visible(), r.db
         _show_tab(page, "data-model")
         owners = page.locator("#table-owners-section")
-        assert owners.locator('[aria-expanded="false"]').count() == 1, r.db
-        assert owners.locator('[aria-expanded="true"]').count() == 0, r.db
-        # #2321: its replicas are columns of that table; no second section lists them.
-        assert page.locator("#sources-of-truth-section").count() == 0, r.db
         report = json.loads((r.artifact_root / r.report["report"]).read_text())
+        # Closed: the section's toggle, and the Info link when a table has a replica.
+        info = bool(
+            ((report.get("facts") or {}).get("table_sources") or {}).get("replicated_tables")
+        )
+        assert owners.locator('[aria-expanded="false"]').count() == 1 + info, r.db
+        assert owners.locator('[aria-expanded="true"]').count() == 0, r.db
+        # #2321: its replicas are columns of that table; no second section lists them,
+        # and an old link to that section lands inside Table owners.
+        assert page.locator("#sources-of-truth-section").count() == 1, r.db
+        assert owners.locator("#sources-of-truth-section").count() == 1, r.db
         close_calls = (report.get("facts") or {}).get("close_calls") or {}
         pairs = close_calls.get("engine_pairs") or []
         if pairs and close_calls.get("close_call_query_count"):
