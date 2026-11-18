@@ -16,7 +16,6 @@ from __future__ import annotations
 from typing import Any
 
 from src.shared.engine_names import display_engine
-from src.shared.report_facts import shared_replica_risk_text
 
 from . import escaping
 from .facts import report_facts
@@ -42,32 +41,22 @@ def cdc_direction(row: dict[str, Any]) -> str:
     return f"{display_engine(str(row.get('source_of_truth', '')))} → {replicas}"
 
 
-def _risks_md(rows: list[dict[str, Any]]) -> list[str]:
+def _risks_md(facts: dict[str, Any], rows: list[dict[str, Any]]) -> list[str]:
     """The risk of the replicated tables, stated once (#1170).
 
-    A row whose facts say ``shares_replica_risk`` (its stored risk is the standard
-    sentence, which differs from the next only in what the table above gives for
-    each row) is covered by one sentence naming the sources of truth. Any other
-    row's stored risk (a report written with older wording) is printed as stored,
-    for its own table. The facts decide which is which (#1232), as the UI reads.
+    The rows whose facts say ``shares_replica_risk`` are covered by
+    ``facts.table_sources.shared_risk_sentence``, the one sentence the results page
+    prints too (#2321). Any other row's stored risk (a report written with older
+    wording) is printed as stored, for its own table. The facts decide which is which
+    (#1232), as the UI reads.
     """
-    sources: list[str] = []
-    own: list[dict[str, Any]] = []
-    for row in rows:
-        source = str(row.get("source_of_truth", ""))
-        if row.get("shares_replica_risk") is True:
-            if source not in sources:
-                sources.append(source)
-        else:
-            own.append(row)
+    sentence = facts.get("shared_risk_sentence")
+    own = [row for row in rows if row.get("shares_replica_risk") is not True]
     out: list[str] = []
-    if sources:
-        lead = (
-            "Every other table above has this risk." if own else "Every table above has this risk."
-        )
-        out.append(f"{lead} {escaping.md_text(shared_replica_risk_text(sources))}")
+    if sentence:
+        out.append(escaping.md_text(sentence))
     if own:
-        out += ["", "The risk of each table below:", ""] if sources else ["The risk of each:", ""]
+        out += ["", "The risk of each table below:", ""] if sentence else ["The risk of each:", ""]
         for row in own:
             out.append(
                 f"- `{escaping.md_cell(escaping.md_code(row.get('table', '?')))}`: "
@@ -101,7 +90,7 @@ def sources_of_truth_md(report: dict[str, Any]) -> list[str]:
                 f"| {escaping.md_cell(cdc_direction(row))} "
                 f"| {escaping.md_cell(row.get('replica_read_count', 0))} |"
             )
-        out += ["", *_risks_md(rows), ""]
+        out += ["", *_risks_md(facts, rows), ""]
     more = facts.get("more_replicated_count") or 0
     if more:
         out += [

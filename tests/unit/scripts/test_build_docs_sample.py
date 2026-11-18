@@ -320,7 +320,11 @@ _NEWER_FIELDS_THAN_THE_RECORDING = {
     "cache_layer": ("role_sentence",),
     # #2166: the rule the lines follow, filled in from them for the recorded run.
     "table_owner_lines": ("unwritten_owner_rule",),
+    # #2321: the one shared risk sentence, from the recorded rows.
+    "table_sources": ("shared_risk_sentence",),
 }
+# Fields added to each owner line, filled in the same way (#2321).
+_NEWER_OWNER_LINE_FIELDS_THAN_THE_RECORDING = ("replica_read_count",)
 # Fields added to each executive-summary exposure, filled in the same way (#2324).
 _NEWER_EXPOSURE_FIELDS_THAN_THE_RECORDING = ("count", "risk_ids", "waves")
 # Fields added to each engine row, filled in the same way (#2162).
@@ -332,6 +336,23 @@ def _recorded(facts: dict[str, Any]) -> dict[str, Any]:
     for key, fields in _NEWER_FIELDS_THAN_THE_RECORDING.items():
         if isinstance(out.get(key), dict):
             out[key] = {k: v for k, v in out[key].items() if k not in fields}
+    owners = out.get("table_owner_lines")
+    if isinstance(owners, dict) and isinstance(owners.get("table_lines"), list):
+        out["table_owner_lines"] = {
+            **owners,
+            "table_lines": [
+                (
+                    {
+                        k: v
+                        for k, v in r.items()
+                        if k not in _NEWER_OWNER_LINE_FIELDS_THAN_THE_RECORDING
+                    }
+                    if isinstance(r, dict)
+                    else r
+                )
+                for r in owners["table_lines"]
+            ],
+        }
     brief = out.get("executive_brief")
     if isinstance(brief, dict) and isinstance(brief.get("exposures"), list):
         out["executive_brief"] = {

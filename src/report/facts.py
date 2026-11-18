@@ -44,6 +44,7 @@ from src.shared.report_facts import (
     read_step_gate_facts,
     resolved_risk_severity_facts,
     retired_in_use_engine_facts,
+    shared_risk_sentence,
     shares_replica_risk,
     step_gate_key,
     table_ownership_facts,
@@ -100,6 +101,33 @@ def _with_table_split(e: dict[str, Any], split: dict[str, dict[str, Any]]) -> di
     return out
 
 
+def _is_count(value: Any) -> bool:
+    return isinstance(value, int) and not isinstance(value, bool)
+
+
+def _with_replica_reads(report: dict[str, Any], block: dict[str, Any]) -> dict[str, Any]:
+    """A stored ``table_owner_lines`` block whose lines lack ``replica_read_count``
+    (#2321), each filled in from :func:`table_ownership_facts` over the report, the
+    stored lines and counts otherwise kept."""
+    computed = table_ownership_facts(report, resolve_migration_waves(report)) or {}
+    counts = {
+        r.get("table"): r.get("replica_read_count")
+        for r in computed.get("table_lines") or []
+        if isinstance(r, dict)
+    }
+    return {
+        **block,
+        "table_lines": [
+            (
+                {**r, "replica_read_count": counts.get(r.get("table"))}
+                if isinstance(r, dict) and not _is_count(r.get("replica_read_count"))
+                else r
+            )
+            for r in block.get("table_lines") or []
+        ],
+    }
+
+
 def report_facts(report: dict[str, Any]) -> dict[str, Any]:
     """``report["facts"]`` when synthesis wrote it, else the same block computed now.
 
@@ -113,7 +141,9 @@ def report_facts(report: dict[str, Any]) -> dict[str, Any]:
     written before #1120 no cross-engine wave 1 figures or note, one written before #1284
     no ``waves[].moved_by_later_waves``, one written before #212 no ``table_owner_lines``
     (and a map split by recommended engine), one written before #2166 no
-    ``table_owner_lines.unwritten_owner_rule``, one written before #1329 no
+    ``table_owner_lines.unwritten_owner_rule``, one written before #2321 no
+    ``table_owner_lines.table_lines[].replica_read_count`` or
+    ``table_sources.shared_risk_sentence``, one written before #1329 no
     ``unservable.no_engine_in_scope_query_count``, one written before #1410 no
     ``query_group_counts``, and one written before
     #1146 no ``query_pattern_counts`` (filled in from ``query_pattern_groups``: None for a
@@ -228,6 +258,15 @@ def report_facts(report: dict[str, Any]) -> dict[str, Any]:
                 **stored,
                 "unwritten_owner_rule": unwritten_owner_rule(stored.get("table_lines") or []),
             }
+        owner_block = missing.get("table_owner_lines", facts.get("table_owner_lines"))
+        if isinstance(owner_block, dict) and any(
+            isinstance(r, dict) and not _is_count(r.get("replica_read_count"))
+            for r in owner_block.get("table_lines") or []
+        ):
+            # A block written before #2321: each line's replica reads, from the same
+            # function over the report's own usage (None where it cannot give them). The
+            # value decides, not the key: a block re-dumped through the contract has None.
+            missing["table_owner_lines"] = _with_replica_reads(report, owner_block)
         if any(_needs_table_split(e) for e in facts["engines"]):
             # And each migration target's split of its served tables (#1169), on the
             # #2162 definition: a kept-current table both engines of a wave read counts
@@ -254,6 +293,16 @@ def report_facts(report: dict[str, Any]) -> dict[str, Any]:
                     )
                     for r in sources.get("replicated_tables") or []
                 ],
+            }
+        sources = missing.get("table_sources", sources)
+        if isinstance(sources, dict) and not sources.get("shared_risk_sentence"):
+            # A block written before #2321: the one sentence both renderers print for the
+            # rows that share the risk, from the same function (None when none does).
+            missing["table_sources"] = {
+                **sources,
+                "shared_risk_sentence": shared_risk_sentence(
+                    r for r in sources.get("replicated_tables") or [] if isinstance(r, dict)
+                ),
             }
         unservable = facts.get("unservable")
         if isinstance(unservable, dict) and "no_fit_query_count" not in unservable:

@@ -847,6 +847,14 @@ class TableMapping(BaseModel):
     cached_by: str | None = Field(
         None, description="The cache engine fronting the table's reads, or keying it"
     )
+    replica_read_count: int | None = Field(
+        None,
+        ge=0,
+        description=(
+            "The in-scope reads the also_read_by engines serve from their CDC copy (#2321); "
+            "0 when no other engine reads the table. None in a report written before"
+        ),
+    )
 
     model_config = ConfigDict(extra="allow")
 
@@ -3078,6 +3086,14 @@ class TableSourceFacts(BaseModel):
         description="At most TABLE_SOURCES_SHOWN, most replica reads first, then by table",
     )
     more_replicated_count: int = Field(0, ge=0, description="The replicated tables not listed")
+    shared_risk_sentence: str | None = Field(
+        None,
+        description=(
+            "The one sentence every deliverable prints for the listed rows whose risk is the "
+            "standard one (shares_replica_risk), naming the replicated tables (#2321); None "
+            "when no row shares it. Filled in at read time for a block stored before it"
+        ),
+    )
     single_engine_tables: list[str] = Field(
         default_factory=list,
         description="Written tables every query of which runs on the source of truth",
@@ -3105,6 +3121,15 @@ class TableOwnershipRow(BaseModel):
     )
     also_read_by: list[str] = Field(default_factory=list, description="Most queries first")
     cached_by: str | None = Field(None)
+    replica_read_count: int | None = Field(
+        None,
+        ge=0,
+        description=(
+            "The in-scope reads the also_read_by engines serve from their CDC copy, for every "
+            "mapped table, uncapped (#2321); 0: no replica read. None only when a report "
+            "written before cannot give it"
+        ),
+    )
     target_engine: str | None = Field(
         None, description="The schema design target_table comes from: the owner's when it maps it"
     )

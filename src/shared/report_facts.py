@@ -2894,6 +2894,27 @@ def shares_replica_risk(row: dict[str, Any]) -> bool:
     return row.get("risk") in (text, text.replace(_KEPT_CURRENT, _KEPT_BEFORE_2167, 1))
 
 
+def shared_risk_sentence(rows: Iterable[Mapping[str, Any]]) -> str | None:
+    """The one sentence every deliverable prints for the listed replicated tables whose
+    risk is the standard one (``shares_replica_risk``), or None when none is (#1170,
+    #2321). It names the replicated tables, so it reads true under the engineering
+    report's table of replicated tables and under the results page's Table owners table,
+    which lists every mapped table. "other" when some listed row keeps its own risk."""
+    sources: list[str] = []
+    own = False
+    for row in rows:
+        if row.get("shares_replica_risk") is True:
+            source = str(row.get("source_of_truth", ""))
+            if source not in sources:
+                sources.append(source)
+        else:
+            own = True
+    if not sources:
+        return None
+    lead = "Every other replicated table above" if own else "Every replicated table above"
+    return f"{lead} has this risk. {shared_replica_risk_text(sources)}"
+
+
 # The replica risk's copy phrase, and how a report written before #2167 stored it.
 _KEPT_CURRENT = "a copy kept current from "
 _KEPT_BEFORE_2167 = "a copy kept in sync from "
@@ -2946,6 +2967,7 @@ def table_source_facts(report: dict[str, Any]) -> dict[str, Any] | None:
         "replicated_table_count": len(replicated),
         "split_write_table_count": split,
         "replicated_tables": replicated[:TABLE_SOURCES_SHOWN],
+        "shared_risk_sentence": shared_risk_sentence(replicated[:TABLE_SOURCES_SHOWN]),
         "more_replicated_count": max(len(replicated) - TABLE_SOURCES_SHOWN, 0),
         "single_engine_tables": single,
         "single_engine_table_count": len(single),
@@ -3234,6 +3256,24 @@ def _design_engines(row: Mapping[str, Any]) -> list[str]:
     return [e for e in dict.fromkeys(engines) if e]
 
 
+def owner_line_replica_reads(
+    line: Mapping[str, Any], usage: Mapping[str, Any], *, every_reader_counted: bool = False
+) -> int | None:
+    """The in-scope reads an owner line's CDC engines (``also_read_by``) serve, from the
+    table's ``usage`` (:func:`assignment_table_usage`'s shape): each engine's queries on
+    the table less its writes (a split-write table's other writer), added up (#2321). 0
+    for a table no other engine reads. ``every_reader_counted`` is for a report read
+    back: None when the report counts no query of a listed engine on the table, since
+    it cannot give the figure, never a 0 for a CDC engine it knows nothing of. (A
+    split-write table's other writer, counted with only its writes, adds 0.)"""
+    writes = usage.get("writes") or {}
+    queries = usage.get("queries") or {}
+    engines = list(line.get("also_read_by") or [])
+    if every_reader_counted and any(not queries.get(e) for e in engines):
+        return None
+    return sum(max(int(queries.get(e) or 0) - int(writes.get(e) or 0), 0) for e in engines)
+
+
 def table_owner_fields(
     mappings: Iterable[Mapping[str, Any]],
     usage: Mapping[str, Mapping[str, Any]],
@@ -3242,7 +3282,8 @@ def table_owner_fields(
     design_fallback: bool = False,
 ) -> list[dict[str, Any]]:
     """Each ``table_mappings`` row with its owner line (``owner``, ``owner_basis``,
-    ``also_read_by``, ``cached_by``, :func:`table_owner_line`), from ``usage``
+    ``also_read_by``, ``cached_by``, :func:`table_owner_line`) and its
+    ``replica_read_count`` (:func:`owner_line_replica_reads`), from ``usage``
     (:func:`assignment_table_usage`), the wave plan's ``owners`` and wave 1's
     ``retained_engine``. New dicts; the input rows are not changed."""
     out: list[dict[str, Any]] = []
@@ -3260,7 +3301,8 @@ def table_owner_fields(
             retained_engine=retained_engine,
             design_fallback=design_fallback,
         )
-        out.append({**row, **line})
+        reads = owner_line_replica_reads(line, u, every_reader_counted=design_fallback)
+        out.append({**row, **line, "replica_read_count": reads})
     return out
 
 
@@ -3441,11 +3483,25 @@ def table_ownership_facts(
     report: Mapping[str, Any], waves: Iterable[Mapping[str, Any]] | None = None
 ) -> dict[str, Any] | None:
     """One line per mapped source table (``TableOwnershipFacts``, #212): its owner, the
-    engines that also read it, its cache and the owner's target table, plus the counts
-    every deliverable states. None for a report with no ``table_mappings``."""
+    engines that also read it, its cache, the reads those engines serve and the owner's
+    target table, plus the counts every deliverable states. None for a report with no
+    ``table_mappings``. A row stored before ``replica_read_count`` (#2321) gets it from
+    the report's own usage (:func:`report_table_usage`), or None when it cannot."""
     rows = owned_table_mappings(report, waves)
     if not rows:
         return None
+    usage: dict[str, dict[str, Any]] | None = None
+
+    def replica_reads(m: Mapping[str, Any]) -> int | None:
+        nonlocal usage
+        stored = m.get("replica_read_count")
+        if isinstance(stored, int) and not isinstance(stored, bool):
+            return stored
+        if usage is None:
+            usage = report_table_usage(report)
+        u = usage.get(str(m.get("source_table") or "")) or {}
+        return owner_line_replica_reads(m, u, every_reader_counted=True)
+
     tables = sorted(
         (
             {
@@ -3454,6 +3510,7 @@ def table_ownership_facts(
                 "owner_basis": m.get("owner_basis"),
                 "also_read_by": [str(e) for e in m.get("also_read_by") or []],
                 "cached_by": m.get("cached_by"),
+                "replica_read_count": replica_reads(m),
                 **_owner_target(m),
             }
             for m in rows

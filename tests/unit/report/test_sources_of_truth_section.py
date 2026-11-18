@@ -96,7 +96,8 @@ def test_the_engineering_report_states_each_tables_source_replicas_cdc_and_risk(
     assert row == "| `trailgear.Shipment` | DynamoDB | DynamoDB → Aurora PostgreSQL | 2 |"
     # #1170: one source of truth, so the risk is stated once for every table.
     assert (
-        "Every table above has this risk. " + md_text(shared_replica_risk_text(["dynamodb"]))
+        "Every replicated table above has this risk. "
+        + md_text(shared_replica_risk_text(["dynamodb"]))
         in section.splitlines()
     )
     assert report["facts"]["table_sources"]["replicated_tables"][0]["risk"] == RISK
@@ -147,13 +148,15 @@ def test_the_renderers_print_the_stored_facts(report) -> None:
     row = doctored["facts"]["table_sources"]["replicated_tables"][0]
     row["risk"] = "Stored risk."
     # #1232: the facts say whether a row shares the one risk sentence; the
-    # renderer never decides it from the prose.
+    # renderer never decides it from the prose. #2321: it prints the facts' sentence.
+    doctored["facts"]["table_sources"]["shared_risk_sentence"] = "Stored shared sentence."
     md = _section_md(render_engineering_report_md(doctored))
     assert "(9 written tables)" in md
-    assert "Stored risk." not in md and "Every table above has this risk." in md
+    assert "Stored risk." not in md and "Stored shared sentence." in md
     row["shares_replica_risk"] = False
+    doctored["facts"]["table_sources"]["shared_risk_sentence"] = None
     md = _section_md(render_engineering_report_md(doctored))
-    assert "Stored risk." in md and "Every table above has this risk." not in md
+    assert "Stored risk." in md and "Stored shared sentence." not in md
 
 
 OLD_WORDING = (
@@ -228,36 +231,50 @@ def test_writes_moved_after_approval_are_disclosed_with_their_cause() -> None:
     assert "schema design review found" not in md
 
 
-# #1232: the results page states the risk once too, in its own strings. They
-# must read exactly as the engineering report's shared sentence, and its intro.
+# #2321: the results page puts the shared risk under its Table owners table, which
+# lists every mapped table. "Every table above" was true only in the engineering
+# report, whose table lists the replicated tables, so both now print the one sentence
+# facts.table_sources.shared_risk_sentence names, with the same meaning in both.
 def _ui_strings() -> dict[str, str]:
     en = Path(__file__).resolve().parents[3] / "src/ui/src/locales/en.json"
     strings: dict[str, str] = json.loads(en.read_text(encoding="utf-8"))
     return strings
 
 
-def test_the_results_page_states_the_shared_risk_in_the_engineering_reports_words() -> None:
-    from src.shared.engine_names import display_engine
+def test_the_shared_risk_sentence_names_the_replicated_tables_once_in_the_facts() -> None:
+    risk = shared_replica_risk_text(["dynamodb"])
+    one = _report([_shipment()])["facts"]["table_sources"]
+    assert one["shared_risk_sentence"] == f"Every replicated table above has this risk. {risk}"
+    mixed = _report([_shipment(), _row("trailgear.Order", "dynamodb", {"documentdb": ["r9"]})])
+    sources = mixed["facts"]["table_sources"]
+    sources["replicated_tables"][1]["risk"] = "Older wording."
+    del sources["shared_risk_sentence"]
+    for row in sources["replicated_tables"]:
+        row.pop("shares_replica_risk")
+    served = report_facts({"facts": {"engines": [], "table_sources": sources}})["table_sources"]
+    assert served["shared_risk_sentence"] == (
+        f"Every other replicated table above has this risk. {risk}"
+    )
+    none = _report([_row("trailgear.Customer", "aurora_postgresql", {})])["facts"]
+    assert none["table_sources"]["shared_risk_sentence"] is None
 
+
+def test_the_engineering_report_prints_the_facts_shared_risk_sentence() -> None:
+    report = _report([_shipment()])
+    sentence = report["facts"]["table_sources"]["shared_risk_sentence"]
+    lines = _section_md(render_engineering_report_md(report)).splitlines()
+    assert md_text(sentence) in lines
+
+
+def test_the_results_page_keeps_no_copy_of_the_shared_risk_words() -> None:
+    """The UI prints facts.table_sources.shared_risk_sentence, so en.json holds no
+    second copy of the lead or the risk that could drift from it."""
     en = _ui_strings()
     prefix = "analysis-results.sources-of-truth."
-    one = en[prefix + "risk-one-source"].replace("{{source}}", display_engine("dynamodb"))
-    assert one == shared_replica_risk_text(["dynamodb"])
-    sources = ["dynamodb", "documentdb", "aurora_postgresql"]
-    many = (
-        en[prefix + "risk-many-sources"]
-        .replace("{{sources}}", ", ".join(display_engine(s) for s in sources[:-1]))
-        .replace("{{last}}", display_engine(sources[-1]))
-    )
-    assert many == shared_replica_risk_text(sources)
+    for key in ("risk-lead", "risk-lead-other", "risk-one-source", "risk-many-sources"):
+        assert prefix + key not in en, key
+    assert not any("has this risk" in v for v in en.values())
     assert en[prefix + "intro"] == SOURCES_OF_TRUTH_INTRO
-    # The leads the engineering report puts before that sentence.
-    lead = _section_md(render_engineering_report_md(_report([_shipment()])))
-    assert f"{en[prefix + 'risk-lead']} {shared_replica_risk_text(['dynamodb'])}" in lead
-    mixed = _report([_shipment(), _row("trailgear.Order", "dynamodb", {"documentdb": ["r9"]})])
-    mixed["facts"]["table_sources"]["replicated_tables"][1]["shares_replica_risk"] = False
-    other = _section_md(render_engineering_report_md(mixed))
-    assert f"{en[prefix + 'risk-lead-other']} {shared_replica_risk_text(['dynamodb'])}" in other
 
 
 def _shipment() -> dict[str, Any]:

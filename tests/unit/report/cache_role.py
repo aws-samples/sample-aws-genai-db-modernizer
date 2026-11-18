@@ -1,13 +1,14 @@
 # Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
 # SPDX-License-Identifier: MIT-0
 
-"""What an older stored facts block reads back as (#399, #2162)."""
+"""What an older stored facts block reads back as (#399, #2162, #2321)."""
 
 from __future__ import annotations
 
 from typing import Any
 
 from src.shared.cache_role import cache_role_sentence
+from src.shared.report_facts import shared_risk_sentence
 
 
 def with_cache_role_sentence(facts: dict[str, Any]) -> dict[str, Any]:
@@ -23,10 +24,19 @@ def with_cache_role_sentence(facts: dict[str, Any]) -> dict[str, Any]:
 
 
 def as_read_back(facts: dict[str, Any]) -> dict[str, Any]:
-    """``with_cache_role_sentence``, and a migration target's row written before #2162
+    """``with_cache_role_sentence``, a ``table_sources`` block written before #2321 gains
+    its ``shared_risk_sentence``, and a migration target's row written before #2162
     gains ``kept_in_sync_counted_under``: empty for a wave whose engines read no
     outside-owned table in common, its other figures as stored."""
     out = with_cache_role_sentence(facts)
+    sources = out.get("table_sources")
+    if isinstance(sources, dict) and not sources.get("shared_risk_sentence"):
+        # A table_sources block written before #2321 gains its shared risk sentence.
+        rows = [r for r in sources.get("replicated_tables") or [] if isinstance(r, dict)]
+        out = {
+            **out,
+            "table_sources": {**sources, "shared_risk_sentence": shared_risk_sentence(rows)},
+        }
     engines = out.get("engines")
     if not isinstance(engines, list):
         return out

@@ -14,19 +14,35 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
-from src.report.table_owners import OWNER_RULE, OWNER_RULE_MOST_QUERIES, ownership_summary_text
+from src.report.table_owners import (
+    OWNER_RULE_SHORT,
+    OWNER_RULE_SHORT_MOST_QUERIES,
+    ownership_summary_text,
+)
 
 REPO = Path(__file__).resolve().parents[3]
 EN = json.loads((REPO / "src/ui/src/locales/en.json").read_text())
 
 
+# #2321: the results page's table has its own columns (CDC to and Replica reads where
+# the Migration map has Also read by), so its rule ends by naming them. The rule itself
+# is the engineering report's, word for word.
+RESULTS_PAGE_COLUMNS = (
+    " CDC to names those engines; Replica reads counts the reads a replica serves; Cached by "
+    "names the cache in front of the table's reads."
+)
+
+
 def test_the_ui_states_the_owner_rule_word_for_word() -> None:
-    assert EN["analysis-results.table-owners.rule"] == OWNER_RULE
+    assert EN["analysis-results.table-owners.rule"] == OWNER_RULE_SHORT + RESULTS_PAGE_COLUMNS
 
 
 def test_the_ui_states_an_older_reports_rule_word_for_word() -> None:
     """#2166 review: a report saved before #2166 states the rule its own lines follow."""
-    assert EN["analysis-results.table-owners.rule-most-queries"] == OWNER_RULE_MOST_QUERIES
+    assert (
+        EN["analysis-results.table-owners.rule-most-queries"]
+        == OWNER_RULE_SHORT_MOST_QUERIES + RESULTS_PAGE_COLUMNS
+    )
 
 
 def test_the_ui_counts_use_the_reports_wording() -> None:

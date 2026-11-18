@@ -22,14 +22,17 @@ import EngineBadge from "./EngineBadge";
  * writes, the plan's relational engine (#2166); never a cache), the engines that read
  * a CDC copy of it, the reads a replica serves and the cache in front of its reads.
  * The columns sort and a text filter narrows the rows. The eventual-consistency risk
- * is stated once behind an Info link, in the engineering report's words (#1170,
- * #1232). The counts are the facts layer's (ADR-032); this only formats them.
+ * is stated once behind an Info link, in the sentence the engineering report prints
+ * (facts.table_sources.shared_risk_sentence; #1170, #1232, #2321). The counts are the
+ * facts layer's (ADR-032), each table's replica reads its own owner line's; this only
+ * formats them.
  * Collapsed when the page opens.
  *
  * Callers pass `t` (the page's own `useTranslation` function).
  */
 
 const DASH = '—';
+const CONSISTENCY_ID = 'table-owners-consistency';
 
 function engineList(engines) {
   const shown = (engines || []).map(displayEngine);
@@ -80,66 +83,45 @@ export function ruleKey(ownership) {
     : 'analysis-results.table-owners.rule';
 }
 
-function sharedRiskSources(sources) {
-  const replicated = (sources && sources.replicated_tables) || [];
-  return {
-    shared: replicated.filter(row => row.shares_replica_risk === true),
-    all: replicated,
-  };
-}
-
-// The risk once for every table that shares it, naming their sources of truth in the
-// order the rows list them (the engineering report's shared_replica_risk_text).
-function sharedRiskText(rows, t) {
-  const names = [...new Set(rows.map(row => row.source_of_truth))].map(displayEngine);
-  if (names.length === 1) {
-    return t('analysis-results.sources-of-truth.risk-one-source', { source: names[0] });
-  }
-  return t('analysis-results.sources-of-truth.risk-many-sources', {
-    sources: names.slice(0, -1).join(', '),
-    last: names.slice(-1)[0],
-  });
-}
-
+// The risk once for every replicated table that shares it, as
+// facts.table_sources.shared_risk_sentence words it (the engineering report prints the
+// same sentence, #2321), then any older report's own per-table risk. The Info link
+// discloses it in place, so it says whether it is open and what it controls.
 function ConsistencyNote({ sources, t }) {
   const [open, setOpen] = useState(false);
-  const { shared, all } = sharedRiskSources(sources);
+  const all = (sources && sources.replicated_tables) || [];
   if (all.length === 0) return null;
   const own = all.filter(row => row.shares_replica_risk !== true);
+  const shared = sources.shared_risk_sentence;
   return (
     <SpaceBetween size="xs">
       <span data-figure="consistency-info">
         <Link
           variant="info"
           ariaLabel={t('analysis-results.table-owners.info-label')}
+          nativeAttributes={{ 'aria-expanded': open ? 'true' : 'false', 'aria-controls': CONSISTENCY_ID }}
           onFollow={(e) => { e.preventDefault(); setOpen(value => !value); }}
         >
           {t('analysis-results.table-owners.info')}
         </Link>
       </span>
-      {open && (
-        <Box data-figure="consistency">
-          <SpaceBetween size="xs">
-            <div>{t('analysis-results.sources-of-truth.intro')}</div>
-            {shared.length > 0 && (
-              <div data-figure="shared-risk">
-                {t(own.length === 0
-                  ? 'analysis-results.sources-of-truth.risk-lead'
-                  : 'analysis-results.sources-of-truth.risk-lead-other')}
-                {' '}
-                {sharedRiskText(shared, t)}
-              </div>
-            )}
-            {own.map(row => (
-              <div key={row.table} data-own-risk={row.table}>
-                <span style={{ fontFamily: 'monospace' }}>{row.table}</span>
-                {' '}
-                {row.risk}
-              </div>
-            ))}
-          </SpaceBetween>
-        </Box>
-      )}
+      <div id={CONSISTENCY_ID}>
+        {open && (
+          <Box data-figure="consistency">
+            <SpaceBetween size="xs">
+              <div>{t('analysis-results.sources-of-truth.intro')}</div>
+              {shared && <div data-figure="shared-risk">{shared}</div>}
+              {own.map(row => (
+                <div key={row.table} data-own-risk={row.table}>
+                  <span style={{ fontFamily: 'monospace' }}>{row.table}</span>
+                  {' '}
+                  {row.risk}
+                </div>
+              ))}
+            </SpaceBetween>
+          </Box>
+        )}
+      </div>
     </SpaceBetween>
   );
 }
@@ -208,6 +190,8 @@ const TableOwnersCallout = memo(({ synthesis, t }) => {
 
   return (
     <div id="table-owners-section">
+      {/* #2321: where an old link to the removed Sources of truth section lands. */}
+      <div id="sources-of-truth-section">
       <ExpandableSection variant="container" defaultExpanded={false} headerText={headerText}>
         <SpaceBetween size="s">
           {ownership && <Box data-figure="owner-rule">{t(ruleKey(ownership))}</Box>}
@@ -257,7 +241,7 @@ const TableOwnersCallout = memo(({ synthesis, t }) => {
             ariaLabels={{ tableLabel: t('analysis-results.table-owners.table-label') }}
             footer={hasReplicas ? <ConsistencyNote sources={sources} t={t} /> : undefined}
           />
-          {sources && sources.more_replicated_count > 0 && (
+          {sources && !ownership && sources.more_replicated_count > 0 && (
             <Box>{t('analysis-results.sources-of-truth.more', { count: sources.more_replicated_count })}</Box>
           )}
           {sources && !ownership && sources.single_engine_table_count > 0 && (
@@ -280,6 +264,7 @@ const TableOwnersCallout = memo(({ synthesis, t }) => {
           )}
         </SpaceBetween>
       </ExpandableSection>
+      </div>
     </div>
   );
 });
