@@ -50,6 +50,7 @@ from src.shared.cache_role import cache_role_sentence
 from src.shared.capability_labels import capability_label, flag_redesign_hints, redesign_hints
 from src.shared.catalog.gaps import GAP_IMPACTS
 from src.shared.cutover_message import CUTOVER_MESSAGE
+from src.shared.decision_headline import decision_headline
 from src.shared.engine_names import (
     ENGINE_DISPLAY_NAMES,
     SOURCE_DATABASE,
@@ -3791,6 +3792,10 @@ def executive_brief_facts(
         # #1992: the first suggested wave; None when no wave is.
         "decision_wave": decision,
         "held_waves": held,
+        # #2315: the summary's lead line, from the decision wave and the waves above.
+        "decision_headline": decision_headline(
+            {"decision_wave": decision, "waves": brief_waves}, report.get("database_name")
+        ),
     }
 
 

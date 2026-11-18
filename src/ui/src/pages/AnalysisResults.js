@@ -66,7 +66,7 @@ import ResultsOnThisPage from "../components/ResultsOnThisPage";
 import { designBodyState, explorerAvailability } from "../utils/sectionStates";
 import { failureError, failureFlash, failureKind, failureReason, reportFailure, upsertFlash } from "../utils/requestFailure";
 import { schemaDesignsRefused } from "../utils/schemaDesignsLoad";
-import ExecutiveSummaryStats from "../components/ExecutiveSummaryStats";
+import ExecutiveSummary from "../components/ExecutiveSummary";
 import TableOwnersCallout from "../components/TableOwnersCallout";
 import DeliverablesPanel from "../components/DeliverablesPanel";
 import AssumptionsPanel from "../components/AssumptionsPanel";
@@ -791,20 +791,9 @@ const AnalysisResultsPage = memo(() => {
   const totalAccessPatterns = patternTotals.owned;
   const cachePatternCount = patternTotals.cacheLayer;
 
-  // #361: the Query flow's query count (afterDist is already owner-only, see
-  // ownerDistribution above) -- the number "Access patterns" is compared
-  // against. Access patterns can legitimately differ from this: relational
-  // engines model as tables, not per-pattern designs, and several queries can
-  // converge into one access pattern.
-  const ownerQueryCount = useMemo(
-    () => Object.values(afterDist).reduce((a, b) => a + b, 0),
-    [afterDist]
-  );
-
   // #429 part 2: the explorer's own combined total (owner rows + cache-layer
   // rows), used for its header count ("64 (54 owned + 10 cache layer)") --
-  // kept separate from totalAccessPatterns, which must stay owner-only (the
-  // "Access patterns" stat above compares against it).
+  // kept separate from totalAccessPatterns, which stays owner-only.
   const explorerTotal = patternTotals.listed;
   // #2308: the report counts patterns the page holds no row for: say so, do not show an empty table.
   const explorerState = explorerAvailability({
@@ -1881,99 +1870,68 @@ const AnalysisResultsPage = memo(() => {
   const tabContent = {
     summary: (
       <SpaceBetween size="l">
-        {/* Executive Summary. #1028: the access-pattern count sits below
-            the database name; a cost tile with no figure is left out. */}
-        <Container id="executive-summary-section" header={<Header variant="h2">{t('analysis-results.executive-summary.title')}</Header>}>
-          <SpaceBetween size="m">
-            {/* #1403: one paragraph per part (recommendation, risk, decision), as
-                the engineering report prints them. */}
-            <Box variant="div" fontSize="body-m">
-              {synthesis?.summary ? <ProseText text={synthesis.summary} paragraphs /> : 'No summary available.'}
-            </Box>
-            <PinRuleNote note={resultsData?.pin_rule_note} />
-            {summaryFallback.isFallback && (
-              <SummaryFallbackNotice
-                text={t('analysis-results.executive-summary.fallback-notice', {
-                  reason: fallbackWithheldReason(summaryFallback.warnings),
-                })}
-              />
-            )}
-            <ExecutiveSummaryStats
-              t={t}
-              databaseName={synthesis?.database_name}
-              accessPatternCount={totalAccessPatterns}
-              ownerQueryCount={ownerQueryCount}
-              cachePatternCount={cachePatternCount}
-              projectedCost={projectedCost}
-              costBaseline={costBaseline}
-              retiredEngines={synthesis?.facts?.retired_in_use_engines}
-              engineScope={synthesis?.facts?.engine_scope}
-              noEngineInScope={noEngineInScopeOf(synthesis)}
-              queryPatterns={queryPatternCountsOf(synthesis)}
-              priceList={synthesis?.facts?.price_list}
-              costScopeLabel={costScopeLabelOf(synthesis)}
-              targetEngines={(
-                <>
-                  <Box fontSize="heading-m">
-                    <SpaceBetween direction="horizontal" size="xxs">
-                      {/* #358: the cache layer is listed here too (labeled
-                          distinctly, e.g. "ElastiCache (cache layer)") -- it
-                          owns no queries, but it is still a target engine
-                          the deliverables name and price. */}
-                      {targetEngines.map(({ engine, isCacheLayer }) => (
-                        <EngineBadge key={engine} engine={engine}>
-                          {ENGINE_LABELS[engine] || engine}
-                          {isCacheLayer ? t('cache-layer.engine-badge-suffix', { defaultValue: ' (cache layer)' }) : ''}
-                        </EngineBadge>
-                      ))}
-                    </SpaceBetween>
-                  </Box>
-                  {/* #296: additional cache-layer stats (reads fronted, %
-                      of calls) shown as a note below the badges above. */}
-                  {cacheLayerLine && (
-                    <Box fontSize="body-s" color="text-body-secondary" padding={{ top: 'xxs' }}>
-                      {cacheLayerLine}
-                    </Box>
-                  )}
-                  {/* #399: why the cache layer is cache-aside, from
-                      facts.cache_layer.role_sentence, as every deliverable states it. */}
-                  {cacheLayerLine && cacheFacts?.roleSentence && (
-                    <Box fontSize="body-s" color="text-body-secondary" padding={{ top: 'xxs' }}>
-                      {cacheFacts.roleSentence}
-                    </Box>
-                  )}
-                  {/* #1891: per non-Aurora engine, its statements on temporary objects
-                      that follow their routine (facts.query_group_counts.
-                      procedure_internal_routine_counts); an Aurora engine states its
-                      own on its tab. */}
-                  {Object.entries(procedureInternalRoutineCountsOf(synthesis))
-                    .filter(([engine, count]) => count > 0 && !isAuroraEngine(engine))
-                    .map(([engine, count]) => (
-                      <Box key={`follows-${engine}`} fontSize="body-s" color="text-body-secondary" padding={{ top: 'xxs' }}>
-                        {t('analysis-results.procedure-internal-routine-on', {
-                          engine: ENGINE_LABELS[engine] || engine,
-                          count,
-                        })}
-                      </Box>
-                    ))}
-                  {/* #1252: the gate's cache candidates and the design's cached reads
-                      can differ (the post-schema-design safety net drops reads the
-                      design does not cover). The sentence comes from facts.cache_layer,
-                      once, as a plain text child. */}
-                  {cacheChange && (
-                    <Box
-                      fontSize="body-s"
-                      color="text-status-warning"
-                      padding={{ top: 'xxs' }}
-                    >
-                      {cacheChange}
-                    </Box>
-                  )}
-                </>
+        {/* Executive Summary (#2315): the decision in the header, five figures, then the
+            summary's paragraphs under "Why". Every figure is a report.json fact. */}
+        <ExecutiveSummary
+          synthesis={synthesis}
+          t={t}
+          why={(
+            <SpaceBetween size="m">
+              {/* #1403: one paragraph per part (recommendation, risk, decision), as
+                  the engineering report prints them. */}
+              <Box variant="div" fontSize="body-m">
+                {synthesis?.summary ? <ProseText text={synthesis.summary} paragraphs /> : 'No summary available.'}
+              </Box>
+              <PinRuleNote note={resultsData?.pin_rule_note} />
+              {summaryFallback.isFallback && (
+                <SummaryFallbackNotice
+                  text={t('analysis-results.executive-summary.fallback-notice', {
+                    reason: fallbackWithheldReason(summaryFallback.warnings),
+                  })}
+                />
               )}
-            />
-          </SpaceBetween>
-        </Container>
+            </SpaceBetween>
+          )}
+          statsProps={{
+            projectedCost,
+            costBaseline,
+            retiredEngines: synthesis?.facts?.retired_in_use_engines,
+            engineScope: synthesis?.facts?.engine_scope,
+            noEngineInScope: noEngineInScopeOf(synthesis),
+            priceList: synthesis?.facts?.price_list,
+            costScopeLabel: costScopeLabelOf(synthesis),
+            cacheLayerLine,
+            // #1252: the cache candidates the design does not cover stay on the tile as
+            // a warning, as the executive report prints them in its body.
+            cacheChange,
+            // The longer notes sit behind the Target engines' Info link: #399 why the
+            // cache layer is cache-aside (facts.cache_layer.role_sentence) and #1891 per
+            // non-Aurora engine its statements on temporary objects that follow their routine
+            // (facts.query_group_counts.procedure_internal_routine_counts).
+            targetEngineNotes: [
+              cacheLayerLine && cacheFacts?.roleSentence,
+              ...Object.entries(procedureInternalRoutineCountsOf(synthesis))
+                .filter(([engine, count]) => count > 0 && !isAuroraEngine(engine))
+                .map(([engine, count]) => t('analysis-results.procedure-internal-routine-on', {
+                  engine: ENGINE_LABELS[engine] || engine,
+                  count,
+                })),
+            ],
+            targetEngines: (
+              <SpaceBetween direction="horizontal" size="xxs">
+                {/* #358: the cache layer is listed here too (labeled distinctly,
+                    e.g. "ElastiCache (cache layer)") -- it owns no queries, but it is
+                    still a target engine the deliverables name and price. */}
+                {targetEngines.map(({ engine, isCacheLayer }) => (
+                  <EngineBadge key={engine} engine={engine}>
+                    {ENGINE_LABELS[engine] || engine}
+                    {isCacheLayer ? t('cache-layer.engine-badge-suffix', { defaultValue: ' (cache layer)' }) : ''}
+                  </EngineBadge>
+                ))}
+              </SpaceBetween>
+            ),
+          }}
+        />
 
         {/* Cost Breakdown (#2316: total first, engines in a table, notes in one expandable) */}
         {costBreakdown.length > 0 && (
@@ -2049,6 +2007,7 @@ const AnalysisResultsPage = memo(() => {
             filter; the selected query's detail opens in the split panel. */}
         <QueryRoutingTable
           rows={queryRoutingRows}
+          queryPatterns={queryPatternCountsOf(synthesis)}
           loading={queryJourneyList.loading}
           error={queryJourneyList.error}
           hasLedger={routingHistoryRecorded(resultsData?.synthesis)}
@@ -2899,6 +2858,11 @@ const AnalysisResultsPage = memo(() => {
               <div ref={setTabsRoot}>
                 <Tabs
                   ariaLabel={t('analysis-results.tabs.aria-label')}
+                  // A narrow screen scrolls the tab list with two icon buttons (#2458).
+                  i18nStrings={{
+                    scrollLeftAriaLabel: t('analysis-results.tabs.scroll-left'),
+                    scrollRightAriaLabel: t('analysis-results.tabs.scroll-right'),
+                  }}
                   activeTabId={activeTab}
                   onChange={({ detail }) => selectTab(detail.activeTabId)}
                   tabs={RESULTS_TABS.map(tab => ({

@@ -41,6 +41,7 @@ from src.report.facts import report_facts
 from src.report.merge_reviews import MERGE_REVIEWS_PDF_NOTE, MERGE_REVIEWS_TITLE
 from src.report.renderers import render_engineering_report_md
 from src.shared.cutover_message import CUTOVER_MESSAGE
+from src.shared.decision_headline import decision_headline
 from src.shared.exposure_wording import group_exposures
 from src.shared.report_facts import (
     RECONSTRUCTED_NOTE,
@@ -418,6 +419,8 @@ def test_an_old_job_loads_and_renders_unchanged() -> None:
     assert facts["executive_brief"] == {
         **brief,
         "exposures": group_exposures(brief["exposures"]),
+        # #2315: and its lead line, from the same function.
+        "decision_headline": decision_headline(brief, "wordpress"),
     }
     # #2358: and each engine's final query count, from the ranking.
     assert facts["engine_query_counts"] == engine_query_count_facts(old, facts["engines"])

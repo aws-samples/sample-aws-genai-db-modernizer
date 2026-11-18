@@ -35,6 +35,7 @@ from src.report.merge_conflicts import (
 )
 from src.report.renderers import render_engineering_report_md
 from src.shared.cutover_message import CUTOVER_MESSAGE
+from src.shared.decision_headline import decision_headline
 from src.shared.exposure_wording import group_exposures
 from src.shared.report_facts import (
     compute_report_facts,
@@ -324,6 +325,8 @@ def test_an_old_job_loads_and_renders_without_the_section() -> None:
     assert facts["executive_brief"] == {
         **brief,
         "exposures": group_exposures(brief["exposures"]),
+        # #2315: and its lead line, from the same function.
+        "decision_headline": decision_headline(brief, "wordpress"),
     }
     # #2358: and each engine's final query count, from the ranking.
     assert facts["engine_query_counts"] == engine_query_count_facts(old, facts["engines"])

@@ -229,3 +229,21 @@ test('statement text is text: markup in a statement is not parsed', () => {
   expect(container.querySelector('img')).toBeNull();
   expect(cellText(1, 9)).toContain('<img src=x onerror=alert(1)>');
 });
+
+// #1146, #2315: the queries and the distinct query patterns they make, from the facts,
+// stated above the filter (moved here from the executive summary).
+test('the distinct query patterns line reads the facts it is given', () => {
+  render({ queryPatterns: { queries: 1654, patterns: 1045 } });
+  const line = () => container.querySelector('[data-figure="query-patterns"]');
+  expect(line().textContent).toBe('1,654 queries in 1,045 distinct query patterns');
+  expect(container.querySelector('#query-routing-section').contains(line())).toBe(true);
+  render({ queryPatterns: { queries: 1, patterns: 1 } });
+  expect(line().textContent).toBe('1 query in 1 distinct query pattern');
+});
+
+test('a report written before the figure shows no query patterns line', () => {
+  [null, undefined].forEach((queryPatterns) => {
+    render({ queryPatterns });
+    expect(container.querySelector('[data-figure="query-patterns"]')).toBeNull();
+  });
+});

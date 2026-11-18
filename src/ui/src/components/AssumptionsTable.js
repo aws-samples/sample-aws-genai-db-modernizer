@@ -25,6 +25,9 @@ const AssumptionsTable = memo(({ items, t, renderEdit }) => {
       <Table
         variant="embedded"
         trackBy="key"
+        // Names the table, and the scroll region a narrow screen wraps it in (axe:
+        // landmark-unique, #2458).
+        ariaLabels={{ tableLabel: t('analysis-results.assumptions-panel.title') }}
         items={items}
         columnDefinitions={[
           {

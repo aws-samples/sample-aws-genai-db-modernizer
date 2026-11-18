@@ -37,7 +37,10 @@ import DestinationTables from './DestinationTables';
  * filter compares one lower-cased string per row.
  *
  * Callers pass `t` (the page's own `useTranslation` function), like
- * QueryDecisionTrace.
+ * QueryDecisionTrace. `queryPatterns` is facts.query_pattern_counts as
+ * `{ queries, patterns }` (queryPatternCountsOf), or null for a report written before it
+ * (#1146): "1,654 queries in 1,045 distinct query patterns", the line the executive and
+ * engineering reports print, stated above the filter (#2315: moved here from the summary).
  */
 
 const PAGE_SIZE = 25;
@@ -75,7 +78,9 @@ function RoutingBadges({ kinds, hasLedger, t }) {
   );
 }
 
-const QueryRoutingTable = memo(({ rows, loading, error, hasLedger, truncated, selectedId, onSelect, t }) => {
+const QueryRoutingTable = memo(({
+  rows, loading, error, hasLedger, truncated, selectedId, onSelect, t, queryPatterns,
+}) => {
   const [query, setQuery] = useState({ tokens: [], operation: 'and' });
   const [page, setPage] = useState(1);
 
@@ -202,6 +207,20 @@ const QueryRoutingTable = memo(({ rows, loading, error, hasLedger, truncated, se
           </Alert>
         ) : (
           <SpaceBetween size="m">
+            {queryPatterns && (
+              <Box color="text-body-secondary">
+                <span data-figure="query-patterns">
+                  {t('analysis-results.executive-summary.query-patterns', {
+                    count: queryPatterns.patterns,
+                    patterns: queryPatterns.patterns.toLocaleString('en-US'),
+                    queries: t('analysis-results.executive-summary.query-patterns-queries', {
+                      count: queryPatterns.queries,
+                      queries: queryPatterns.queries.toLocaleString('en-US'),
+                    }),
+                  })}
+                </span>
+              </Box>
+            )}
             <PropertyFilter
               query={query}
               onChange={({ detail }) => { setQuery(detail); setPage(1); }}

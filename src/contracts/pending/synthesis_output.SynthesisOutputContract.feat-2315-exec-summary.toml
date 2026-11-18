@@ -1,0 +1,6 @@
+# A pending contract version bump (ADR-008 Decision 8). The number is assigned by
+# uv run python scripts/resolve_contract_versions.py --release at release (a MAJOR: in its pull request).
+contract = "synthesis_output.SynthesisOutputContract"
+kind = "minor"
+reason = "Added optional ExecutiveBriefFacts.decision_headline: the executive summary's lead line, the decision wave and what it does, or the plan when no wave is suggested yet. A report written before gets it from the same function."
+issue = 2315

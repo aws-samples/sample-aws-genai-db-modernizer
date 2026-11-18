@@ -463,3 +463,24 @@ def test_the_gate_lists_no_cache_candidates_when_the_status_data_has_none() -> N
     text = _gate(cache_reads=None)
     assert "Cache layer: ElastiCache has 20 cache candidates" in text
     assert "calls/s" not in text
+
+
+def test_the_final_summary_leads_with_the_decision_the_results_page_heads_with() -> None:
+    """#2315: the line the results page's summary header states, from
+    facts.executive_brief.decision_headline, right under the heading; escaped as prose."""
+    report = _report()
+    report["facts"]["executive_brief"] = {
+        "decision_wave": 1,
+        "waves": [{"wave": 1, "engines": ["aurora_mysql"], "kind": "homogeneous"}],
+        "decision_headline": "Approve wave 1: move word_press to Aurora MySQL",
+    }
+    lines = _final(report).splitlines()
+    assert lines[0] == "## Assessment: wordpress (job job1)"
+    assert lines[2] == "**Approve wave 1: move word\\_press to Aurora MySQL**"
+    assert lines[4] == "### Executive summary"
+
+
+@pytest.mark.passes_on_main  # a report with no decision line keeps the old opening
+def test_a_report_with_no_headline_opens_on_the_executive_summary() -> None:
+    lines = _final(_report()).splitlines()
+    assert lines[2] == "### Executive summary"

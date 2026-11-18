@@ -41,7 +41,12 @@ jest.mock('@cloudscape-design/components/header', () => ({ __esModule: true, def
 jest.mock('@cloudscape-design/components/help-panel', () => ({ __esModule: true, default: () => null }));
 jest.mock('@cloudscape-design/components/icon', () => ({ __esModule: true, default: () => null }));
 jest.mock('@cloudscape-design/components/input', () => ({ __esModule: true, default: () => null }));
-jest.mock('@cloudscape-design/components/key-value-pairs', () => ({ __esModule: true, default: () => null }));
+// #2315: the executive summary's figures are a KeyValuePairs row; each item's value renders.
+jest.mock('@cloudscape-design/components/key-value-pairs', () => ({
+  __esModule: true,
+  default: ({ items }) => (items || []).map((item, i) => <div key={i}>{item.value}</div>),
+}));
+jest.mock('@cloudscape-design/components/popover', () => ({ __esModule: true, default: mockPassThrough }));
 jest.mock('@cloudscape-design/components/link', () => ({ __esModule: true, default: mockPassThrough }));
 jest.mock('@cloudscape-design/components/modal', () => ({ __esModule: true, default: () => null }));
 jest.mock('@cloudscape-design/components/multiselect', () => ({ __esModule: true, default: () => null }));

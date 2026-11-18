@@ -244,3 +244,10 @@ test('a successful request with no rows and no report assumptions shows nothing'
   await render();
   expect(container.querySelector('#assumptions-panel')).toBeNull();
 });
+
+test('the table has its own name, so a phone-width scroll region is told apart (#2458)', async () => {
+  mockApi({ success: true });
+  await render();
+  expect(container.querySelector('table').getAttribute('aria-label'))
+    .toBe('analysis-results.assumptions-panel.title');
+});

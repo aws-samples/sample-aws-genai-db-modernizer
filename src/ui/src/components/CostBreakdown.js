@@ -104,6 +104,9 @@ function CostBreakdown({ synthesis, costBreakdown = [], projectedCost = null, ca
         <Table
           variant="embedded"
           trackBy="key"
+          // Names the table, and the scroll region a narrow screen wraps it in (axe:
+          // landmark-unique, #2458).
+          ariaLabels={{ tableLabel: t('analysis-results.cost-breakdown.title') }}
           items={items}
           columnDefinitions={[
             {

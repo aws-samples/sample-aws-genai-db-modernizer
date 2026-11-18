@@ -29,6 +29,7 @@ from src.contracts.synthesis_output import SynthesisOutputContract
 from src.report.facts import report_facts
 from src.shared.adoption_facts import adoption_facts, slice_plan_facts
 from src.shared.cutover_message import CUTOVER_MESSAGE
+from src.shared.decision_headline import decision_headline
 from src.shared.exposure_wording import group_exposures
 from src.shared.report_facts import (
     engine_query_count_facts,
@@ -111,7 +112,12 @@ def test_a_report_written_before_1_72_validates_and_reads_back_unchanged() -> No
     assert facts["engine_query_counts"]
     # #2324: and the executive summary's exposures, grouped and counted.
     brief = stored["executive_brief"]
-    assert facts["executive_brief"] == {**brief, "exposures": group_exposures(brief["exposures"])}
+    # #2315: and its lead line, from the same function.
+    assert facts["executive_brief"] == {
+        **brief,
+        "exposures": group_exposures(brief["exposures"]),
+        "decision_headline": decision_headline(brief, old.get("database_name")),
+    }
     # #2325: this report's source queries name no tables, so it has no per-table query
     # rows to fill and its query group counts read back as stored.
     assert "table_queries" not in stored["query_group_counts"]

@@ -130,3 +130,20 @@ export function waveReadiness(synthesis, wave) {
     openWarnings: typeof wf.open_warning_count === 'number' ? wf.open_warning_count : 0,
   };
 }
+
+// #1992, #2318: a suggested wave is a success unless a warning is still to accept; a held
+// one is a warning; a wave not designed or not reviewed yet is pending.
+export function readinessType(view) {
+  if (view.readiness === 'suggested') return view.openWarnings > 0 ? 'warning' : 'success';
+  if (view.readiness === 'held') return 'warning';
+  return view.readiness ? 'pending' : 'info';
+}
+
+export function readinessText(view, t) {
+  if (view.readiness === 'suggested') {
+    return view.openWarnings > 0
+      ? t('analysis-results.waves.readiness-status.suggested-warnings', { count: view.openWarnings })
+      : t('analysis-results.waves.readiness-status.suggested');
+  }
+  return view.readiness ? t(`analysis-results.waves.readiness-status.${view.readiness}`) : null;
+}
