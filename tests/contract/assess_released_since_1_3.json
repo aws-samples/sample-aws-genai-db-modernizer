@@ -12,8 +12,11 @@
         "contract_version": {
           "required": false,
           "schema": {
-            "kind": "const",
-            "value": "1.3"
+            "kind": "enum",
+            "values": [
+              "1.3",
+              "1.4"
+            ]
           }
         },
         "database_name": {
@@ -76,6 +79,24 @@
                 }
               }
             }
+          }
+        },
+        "routine_sources": {
+          "required": false,
+          "schema": {
+            "kind": "anyOf",
+            "members": [
+              {
+                "items": {
+                  "kind": "object"
+                },
+                "kind": "array"
+              },
+              {
+                "kind": "scalar",
+                "type": "null"
+              }
+            ]
           }
         },
         "scope": {
@@ -169,8 +190,8 @@
           }
         }
       },
-      "schema_hash": "733bf51d39f4db42b3cf9ac852c69b517580d4b55d9dbc5a6192cf9396c5260f",
-      "version": "1.3"
+      "schema_hash": "481a60fd78f9f706b56bb31982c43c65c26e0de3b195236061329df56e99db88",
+      "version": "1.4"
     },
     "assessment.AssessmentResult": {
       "fields": {
@@ -201,8 +222,11 @@
         "contract_version": {
           "required": false,
           "schema": {
-            "kind": "const",
-            "value": "1.3"
+            "kind": "enum",
+            "values": [
+              "1.3",
+              "1.4"
+            ]
           }
         },
         "designs": {
@@ -2552,9 +2576,9 @@
           }
         }
       },
-      "schema_hash": "fdf8bf5614c3f05022445358fb80cb122241fc9155994c845db023bd6fe57880",
-      "version": "1.3"
+      "schema_hash": "5a06bc9c9d8d448b0dbcde69914f4b8e686bb16f166400310f3485be8803b0a6",
+      "version": "1.4"
     }
   },
-  "released": "v0.4.0-beta.3"
+  "released": "v0.5.0-beta.1"
 }

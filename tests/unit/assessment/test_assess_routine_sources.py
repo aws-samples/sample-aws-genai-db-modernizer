@@ -3,7 +3,8 @@
 
 """``assess()`` takes routine sources and writes the job's routine sources (#2022).
 
-A 1.4 run (read only when pinned until a release step records it) extracts a raw
+A 1.4 run (the default since v0.5.0-beta.1's record step; before it, read only when
+pinned) extracts a raw
 collection's routine bodies as the scripts do, and a library caller may pass each
 routine's ``CREATE`` in the routine-sources format (``RoutineSource`` entries,
 ``AssessmentRequest.routine_sources``), which replaces its routine's. The run writes the
@@ -13,6 +14,8 @@ collection made with ``include_routine_bodies = 0`` writes none; only a routine 
 collection lists with its body collected gets one (a ``not_readable``, ``opted_out`` or
 ``not_supported`` routine, or one the collection does not list, gets none); each body
 goes through the repository's credential scan. A 1.3 request writes none, as before 1.4.
+The cases for a request naming no version while 1.3 is the default run under a 1.3
+record (``tests/released_record.py``), so they hold whatever the release record names.
 """
 
 from __future__ import annotations
@@ -21,6 +24,7 @@ import gzip
 import json
 import logging
 import traceback
+from contextlib import AbstractContextManager, nullcontext
 from pathlib import Path
 from typing import Any
 
@@ -31,6 +35,7 @@ from src.agents.collector.routine_sources import iter_collection_sources, read_r
 from src.assessment import AssessmentRequest, RoutineSourcesError, assess
 from src.contracts.routine_sources import MAX_CHUNK_SOURCES, RoutineSourcesContract
 from src.storage.local_store import LocalArtifactStore
+from tests.released_record import recorded_as
 from tests.unit.agents.routine_collections import (
     SEED,
     mysql_collection,
@@ -137,11 +142,17 @@ def test_a_request_for_1_3_writes_no_routine_sources_even_from_a_collection_with
     }
     if pinned is not None:
         request["contract_version"] = pinned
-    result = assess(request, store=store, job_id="rs000001")
+    with _unpinned_is_1_3(pinned, tmp_path):
+        result = assess(request, store=store, job_id="rs000001")
     assert result.contract_version == "1.3"
     assert not list((tmp_path / "artifacts").rglob("routine_sources*"))
     assert _index(store) is None
     assert _files_holding(tmp_path / "artifacts", SEED) == []
+
+
+def _unpinned_is_1_3(pinned: str | None, directory: Path) -> AbstractContextManager[Any]:
+    """Unpinned, the request runs under a 1.3 record (1.3 the default); pinned, as is."""
+    return recorded_as("1.3", directory) if pinned is None else nullcontext()
 
 
 def _scripts_write(tmp_path: Path, raw: dict[str, Any], collector_output: Any) -> Path:
@@ -660,9 +671,18 @@ def _chain(exc: BaseException) -> list[BaseException]:
     return out
 
 
+@pytest.mark.passes_on_main
 @pytest.mark.parametrize("number", range(9))
-def test_no_error_carries_the_routine_text(number: int, tmp_path: Path) -> None:
+def test_no_error_carries_the_routine_text(
+    number: int, tmp_path: Path, tmp_path_factory: pytest.TempPathFactory
+) -> None:
     payload = _bad_requests()[number]
+    # The unpinned case is refused while 1.3 is the default: run it under a 1.3 record.
+    with _unpinned_is_1_3(payload.get("contract_version"), tmp_path_factory.mktemp("rec")):
+        _check_no_error_carries_the_routine_text(payload, tmp_path)
+
+
+def _check_no_error_carries_the_routine_text(payload: dict[str, Any], tmp_path: Path) -> None:
     paths = (
         lambda: AssessmentRequest.model_validate(payload),
         lambda: AssessmentRequest(**payload),
@@ -694,9 +714,10 @@ def test_no_error_carries_the_routine_text(number: int, tmp_path: Path) -> None:
     assert not any(tmp_path.iterdir())
 
 
+@pytest.mark.passes_on_main
 @pytest.mark.parametrize("pinned", ["1.3", None])
 def test_a_request_for_1_3_with_routine_sources_is_refused_with_no_input(
-    pinned: str | None,
+    pinned: str | None, tmp_path: Path
 ) -> None:
     """A caller who forgets the 1.4 pin gets the input-free RoutineSourcesError, from the
     field's own validator: str(), errors() and json() hold no routine text and no other
@@ -706,7 +727,7 @@ def test_a_request_for_1_3_with_routine_sources_is_refused_with_no_input(
         del payload["contract_version"]
     else:
         payload["contract_version"] = pinned
-    with pytest.raises(RoutineSourcesError) as caught:
+    with _unpinned_is_1_3(pinned, tmp_path), pytest.raises(RoutineSourcesError) as caught:
         AssessmentRequest.model_validate(payload)
     error = caught.value
     assert [e["loc"] for e in error.errors()] == [("routine_sources",)]

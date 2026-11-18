@@ -57,6 +57,7 @@ from src.assessment import (
     cut_collection,
     load_collection,
 )
+from tests.released_record import versions_note
 
 REPO = Path(__file__).resolve().parents[2]
 FIXTURES = REPO / "tests" / "fixtures"
@@ -743,6 +744,7 @@ def test_no_statement_of_a_whole_collection_has_a_from_query_id() -> None:
 # --------------------------------------------------------------------------- versions
 
 
+@pytest.mark.passes_on_main
 @pytest.mark.parametrize("version", ["1.0", "1.1", "1.2"])
 def test_a_cut_assessed_for_a_retired_version_is_refused(version: str) -> None:
     """A cut's request names 1.3, 1.4 or nothing: 1.0 to 1.2 are retired (#1641)."""
@@ -753,7 +755,7 @@ def test_a_cut_assessed_for_a_retired_version_is_refused(version: str) -> None:
     )
     with pytest.raises(
         RetiredContractVersionError,
-        match=r"this code reads contracts 1\.3 and 1\.4 \(read only when pinned\)",
+        match=re.escape(f"this code reads contracts {versions_note()}. Pin"),
     ):
         _assess_cut(cut, "analysis", version)
     text = _assess_cut(cut, "analysis", "1.3").model_dump_json()
