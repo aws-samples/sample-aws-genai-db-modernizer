@@ -287,6 +287,23 @@ def is_assignment_reviewed(store, db_name: str, job_id: str) -> bool:
         return False
 
 
+def assignment_approval_recorded(store, db_name: str, job_id: str) -> bool:
+    """True once the assignment gate is recorded as passed (#2326): the orchestrator's
+    ``.meta/<job_id>.json`` has ``assignment_review`` completed, or ``decisions/`` holds
+    the review or approval record (``is_assignment_reviewed``). The UI gate says
+    "Approved" only then. Best-effort: an unreadable store reads as False."""
+    try:
+        meta_path = f".meta/{job_id}.json"
+        if store.exists(meta_path):
+            meta = store.read_json(meta_path)
+            phase = ((meta or {}).get("phases") or {}).get("assignment_review") or {}
+            if phase.get("status") == "completed":
+                return True
+    except Exception:
+        logger.debug("job_status: could not read the progression of %s", job_id)
+    return is_assignment_reviewed(store, db_name, job_id)
+
+
 def mark_assignment_reviewed(store, db_name: str, job_id: str, inferred_from: str) -> None:
     """Record the assignment-review gate as passed (#517).
 

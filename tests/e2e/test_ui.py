@@ -499,6 +499,66 @@ def test_old_results_v2_route_redirects_to_results(
         assert ev == {"console": [], "pageerror": [], "failed": []}, (r.db, ev)
 
 
+def _open_per_query_view(page: Page) -> None:
+    """Switch the assignment review to its per-query view: a segmented control, which
+    Cloudscape shows as a dropdown on a narrow screen (#2326)."""
+    segment = page.get_by_role("radio", name="Per query").or_(
+        page.get_by_role("button", name="Per query", exact=True)
+    )
+    if segment.count():
+        segment.first.click()
+    else:
+        page.get_by_role("button", name=re.compile("View|Per query|Summary")).first.click()
+        page.get_by_role("option", name="Per query").click()
+
+
+def test_assignment_review_of_a_finished_job_states_the_approval_and_offers_none(
+    page: Page, ui: str, all_runs: list[PipelineResult]
+) -> None:
+    """#2326: a finished job's assignment review says which version was approved, links
+    the results, and offers neither approval nor engine overrides."""
+    for r in all_runs:
+        page.goto(f"{ui}/analysis/assignments/{r.job_id}")
+        alert = page.locator("[data-gate-state]")
+        expect(alert).to_contain_text("Approved: assignment version", timeout=READY_MS)
+        assert alert.get_attribute("data-gate-state") == "done", r.db
+        expect(alert.get_by_text("View results").first).to_be_visible()
+        body = page.inner_text("body")
+        assert "Approve assignment" not in body and "Continue with recommendation" not in body, r.db
+        _open_per_query_view(page)
+        expect(page.locator(".query-list-row__summary").first).to_be_visible(timeout=READY_MS)
+        assert page.locator(".query-list-row button[aria-haspopup=listbox]").count() == 0, r.db
+        assert page.locator(".query-list-row input[type=checkbox]").count() == 0, r.db
+
+
+def test_assignment_review_states_the_chat_gates_figures(
+    page: Page, ui: str, all_runs: list[PipelineResult]
+) -> None:
+    """#2326: the assignment review's figures are the chat gate's (gate_block_facts on the
+    same artifacts): queries, source tables, the engines kept and the cache candidates."""
+    from scripts import run_assessment
+    from src.shared.gate_facts import gate_block_facts
+    from src.storage.local_store import LocalArtifactStore
+
+    for r in all_runs:
+        store = LocalArtifactStore(base_dir=str(r.artifact_root))
+        chat = gate_block_facts(run_assessment._reality_check_artifact(store, r.job_id, r.db))
+        page.goto(f"{ui}/analysis/assignments/{r.job_id}")
+        figures = page.locator("[data-figure=gate-figures]")
+        expect(figures).to_be_visible(timeout=READY_MS)
+        text = " ".join(figures.inner_text().split())
+        assert f"Queries {chat['query_total_count']:,}" in text, (r.db, text)
+        assert "Source tables" in text, (r.db, text)
+        for row in chat["rows"]:
+            if row["engine"] in chat["surviving"] and not row["dropped"]:
+                assert f"{row['after']:,}" in text, (r.db, row["engine"], text)
+        cache = chat["cache_candidates"]
+        if cache and cache["reads"]:
+            assert f"Cache candidates {cache['read_count']:,}" in text, (r.db, text)
+            table = page.locator("[data-figure=gate-cache-candidates] tbody tr")
+            assert table.count() == len(cache["reads"]), r.db
+
+
 def test_assignments_page_recommends_the_ranked_engines(
     page: Page, ui: str, all_runs: list[PipelineResult]
 ) -> None:
@@ -557,7 +617,7 @@ def test_an_unknown_assessment_id_shows_one_not_found_state(
     expect(page.get_by_role("link", name="Go to assessments")).to_be_visible()
     text = page.inner_text("body")
     assert "/api/v1/" not in text and "Failed to fetch" not in text and "404" not in text, text
-    assert page.get_by_role("button", name=re.compile("Continue with recommendation")).count() == 0
+    assert page.get_by_role("button", name=re.compile("Approve assignment")).count() == 0
 
 
 @pytest.mark.parametrize("route", ["analysis/monitor", "analysis/engine-analysis"])
@@ -2481,7 +2541,7 @@ def test_job_pages_have_no_accessibility_violations(
 
     page.goto(f"{ui}/analysis/assignments/{r.job_id}")
     expect(page.get_by_text(f"Your {r.db} workload").first).to_be_visible(timeout=READY_MS)
-    page.get_by_role("button", name=re.compile("Review in detail")).click()
+    _open_per_query_view(page)
     rows = page.locator(".query-list-row__summary")
     expect(rows.first).to_be_visible(timeout=READY_MS)
     # Every row on the page, so each kind of detail (patterns, signals, optimization

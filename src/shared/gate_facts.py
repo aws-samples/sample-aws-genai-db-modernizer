@@ -1,11 +1,13 @@
 # Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
 # SPDX-License-Identifier: MIT-0
 
-"""The approval-gate figures, computed once from the reality-check status data (#1307, ADR-032).
+"""The approval-gate figures, computed once from the gate's status data (#1307, ADR-032).
 
 The gate shows each engine's query count before and after the reality check and its share of
-the total. ``scripts/print_summary.py`` prints the block from this; the block's renderer
-(``src.report.printed_summary``) only formats it.
+the total. ``src.shared.gate_status`` builds the status data for the assignment version the
+gate states. ``scripts/print_summary.py`` prints the block from this, and the block's
+renderer (``src.report.printed_summary``) only formats it; the assignments API returns the
+same figures as ``gate_facts`` for the UI gate (#2326).
 """
 
 from __future__ import annotations
@@ -69,15 +71,28 @@ def cache_candidate_reads(
     return {"reads": reads, "more": max(0, len(ranked) - len(reads))}
 
 
-def gate_block_facts(gate: Mapping[str, Any]) -> dict[str, Any]:
+def source_table_count(collector: Mapping[str, Any]) -> int:
+    """How many source tables the collection names (#2326): ``database_schema.tables``, or
+    the ``schema.tables`` an older collection wrote."""
+    schema = collector.get("database_schema") or collector.get("schema") or {}
+    tables = schema.get("tables") if isinstance(schema, Mapping) else None
+    return len(tables) if isinstance(tables, list) else 0
+
+
+def gate_block_facts(
+    gate: Mapping[str, Any], *, collector: Mapping[str, Any] | None = None
+) -> dict[str, Any]:
     """Per-engine rows, the totals and whether the reality check changed anything.
 
-    ``gate`` is the reality-check status data ``scripts/run_assessment.py`` prints
-    (``before_distribution``, ``after_distribution``, ``eliminated_engines``,
-    ``consolidations``, and for a scoped job ``engine_scope`` and ``unservable_queries``,
-    the count of queries no engine in the scope can serve, #1574). A row's ``dropped`` comes from ``eliminated_engines`` only, never
-    from a zero or nonzero count (an eliminated engine can keep a count for an out-of-scope
-    query). Rows run from the largest final count down, ties by engine id.
+    ``gate`` is the status data ``src.shared.gate_status.gate_status`` builds for the
+    assignment version the gate states (``before_distribution``, ``after_distribution``,
+    ``eliminated_engines``, ``consolidations``, and for a scoped job ``engine_scope`` and
+    ``unservable_query_count``, the count of queries no engine in the scope can serve,
+    #1574; the chat status line's older ``unservable_queries`` is read too). A row's
+    ``dropped`` comes from ``eliminated_engines`` only, never from a zero or nonzero count.
+    Rows run from the largest final count down, ties by engine id. ``source_table_count``
+    is the gate's own when it has one (the version's report states it), else counted from
+    ``collector`` when given (#2326), else None.
     """
     before = gate.get("before_distribution") or {}
     after = gate.get("after_distribution") or {}
@@ -107,7 +122,7 @@ def gate_block_facts(gate: Mapping[str, Any]) -> dict[str, Any]:
     )
     designed = [str(e) for e in gate.get("schema_design_engines") or []]
     cache = [e for e in designed if e in CACHE_ENGINES]
-    unservable = _count(gate.get("unservable_queries"))
+    unservable = _count(gate.get("unservable_query_count", gate.get("unservable_queries")))
     overlay = gate.get("cache_overlay")
     return {
         "rows": rows,
@@ -155,4 +170,11 @@ def gate_block_facts(gate: Mapping[str, Any]) -> dict[str, Any]:
         ),
         "unservable_query_count": unservable,
         "query_total_count": total_after + unservable,
+        # #2326: the source tables, for the UI gate's figures: the version's report's, else
+        # the collection's; None when neither was given (the chat gate block does not state it).
+        "source_table_count": (
+            gate["source_table_count"]
+            if isinstance(gate.get("source_table_count"), int)
+            else source_table_count(collector) if collector is not None else None
+        ),
     }

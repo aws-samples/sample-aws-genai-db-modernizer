@@ -76,7 +76,7 @@ global.IS_REACT_ACT_ENVIRONMENT = true;
 
 function payloads() {
   return {
-    job: { database_name: 'discourse' },
+    job: { database_name: 'discourse', progress: { stages: [{ name: 'WaitForAssignmentApproval', status: 'in-progress' }] } },
     assignments: {
       success: true,
       assignment: {
@@ -151,7 +151,7 @@ async function rows() {
     root.render(<AssignmentGate />);
   });
   const toDetail = [...container.querySelectorAll('button')].find((b) =>
-    b.textContent.includes('assignment-gate.actions.review-in-detail'),
+    b.textContent.includes('assignment-gate.actions.review-per-query'),
   );
   await act(async () => {
     toDetail.click();

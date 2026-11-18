@@ -84,6 +84,24 @@ def resolve_downstream_assignment_version(store: _Lister, database_name: str, jo
     return resolve_effective_assignment_version(store, database_name, job_id) or 1
 
 
+def latest_synthesis_version(store: _Lister, database_name: str, job_id: str) -> int | None:
+    """The highest assignment version a synthesis report was written for, or None.
+
+    Reads the ``synthesis/v<N>/report.json`` keys; the assignment gate compares it with
+    the effective assignment version to tell results of an earlier version from current ones.
+    """
+    prefix = f"{database_name}/{job_id}/synthesis/"
+    found: list[int] = []
+    for key in store.list_prefix(prefix):
+        parts = str(key).replace(prefix, "").split("/")
+        if len(parts) == 2 and parts[1] == "report.json" and parts[0].startswith("v"):
+            try:
+                found.append(int(parts[0][1:]))
+            except ValueError:
+                continue
+    return max(found) if found else None
+
+
 def synthesis_report_candidates(store: _Lister, database_name: str, job_id: str) -> list[str]:
     """Return synthesis report keys to try, most authoritative first.
 

@@ -88,6 +88,8 @@ def test_ties_sort_by_engine_id_and_an_empty_gate_has_no_rows_and_zero_shares() 
         "engine_scope": None,
         "unservable_query_count": 0,
         "query_total_count": 0,
+        # #2326: no collector given, so no source table count.
+        "source_table_count": None,
     }
 
 
@@ -187,3 +189,19 @@ def test_the_gate_facts_carry_the_cache_candidate_reads() -> None:
     bare = gate_block_facts({**GATE, "cache_overlay": {"query_count": 4}})
     assert bare["cache_candidates"]["reads"] == []
     assert bare["cache_candidates"]["more"] == 0
+
+
+def test_the_source_table_count_is_the_collectors_tables() -> None:
+    # #2326: the gate page states how many source tables the workload has; the facts count them.
+    collector = {"database_schema": {"tables": [{"name": "a"}, {"name": "b"}, {"name": "c"}]}}
+    assert gate_block_facts(GATE, collector=collector)["source_table_count"] == 3
+
+
+def test_an_old_collector_with_a_schema_block_still_counts_its_tables() -> None:
+    collector = {"schema": {"tables": [{"name": "a"}, {"name": "b"}]}}
+    assert gate_block_facts(GATE, collector=collector)["source_table_count"] == 2
+
+
+def test_no_collector_means_no_source_table_count() -> None:
+    assert gate_block_facts(GATE)["source_table_count"] is None
+    assert gate_block_facts(GATE, collector={})["source_table_count"] == 0

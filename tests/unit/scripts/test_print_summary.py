@@ -276,6 +276,8 @@ def test_a_job_whose_only_reality_check_is_another_lineages_is_a_json_error(
     assert "run reality check first" in json.loads(proc.stdout)["message"]
 
 
+# Existing behaviour (#1574), kept: #2326 only runs it before synthesis, as the gate is.
+@pytest.mark.passes_on_main
 def test_a_scoped_job_s_gate_states_the_scope_and_its_queries_with_no_engine(
     run_root: Path, tmp_path: Path
 ) -> None:
@@ -292,6 +294,9 @@ def test_a_scoped_job_s_gate_states_the_scope_and_its_queries_with_no_engine(
 
     root = tmp_path / "artifacts"
     shutil.copytree(run_root, root)
+    # The gate as printed before synthesis: the scope is added by hand below, and a report
+    # written without it would state the figures of the job without it (#2326).
+    shutil.rmtree(root / "wordpress" / "ps-job" / "synthesis")
     store = LocalArtifactStore(base_dir=str(root))
     triage_key = "wordpress/ps-job/referee-triage/triage.json"
     triage = store.read_json(triage_key)
