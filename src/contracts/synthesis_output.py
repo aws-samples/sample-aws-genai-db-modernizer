@@ -3188,9 +3188,11 @@ class TableSourceFacts(BaseModel):
     shared_risk_sentence: str | None = Field(
         None,
         description=(
-            "The one sentence every deliverable prints for the listed rows whose risk is the "
-            "standard one (shares_replica_risk), naming the replicated tables (#2321); None "
-            "when no row shares it. Filled in at read time for a block stored before it"
+            "The one sentence every deliverable prints for the replicated tables whose risk is "
+            "the standard one (shares_replica_risk), naming the replicated tables (#2321). "
+            "Also set when only a table nothing writes has a CDC copy, then led by 'Every "
+            "table another engine reads through CDC' (#2459); None when no table has one. Filled in at "
+            "read time for a block stored before it"
         ),
     )
     single_engine_tables: list[str] = Field(

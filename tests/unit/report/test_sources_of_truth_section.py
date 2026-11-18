@@ -347,3 +347,120 @@ def test_the_shared_risk_sentence_is_the_same_for_any_sources_and_any_number_of_
     )["facts"]["table_sources"]["shared_risk_sentence"]
     assert many == one
     assert _named_sources(one) == set()
+
+
+# #2459: a table nothing writes can have a CDC copy while no written table does. The
+# Table owners row shows CDC to and a replica read, so a risk note has to be there.
+def _only_an_unwritten_table_has_a_cdc_copy() -> dict[str, Any]:
+    return _report(
+        [_row("trailgear.Order", "dynamodb", {})],
+        [
+            _mapping("trailgear.Order", "dynamodb", "writes", [], 0),
+            _mapping("trailgear.Region", "aurora_postgresql", "retained", ["dynamodb"], 1),
+        ],
+    )
+
+
+def test_the_shared_risk_sentence_exists_when_only_an_unwritten_table_has_a_cdc_copy() -> None:
+    facts = _only_an_unwritten_table_has_a_cdc_copy()["facts"]
+    assert facts["table_sources"]["replicated_tables"] == []
+    assert facts["table_sources"]["shared_risk_sentence"] == (
+        f"Every table another engine reads through CDC has this risk. {shared_replica_risk_text()}"
+    )
+
+
+@pytest.mark.passes_on_main
+def test_a_table_without_a_cdc_copy_anywhere_gets_no_sentence() -> None:
+    report = _report(
+        [_row("trailgear.Order", "dynamodb", {})],
+        [_mapping("trailgear.Order", "dynamodb", "writes", [], 0)],
+    )
+    assert report["facts"]["table_sources"]["shared_risk_sentence"] is None
+
+
+def test_the_engineering_report_prints_the_note_when_only_an_unwritten_table_has_a_cdc_copy() -> (
+    None
+):
+    report = _only_an_unwritten_table_has_a_cdc_copy()
+    sentence = report["facts"]["table_sources"]["shared_risk_sentence"]
+    section = _section_md(render_engineering_report_md(report))
+    assert md_text(sentence) in section.splitlines()
+    assert "above" not in sentence
+    assert "| Table |" not in section
+
+
+def test_an_old_block_without_the_sentence_gets_it_at_read_time_from_the_owner_lines() -> None:
+    stored = copy.deepcopy(_only_an_unwritten_table_has_a_cdc_copy())
+    sentence = stored["facts"]["table_sources"]["shared_risk_sentence"]
+    assert sentence
+    for stale in (None, ""):
+        stored["facts"]["table_sources"]["shared_risk_sentence"] = stale
+        served = report_facts(stored)["table_sources"]["shared_risk_sentence"]
+        assert served == sentence
+    del stored["facts"]["table_sources"]["shared_risk_sentence"]
+    assert report_facts(stored)["table_sources"]["shared_risk_sentence"] == sentence
+
+
+def test_the_section_shows_with_no_written_table_and_says_what_it_holds() -> None:
+    """#2459 review: the gate lets the section through on the sentence alone, so the
+    heading must not read "(0 written tables)"."""
+    section = _section_md(render_engineering_report_md(_report([], _mappings_unwritten_only())))
+    assert section.splitlines()[0] == f"{MD_HEADING} (copies of tables nothing writes)"
+    assert "0 written" not in section
+    sentence = _report([], _mappings_unwritten_only())["facts"]["table_sources"]
+    assert md_text(sentence["shared_risk_sentence"]) in section.splitlines()
+
+
+def _mappings_unwritten_only() -> list[dict[str, Any]]:
+    return [_mapping("trailgear.Region", "aurora_postgresql", "retained", ["dynamodb"], 1)]
+
+
+def test_a_listed_row_with_its_own_risk_does_not_make_the_sentence_cover_no_table() -> None:
+    """#2459 review: an old report whose listed rows each keep their own risk, and no
+    table nothing writes has a CDC copy, gets no sentence. The listed row's own owner
+    line has also_read_by too, and must not count."""
+    stored = copy.deepcopy(
+        _report(
+            [_shipment(), _row("trailgear.Order", "dynamodb", {})],
+            [
+                _mapping("trailgear.Shipment", "dynamodb", "writes", ["aurora_postgresql"], 2),
+                _mapping("trailgear.Order", "dynamodb", "writes", [], 0),
+            ],
+        )
+    )
+    sources = stored["facts"]["table_sources"]
+    for row in sources["replicated_tables"]:
+        row["shares_replica_risk"] = False
+    sources["shared_risk_sentence"] = None
+    assert report_facts(stored)["table_sources"]["shared_risk_sentence"] is None
+
+
+def test_the_other_lead_names_a_table_past_the_listed_rows() -> None:
+    stored = copy.deepcopy(
+        _report(
+            [_shipment()],
+            [
+                _mapping("trailgear.Shipment", "dynamodb", "writes", ["aurora_postgresql"], 2),
+                _mapping("trailgear.Region", "aurora_postgresql", "retained", ["dynamodb"], 1),
+            ],
+        )
+    )
+    sources = stored["facts"]["table_sources"]
+    sources["replicated_tables"][0]["shares_replica_risk"] = False
+    sources["shared_risk_sentence"] = None
+    sentence = report_facts(stored)["table_sources"]["shared_risk_sentence"]
+    assert sentence.startswith("Every other table another engine reads through CDC has this risk.")
+
+
+def test_the_unwritten_cdc_fixture_holds_the_sentence_synthesis_writes() -> None:
+    """The results page test reads this block, so it cannot drift from Python."""
+    fixture = json.loads(_UNWRITTEN_CDC_FIXTURE.read_text())
+    expected = _only_an_unwritten_table_has_a_cdc_copy()["facts"]
+    assert fixture["table_sources"] == expected["table_sources"]
+    assert fixture["table_owner_lines"] == expected["table_owner_lines"]
+
+
+_UNWRITTEN_CDC_FIXTURE = (
+    Path(__file__).resolve().parents[3]
+    / "src/ui/src/components/__tests__/fixtures/unwrittenCdcTableSources.json"
+)

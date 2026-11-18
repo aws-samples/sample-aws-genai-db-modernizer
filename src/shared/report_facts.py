@@ -2925,29 +2925,58 @@ def shares_replica_risk(row: dict[str, Any]) -> bool:
     return row.get("risk") in (text, text.replace(_KEPT_CURRENT, _KEPT_BEFORE_2167, 1))
 
 
-def shared_risk_sentence(rows: Iterable[Mapping[str, Any]]) -> str | None:
-    """The one sentence every deliverable prints for the listed replicated tables whose
-    risk is the standard one (``shares_replica_risk``), or None when none is (#1170,
-    #2321). It names the replicated tables and no engine, so it reads true under the
-    engineering report's table of replicated tables and under every row with a CDC to
-    engine in the results page's Table owners table, which lists every mapped table
-    (a table nothing writes too, and past the 25 rows listed here). "other" when some
-    listed row keeps its own risk."""
+def shared_risk_sentence(
+    rows: Iterable[Mapping[str, Any]], owner_lines: Iterable[Mapping[str, Any]] = ()
+) -> str | None:
+    """The one sentence every deliverable prints for the replicated tables whose risk is
+    the standard one, or None when no table has a CDC copy (#1170, #2321, #2459). It
+    names no engine, so it reads true under the engineering report's table of replicated
+    tables and under every row with a CDC to column in the results page's Table owners
+    table, which lists every mapped table (a table nothing writes too, and past the 25
+    rows listed here). "other" when some listed row keeps its own risk.
+
+    ``owner_lines`` are the Table owners rows. A row of them with an ``also_read_by``
+    engine has a CDC copy, written or not. When no listed written table shares the risk
+    but such a row exists that is not itself listed, the sentence leads with "Every table
+    another engine reads through CDC", which holds for those rows and for any listed row
+    that keeps its own risk. A listed row's own copy never counts here."""
     shared = own = False
+    listed = set()
     for row in rows:
+        listed.add(row.get("table"))
         if row.get("shares_replica_risk") is True:
             shared = True
         else:
             own = True
-    if not shared:
-        return None
-    lead = "Every other replicated table above" if own else "Every replicated table above"
-    return f"{lead} has this risk. {shared_replica_risk_text()}"
+    if shared:
+        lead = "Every other replicated table above" if own else "Every replicated table above"
+        return f"{lead} has this risk. {shared_replica_risk_text()}"
+    if any(line.get("also_read_by") and line.get("table") not in listed for line in owner_lines):
+        lead = (
+            "Every other table another engine reads through CDC"
+            if own
+            else "Every table another engine reads through CDC"
+        )
+        return f"{lead} has this risk. {shared_replica_risk_text()}"
+    return None
 
 
 # The replica risk's copy phrase, and how a report written before #2167 stored it.
 _KEPT_CURRENT = "a copy kept current from "
 _KEPT_BEFORE_2167 = "a copy kept in sync from "
+
+
+def with_owner_line_risk(
+    sources: dict[str, Any] | None, owner_block: Mapping[str, Any] | None
+) -> dict[str, Any] | None:
+    """``facts.table_sources`` with its shared risk sentence also covering the Table owners
+    rows that have a CDC copy of a table nothing writes (#2459). The one place that
+    decides it, for synthesis and for the read-back of an older report."""
+    if sources is None:
+        return None
+    lines = [r for r in (owner_block or {}).get("table_lines") or [] if isinstance(r, Mapping)]
+    rows = [r for r in sources.get("replicated_tables") or [] if isinstance(r, Mapping)]
+    return {**sources, "shared_risk_sentence": shared_risk_sentence(rows, lines)}
 
 
 def table_source_facts(report: dict[str, Any]) -> dict[str, Any] | None:
@@ -4161,6 +4190,7 @@ def compute_report_facts(
         ),
         "critical_high_risks": sum(by_engine.get(e["engine"], 0) for e in no_move),
     }
+    owner_lines = table_ownership_facts(report, waves)
     return {
         "projected_monthly_cost_usd": projected_monthly_cost(report),
         "source_table_count": tables_analyzed,
@@ -4236,9 +4266,9 @@ def compute_report_facts(
         # #1410: the query groups the engineering report lists, and the rest.
         "query_group_counts": query_group_facts(report),
         # #992: each written table's source of truth, replicas and CDC risk.
-        "table_sources": table_source_facts(report),
+        "table_sources": with_owner_line_risk(table_source_facts(report), owner_lines),
         # #212: each mapped table's owner, the engines that also read it, its cache.
-        "table_owner_lines": table_ownership_facts(report, waves),
+        "table_owner_lines": owner_lines,
         # #471: the relational move's version and feature gaps.
         "relational_gaps": dict(relational_gaps) if relational_gaps is not None else None,
         # #1938: the routine-migration headline and the routines behind its risks

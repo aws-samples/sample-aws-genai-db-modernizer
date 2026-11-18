@@ -1,0 +1,56 @@
+{
+  "_comment": "The facts block synthesis writes when only a table nothing writes has a CDC copy (#2459). tests/unit/report/test_sources_of_truth_section.py checks it still matches; components/__tests__/TableOwnersCallout.test.js checks the results page prints its sentence.",
+  "table_sources": {
+    "written_table_count": 1,
+    "replicated_table_count": 0,
+    "split_write_table_count": 0,
+    "replicated_tables": [],
+    "shared_risk_sentence": "Every table another engine reads through CDC has this risk. Eventually consistent: a read on a replica reads a copy kept current from the table's owner (its source of truth) via CDC, so it sees a write only after CDC applies it, behind by the replication lag; a read that must see its own write should read from the owner.",
+    "more_replicated_count": 0,
+    "single_engine_tables": [
+      "trailgear.Order"
+    ],
+    "single_engine_table_count": 1,
+    "source_database_table_count": 0
+  },
+  "table_owner_lines": {
+    "table_count": 2,
+    "owned_table_counts": {
+      "aurora_postgresql": 1,
+      "dynamodb": 1
+    },
+    "no_owner_table_count": 0,
+    "also_read_table_count": 1,
+    "cached_table_count": 0,
+    "cache_engines": [],
+    "unwritten_owner_rule": "relational_step",
+    "table_lines": [
+      {
+        "table": "trailgear.Order",
+        "owner": "dynamodb",
+        "owner_basis": "writes",
+        "also_read_by": [],
+        "cached_by": null,
+        "replica_read_count": 0,
+        "target_engine": "dynamodb",
+        "target_table": null,
+        "aggregate_pattern": null,
+        "confidence_score": null
+      },
+      {
+        "table": "trailgear.Region",
+        "owner": "aurora_postgresql",
+        "owner_basis": "retained",
+        "also_read_by": [
+          "dynamodb"
+        ],
+        "cached_by": null,
+        "replica_read_count": 1,
+        "target_engine": "aurora_postgresql",
+        "target_table": null,
+        "aggregate_pattern": null,
+        "confidence_score": null
+      }
+    ]
+  }
+}
