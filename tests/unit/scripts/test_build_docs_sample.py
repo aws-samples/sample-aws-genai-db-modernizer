@@ -307,28 +307,18 @@ def test_backfill_gives_an_older_report_the_figures_this_run_stored(figure: str)
 
 # Facts added after the recorded run's release, which the reader fills in for it until
 # the next release re-records the sample (CONTRIBUTING's Releases, step 1).
-_NEWER_THAN_THE_RECORDING = (
-    "trade_off_topics",  # #1221
-    "cutover_responsibility",  # #2107
-    "slice_plan",  # #1128
-    "adoption",  # #1128
-    "engine_query_counts",  # #2358
-    "target_engines",  # #2345
-)
+_NEWER_THAN_THE_RECORDING: tuple[str, ...] = ()
 # Fields added inside a recorded fact, filled in the same way (#399).
 _NEWER_FIELDS_THAN_THE_RECORDING = {
-    "cache_layer": ("role_sentence",),
-    # #2166: the rule the lines follow, filled in from them for the recorded run.
-    "table_owner_lines": ("unwritten_owner_rule",),
     # #2321: the one shared risk sentence, from the recorded rows.
     "table_sources": ("shared_risk_sentence",),
 }
 # Fields added to each owner line, filled in the same way (#2321).
 _NEWER_OWNER_LINE_FIELDS_THAN_THE_RECORDING = ("replica_read_count",)
 # Fields added to each executive-summary exposure, filled in the same way (#2324).
-_NEWER_EXPOSURE_FIELDS_THAN_THE_RECORDING = ("count", "risk_ids", "waves")
+_NEWER_EXPOSURE_FIELDS_THAN_THE_RECORDING: tuple[str, ...] = ()
 # Fields added to each engine row, filled in the same way (#2162).
-_NEWER_ENGINE_FIELDS_THAN_THE_RECORDING = ("kept_in_sync_counted_under",)
+_NEWER_ENGINE_FIELDS_THAN_THE_RECORDING: tuple[str, ...] = ()
 
 
 def _recorded(facts: dict[str, Any]) -> dict[str, Any]:
@@ -723,7 +713,13 @@ def test_render_sample_run_stages_the_routing_records_for_the_detailed_report(
     assert "No assignment is saved next to this report" not in detailed.read_text(encoding="utf-8")
 
 
-def test_refresh_records_the_new_report_s_query_ids_in_the_baseline(tmp_path: Path) -> None:
+def test_refresh_records_the_new_report_s_query_ids_in_the_baseline(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # The refresh refuses a report naming this machine's login as a whole word. A CI
+    # runner's login is "runner", an ordinary word the recorded sample uses ("the queue
+    # runner"), so pin a login no report text uses: this test is about the baseline.
+    monkeypatch.setattr(build_docs_sample, "local_user_names", lambda: ("sample-login-0",))
     run_dir = tmp_path / "sample-run"
     shutil.copytree(RUN_DIR, run_dir)
     job = tmp_path / "job"

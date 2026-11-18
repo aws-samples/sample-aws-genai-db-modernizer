@@ -4,19 +4,19 @@
     "agent_name": "opensearch-analysis-agent",
     "agent_version": "1.0.0",
     "target_database": "opensearch",
-    "analysis_timestamp": "2026-10-26T20:38:08.773274",
-    "analysis_duration_seconds": 0.018994
+    "analysis_timestamp": "2026-11-18T09:55:44.956046",
+    "analysis_duration_seconds": 0.091103
   },
   "table_recommendations": [
     {
       "table_id": "wordpress.wp_actionscheduler_actions",
-      "confidence_score": 81,
-      "rationale": "[SEARCH] Detected patterns: wildcard search.",
+      "confidence_score": 87,
+      "rationale": "[SEARCH] Detected patterns: wildcard search. High query throughput (47 calls/sec) suits OpenSearch search scalability.",
       "score_breakdown": {
         "pattern_match_score": 90,
         "complexity_score": 100,
-        "performance_score": 40,
-        "cost_score": 75
+        "performance_score": 70,
+        "cost_score": 80
       },
       "supporting_patterns": [
         "os-02"
@@ -42,13 +42,13 @@
     },
     {
       "table_id": "wordpress.wp_actionscheduler_groups",
-      "confidence_score": 82,
-      "rationale": "[SEARCH] Detected patterns: wildcard search.",
+      "confidence_score": 87,
+      "rationale": "[SEARCH] Detected patterns: wildcard search. High query throughput (28 calls/sec) suits OpenSearch search scalability.",
       "score_breakdown": {
         "pattern_match_score": 90,
         "complexity_score": 100,
-        "performance_score": 40,
-        "cost_score": 85
+        "performance_score": 65,
+        "cost_score": 90
       },
       "supporting_patterns": [
         "os-02"
@@ -86,7 +86,7 @@
       },
       "supporting_patterns": null,
       "concerns": null,
-      "migration_complexity": "LOW"
+      "migration_complexity": "MEDIUM"
     },
     {
       "table_id": "wordpress.wp_comments",
@@ -144,22 +144,26 @@
         "performance_score": 0,
         "cost_score": 0
       },
-      "supporting_patterns": null,
+      "supporting_patterns": [
+        "os-07"
+      ],
       "concerns": [
         "multi-index-joins: Denormalize into a single OpenSearch index, or handle joins in the application layer by fetching related documents separately.",
+        "acid-transactions: Keep transactional data in the relational database. Use OpenSearch for read-heavy search/analytics queries only, with async sync from the source of truth.",
+        "audit-columns-only: Tables with timestamp columns used only for audit/metadata purposes are not time-series candidates. Evaluate for search suitability instead.",
         "Complex joins detected: must be handled in application layer or denormalized."
       ],
-      "migration_complexity": "MEDIUM"
+      "migration_complexity": "HIGH"
     },
     {
       "table_id": "wordpress.wp_posts",
       "confidence_score": 81,
-      "rationale": "[SEARCH] Detected patterns: wildcard search, time range query. High query throughput (25 calls/sec) suits OpenSearch search scalability.",
+      "rationale": "[SEARCH] Detected patterns: wildcard search, time range query. High query throughput (159 calls/sec) suits OpenSearch search scalability.",
       "score_breakdown": {
         "pattern_match_score": 90,
         "complexity_score": 90,
         "performance_score": 50,
-        "cost_score": 85
+        "cost_score": 80
       },
       "supporting_patterns": [
         "os-02",
@@ -167,14 +171,15 @@
       ],
       "concerns": [
         "multi-index-joins: Denormalize into a single OpenSearch index, or handle joins in the application layer by fetching related documents separately.",
+        "acid-transactions: Keep transactional data in the relational database. Use OpenSearch for read-heavy search/analytics queries only, with async sync from the source of truth.",
         "Complex joins detected: must be handled in application layer or denormalized."
       ],
-      "migration_complexity": "MEDIUM"
+      "migration_complexity": "HIGH"
     },
     {
       "table_id": "wordpress.wp_term_relationships",
       "confidence_score": 78,
-      "rationale": "[SEARCH] Detected patterns: wildcard search. High query throughput (17 calls/sec) suits OpenSearch search scalability.",
+      "rationale": "[SEARCH] Detected patterns: wildcard search. High query throughput (109 calls/sec) suits OpenSearch search scalability.",
       "score_breakdown": {
         "pattern_match_score": 90,
         "complexity_score": 85,
@@ -194,7 +199,7 @@
     {
       "table_id": "wordpress.wp_term_taxonomy",
       "confidence_score": 81,
-      "rationale": "[SEARCH] Detected patterns: wildcard search. High query throughput (20 calls/sec) suits OpenSearch search scalability.",
+      "rationale": "[SEARCH] Detected patterns: wildcard search. High query throughput (134 calls/sec) suits OpenSearch search scalability.",
       "score_breakdown": {
         "pattern_match_score": 90,
         "complexity_score": 95,
@@ -224,14 +229,15 @@
       "supporting_patterns": null,
       "concerns": [
         "multi-index-joins: Denormalize into a single OpenSearch index, or handle joins in the application layer by fetching related documents separately.",
+        "acid-transactions: Keep transactional data in the relational database. Use OpenSearch for read-heavy search/analytics queries only, with async sync from the source of truth.",
         "Complex joins detected: must be handled in application layer or denormalized."
       ],
-      "migration_complexity": "MEDIUM"
+      "migration_complexity": "HIGH"
     },
     {
       "table_id": "wordpress.wp_terms",
       "confidence_score": 82,
-      "rationale": "[SEARCH] Detected patterns: wildcard search. High query throughput (20 calls/sec) suits OpenSearch search scalability.",
+      "rationale": "[SEARCH] Detected patterns: wildcard search. High query throughput (131 calls/sec) suits OpenSearch search scalability.",
       "score_breakdown": {
         "pattern_match_score": 90,
         "complexity_score": 100,
@@ -250,31 +256,32 @@
     },
     {
       "table_id": "wordpress.wp_usermeta",
-      "confidence_score": 80,
-      "rationale": "[SEARCH] Detected patterns: wildcard search.",
+      "confidence_score": 81,
+      "rationale": "[SEARCH] Detected patterns: wildcard search. High query throughput (51 calls/sec) suits OpenSearch search scalability.",
       "score_breakdown": {
         "pattern_match_score": 90,
-        "complexity_score": 100,
-        "performance_score": 30,
-        "cost_score": 85
+        "complexity_score": 95,
+        "performance_score": 50,
+        "cost_score": 70
       },
       "supporting_patterns": [
         "os-02"
       ],
       "concerns": [
+        "acid-transactions: Keep transactional data in the relational database. Use OpenSearch for read-heavy search/analytics queries only, with async sync from the source of truth.",
         "audit-columns-only: Tables with timestamp columns used only for audit/metadata purposes are not time-series candidates. Evaluate for search suitability instead."
       ],
-      "migration_complexity": "MEDIUM"
+      "migration_complexity": "HIGH"
     },
     {
       "table_id": "wordpress.wp_users",
-      "confidence_score": 81,
-      "rationale": "[SEARCH] Detected patterns: wildcard search.",
+      "confidence_score": 83,
+      "rationale": "[SEARCH] Detected patterns: wildcard search. High query throughput (16 calls/sec) suits OpenSearch search scalability.",
       "score_breakdown": {
         "pattern_match_score": 90,
-        "complexity_score": 100,
-        "performance_score": 35,
-        "cost_score": 85
+        "complexity_score": 95,
+        "performance_score": 50,
+        "cost_score": 90
       },
       "supporting_patterns": [
         "os-02"
@@ -337,8 +344,10 @@
         "cost_score": 0
       },
       "supporting_patterns": null,
-      "concerns": null,
-      "migration_complexity": "LOW"
+      "concerns": [
+        "audit-columns-only: Tables with timestamp columns used only for audit/metadata purposes are not time-series candidates. Evaluate for search suitability instead."
+      ],
+      "migration_complexity": "MEDIUM"
     },
     {
       "table_id": "wordpress.wp_wc_download_log",
@@ -506,7 +515,7 @@
       },
       "supporting_patterns": null,
       "concerns": null,
-      "migration_complexity": "LOW"
+      "migration_complexity": "MEDIUM"
     },
     {
       "table_id": "wordpress.wp_wc_rate_limits",
@@ -634,13 +643,15 @@
         "cost_score": 0
       },
       "supporting_patterns": [
-        "os-05"
+        "os-05",
+        "os-07"
       ],
       "concerns": [
         "multi-index-joins: Denormalize into a single OpenSearch index, or handle joins in the application layer by fetching related documents separately.",
+        "acid-transactions: Keep transactional data in the relational database. Use OpenSearch for read-heavy search/analytics queries only, with async sync from the source of truth.",
         "Complex joins detected: must be handled in application layer or denormalized."
       ],
-      "migration_complexity": "MEDIUM"
+      "migration_complexity": "HIGH"
     },
     {
       "table_id": "wordpress.wp_woocommerce_order_items",
@@ -783,12 +794,23 @@
         "description": "LIKE/ILIKE wildcard queries on text columns. OpenSearch wildcard queries are more scalable than SQL LIKE on large datasets, with no full-table scan.",
         "query_ids": [
           "59163c184972d1ec4ad95106a5fc20c95d19dd06d071f956bf50e0c51ce12bdf",
+          "f4fcc7f6ef237eb98ceebe18f53efbc90ce9cc76e15fc20c0010447b449a1987",
+          "daf3cf855699fb96d3c4974d9c89277010387a94f495cb2de7d6bcddf5c9a05b",
+          "4f645105c95a51966b535a644a371aac350235acdb50b4855a340f4a1fde0969",
+          "4ef12cb63f5715f0892ced8670ee5337d1a39c30d8a7410cec692fdba3825243",
+          "9e4d9a2633de302260ad6c30e33eadfb1190fbc869eeff4be1a117cd0cf9d191",
+          "76a0890e96395f05b7755961d85296d7b26ad77483857c0fdb43749ca0b97f98",
           "97834e68ad8550b0db33ca13d5b4d2f5ee6d56b1acbcd3374a1fefad234ca8ca",
-          "797c033f24c616611d9d000bcef94d12e698d48aac1ea09e84c71805d1d47935",
-          "05e0232d3850a4672d21c95cdebf907cd787cdd0353fff9adee1cd4009b5a653",
-          "f4fcc7f6ef237eb98ceebe18f53efbc90ce9cc76e15fc20c0010447b449a1987"
+          "d987e55e2b6bf139b5e92619d338bee5c3b7a8b6712e447850586147660f7796",
+          "a72b965922848d2b5f697f9c499411910581b77921bbc4deaa2dc2e9473e937f",
+          "cb8ba3105ebeca9d3b9920e0bc1df2321af3e83ec91a8057f561a4a3a31aaebe",
+          "3e64e58573576aeb5150564ce7a65fb0941edbaccfd133d070fcce5c71441a6b",
+          "faa3737798fa780d112a14bb8327583e935a95ec81454f89a9ee9c2c95783f4e",
+          "f1f4d1593d283ae809a910d7038e58c205f565385c79b9741d7c9f3ad3587cb7",
+          "1cfc77aef96607706c761548e77858866f92af9b3438298f561dcf7d5985bf8e"
         ],
         "table_ids": [
+          "unknown",
           "wordpress.wp_actionscheduler_actions",
           "wordpress.wp_actionscheduler_groups",
           "wordpress.wp_posts",
@@ -798,7 +820,7 @@
           "wordpress.wp_usermeta",
           "wordpress.wp_users"
         ],
-        "frequency_percent": 4.67
+        "frequency_percent": 9.2
       },
       {
         "pattern_id": "os-05",
@@ -816,7 +838,33 @@
           "wordpress.wp_woocommerce_order_itemmeta",
           "wordpress.wp_woocommerce_order_items"
         ],
-        "frequency_percent": 3.74
+        "frequency_percent": 2.45
+      },
+      {
+        "pattern_id": "os-07",
+        "pattern_type": "high-ingest",
+        "confidence": "HIGH",
+        "description": "High-throughput INSERT workload (>= 10 calls/second per table). OpenSearch bulk indexing API is designed for sustained high-ingest. Auto-sharding and refresh interval tuning support this pattern.",
+        "query_ids": [
+          "126679dc6aaed0c3c05926ea8c60b79f6b00a518389064878c17fe74a60bef8e"
+        ],
+        "table_ids": [
+          "wordpress.wp_postmeta"
+        ],
+        "frequency_percent": 0.61
+      },
+      {
+        "pattern_id": "os-07",
+        "pattern_type": "high-ingest",
+        "confidence": "HIGH",
+        "description": "High-throughput INSERT workload (>= 10 calls/second per table). OpenSearch bulk indexing API is designed for sustained high-ingest. Auto-sharding and refresh interval tuning support this pattern.",
+        "query_ids": [
+          "2caa2be1b7b5d3ef7d5dc9a6aba0f82df0e9b01383258d373dc93ee23147ba8a"
+        ],
+        "table_ids": [
+          "wordpress.wp_woocommerce_order_itemmeta"
+        ],
+        "frequency_percent": 0.61
       }
     ],
     "anti_patterns_detected": [
@@ -829,11 +877,12 @@
           "a0b655ea2f80c5bc688a142e3e03956031de6a491787f4e8a847ae67c65fbef0",
           "fc99562bfa4be32418b08a3ab1ce8b7763f2bd698ff428782e9428a8fd6e3a98",
           "d5ae7abb4fb5271f15a4193c025bb6c2bd745ff7e0806d140f89069876cd7ee7",
-          "4481cc0ca988374076baa83caa074ab5f9197db98fae7072c2cc068e0bdba8ba",
+          "f86b4be6598d18fabc947fb1c716f6221a3620a687940154774728dbbc8ae730",
           "cb3300c6fc11f0dd851bbee427ed58a930926ea9b925a271e1699f5bc09814ee",
+          "4481cc0ca988374076baa83caa074ab5f9197db98fae7072c2cc068e0bdba8ba",
+          "f37cfe518f83669067b5e9c57f68ced43ba9175a37b7b64f1122a20a46d6bf2e",
           "97834e68ad8550b0db33ca13d5b4d2f5ee6d56b1acbcd3374a1fefad234ca8ca",
           "3f9f6bab31e30e6cab0f93d7153b166e0e1a509e72b8099434729aae955182c8",
-          "f37cfe518f83669067b5e9c57f68ced43ba9175a37b7b64f1122a20a46d6bf2e",
           "4b79d7a8be865f8758729140de11cba4dff2b0262c6b258523f6dac6e496720a",
           "25e3c7550c3775ca1f60248bfbaefc90e027c17f4c54084860dccd6776fb8a16",
           "119b7fbf3a2efd757e864dc02fa2b5a1b682049fe3a552f8f95d320c20b4de1e",
@@ -858,12 +907,25 @@
         "severity_weight": 0.6,
         "description": "Frequent UPDATE/DELETE operations (> 1 CPS) indicate mutable data with ACID transactional requirements. OpenSearch has no multi-document transactions: each document write stands alone (OpenSearch documentation, Bulk API).",
         "query_ids": [
+          "ac34da34fb23498bd1392f02403e9dbdd0d28d3cfef236e6d3c4c6ffe6e82ad2",
+          "216d92b3f4e7091a2aa00b97ff8d389edbc5c148efcbed8cd6a1c3e408206051",
+          "ea7778dba09d12bdf18da33ac8afa62a59569bdad219b4bc65fa1a767c01de40",
           "0452bed28b31e64ae9294ddef1d5e82c3166557fd4c02b6e7d4140a11170af82",
-          "ac34da34fb23498bd1392f02403e9dbdd0d28d3cfef236e6d3c4c6ffe6e82ad2"
+          "214edb87c83db8545897614b3831eeab765103dccd023b451a3dd971dee4036a",
+          "4b856e296129b8dcca701ba2561310f1d1f1768eb5986cc43d1edde63f937226",
+          "a783694619352b153b690ccc07f9dae79c9caa43ecefcceae3d486fe49c7c1c8",
+          "f2a4e87e8f0ff10c09fe3286e6f8e830af809b48c7d5e57d4a4061299d0d022d",
+          "41b2f2d13bca108b52d8bd32b1c7758a9899a7be53f8a3454e95da3749ae3429",
+          "3c5c8a793663a2b214fc0a46b8016d075a2462b371b5a21117ce8a4d517508d4"
         ],
         "table_ids": [
           "wordpress.wp_options",
-          "wordpress.wp_woocommerce_api_keys"
+          "wordpress.wp_postmeta",
+          "wordpress.wp_posts",
+          "wordpress.wp_termmeta",
+          "wordpress.wp_usermeta",
+          "wordpress.wp_woocommerce_api_keys",
+          "wordpress.wp_woocommerce_order_itemmeta"
         ],
         "recommendation": "Keep transactional data in the relational database. Use OpenSearch for read-heavy search/analytics queries only, with async sync from the source of truth."
       },
@@ -873,29 +935,41 @@
         "severity_weight": 0.1,
         "description": "Timestamp columns (created_at, updated_at, event_time, etc.) used only in equality checks, not range queries. This is an audit/metadata pattern, not a time-series workload. Guard rail to prevent false time-series classification; guidance only, since no OpenSearch limit applies (OpenSearch documentation, Date field type).",
         "query_ids": [
-          "0452bed28b31e64ae9294ddef1d5e82c3166557fd4c02b6e7d4140a11170af82",
           "59163c184972d1ec4ad95106a5fc20c95d19dd06d071f956bf50e0c51ce12bdf",
-          "06584926ec16d35bcd9ad7d2351721be47c4216c1c3b543f1d151ce1f1dbb616",
           "7ead756f0ea0ffe5cb6550cacd3b5efa6f65539d8a3cfb37dc66346a3ff2ad3f",
+          "06584926ec16d35bcd9ad7d2351721be47c4216c1c3b543f1d151ce1f1dbb616",
+          "9438ed54a7afc46837cd821ba15c7ed80b577191d387f314e3dc5c87a236011a",
           "59163c184972d1ec4ad95106a5fc20c95d19dd06d071f956bf50e0c51ce12bdf",
+          "0452bed28b31e64ae9294ddef1d5e82c3166557fd4c02b6e7d4140a11170af82",
+          "f4fcc7f6ef237eb98ceebe18f53efbc90ce9cc76e15fc20c0010447b449a1987",
+          "4f645105c95a51966b535a644a371aac350235acdb50b4855a340f4a1fde0969",
+          "a3eb3282c1f00966e30dec79d4d260b16aa3c4ddef449e64a31f9c8e360c35b2",
+          "5da98ce7cdba2cdf5aef46ad7a56bb7c9b1b8a1c1cdd1a3165f207e4d7978300",
+          "f4fcc7f6ef237eb98ceebe18f53efbc90ce9cc76e15fc20c0010447b449a1987",
+          "4f645105c95a51966b535a644a371aac350235acdb50b4855a340f4a1fde0969",
           "de9a7ba3598eaa8b41839c2fce3889985e5636fc7489653be3b59378bf4779da",
+          "19e8085f9593fd708942f6f18f918808f01597be3dd562297646e785e583b4a2",
+          "5ae79e002ae4ab9da1c6dbda1ffe2fc14c7e557732c6ce9631d41b9ff377e8dd",
+          "611079ff89c7fcbd01ed195b38f92d5b5961b531565b82b5e61f3d2730c78fa2",
+          "ee8b8e2169a3ca339065e40d5a1841622a886351d25561f4ece1807ed3cdcbe2",
           "b05af520688a1a5f54ba51896e5a079d05fde97ea81aa1f8618c9eed2e8e6212",
           "97834e68ad8550b0db33ca13d5b4d2f5ee6d56b1acbcd3374a1fefad234ca8ca",
           "97834e68ad8550b0db33ca13d5b4d2f5ee6d56b1acbcd3374a1fefad234ca8ca",
           "97834e68ad8550b0db33ca13d5b4d2f5ee6d56b1acbcd3374a1fefad234ca8ca",
-          "f4fcc7f6ef237eb98ceebe18f53efbc90ce9cc76e15fc20c0010447b449a1987",
-          "f4fcc7f6ef237eb98ceebe18f53efbc90ce9cc76e15fc20c0010447b449a1987"
+          "8bc823cb67ed85abd3c5f224b718c22304f8adf7970d5a2d652c0c8c7f3cb6f7"
         ],
         "table_ids": [
           "wordpress.wp_actionscheduler_actions",
           "wordpress.wp_actionscheduler_groups",
           "wordpress.wp_actionscheduler_logs",
           "wordpress.wp_comments",
+          "wordpress.wp_postmeta",
           "wordpress.wp_term_relationships",
           "wordpress.wp_term_taxonomy",
           "wordpress.wp_terms",
           "wordpress.wp_usermeta",
           "wordpress.wp_users",
+          "wordpress.wp_wc_customer_lookup",
           "wordpress.wp_woocommerce_api_keys"
         ],
         "recommendation": "Tables with timestamp columns used only for audit/metadata purposes are not time-series candidates. Evaluate for search suitability instead."
@@ -915,7 +989,7 @@
         "source": "AWS Price List",
         "region": "us-east-1",
         "pricing_model": "on-demand",
-        "retrieved_on": "2026-10-25"
+        "retrieved_on": "2026-11-04"
       }
     },
     "pricing_assumptions": [

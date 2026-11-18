@@ -1,12 +1,12 @@
 # WordPress sample run
 
-The recorded assessment the help site's [Sample report](https://aws-samples.github.io/sample-aws-genai-db-modernizer/sample/) renders: one complete `/modernize` run of the WordPress sample as it was bundled before #1955 (the earlier, 107-statement collection; `docs/examples/wordpress/wordpress.zip` now holds a newer one).
+The recorded assessment the help site's [Sample report](https://aws-samples.github.io/sample-aws-genai-db-modernizer/sample/) renders: one complete `/modernize` run of the WordPress sample bundled in `docs/examples/wordpress/wordpress.zip` (the 163-statement collection of #1955).
 
 | | |
 |---|---|
-| Release | v0.4.0-beta.1 |
+| Release | v0.5.0-beta.1 |
 | How it ran | Claude Code, interactive `/modernize` (`--llm-mode external`): Claude wrote the reality-check review, the schema designs (Aurora MySQL, DynamoDB with its design review, ElastiCache) and the executive summary; the analysis and the query routing are deterministic, as in every run |
-| Synthesis contract | 1.69 |
+| Synthesis contract | 1.99 |
 | Assignment version | v2 (after the reality check) |
 
 ## What is here
@@ -20,7 +20,13 @@ Only what the deliverable renderers read, under the job folder's own layout:
 
 The rest of the job (per-phase outputs, the context graph, model inputs and responses) is not needed to render the deliverables and is not committed.
 
-The recorded run predates #1893: its call rates divide each statement's execution count by 24 hours. A run with the current code divides it by the statement's own first-to-last-seen window in the collection, so its rates, cache candidates and costs come from a different window than these (a deterministic run of the bundled collection projects $1,178.33 a month; this report shows $512.58). Refreshing the sample for the next release brings the page in line. It also predates the refreshed collection in `wordpress.zip` (#1955): it was recorded from the earlier, 107-statement one, and is re-recorded from the current one by the maintainer. <!-- claim: tests/unit/shared/test_rate_window.py::test_the_observed_window_divides_the_count, tests/e2e/test_executive_summary_structure.py::test_the_summary_has_the_three_parts_with_the_facts_figures -->
+## Sample run for v0.5.0-beta.1
+
+This folder holds the sample run for v0.5.0-beta.1. Use this run from now on, because it carries richer descriptions and more information.
+
+## Sample run for v0.4.0-beta.1
+
+The v0.4.0-beta.1 run is in the [sample-run folder at the v0.4.0-beta.3 tag](https://github.com/aws-samples/sample-aws-genai-db-modernizer/tree/v0.4.0-beta.3/docs/examples/wordpress/sample-run) on GitHub. Its format is still supported, so a report like it still loads, but use the v0.5.0-beta.1 run: its data is richer. <!-- claim: tests/unit/shared/test_adoption_facts.py::test_a_report_written_before_the_slice_plan_loads_and_is_filled_at_read_time, tests/contract/test_old_job_loads.py::test_every_stored_file_reads_and_every_contract_loads -->
 
 ## How it is used
 
