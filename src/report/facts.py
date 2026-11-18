@@ -145,7 +145,8 @@ def report_facts(report: dict[str, Any]) -> dict[str, Any]:
     ``table_owner_lines.table_lines[].replica_read_count`` or
     ``table_sources.shared_risk_sentence``, one written before #1329 no
     ``unservable.no_engine_in_scope_query_count``, one written before #1410 no
-    ``query_group_counts``, and one written before
+    ``query_group_counts``, one written before #2325 no ``query_group_counts.table_queries``,
+    and one written before
     #1146 no ``query_pattern_counts`` (filled in from ``query_pattern_groups``: None for a
     report with no grouping, whose deliverables leave the query patterns out); those
     figures are filled in from ``query_groups``, ``ranking``, the resolved risks, the
@@ -159,6 +160,19 @@ def report_facts(report: dict[str, Any]) -> dict[str, Any]:
         if "query_group_counts" not in facts:
             # A block written before #1410: the query group counts, from query_groups.
             missing["query_group_counts"] = query_group_facts(report)
+        elif isinstance(facts["query_group_counts"], dict) and not facts["query_group_counts"].get(
+            "table_queries"
+        ):
+            # A block written before #2325: the per-table query rows, from the same
+            # function. The value decides, not the key: a block re-dumped through the
+            # contract reads the field back as an empty list. A report whose source
+            # queries name no tables has no rows to fill, and reads back as stored.
+            rows = (query_group_facts(report) or {}).get("table_queries")
+            if rows:
+                missing["query_group_counts"] = {
+                    **facts["query_group_counts"],
+                    "table_queries": rows,
+                }
         if "moving_query_count" not in facts:
             moves = query_move_facts(report, facts["engines"])
             missing.update(moves)

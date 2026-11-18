@@ -30,7 +30,11 @@ from src.report.facts import report_facts
 from src.shared.adoption_facts import adoption_facts, slice_plan_facts
 from src.shared.cutover_message import CUTOVER_MESSAGE
 from src.shared.exposure_wording import group_exposures
-from src.shared.report_facts import engine_query_count_facts, trade_off_topic_facts
+from src.shared.report_facts import (
+    engine_query_count_facts,
+    query_group_facts,
+    trade_off_topic_facts,
+)
 from tests.unit.agents.schema_design.valid_designs import ddb_design, ddb_pattern, ddb_table
 from tests.unit.report.cache_role import as_read_back
 
@@ -108,6 +112,10 @@ def test_a_report_written_before_1_72_validates_and_reads_back_unchanged() -> No
     # #2324: and the executive summary's exposures, grouped and counted.
     brief = stored["executive_brief"]
     assert facts["executive_brief"] == {**brief, "exposures": group_exposures(brief["exposures"])}
+    # #2325: this report's source queries name no tables, so it has no per-table query
+    # rows to fill and its query group counts read back as stored.
+    assert "table_queries" not in stored["query_group_counts"]
+    assert (query_group_facts(old) or {})["table_queries"] == []
     filled = (
         "trade_off_topics",
         SAID,

@@ -168,7 +168,7 @@ export const tableKey = (name) => String(name || '').replace(/[`"[\]]/g, '').tri
 
 /**
  * Each table with the queries the facts say the engine serves on it
- * (`facts.query_groups.table_queries`: ids and a count) and its own stored statements
+ * (`facts.query_group_counts.table_queries`: ids and a count) and its own stored statements
  * (`ddl_statements`, null for a design saved before the field). The count is the fact's;
  * `queries` is the same ids joined to the query rows the page already holds. `key` is the
  * row's position, because two schemas can share a table name.

@@ -312,6 +312,8 @@ _NEWER_THAN_THE_RECORDING: tuple[str, ...] = ()
 _NEWER_FIELDS_THAN_THE_RECORDING = {
     # #2321: the one shared risk sentence, from the recorded rows.
     "table_sources": ("shared_risk_sentence",),
+    # #2325: the per-table query rows, filled in from the query groups.
+    "query_group_counts": ("table_queries",),
 }
 # Fields added to each owner line, filled in the same way (#2321).
 _NEWER_OWNER_LINE_FIELDS_THAN_THE_RECORDING = ("replica_read_count",)
