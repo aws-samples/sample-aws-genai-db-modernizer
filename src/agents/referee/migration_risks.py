@@ -66,7 +66,7 @@ rule                       severity  raised when
                                      risk per engine
                            LOW       every noted object is a trigger or routine on wave 1's
                                      engine for a homogeneous source: it carries over with
-                                     the schema and is tested after cutover (#1642)
+                                     the schema and is tested on the target (#1642)
                                      (a ``duplicate_index_name`` note is no source logic and
                                      raises no risk, #2402)
 ``design.hot_partition``   HIGH      a partition key value's estimated load is above its
@@ -222,8 +222,9 @@ def _names(engines: Iterable[str]) -> str:
     return _join([display_engine(e) for e in engines])
 
 
-def _start(wave: int | None) -> str:
-    return f"Wave {wave} starts" if wave else "cutover"
+def _before_start(wave: int | None) -> str:
+    """ " before Wave N starts", or nothing for a risk in no wave: never a cutover time (#2434)."""
+    return f" before Wave {wave} starts" if wave else ""
 
 
 def _wave_number(wave: Mapping[str, Any]) -> int | None:
@@ -717,7 +718,7 @@ def _close_call_risks(ctx: _Context, query_traces: Mapping[str, Any] | None) -> 
         description = close_call_description(f"{head}{decided}", parts, _them(total))
         mitigation = (
             f"Confirm the engine for {_these(total, 'query', 'queries')} in the assignment "
-            f"review before {_start(wave)}, using the close calls section; move any that fit "
+            f"review{_before_start(wave)}, using the close calls section; move any that fit "
             "the runner-up better."
         )
         out.append(
@@ -758,8 +759,8 @@ def _tie_risks(ctx: _Context, tied_queries: list[dict[str, Any]] | None) -> list
                 f"{display_engine(placeholder) if placeholder else 'a placeholder engine'} "
                 "until you choose.",
                 f"Choose {' or '.join(display_engine(e) for e in tied)} for "
-                f"{_these(len(qids), 'query', 'queries')} in the assignment review before "
-                f"{_start(wave)}.",
+                f"{_these(len(qids), 'query', 'queries')} in the assignment review"
+                f"{_before_start(wave)}.",
                 {tb for q in qids for tb in ctx.tables_of.get(q, ())},
                 qids,
                 wave,

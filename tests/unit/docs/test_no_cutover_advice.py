@@ -66,6 +66,12 @@ BANNED = {
     # stay only as pinned legacy aliases (LEGACY_ALIASES).
     "cutover script": r"\bcutover[\s_-]+scripts?\b",
     "old trigger script name": r"\bcutover[\s_-]+(?:routines?|check|resume)\b|\bcutover\.md\b",
+    # #2434: a condition the cutover waits on ("its cutover waits until ...", "each wave cuts
+    # over only once its gate passes"), and "safe" as a claim about approving or moving.
+    "cutover condition": r"\bcut\s*over\s+(?:waits?|happens?|starts?|follows?|proceeds?)\b"
+    r"|\bcuts?\s+over\s+(?:only\s+)?(?:once|when|after|until|if)\b|\bcuts?\s+over\s+only\b",
+    "safe to approve": r"\bsafe\s+to\s+(?:approve|start|begin|proceed|move|switch|migrate|go|cut)\b"
+    r"|\b(?:wave|move|step|plan|migration|target)\s+is\s+(?:now\s+)?safe\b",
 }
 #: The labels for #1948's names, checked in every tracked file (``test_no_tracked_file_...``).
 OLD_NAMES = ("cutover script", "old trigger script name")
@@ -216,6 +222,8 @@ ASSESSMENT_SOURCES = (
     # #1801: step 1's gate evidence in the deliverables, and the results page's copy of it.
     "src/report/step_gate.py",
     "src/ui/src/components/StepGateEvidence.js",
+    # #2434: the executive brief's Decision sentence.
+    "src/shared/executive_brief.py",
 )
 
 
@@ -456,6 +464,71 @@ def test_the_rendered_deliverables_give_no_cutover_advice(name: str) -> None:
     report = REPORTS[name]()
     found = _findings(f"{name} engineering", render_engineering_report_md(report), deliverable=True)
     found += _findings(f"{name} executive", normalize(executive_text(report)), deliverable=True)
+    assert found == []
+
+
+# #2434: the executive brief's Decision sentences before the fix, whole and in part.
+DECISION_ADVICE = [
+    "Decision: approve wave 1. It is safe to approve: it moves the database 1:1 to Aurora "
+    "MySQL, the same engine family as MySQL, with its current data model, and its cutover "
+    "waits until schema and data parity is validated against the source.",
+    "It is safe to approve: it converts the SQL dialect and data types from SQL Server to "
+    "Aurora PostgreSQL and keeps the current data model, and its cutover waits until the "
+    "schema and query translation is validated.",
+    "Decision: approve wave 2. It is safe to approve: ElastiCache moves no data and can be "
+    "switched off again.",
+    "Decision: approve wave 1. Each wave cuts over only once its validation gate passes.",
+    "The wave is safe to start.",
+    "The move is safe.",
+    "Its cutover happens after the parity check.",
+    "Wave 2 cuts over when its gate passes.",
+]
+
+
+@pytest.mark.parametrize("advice", DECISION_ADVICE)
+def test_the_guard_catches_the_decision_sentences_cutover_advice(advice: str) -> None:
+    assert _findings("sample", advice, deliverable=True) != []
+    assert _findings("sample", advice) != []  # and in step 1's text
+
+
+def _strings(value: object) -> list[str]:
+    if isinstance(value, str):
+        return [value]
+    if isinstance(value, dict):
+        return [s for v in value.values() for s in _strings(v)]
+    if isinstance(value, list):
+        return [s for v in value for s in _strings(v)]
+    return []
+
+
+@pytest.mark.parametrize("name", sorted(REPORTS))
+def test_the_report_facts_give_no_cutover_advice(name: str) -> None:
+    """#2434: every string report.json's facts carry, and the executive summary the
+    deliverables word from them (its Decision included)."""
+    from src.report.facts import report_facts
+    from src.shared.executive_brief import compose_summary, executive_brief_text
+
+    report = REPORTS[name]()
+    facts = report_facts(report)
+    brief = executive_brief_text(facts, "shop")
+    assert brief and "\n\nDecision: approve wave 1. " in brief
+    strings = [*_strings(facts), brief, compose_summary(str(report.get("summary") or ""), facts)]
+    found = [f for s in strings for f in _findings(f"{name} facts", s, deliverable=True)]
+    assert found == []
+
+
+def test_the_ui_strings_give_no_cutover_advice() -> None:
+    """#2434: en.json, checked as deliverable text. "ready" counts there only as a readiness
+    claim ("Assessment ready, waiting for your review" is the job's state, not the move's)."""
+    import json
+
+    strings = json.loads((REPO / "src/ui/src/locales/en.json").read_text())
+    found = [
+        f
+        for key, text in strings.items()
+        for f in _findings(key, text, skip=("ready",), deliverable=True)
+        + _findings(key, text, model_text=True)
+    ]
     assert found == []
 
 
