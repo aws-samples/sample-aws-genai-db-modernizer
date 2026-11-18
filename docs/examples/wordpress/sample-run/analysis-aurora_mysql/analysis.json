@@ -4,19 +4,19 @@
     "agent_name": "aurora-mysql-analysis-agent",
     "agent_version": "1.0.0",
     "target_database": "aurora_mysql",
-    "analysis_timestamp": "2026-10-26T20:38:08.827461",
-    "analysis_duration_seconds": 0.042621
+    "analysis_timestamp": "2026-11-18T09:55:45.196526",
+    "analysis_duration_seconds": 0.217743
   },
   "table_recommendations": [
     {
       "table_id": "wordpress.wp_actionscheduler_actions",
-      "confidence_score": 81,
-      "rationale": "Detected relational patterns: pagination, simple join, standard crud, batch in list.",
+      "confidence_score": 89,
+      "rationale": "Detected relational patterns: pagination, simple join, standard crud, batch in list. Active workload (47 calls/sec) benefits from Aurora MySQL query optimizer.",
       "score_breakdown": {
         "pattern_match_score": 89,
         "complexity_score": 100,
-        "performance_score": 40,
-        "cost_score": 75
+        "performance_score": 80,
+        "cost_score": 80
       },
       "supporting_patterns": [
         "aurora-common-08",
@@ -43,17 +43,18 @@
     },
     {
       "table_id": "wordpress.wp_actionscheduler_groups",
-      "confidence_score": 84,
-      "rationale": "Detected relational patterns: pagination, simple join, batch in list.",
+      "confidence_score": 87,
+      "rationale": "Detected relational patterns: pagination, simple join, standard crud, batch in list. Active workload (28 calls/sec) benefits from Aurora MySQL query optimizer.",
       "score_breakdown": {
         "pattern_match_score": 89,
         "complexity_score": 100,
-        "performance_score": 50,
-        "cost_score": 85
+        "performance_score": 65,
+        "cost_score": 90
       },
       "supporting_patterns": [
         "aurora-common-08",
         "aurora-common-09",
+        "aurora-common-10",
         "aurora-common-11"
       ],
       "concerns": null,
@@ -61,15 +62,17 @@
     },
     {
       "table_id": "wordpress.wp_actionscheduler_logs",
-      "confidence_score": 47,
-      "rationale": "No strong relational patterns detected for wordpress.wp_actionscheduler_logs. This table may not benefit significantly from Aurora MySQL.",
+      "confidence_score": 64,
+      "rationale": "Detected relational patterns: standard crud.",
       "score_breakdown": {
-        "pattern_match_score": 20,
+        "pattern_match_score": 60,
         "complexity_score": 90,
         "performance_score": 35,
-        "cost_score": 55
+        "cost_score": 65
       },
-      "supporting_patterns": null,
+      "supporting_patterns": [
+        "aurora-common-10"
+      ],
       "concerns": [
         "no-relational-need: Evaluate whether this table benefits from Aurora's relational features. If it's purely key-value access, DynamoDB offers better cost/performance. If it's a hot lookup, ElastiCache is more appropriate.",
         "single-access-pattern-table: Consider DynamoDB for simple key-value access or ElastiCache for sub-millisecond lookups. Aurora adds connection overhead and query parsing cost for access patterns that don't need them."
@@ -78,42 +81,43 @@
     },
     {
       "table_id": "wordpress.wp_commentmeta",
-      "confidence_score": 65,
-      "rationale": "Detected relational patterns: batch in list.",
+      "confidence_score": 79,
+      "rationale": "Detected relational patterns: aggregation analytics, simple join, standard crud, batch in list.",
       "score_breakdown": {
-        "pattern_match_score": 70,
+        "pattern_match_score": 80,
         "complexity_score": 100,
-        "performance_score": 5,
-        "cost_score": 65
+        "performance_score": 45,
+        "cost_score": 85
       },
       "supporting_patterns": [
+        "aurora-common-02",
+        "aurora-common-09",
+        "aurora-common-10",
         "aurora-common-11"
       ],
-      "concerns": [
-        "no-relational-need: Evaluate whether this table benefits from Aurora's relational features. If it's purely key-value access, DynamoDB offers better cost/performance. If it's a hot lookup, ElastiCache is more appropriate.",
-        "single-access-pattern-table: Consider DynamoDB for simple key-value access or ElastiCache for sub-millisecond lookups. Aurora adds connection overhead and query parsing cost for access patterns that don't need them."
-      ],
-      "migration_complexity": "HIGH"
+      "concerns": null,
+      "migration_complexity": "LOW"
     },
     {
       "table_id": "wordpress.wp_comments",
-      "confidence_score": 73,
-      "rationale": "Detected relational patterns: aggregation analytics, pagination, key value lookup.",
+      "confidence_score": 80,
+      "rationale": "Detected relational patterns: aggregation analytics, pagination, simple join, standard crud, batch in list, key value lookup.",
       "score_breakdown": {
-        "pattern_match_score": 82,
+        "pattern_match_score": 89,
         "complexity_score": 95,
-        "performance_score": 30,
-        "cost_score": 60
+        "performance_score": 45,
+        "cost_score": 75
       },
       "supporting_patterns": [
         "aurora-common-02",
         "aurora-common-08",
+        "aurora-common-09",
+        "aurora-common-10",
+        "aurora-common-11",
         "aurora-common-12"
       ],
-      "concerns": [
-        "no-relational-need: Evaluate whether this table benefits from Aurora's relational features. If it's purely key-value access, DynamoDB offers better cost/performance. If it's a hot lookup, ElastiCache is more appropriate."
-      ],
-      "migration_complexity": "MEDIUM"
+      "concerns": null,
+      "migration_complexity": "LOW"
     },
     {
       "table_id": "wordpress.wp_links",
@@ -131,13 +135,13 @@
     },
     {
       "table_id": "wordpress.wp_options",
-      "confidence_score": 78,
-      "rationale": "Detected relational patterns: pagination, standard crud, key value lookup, upsert duplicate key. Active workload (93 calls/sec) benefits from Aurora MySQL query optimizer.",
+      "confidence_score": 75,
+      "rationale": "Detected relational patterns: pagination, standard crud, key value lookup, upsert duplicate key. Active workload (655 calls/sec) benefits from Aurora MySQL query optimizer.",
       "score_breakdown": {
         "pattern_match_score": 80,
-        "complexity_score": 95,
+        "complexity_score": 90,
         "performance_score": 50,
-        "cost_score": 80
+        "cost_score": 65
       },
       "supporting_patterns": [
         "aurora-common-08",
@@ -146,18 +150,16 @@
         "aurora-mysql-03"
       ],
       "concerns": [
-        "high-frequency-pk-lookup: Migrate high-frequency PK lookups to DynamoDB for predictable single-digit-millisecond latency at scale (microseconds need DynamoDB Accelerator).",
-        "no-relational-need: Evaluate whether this table benefits from Aurora's relational features. If it's purely key-value access, DynamoDB offers better cost/performance. If it's a hot lookup, ElastiCache is more appropriate.",
-        "Very high frequency simple lookups may benefit from a caching layer or DynamoDB."
+        "no-relational-need: Evaluate whether this table benefits from Aurora's relational features. If it's purely key-value access, DynamoDB offers better cost/performance. If it's a hot lookup, ElastiCache is more appropriate."
       ],
-      "migration_complexity": "HIGH"
+      "migration_complexity": "MEDIUM"
     },
     {
       "table_id": "wordpress.wp_postmeta",
-      "confidence_score": 81,
-      "rationale": "Detected relational patterns: complex join, aggregation analytics, simple join, standard crud, batch in list. Complex joins (4 tables) are a core Aurora MySQL strength. Active workload (38 calls/sec) benefits from Aurora MySQL query optimizer.",
+      "confidence_score": 83,
+      "rationale": "Detected relational patterns: complex join, aggregation analytics, pagination, simple join, standard crud, batch in list. Complex joins (4 tables) are a core Aurora MySQL strength. Active workload (259 calls/sec) benefits from Aurora MySQL query optimizer.",
       "score_breakdown": {
-        "pattern_match_score": 85,
+        "pattern_match_score": 91,
         "complexity_score": 95,
         "performance_score": 60,
         "cost_score": 70
@@ -165,6 +167,7 @@
       "supporting_patterns": [
         "aurora-common-01",
         "aurora-common-02",
+        "aurora-common-08",
         "aurora-common-09",
         "aurora-common-10",
         "aurora-common-11"
@@ -175,12 +178,12 @@
     {
       "table_id": "wordpress.wp_posts",
       "confidence_score": 81,
-      "rationale": "Detected relational patterns: complex join, aggregation analytics, pagination, simple join, standard crud, batch in list, key value lookup. Complex joins (4 tables) are a core Aurora MySQL strength. Active workload (25 calls/sec) benefits from Aurora MySQL query optimizer.",
+      "rationale": "Detected relational patterns: complex join, aggregation analytics, pagination, simple join, standard crud, batch in list, key value lookup. Complex joins (4 tables) are a core Aurora MySQL strength. Active workload (159 calls/sec) benefits from Aurora MySQL query optimizer.",
       "score_breakdown": {
         "pattern_match_score": 93,
         "complexity_score": 80,
         "performance_score": 60,
-        "cost_score": 85
+        "cost_score": 80
       },
       "supporting_patterns": [
         "aurora-common-01",
@@ -197,7 +200,7 @@
     {
       "table_id": "wordpress.wp_term_relationships",
       "confidence_score": 84,
-      "rationale": "Detected relational patterns: complex join, aggregation analytics, pagination, batch in list, key value lookup. Complex joins (3 tables) are a core Aurora MySQL strength. Active workload (17 calls/sec) benefits from Aurora MySQL query optimizer.",
+      "rationale": "Detected relational patterns: complex join, aggregation analytics, pagination, simple join, standard crud, batch in list, key value lookup. Complex joins (3 tables) are a core Aurora MySQL strength. Active workload (109 calls/sec) benefits from Aurora MySQL query optimizer.",
       "score_breakdown": {
         "pattern_match_score": 95,
         "complexity_score": 90,
@@ -208,6 +211,8 @@
         "aurora-common-01",
         "aurora-common-02",
         "aurora-common-08",
+        "aurora-common-09",
+        "aurora-common-10",
         "aurora-common-11",
         "aurora-common-12"
       ],
@@ -217,7 +222,7 @@
     {
       "table_id": "wordpress.wp_term_taxonomy",
       "confidence_score": 82,
-      "rationale": "Detected relational patterns: complex join, aggregation analytics, pagination, simple join, batch in list. Complex joins (3 tables) are a core Aurora MySQL strength. Active workload (20 calls/sec) benefits from Aurora MySQL query optimizer.",
+      "rationale": "Detected relational patterns: complex join, aggregation analytics, pagination, simple join, batch in list, key value lookup. Complex joins (3 tables) are a core Aurora MySQL strength. Active workload (134 calls/sec) benefits from Aurora MySQL query optimizer.",
       "score_breakdown": {
         "pattern_match_score": 95,
         "complexity_score": 85,
@@ -229,20 +234,21 @@
         "aurora-common-02",
         "aurora-common-08",
         "aurora-common-09",
-        "aurora-common-11"
+        "aurora-common-11",
+        "aurora-common-12"
       ],
       "concerns": null,
       "migration_complexity": "LOW"
     },
     {
       "table_id": "wordpress.wp_termmeta",
-      "confidence_score": 82,
-      "rationale": "Detected relational patterns: complex join, standard crud, batch in list. Complex joins (3 tables) are a core Aurora MySQL strength.",
+      "confidence_score": 84,
+      "rationale": "Detected relational patterns: complex join, standard crud, batch in list. Complex joins (3 tables) are a core Aurora MySQL strength. Active workload (28 calls/sec) benefits from Aurora MySQL query optimizer.",
       "score_breakdown": {
         "pattern_match_score": 89,
         "complexity_score": 100,
-        "performance_score": 45,
-        "cost_score": 80
+        "performance_score": 50,
+        "cost_score": 85
       },
       "supporting_patterns": [
         "aurora-common-01",
@@ -257,7 +263,7 @@
     {
       "table_id": "wordpress.wp_terms",
       "confidence_score": 84,
-      "rationale": "Detected relational patterns: complex join, aggregation analytics, pagination, simple join, batch in list. Complex joins (3 tables) are a core Aurora MySQL strength. Active workload (20 calls/sec) benefits from Aurora MySQL query optimizer.",
+      "rationale": "Detected relational patterns: complex join, aggregation analytics, pagination, simple join, batch in list. Complex joins (3 tables) are a core Aurora MySQL strength. Active workload (131 calls/sec) benefits from Aurora MySQL query optimizer.",
       "score_breakdown": {
         "pattern_match_score": 95,
         "complexity_score": 90,
@@ -276,13 +282,13 @@
     },
     {
       "table_id": "wordpress.wp_usermeta",
-      "confidence_score": 80,
-      "rationale": "Detected relational patterns: pagination, simple join, standard crud, batch in list.",
+      "confidence_score": 82,
+      "rationale": "Detected relational patterns: pagination, simple join, standard crud, batch in list. Active workload (51 calls/sec) benefits from Aurora MySQL query optimizer.",
       "score_breakdown": {
-        "pattern_match_score": 89,
-        "complexity_score": 100,
-        "performance_score": 30,
-        "cost_score": 85
+        "pattern_match_score": 88,
+        "complexity_score": 95,
+        "performance_score": 60,
+        "cost_score": 70
       },
       "supporting_patterns": [
         "aurora-common-08",
@@ -295,15 +301,16 @@
     },
     {
       "table_id": "wordpress.wp_users",
-      "confidence_score": 83,
-      "rationale": "Detected relational patterns: pagination, simple join, standard crud, batch in list, key value lookup.",
+      "confidence_score": 82,
+      "rationale": "Detected relational patterns: aggregation analytics, pagination, simple join, standard crud, batch in list, key value lookup. Active workload (16 calls/sec) benefits from Aurora MySQL query optimizer.",
       "score_breakdown": {
         "pattern_match_score": 89,
-        "complexity_score": 100,
-        "performance_score": 45,
-        "cost_score": 85
+        "complexity_score": 85,
+        "performance_score": 60,
+        "cost_score": 90
       },
       "supporting_patterns": [
+        "aurora-common-02",
         "aurora-common-08",
         "aurora-common-09",
         "aurora-common-10",
@@ -329,16 +336,17 @@
     },
     {
       "table_id": "wordpress.wp_wc_admin_notes",
-      "confidence_score": 62,
-      "rationale": "Detected relational patterns: aggregation analytics, batch in list.",
+      "confidence_score": 65,
+      "rationale": "Detected relational patterns: aggregation analytics, standard crud, batch in list.",
       "score_breakdown": {
         "pattern_match_score": 70,
         "complexity_score": 90,
-        "performance_score": 5,
-        "cost_score": 65
+        "performance_score": 15,
+        "cost_score": 75
       },
       "supporting_patterns": [
         "aurora-common-02",
+        "aurora-common-10",
         "aurora-common-11"
       ],
       "concerns": null,
@@ -360,17 +368,24 @@
     },
     {
       "table_id": "wordpress.wp_wc_customer_lookup",
-      "confidence_score": 30,
-      "rationale": "No strong relational patterns detected for wordpress.wp_wc_customer_lookup. This table may not benefit significantly from Aurora MySQL.",
+      "confidence_score": 76,
+      "rationale": "Detected relational patterns: pagination, standard crud, key value lookup, upsert duplicate key.",
       "score_breakdown": {
-        "pattern_match_score": 0,
-        "complexity_score": 85,
-        "performance_score": 0,
-        "cost_score": 50
+        "pattern_match_score": 87,
+        "complexity_score": 90,
+        "performance_score": 40,
+        "cost_score": 70
       },
-      "supporting_patterns": null,
-      "concerns": null,
-      "migration_complexity": "LOW"
+      "supporting_patterns": [
+        "aurora-common-08",
+        "aurora-common-10",
+        "aurora-common-12",
+        "aurora-mysql-03"
+      ],
+      "concerns": [
+        "no-relational-need: Evaluate whether this table benefits from Aurora's relational features. If it's purely key-value access, DynamoDB offers better cost/performance. If it's a hot lookup, ElastiCache is more appropriate."
+      ],
+      "migration_complexity": "MEDIUM"
     },
     {
       "table_id": "wordpress.wp_wc_download_log",
@@ -528,22 +543,22 @@
     },
     {
       "table_id": "wordpress.wp_wc_product_meta_lookup",
-      "confidence_score": 71,
-      "rationale": "Detected relational patterns: upsert duplicate key.",
+      "confidence_score": 90,
+      "rationale": "Detected relational patterns: pagination, simple join, standard crud, upsert duplicate key.",
       "score_breakdown": {
-        "pattern_match_score": 85,
-        "complexity_score": 80,
-        "performance_score": 35,
-        "cost_score": 60
+        "pattern_match_score": 98,
+        "complexity_score": 100,
+        "performance_score": 65,
+        "cost_score": 80
       },
       "supporting_patterns": [
+        "aurora-common-08",
+        "aurora-common-09",
+        "aurora-common-10",
         "aurora-mysql-03"
       ],
-      "concerns": [
-        "no-relational-need: Evaluate whether this table benefits from Aurora's relational features. If it's purely key-value access, DynamoDB offers better cost/performance. If it's a hot lookup, ElastiCache is more appropriate.",
-        "single-access-pattern-table: Consider DynamoDB for simple key-value access or ElastiCache for sub-millisecond lookups. Aurora adds connection overhead and query parsing cost for access patterns that don't need them."
-      ],
-      "migration_complexity": "HIGH"
+      "concerns": null,
+      "migration_complexity": "LOW"
     },
     {
       "table_id": "wordpress.wp_wc_rate_limits",
@@ -561,15 +576,17 @@
     },
     {
       "table_id": "wordpress.wp_wc_reserved_stock",
-      "confidence_score": 46,
-      "rationale": "No strong relational patterns detected for wordpress.wp_wc_reserved_stock. This table may not benefit significantly from Aurora MySQL.",
+      "confidence_score": 63,
+      "rationale": "Detected relational patterns: standard crud.",
       "score_breakdown": {
-        "pattern_match_score": 20,
+        "pattern_match_score": 60,
         "complexity_score": 90,
         "performance_score": 25,
-        "cost_score": 60
+        "cost_score": 70
       },
-      "supporting_patterns": null,
+      "supporting_patterns": [
+        "aurora-common-10"
+      ],
       "concerns": [
         "no-relational-need: Evaluate whether this table benefits from Aurora's relational features. If it's purely key-value access, DynamoDB offers better cost/performance. If it's a hot lookup, ElastiCache is more appropriate.",
         "single-access-pattern-table: Consider DynamoDB for simple key-value access or ElastiCache for sub-millisecond lookups. Aurora adds connection overhead and query parsing cost for access patterns that don't need them."
@@ -611,13 +628,13 @@
     },
     {
       "table_id": "wordpress.wp_woocommerce_api_keys",
-      "confidence_score": 74,
-      "rationale": "Detected relational patterns: standard crud.",
+      "confidence_score": 69,
+      "rationale": "Detected relational patterns: standard crud. Active workload (102 calls/sec) benefits from Aurora MySQL query optimizer.",
       "score_breakdown": {
         "pattern_match_score": 60,
         "complexity_score": 100,
-        "performance_score": 60,
-        "cost_score": 80
+        "performance_score": 35,
+        "cost_score": 85
       },
       "supporting_patterns": [
         "aurora-common-10"
@@ -644,15 +661,17 @@
     },
     {
       "table_id": "wordpress.wp_woocommerce_downloadable_product_permissions",
-      "confidence_score": 43,
-      "rationale": "No strong relational patterns detected for wordpress.wp_woocommerce_downloadable_product_permissions. This table may not benefit significantly from Aurora MySQL.",
+      "confidence_score": 59,
+      "rationale": "Detected relational patterns: standard crud.",
       "score_breakdown": {
-        "pattern_match_score": 20,
+        "pattern_match_score": 59,
         "complexity_score": 80,
         "performance_score": 25,
-        "cost_score": 60
+        "cost_score": 70
       },
-      "supporting_patterns": null,
+      "supporting_patterns": [
+        "aurora-common-10"
+      ],
       "concerns": [
         "no-relational-need: Evaluate whether this table benefits from Aurora's relational features. If it's purely key-value access, DynamoDB offers better cost/performance. If it's a hot lookup, ElastiCache is more appropriate.",
         "single-access-pattern-table: Consider DynamoDB for simple key-value access or ElastiCache for sub-millisecond lookups. Aurora adds connection overhead and query parsing cost for access patterns that don't need them."
@@ -675,12 +694,12 @@
     },
     {
       "table_id": "wordpress.wp_woocommerce_order_itemmeta",
-      "confidence_score": 79,
-      "rationale": "Detected relational patterns: complex join, aggregation analytics, standard crud, batch in list. Active workload (19 calls/sec) benefits from Aurora MySQL query optimizer.",
+      "confidence_score": 83,
+      "rationale": "Detected relational patterns: complex join, aggregation analytics, standard crud, batch in list. Complex joins (3 tables) are a core Aurora MySQL strength. Active workload (98 calls/sec) benefits from Aurora MySQL query optimizer.",
       "score_breakdown": {
-        "pattern_match_score": 82,
+        "pattern_match_score": 87,
         "complexity_score": 100,
-        "performance_score": 50,
+        "performance_score": 60,
         "cost_score": 70
       },
       "supporting_patterns": [
@@ -694,13 +713,13 @@
     },
     {
       "table_id": "wordpress.wp_woocommerce_order_items",
-      "confidence_score": 83,
-      "rationale": "Detected relational patterns: complex join, aggregation analytics, standard crud, batch in list. Complex joins (4 tables) are a core Aurora MySQL strength.",
+      "confidence_score": 86,
+      "rationale": "Detected relational patterns: complex join, aggregation analytics, standard crud, batch in list. Complex joins (4 tables) are a core Aurora MySQL strength. Active workload (16 calls/sec) benefits from Aurora MySQL query optimizer.",
       "score_breakdown": {
         "pattern_match_score": 89,
         "complexity_score": 95,
-        "performance_score": 55,
-        "cost_score": 80
+        "performance_score": 70,
+        "cost_score": 85
       },
       "supporting_patterns": [
         "aurora-common-01",
@@ -835,11 +854,12 @@
           "a0b655ea2f80c5bc688a142e3e03956031de6a491787f4e8a847ae67c65fbef0",
           "fc99562bfa4be32418b08a3ab1ce8b7763f2bd698ff428782e9428a8fd6e3a98",
           "d5ae7abb4fb5271f15a4193c025bb6c2bd745ff7e0806d140f89069876cd7ee7",
-          "4481cc0ca988374076baa83caa074ab5f9197db98fae7072c2cc068e0bdba8ba",
+          "f86b4be6598d18fabc947fb1c716f6221a3620a687940154774728dbbc8ae730",
           "cb3300c6fc11f0dd851bbee427ed58a930926ea9b925a271e1699f5bc09814ee",
+          "4481cc0ca988374076baa83caa074ab5f9197db98fae7072c2cc068e0bdba8ba",
+          "f37cfe518f83669067b5e9c57f68ced43ba9175a37b7b64f1122a20a46d6bf2e",
           "97834e68ad8550b0db33ca13d5b4d2f5ee6d56b1acbcd3374a1fefad234ca8ca",
           "3f9f6bab31e30e6cab0f93d7153b166e0e1a509e72b8099434729aae955182c8",
-          "f37cfe518f83669067b5e9c57f68ced43ba9175a37b7b64f1122a20a46d6bf2e",
           "4b79d7a8be865f8758729140de11cba4dff2b0262c6b258523f6dac6e496720a",
           "25e3c7550c3775ca1f60248bfbaefc90e027c17f4c54084860dccd6776fb8a16",
           "119b7fbf3a2efd757e864dc02fa2b5a1b682049fe3a552f8f95d320c20b4de1e",
@@ -856,7 +876,7 @@
           "wordpress.wp_woocommerce_order_itemmeta",
           "wordpress.wp_woocommerce_order_items"
         ],
-        "frequency_percent": 12.15
+        "frequency_percent": 8.59
       },
       {
         "pattern_id": "aurora-common-02",
@@ -868,33 +888,42 @@
           "fc99562bfa4be32418b08a3ab1ce8b7763f2bd698ff428782e9428a8fd6e3a98",
           "d99618ea3724cae0b2ef0dda96a021dda2c50c6b3ba3847b9ccf307ad044ec67",
           "3f9f6bab31e30e6cab0f93d7153b166e0e1a509e72b8099434729aae955182c8",
-          "254f282ce4da5837c67df5f5d405e1ad3c405cee2c14420378bd8dfd0d86787c",
-          "8c66eaee9125d49703cd068cdba72c305ac38bcbb8e1dab7f399e224cb40a7d6",
-          "f7de9a8110453cdec99eca2a5338e3bb03d437b409b8b22d7d02da54d9614915",
-          "119b7fbf3a2efd757e864dc02fa2b5a1b682049fe3a552f8f95d320c20b4de1e",
-          "7b62184001103ac9e6f0c4677064c9cbde2fd4c70e17246b09808d5d98b2dc06",
-          "c186dff756b764e27eee24482997ec9f6bbcae891097580079dacad7b9c3ac30",
-          "a355b7403b1d39d90f3ff59ece2a00e0225bbbc7c3a9d3d755d3f0e8d001e077",
-          "c674aa12b3665c30c5aefb1c6f96f35b8d71ffe95f6a4d2769632d53db421347",
-          "bdb34acbf7457475074e149471fdc6bc72e5b6a072bfb25d9b1bf564db9bacc9",
+          "8bc823cb67ed85abd3c5f224b718c22304f8adf7970d5a2d652c0c8c7f3cb6f7",
           "262f32b231ea64268fe70d0dcde3f4c89c93fba0c938e0eeff625df539eaaa97",
+          "7b62184001103ac9e6f0c4677064c9cbde2fd4c70e17246b09808d5d98b2dc06",
+          "254f282ce4da5837c67df5f5d405e1ad3c405cee2c14420378bd8dfd0d86787c",
+          "119b7fbf3a2efd757e864dc02fa2b5a1b682049fe3a552f8f95d320c20b4de1e",
+          "8c66eaee9125d49703cd068cdba72c305ac38bcbb8e1dab7f399e224cb40a7d6",
+          "c186dff756b764e27eee24482997ec9f6bbcae891097580079dacad7b9c3ac30",
+          "80eefa4eceb1b34854e7a8d96e97b6dc8303d43231e1791c0b08629fd5d50bc2",
+          "f7de9a8110453cdec99eca2a5338e3bb03d437b409b8b22d7d02da54d9614915",
+          "a355b7403b1d39d90f3ff59ece2a00e0225bbbc7c3a9d3d755d3f0e8d001e077",
           "2a4b1b61361bc6b0f94452f62a10c9930991e0944a4f1b87498d061ed9052263",
           "f6438457738a613affbd19c1fd9f0978267a39f263d529f02293f6a669e3789d",
+          "09513d199d428000ba329640fab04778f130a00bbe2dbf1558806c0d68c54199",
+          "c674aa12b3665c30c5aefb1c6f96f35b8d71ffe95f6a4d2769632d53db421347",
+          "bdb34acbf7457475074e149471fdc6bc72e5b6a072bfb25d9b1bf564db9bacc9",
+          "661f1032dec43a60b7c3be412db57a6eefa8251ea50a68c5bca065b6db4724c0",
           "3d3b308b385cfc54b939406d23a85a0df689c48c05b5aa3ae901d382b5055d00",
-          "620879e270f6234f50eb8c2188653359be6486f86612d1678214adbf786102d8"
+          "620879e270f6234f50eb8c2188653359be6486f86612d1678214adbf786102d8",
+          "62118b26279d4f5aeadd94f2acdddc1627c7c99c632650020db012ea5c4016a7",
+          "6c018e097b5700f4e3f7f51310b48b024e4c2792143d51fa48b3bfc4564c65ce",
+          "0278ef630aad35db79d780cd92b66d45a9ef35980cfef327f7603fb84f92c510"
         ],
         "table_ids": [
+          "wordpress.wp_commentmeta",
           "wordpress.wp_comments",
           "wordpress.wp_postmeta",
           "wordpress.wp_posts",
           "wordpress.wp_term_relationships",
           "wordpress.wp_term_taxonomy",
           "wordpress.wp_terms",
+          "wordpress.wp_users",
           "wordpress.wp_wc_admin_notes",
           "wordpress.wp_woocommerce_order_itemmeta",
           "wordpress.wp_woocommerce_order_items"
         ],
-        "frequency_percent": 16.82
+        "frequency_percent": 15.34
       },
       {
         "pattern_id": "aurora-common-08",
@@ -905,39 +934,67 @@
           "59163c184972d1ec4ad95106a5fc20c95d19dd06d071f956bf50e0c51ce12bdf",
           "66c96f951dd01698438c1be2887ff2553664cb0b99c1a1b0108b18ca22dcb799",
           "12f856eaf9281605faf126dd7926df918410651b368cf532ecdcf01da5fcf625",
+          "daf3cf855699fb96d3c4974d9c89277010387a94f495cb2de7d6bcddf5c9a05b",
           "047e014629e23e0acd2ce23865fdf4b9eaf6a3e758de4731154eaedcfff471e2",
-          "52da34b1e5fbf3bc61a81c08cf440630ccd96aa21066f7f52c68d4d76aad2867",
+          "4f645105c95a51966b535a644a371aac350235acdb50b4855a340f4a1fde0969",
           "fcfd82fa1ebbc5b4b8183186286a098a42227e04d4445edf00f0a8a0120bf675",
           "06584926ec16d35bcd9ad7d2351721be47c4216c1c3b543f1d151ce1f1dbb616",
-          "d4bf16d6ce4eb63d541be4f9536e2550869dcdb758b0b7a847c5dc63f832ed3c",
-          "97834e68ad8550b0db33ca13d5b4d2f5ee6d56b1acbcd3374a1fefad234ca8ca",
+          "52da34b1e5fbf3bc61a81c08cf440630ccd96aa21066f7f52c68d4d76aad2867",
+          "9e4d9a2633de302260ad6c30e33eadfb1190fbc869eeff4be1a117cd0cf9d191",
+          "76a0890e96395f05b7755961d85296d7b26ad77483857c0fdb43749ca0b97f98",
+          "367a0d78945b3925fd9ba59b05a6af5b9fccdb9c8e177ac1be48815b2771ce81",
           "ed65b0b663c28fba275ae368d7b00dbd7f0ef1282a6a66d53f46f230aac30ceb",
+          "19e8085f9593fd708942f6f18f918808f01597be3dd562297646e785e583b4a2",
+          "97834e68ad8550b0db33ca13d5b4d2f5ee6d56b1acbcd3374a1fefad234ca8ca",
           "4b79d7a8be865f8758729140de11cba4dff2b0262c6b258523f6dac6e496720a",
+          "8bc823cb67ed85abd3c5f224b718c22304f8adf7970d5a2d652c0c8c7f3cb6f7",
+          "2b97dbd810bb0a32199e8040cdcb5e0ac4ed40a7ad70d24c503c6d4d5a6e076b",
+          "a04f91e1851d03a61c0c0c1b05bf4177e76b841a7bae74c3258324c17dc633e3",
+          "d4bf16d6ce4eb63d541be4f9536e2550869dcdb758b0b7a847c5dc63f832ed3c",
+          "a082a58ecd0421ec8b916e2e412f8355795f965151174b7e6ab9f49e85abb29f",
+          "fa687400c5fe6eda2b09e4d0c6dda70534ef7dd1b4471c5e7b0c09497a583cce",
+          "d987e55e2b6bf139b5e92619d338bee5c3b7a8b6712e447850586147660f7796",
           "966f5a331e5bea92b89330f26d7b09ef9a538cf47edf3fcec3070693566a405c",
+          "c186dff756b764e27eee24482997ec9f6bbcae891097580079dacad7b9c3ac30",
           "4f9d2751c29cb0777dbc3770c92cc5b24381e9c2caf7d63978fff42f988642dc",
           "7346ea7e6380af233fc40e0fa6427d3f17efe5fe63447f048542e8ff95f6a406",
-          "305e3eaabea8a6687e2a2e43e4d6f889742a7511a0666267880fd70c89d41efc",
-          "fa687400c5fe6eda2b09e4d0c6dda70534ef7dd1b4471c5e7b0c09497a583cce",
-          "c186dff756b764e27eee24482997ec9f6bbcae891097580079dacad7b9c3ac30",
-          "797c033f24c616611d9d000bcef94d12e698d48aac1ea09e84c71805d1d47935",
-          "d8ba7aa10cff6283c53efd73611a20ce4602f7d95d3aeda0c024df5fdd792223",
+          "cb8ba3105ebeca9d3b9920e0bc1df2321af3e83ec91a8057f561a4a3a31aaebe",
           "be0d2e4c39889ce69ce1a879dac37cd4b33624200e3dea3599b72e1a3e82d3cf",
+          "7a3e82dd4c58ee11a8d2b894875cacd4a8828a3e299efb4271b80730fc6a27b4",
+          "d8ba7aa10cff6283c53efd73611a20ce4602f7d95d3aeda0c024df5fdd792223",
+          "3b1641a721e5d5517515ba4a0f74c3f1103a00924b61ffca964261ba02aaf244",
+          "3e64e58573576aeb5150564ce7a65fb0941edbaccfd133d070fcce5c71441a6b",
+          "8086e2e9a1cc4ad21461c417dee6c48acc1222dc57975f9d1d1c29f3cc00fd50",
+          "a423c74c9d7b52cc5f3b11852aea3eaea9bf55c83493d5d7f82434dd80c24f0d",
           "3d3b308b385cfc54b939406d23a85a0df689c48c05b5aa3ae901d382b5055d00",
-          "620879e270f6234f50eb8c2188653359be6486f86612d1678214adbf786102d8"
+          "305e3eaabea8a6687e2a2e43e4d6f889742a7511a0666267880fd70c89d41efc",
+          "620879e270f6234f50eb8c2188653359be6486f86612d1678214adbf786102d8",
+          "faa3737798fa780d112a14bb8327583e935a95ec81454f89a9ee9c2c95783f4e",
+          "f1f4d1593d283ae809a910d7038e58c205f565385c79b9741d7c9f3ad3587cb7",
+          "4f2e27db25f4e21056244f37c0417b18eadcc826b5fd9b1a663c4fe91e126744",
+          "1cfc77aef96607706c761548e77858866f92af9b3438298f561dcf7d5985bf8e",
+          "9438ed54a7afc46837cd821ba15c7ed80b577191d387f314e3dc5c87a236011a",
+          "7bbaebf82fb7e67b8b3ffecae89c6bdfa7d64878141d173815fc371e94ffa39c",
+          "b08cef7a9c763dc4b4b224221efdd3884f1e9edfc4e16317b357437a227b5a0d",
+          "4d51e982a77a3654c9f0273b1dff4fc8254e9bff8e832ef3c44a2aeef2c1e5e7",
+          "00ee1373f11d94400cb6d8fa32bf8a9b450ccddf905aa83d5f93c03523483a40"
         ],
         "table_ids": [
           "wordpress.wp_actionscheduler_actions",
           "wordpress.wp_actionscheduler_groups",
           "wordpress.wp_comments",
           "wordpress.wp_options",
+          "wordpress.wp_postmeta",
           "wordpress.wp_posts",
           "wordpress.wp_term_relationships",
           "wordpress.wp_term_taxonomy",
           "wordpress.wp_terms",
           "wordpress.wp_usermeta",
-          "wordpress.wp_users"
+          "wordpress.wp_users",
+          "wordpress.wp_wc_customer_lookup",
+          "wordpress.wp_wc_product_meta_lookup"
         ],
-        "frequency_percent": 20.56
+        "frequency_percent": 28.83
       },
       {
         "pattern_id": "aurora-common-09",
@@ -946,28 +1003,43 @@
         "description": "Queries joining 2 tables. While simpler than multi-table complex joins, these still require a relational engine with a query optimizer; NoSQL engines cannot perform server-side joins.",
         "query_ids": [
           "59163c184972d1ec4ad95106a5fc20c95d19dd06d071f956bf50e0c51ce12bdf",
+          "f4fcc7f6ef237eb98ceebe18f53efbc90ce9cc76e15fc20c0010447b449a1987",
+          "daf3cf855699fb96d3c4974d9c89277010387a94f495cb2de7d6bcddf5c9a05b",
+          "4f645105c95a51966b535a644a371aac350235acdb50b4855a340f4a1fde0969",
+          "4ef12cb63f5715f0892ced8670ee5337d1a39c30d8a7410cec692fdba3825243",
           "1da3b85858a9927d081eff8b87ba3c7309c5a07590628fd6de787e47ce4b792e",
           "2389b8a0ec4470f207ccca39bd1d4fbea5a74b0664ee18b54f177ee6288b11cd",
           "22726c847fe8cd5d7e1319b92c714efec37473a9dcff46db1d34a7d2489f6722",
+          "8bc823cb67ed85abd3c5f224b718c22304f8adf7970d5a2d652c0c8c7f3cb6f7",
+          "2b97dbd810bb0a32199e8040cdcb5e0ac4ed40a7ad70d24c503c6d4d5a6e076b",
+          "a04f91e1851d03a61c0c0c1b05bf4177e76b841a7bae74c3258324c17dc633e3",
+          "a082a58ecd0421ec8b916e2e412f8355795f965151174b7e6ab9f49e85abb29f",
           "966f5a331e5bea92b89330f26d7b09ef9a538cf47edf3fcec3070693566a405c",
           "f7de9a8110453cdec99eca2a5338e3bb03d437b409b8b22d7d02da54d9614915",
           "4f9d2751c29cb0777dbc3770c92cc5b24381e9c2caf7d63978fff42f988642dc",
-          "797c033f24c616611d9d000bcef94d12e698d48aac1ea09e84c71805d1d47935",
-          "05e0232d3850a4672d21c95cdebf907cd787cdd0353fff9adee1cd4009b5a653",
-          "f4fcc7f6ef237eb98ceebe18f53efbc90ce9cc76e15fc20c0010447b449a1987",
-          "2a4b1b61361bc6b0f94452f62a10c9930991e0944a4f1b87498d061ed9052263"
+          "2a4b1b61361bc6b0f94452f62a10c9930991e0944a4f1b87498d061ed9052263",
+          "09513d199d428000ba329640fab04778f130a00bbe2dbf1558806c0d68c54199",
+          "661f1032dec43a60b7c3be412db57a6eefa8251ea50a68c5bca065b6db4724c0",
+          "62118b26279d4f5aeadd94f2acdddc1627c7c99c632650020db012ea5c4016a7",
+          "2a6398d3bfc6b034255e79b1959c217221cf1c2fa3deb01fe781c63fba872640",
+          "4d51e982a77a3654c9f0273b1dff4fc8254e9bff8e832ef3c44a2aeef2c1e5e7",
+          "00ee1373f11d94400cb6d8fa32bf8a9b450ccddf905aa83d5f93c03523483a40"
         ],
         "table_ids": [
           "wordpress.wp_actionscheduler_actions",
           "wordpress.wp_actionscheduler_groups",
+          "wordpress.wp_commentmeta",
+          "wordpress.wp_comments",
           "wordpress.wp_postmeta",
           "wordpress.wp_posts",
+          "wordpress.wp_term_relationships",
           "wordpress.wp_term_taxonomy",
           "wordpress.wp_terms",
           "wordpress.wp_usermeta",
-          "wordpress.wp_users"
+          "wordpress.wp_users",
+          "wordpress.wp_wc_product_meta_lookup"
         ],
-        "frequency_percent": 10.28
+        "frequency_percent": 13.5
       },
       {
         "pattern_id": "aurora-common-10",
@@ -975,52 +1047,110 @@
         "confidence": "MEDIUM",
         "description": "Standard single-table CRUD operations (SELECT/INSERT/UPDATE/DELETE) at moderate frequency. These are valid relational workloads; Aurora handles them efficiently with connection pooling and buffer cache.",
         "query_ids": [
-          "0452bed28b31e64ae9294ddef1d5e82c3166557fd4c02b6e7d4140a11170af82",
           "126679dc6aaed0c3c05926ea8c60b79f6b00a518389064878c17fe74a60bef8e",
-          "ac34da34fb23498bd1392f02403e9dbdd0d28d3cfef236e6d3c4c6ffe6e82ad2",
           "2caa2be1b7b5d3ef7d5dc9a6aba0f82df0e9b01383258d373dc93ee23147ba8a",
           "66c96f951dd01698438c1be2887ff2553664cb0b99c1a1b0108b18ca22dcb799",
+          "2f81962855292f9c727319dddc53290b71dea6fb0340cf84c1a36a8e1cca2b8b",
           "a13f5749057b0212d61aea04e432898093305463ae027b79826082006cda7715",
+          "ac34da34fb23498bd1392f02403e9dbdd0d28d3cfef236e6d3c4c6ffe6e82ad2",
           "216d92b3f4e7091a2aa00b97ff8d389edbc5c148efcbed8cd6a1c3e408206051",
           "4f02475439a75f33544c0e7e10e2bf4c53d82ed1edaba7da9437b4da2889dd64",
-          "ea7778dba09d12bdf18da33ac8afa62a59569bdad219b4bc65fa1a767c01de40",
           "3dbc7d9a0824cce437bb7edcc8cad29bf671294799df354d121dce446e79d35d",
+          "ea7778dba09d12bdf18da33ac8afa62a59569bdad219b4bc65fa1a767c01de40",
+          "0452bed28b31e64ae9294ddef1d5e82c3166557fd4c02b6e7d4140a11170af82",
           "047e014629e23e0acd2ce23865fdf4b9eaf6a3e758de4731154eaedcfff471e2",
-          "8485f0647490030c77563b65c57028d87eaf1845ab2aa7dbc11051f64057673d",
-          "f31a66f5fccd8126563191858969b6e77b580511e5ad989f745db08f5301dc86",
+          "d72966f83d952df8a90f3fe081c626f33c8722f24535a4522b54f2528d12918d",
           "413c99e446984db35e1e4e8f3952ddb966d21a85a898e88235b61d26ea096e60",
-          "96ca58298ceb7de7aed37904ff9f915e55ee59c61b1e7aeb1057a4c41f77f084",
           "71b98418d633c56095dc58d00755195b719d6e5fd513a24c2216c1f92fded7d6",
+          "de9a7ba3598eaa8b41839c2fce3889985e5636fc7489653be3b59378bf4779da",
           "e223aefb06f2d48303ad26d2ee9f8aa957286f08174a6e92a6e583544f8099f0",
-          "52da34b1e5fbf3bc61a81c08cf440630ccd96aa21066f7f52c68d4d76aad2867",
-          "fcfd82fa1ebbc5b4b8183186286a098a42227e04d4445edf00f0a8a0120bf675",
-          "0d3bb4065d21d46495028590d9d60b849ab2ece165589a88c5cd863de3893835",
-          "06584926ec16d35bcd9ad7d2351721be47c4216c1c3b543f1d151ce1f1dbb616",
-          "22cb9563dcf184336920b9e30c27109bd4c88f7ddb74e229ab5be6b1ba6185bc",
-          "d4bf16d6ce4eb63d541be4f9536e2550869dcdb758b0b7a847c5dc63f832ed3c",
-          "329367a24ba84ce690000276ff2e3801ac2acef2858fbe113c0f6a3ba3893616",
+          "214edb87c83db8545897614b3831eeab765103dccd023b451a3dd971dee4036a",
+          "4b856e296129b8dcca701ba2561310f1d1f1768eb5986cc43d1edde63f937226",
+          "8485f0647490030c77563b65c57028d87eaf1845ab2aa7dbc11051f64057673d",
+          "674ead2f50a4d39f0a18fb235ba1ae5acb37da3fb07edbbda1795a933b37de7d",
+          "a783694619352b153b690ccc07f9dae79c9caa43ecefcceae3d486fe49c7c1c8",
+          "f2a4e87e8f0ff10c09fe3286e6f8e830af809b48c7d5e57d4a4061299d0d022d",
           "3a74580ede1af2d6447d882da446239b1064a42d7fbc76a62fdd302fcd7c6091",
-          "1794daed36ce90ffb9eb06739fbec3cfb9bcf5edf81ee7ce3e74cce2ef520c26",
-          "a16f38a075908667a1aab1d7f82f64e9ab794bdda479af5cbf9e362947b8df2d",
+          "2c0093ed0c4d5d818ba11723dd9b3f1b7f82cccf1a6f099e191073c0fd7af2dd",
+          "611079ff89c7fcbd01ed195b38f92d5b5961b531565b82b5e61f3d2730c78fa2",
+          "7ead756f0ea0ffe5cb6550cacd3b5efa6f65539d8a3cfb37dc66346a3ff2ad3f",
+          "f31a66f5fccd8126563191858969b6e77b580511e5ad989f745db08f5301dc86",
+          "33dfdb12166d9ed52a1196e6675d56c3462693b24a7dbb80463d3ce7d501152b",
+          "fcfd82fa1ebbc5b4b8183186286a098a42227e04d4445edf00f0a8a0120bf675",
+          "96ca58298ceb7de7aed37904ff9f915e55ee59c61b1e7aeb1057a4c41f77f084",
+          "06584926ec16d35bcd9ad7d2351721be47c4216c1c3b543f1d151ce1f1dbb616",
+          "b05af520688a1a5f54ba51896e5a079d05fde97ea81aa1f8618c9eed2e8e6212",
+          "52da34b1e5fbf3bc61a81c08cf440630ccd96aa21066f7f52c68d4d76aad2867",
+          "445ec39b67db991f5f7d8f3a00a4873af0d9ae5186f32ced941f9a683399799e",
+          "72da3cb4f3c62e94f7de1c8210fbcf51de33edae08ff72757575835a5df6b4a9",
+          "41b2f2d13bca108b52d8bd32b1c7758a9899a7be53f8a3454e95da3749ae3429",
+          "22cb9563dcf184336920b9e30c27109bd4c88f7ddb74e229ab5be6b1ba6185bc",
+          "eb232c6c81b36bf82cfe700754d27d27af81fb8240242c4c173b77a7c850eb3f",
+          "0d3bb4065d21d46495028590d9d60b849ab2ece165589a88c5cd863de3893835",
+          "67fcc3ec34f56aa6c670d9c5e849827e07696f5ff695db4303f4a28ffd4d35e1",
           "ed65b0b663c28fba275ae368d7b00dbd7f0ef1282a6a66d53f46f230aac30ceb",
+          "1794daed36ce90ffb9eb06739fbec3cfb9bcf5edf81ee7ce3e74cce2ef520c26",
+          "a3eb3282c1f00966e30dec79d4d260b16aa3c4ddef449e64a31f9c8e360c35b2",
+          "329367a24ba84ce690000276ff2e3801ac2acef2858fbe113c0f6a3ba3893616",
+          "19e8085f9593fd708942f6f18f918808f01597be3dd562297646e785e583b4a2",
+          "a16f38a075908667a1aab1d7f82f64e9ab794bdda479af5cbf9e362947b8df2d",
+          "34b8682eed45cb3b81adfe16d9e14ba068fb1ab334f02f252491de1545c47f13",
+          "d4bf16d6ce4eb63d541be4f9536e2550869dcdb758b0b7a847c5dc63f832ed3c",
+          "262f32b231ea64268fe70d0dcde3f4c89c93fba0c938e0eeff625df539eaaa97",
           "ee386e4a29973ed202a8880875d2a5f8f7656dfd04f8b9dd4e05c824021a0034",
-          "aa03c2037717e28d98980196814b2660db8c01aea7e0bd1d22848257c316403e"
+          "7b62184001103ac9e6f0c4677064c9cbde2fd4c70e17246b09808d5d98b2dc06",
+          "254f282ce4da5837c67df5f5d405e1ad3c405cee2c14420378bd8dfd0d86787c",
+          "8c66eaee9125d49703cd068cdba72c305ac38bcbb8e1dab7f399e224cb40a7d6",
+          "c186dff756b764e27eee24482997ec9f6bbcae891097580079dacad7b9c3ac30",
+          "65f7884e6670d34fbefc85ff4977b07d421f3ff1ff9603e001ac2a7575b894ca",
+          "aa03c2037717e28d98980196814b2660db8c01aea7e0bd1d22848257c316403e",
+          "50b465673de32095cd10b0e635ae5ccda2d00157c0d9da77d556d45e7f6dd417",
+          "7346ea7e6380af233fc40e0fa6427d3f17efe5fe63447f048542e8ff95f6a406",
+          "be0d2e4c39889ce69ce1a879dac37cd4b33624200e3dea3599b72e1a3e82d3cf",
+          "6627d1bb151b93e93cfc9d5a31248fd13f36bf5b84c9ff0714c9822aa0d4b594",
+          "7a3e82dd4c58ee11a8d2b894875cacd4a8828a3e299efb4271b80730fc6a27b4",
+          "3b49e12f48e00557f375e54b129269acc0f071fdd1858fc17645511e689420dc",
+          "3c5c8a793663a2b214fc0a46b8016d075a2462b371b5a21117ce8a4d517508d4",
+          "d8ba7aa10cff6283c53efd73611a20ce4602f7d95d3aeda0c024df5fdd792223",
+          "0d20f1d9c2796cd4bc627005aa7b1b161388670e319a2498a1fbb858bece9e9a",
+          "0e169d06137d542b00d30e043e3c372cdeffa73d5d2cd7821479e6f9816e651c",
+          "3b1641a721e5d5517515ba4a0f74c3f1103a00924b61ffca964261ba02aaf244",
+          "68b75de2bd1bba434ddd42e76804623d41efa87a7a210df795c0459e548d083d",
+          "f6438457738a613affbd19c1fd9f0978267a39f263d529f02293f6a669e3789d",
+          "3440484f8b200bc76a5f5a513aabf6d2b4dbc0ea7917ebce457d5268d94bd290",
+          "8086e2e9a1cc4ad21461c417dee6c48acc1222dc57975f9d1d1c29f3cc00fd50",
+          "2264704d24f6a1bc3b1a3f8ca27ad5fb07c70dd98830b5e3f0fdb9b9852e8a17",
+          "c674aa12b3665c30c5aefb1c6f96f35b8d71ffe95f6a4d2769632d53db421347",
+          "a423c74c9d7b52cc5f3b11852aea3eaea9bf55c83493d5d7f82434dd80c24f0d",
+          "3d3b308b385cfc54b939406d23a85a0df689c48c05b5aa3ae901d382b5055d00",
+          "620879e270f6234f50eb8c2188653359be6486f86612d1678214adbf786102d8",
+          "77cd1ad742e2533743bbe7069a7a0a6a58076e5c1a9f9d057191504007e39d1d"
         ],
         "table_ids": [
           "unknown",
           "wordpress.wp_actionscheduler_actions",
+          "wordpress.wp_actionscheduler_groups",
+          "wordpress.wp_actionscheduler_logs",
+          "wordpress.wp_commentmeta",
+          "wordpress.wp_comments",
           "wordpress.wp_options",
           "wordpress.wp_postmeta",
           "wordpress.wp_posts",
+          "wordpress.wp_term_relationships",
           "wordpress.wp_termmeta",
           "wordpress.wp_usermeta",
           "wordpress.wp_users",
+          "wordpress.wp_wc_admin_notes",
+          "wordpress.wp_wc_customer_lookup",
+          "wordpress.wp_wc_product_meta_lookup",
+          "wordpress.wp_wc_reserved_stock",
           "wordpress.wp_wc_tax_rate_classes",
           "wordpress.wp_woocommerce_api_keys",
+          "wordpress.wp_woocommerce_downloadable_product_permissions",
           "wordpress.wp_woocommerce_order_itemmeta",
           "wordpress.wp_woocommerce_order_items"
         ],
-        "frequency_percent": 28.04
+        "frequency_percent": 47.85
       },
       {
         "pattern_id": "aurora-common-11",
@@ -1028,44 +1158,56 @@
         "confidence": "MEDIUM",
         "description": "Batch lookups using WHERE column IN (...) with multiple values: one index scan probes every listed value (PostgreSQL documentation, Indexes, a ScalarArrayOpExpr on a B-tree; MySQL Reference Manual, Range Optimization, equality ranges for IN lists), with no item limit, where DynamoDB's BatchGetItem takes at most 100 keys and 16 MB (Amazon DynamoDB API Reference, BatchGetItem). In the key-lookup class it raises no score: key-value-lookup rates the same read at 80.",
         "query_ids": [
-          "a0b655ea2f80c5bc688a142e3e03956031de6a491787f4e8a847ae67c65fbef0",
           "59163c184972d1ec4ad95106a5fc20c95d19dd06d071f956bf50e0c51ce12bdf",
+          "a0b655ea2f80c5bc688a142e3e03956031de6a491787f4e8a847ae67c65fbef0",
           "fc99562bfa4be32418b08a3ab1ce8b7763f2bd698ff428782e9428a8fd6e3a98",
-          "d5ae7abb4fb5271f15a4193c025bb6c2bd745ff7e0806d140f89069876cd7ee7",
           "4f02475439a75f33544c0e7e10e2bf4c53d82ed1edaba7da9437b4da2889dd64",
-          "8485f0647490030c77563b65c57028d87eaf1845ab2aa7dbc11051f64057673d",
+          "d5ae7abb4fb5271f15a4193c025bb6c2bd745ff7e0806d140f89069876cd7ee7",
+          "f86b4be6598d18fabc947fb1c716f6221a3620a687940154774728dbbc8ae730",
           "4481cc0ca988374076baa83caa074ab5f9197db98fae7072c2cc068e0bdba8ba",
-          "52da34b1e5fbf3bc61a81c08cf440630ccd96aa21066f7f52c68d4d76aad2867",
-          "06584926ec16d35bcd9ad7d2351721be47c4216c1c3b543f1d151ce1f1dbb616",
-          "2389b8a0ec4470f207ccca39bd1d4fbea5a74b0664ee18b54f177ee6288b11cd",
-          "d99618ea3724cae0b2ef0dda96a021dda2c50c6b3ba3847b9ccf307ad044ec67",
+          "8485f0647490030c77563b65c57028d87eaf1845ab2aa7dbc11051f64057673d",
           "3a74580ede1af2d6447d882da446239b1064a42d7fbc76a62fdd302fcd7c6091",
-          "97834e68ad8550b0db33ca13d5b4d2f5ee6d56b1acbcd3374a1fefad234ca8ca",
-          "a16f38a075908667a1aab1d7f82f64e9ab794bdda479af5cbf9e362947b8df2d",
-          "3f9f6bab31e30e6cab0f93d7153b166e0e1a509e72b8099434729aae955182c8",
+          "d99618ea3724cae0b2ef0dda96a021dda2c50c6b3ba3847b9ccf307ad044ec67",
+          "06584926ec16d35bcd9ad7d2351721be47c4216c1c3b543f1d151ce1f1dbb616",
+          "52da34b1e5fbf3bc61a81c08cf440630ccd96aa21066f7f52c68d4d76aad2867",
+          "2389b8a0ec4470f207ccca39bd1d4fbea5a74b0664ee18b54f177ee6288b11cd",
           "f37cfe518f83669067b5e9c57f68ced43ba9175a37b7b64f1122a20a46d6bf2e",
+          "19e8085f9593fd708942f6f18f918808f01597be3dd562297646e785e583b4a2",
+          "97834e68ad8550b0db33ca13d5b4d2f5ee6d56b1acbcd3374a1fefad234ca8ca",
           "22726c847fe8cd5d7e1319b92c714efec37473a9dcff46db1d34a7d2489f6722",
-          "34b8682eed45cb3b81adfe16d9e14ba068fb1ab334f02f252491de1545c47f13",
+          "3f9f6bab31e30e6cab0f93d7153b166e0e1a509e72b8099434729aae955182c8",
+          "a16f38a075908667a1aab1d7f82f64e9ab794bdda479af5cbf9e362947b8df2d",
           "4b79d7a8be865f8758729140de11cba4dff2b0262c6b258523f6dac6e496720a",
-          "25e3c7550c3775ca1f60248bfbaefc90e027c17f4c54084860dccd6776fb8a16",
+          "34b8682eed45cb3b81adfe16d9e14ba068fb1ab334f02f252491de1545c47f13",
           "966f5a331e5bea92b89330f26d7b09ef9a538cf47edf3fcec3070693566a405c",
-          "4f9d2751c29cb0777dbc3770c92cc5b24381e9c2caf7d63978fff42f988642dc",
-          "50b465673de32095cd10b0e635ae5ccda2d00157c0d9da77d556d45e7f6dd417",
+          "25e3c7550c3775ca1f60248bfbaefc90e027c17f4c54084860dccd6776fb8a16",
           "7b62184001103ac9e6f0c4677064c9cbde2fd4c70e17246b09808d5d98b2dc06",
           "c186dff756b764e27eee24482997ec9f6bbcae891097580079dacad7b9c3ac30",
-          "a355b7403b1d39d90f3ff59ece2a00e0225bbbc7c3a9d3d755d3f0e8d001e077",
+          "65f7884e6670d34fbefc85ff4977b07d421f3ff1ff9603e001ac2a7575b894ca",
+          "50b465673de32095cd10b0e635ae5ccda2d00157c0d9da77d556d45e7f6dd417",
+          "4f9d2751c29cb0777dbc3770c92cc5b24381e9c2caf7d63978fff42f988642dc",
+          "3b49e12f48e00557f375e54b129269acc0f071fdd1858fc17645511e689420dc",
           "0e169d06137d542b00d30e043e3c372cdeffa73d5d2cd7821479e6f9816e651c",
-          "c674aa12b3665c30c5aefb1c6f96f35b8d71ffe95f6a4d2769632d53db421347",
-          "bdb34acbf7457475074e149471fdc6bc72e5b6a072bfb25d9b1bf564db9bacc9",
+          "a355b7403b1d39d90f3ff59ece2a00e0225bbbc7c3a9d3d755d3f0e8d001e077",
           "2a4b1b61361bc6b0f94452f62a10c9930991e0944a4f1b87498d061ed9052263",
           "f6438457738a613affbd19c1fd9f0978267a39f263d529f02293f6a669e3789d",
-          "65f7884e6670d34fbefc85ff4977b07d421f3ff1ff9603e001ac2a7575b894ca",
-          "620879e270f6234f50eb8c2188653359be6486f86612d1678214adbf786102d8"
+          "c674aa12b3665c30c5aefb1c6f96f35b8d71ffe95f6a4d2769632d53db421347",
+          "bdb34acbf7457475074e149471fdc6bc72e5b6a072bfb25d9b1bf564db9bacc9",
+          "5ae79e002ae4ab9da1c6dbda1ffe2fc14c7e557732c6ce9631d41b9ff377e8dd",
+          "620879e270f6234f50eb8c2188653359be6486f86612d1678214adbf786102d8",
+          "62118b26279d4f5aeadd94f2acdddc1627c7c99c632650020db012ea5c4016a7",
+          "6c018e097b5700f4e3f7f51310b48b024e4c2792143d51fa48b3bfc4564c65ce",
+          "9438ed54a7afc46837cd821ba15c7ed80b577191d387f314e3dc5c87a236011a",
+          "b08cef7a9c763dc4b4b224221efdd3884f1e9edfc4e16317b357437a227b5a0d",
+          "32562af3d1b5ad7a9fedfbf82ba69690eaf833ccf55634fe9ebfd4c0f2b4f9b0",
+          "4d51e982a77a3654c9f0273b1dff4fc8254e9bff8e832ef3c44a2aeef2c1e5e7",
+          "00ee1373f11d94400cb6d8fa32bf8a9b450ccddf905aa83d5f93c03523483a40"
         ],
         "table_ids": [
           "wordpress.wp_actionscheduler_actions",
           "wordpress.wp_actionscheduler_groups",
           "wordpress.wp_commentmeta",
+          "wordpress.wp_comments",
           "wordpress.wp_postmeta",
           "wordpress.wp_posts",
           "wordpress.wp_term_relationships",
@@ -1078,7 +1220,7 @@
           "wordpress.wp_woocommerce_order_itemmeta",
           "wordpress.wp_woocommerce_order_items"
         ],
-        "frequency_percent": 30.84
+        "frequency_percent": 26.99
       },
       {
         "pattern_id": "aurora-common-12",
@@ -1089,21 +1231,26 @@
           "66c96f951dd01698438c1be2887ff2553664cb0b99c1a1b0108b18ca22dcb799",
           "047e014629e23e0acd2ce23865fdf4b9eaf6a3e758de4731154eaedcfff471e2",
           "e223aefb06f2d48303ad26d2ee9f8aa957286f08174a6e92a6e583544f8099f0",
-          "a16f38a075908667a1aab1d7f82f64e9ab794bdda479af5cbf9e362947b8df2d",
           "ed65b0b663c28fba275ae368d7b00dbd7f0ef1282a6a66d53f46f230aac30ceb",
+          "a16f38a075908667a1aab1d7f82f64e9ab794bdda479af5cbf9e362947b8df2d",
           "7346ea7e6380af233fc40e0fa6427d3f17efe5fe63447f048542e8ff95f6a406",
+          "3b49e12f48e00557f375e54b129269acc0f071fdd1858fc17645511e689420dc",
           "0d20f1d9c2796cd4bc627005aa7b1b161388670e319a2498a1fbb858bece9e9a",
           "0e169d06137d542b00d30e043e3c372cdeffa73d5d2cd7821479e6f9816e651c",
-          "3440484f8b200bc76a5f5a513aabf6d2b4dbc0ea7917ebce457d5268d94bd290"
+          "3b1641a721e5d5517515ba4a0f74c3f1103a00924b61ffca964261ba02aaf244",
+          "3440484f8b200bc76a5f5a513aabf6d2b4dbc0ea7917ebce457d5268d94bd290",
+          "32562af3d1b5ad7a9fedfbf82ba69690eaf833ccf55634fe9ebfd4c0f2b4f9b0"
         ],
         "table_ids": [
           "wordpress.wp_comments",
           "wordpress.wp_options",
           "wordpress.wp_posts",
           "wordpress.wp_term_relationships",
-          "wordpress.wp_users"
+          "wordpress.wp_term_taxonomy",
+          "wordpress.wp_users",
+          "wordpress.wp_wc_customer_lookup"
         ],
-        "frequency_percent": 8.41
+        "frequency_percent": 7.36
       },
       {
         "pattern_id": "aurora-mysql-03",
@@ -1112,29 +1259,19 @@
         "description": "UPSERT using INSERT ... ON DUPLICATE KEY UPDATE. Aurora MySQL handles atomic insert-or-update with row-level locking on the unique/primary key.",
         "query_ids": [
           "a13f5749057b0212d61aea04e432898093305463ae027b79826082006cda7715",
-          "d72966f83d952df8a90f3fe081c626f33c8722f24535a4522b54f2528d12918d"
+          "d72966f83d952df8a90f3fe081c626f33c8722f24535a4522b54f2528d12918d",
+          "611079ff89c7fcbd01ed195b38f92d5b5961b531565b82b5e61f3d2730c78fa2",
+          "ee8b8e2169a3ca339065e40d5a1841622a886351d25561f4ece1807ed3cdcbe2"
         ],
         "table_ids": [
           "wordpress.wp_options",
+          "wordpress.wp_wc_customer_lookup",
           "wordpress.wp_wc_product_meta_lookup"
         ],
-        "frequency_percent": 1.87
+        "frequency_percent": 2.45
       }
     ],
     "anti_patterns_detected": [
-      {
-        "anti_pattern_id": "aurora-anti-01",
-        "anti_pattern_type": "high-frequency-pk-lookup",
-        "severity_weight": 0.8,
-        "description": "Single-row SELECT by primary key at very high frequency (more than 30 calls/second). Aurora serves it natively with a B-tree point read and scales reads with up to 15 Aurora Replicas (Amazon Aurora User Guide, Replication with Amazon Aurora). DynamoDB provides single-digit millisecond latency for key-value lookups at any scale. Aurora adds unnecessary overhead for this access pattern.",
-        "query_ids": [
-          "66c96f951dd01698438c1be2887ff2553664cb0b99c1a1b0108b18ca22dcb799"
-        ],
-        "table_ids": [
-          "wordpress.wp_options"
-        ],
-        "recommendation": "Migrate high-frequency PK lookups to DynamoDB for predictable single-digit-millisecond latency at scale (microseconds need DynamoDB Accelerator)."
-      },
       {
         "anti_pattern_id": "aurora-anti-05",
         "anti_pattern_type": "no-relational-need",
@@ -1142,21 +1279,20 @@
         "description": "Table with no foreign keys and no join participation: all queries are single-table CRUD. Aurora serves single-table CRUD natively and uses none of its relational features for it (Amazon Aurora User Guide, What is Amazon Aurora). This workload has no structural relational requirement and could run on a simpler, purpose-built engine (DynamoDB for key-value, ElastiCache for hot lookups).",
         "query_ids": [
           "b05af520688a1a5f54ba51896e5a079d05fde97ea81aa1f8618c9eed2e8e6212",
-          "65f7884e6670d34fbefc85ff4977b07d421f3ff1ff9603e001ac2a7575b894ca",
-          "de9a7ba3598eaa8b41839c2fce3889985e5636fc7489653be3b59378bf4779da",
-          "8c66eaee9125d49703cd068cdba72c305ac38bcbb8e1dab7f399e224cb40a7d6",
-          "7346ea7e6380af233fc40e0fa6427d3f17efe5fe63447f048542e8ff95f6a406",
-          "ac34da34fb23498bd1392f02403e9dbdd0d28d3cfef236e6d3c4c6ffe6e82ad2",
           "66c96f951dd01698438c1be2887ff2553664cb0b99c1a1b0108b18ca22dcb799",
           "a13f5749057b0212d61aea04e432898093305463ae027b79826082006cda7715",
+          "ac34da34fb23498bd1392f02403e9dbdd0d28d3cfef236e6d3c4c6ffe6e82ad2",
           "216d92b3f4e7091a2aa00b97ff8d389edbc5c148efcbed8cd6a1c3e408206051",
           "413c99e446984db35e1e4e8f3952ddb966d21a85a898e88235b61d26ea096e60",
           "e223aefb06f2d48303ad26d2ee9f8aa957286f08174a6e92a6e583544f8099f0",
+          "6980a25f43b91abe03027ba84e6f12fdd67c8d30e0cf5b7a7170b6dd4a155663",
           "4481cc0ca988374076baa83caa074ab5f9197db98fae7072c2cc068e0bdba8ba",
-          "3c5c8a793663a2b214fc0a46b8016d075a2462b371b5a21117ce8a4d517508d4",
           "ee386e4a29973ed202a8880875d2a5f8f7656dfd04f8b9dd4e05c824021a0034",
           "50b465673de32095cd10b0e635ae5ccda2d00157c0d9da77d556d45e7f6dd417",
-          "d72966f83d952df8a90f3fe081c626f33c8722f24535a4522b54f2528d12918d",
+          "3c5c8a793663a2b214fc0a46b8016d075a2462b371b5a21117ce8a4d517508d4",
+          "611079ff89c7fcbd01ed195b38f92d5b5961b531565b82b5e61f3d2730c78fa2",
+          "ee8b8e2169a3ca339065e40d5a1841622a886351d25561f4ece1807ed3cdcbe2",
+          "3b1641a721e5d5517515ba4a0f74c3f1103a00924b61ffca964261ba02aaf244",
           "77cd1ad742e2533743bbe7069a7a0a6a58076e5c1a9f9d057191504007e39d1d",
           "329367a24ba84ce690000276ff2e3801ac2acef2858fbe113c0f6a3ba3893616",
           "0452bed28b31e64ae9294ddef1d5e82c3166557fd4c02b6e7d4140a11170af82",
@@ -1165,11 +1301,9 @@
         ],
         "table_ids": [
           "wordpress.wp_actionscheduler_logs",
-          "wordpress.wp_commentmeta",
-          "wordpress.wp_comments",
           "wordpress.wp_options",
           "wordpress.wp_termmeta",
-          "wordpress.wp_wc_product_meta_lookup",
+          "wordpress.wp_wc_customer_lookup",
           "wordpress.wp_wc_reserved_stock",
           "wordpress.wp_wc_tax_rate_classes",
           "wordpress.wp_woocommerce_api_keys",
@@ -1184,8 +1318,6 @@
         "description": "Table accessed by at most 2 distinct query patterns, all single-table, all by primary key or single column filter. Aurora serves these reads natively and its query optimizer adds nothing to them (Amazon Aurora User Guide, What is Amazon Aurora). This is a key-value workload wearing a relational costume, with no query optimizer benefit.",
         "query_ids": [
           "b05af520688a1a5f54ba51896e5a079d05fde97ea81aa1f8618c9eed2e8e6212",
-          "65f7884e6670d34fbefc85ff4977b07d421f3ff1ff9603e001ac2a7575b894ca",
-          "d72966f83d952df8a90f3fe081c626f33c8722f24535a4522b54f2528d12918d",
           "77cd1ad742e2533743bbe7069a7a0a6a58076e5c1a9f9d057191504007e39d1d",
           "329367a24ba84ce690000276ff2e3801ac2acef2858fbe113c0f6a3ba3893616",
           "0452bed28b31e64ae9294ddef1d5e82c3166557fd4c02b6e7d4140a11170af82",
@@ -1194,8 +1326,6 @@
         ],
         "table_ids": [
           "wordpress.wp_actionscheduler_logs",
-          "wordpress.wp_commentmeta",
-          "wordpress.wp_wc_product_meta_lookup",
           "wordpress.wp_wc_reserved_stock",
           "wordpress.wp_wc_tax_rate_classes",
           "wordpress.wp_woocommerce_api_keys",
@@ -1209,12 +1339,12 @@
     "monthly_cost_usd": 497.25,
     "cost_components": {
       "serverless_v2": {
-        "compute_monthly_usd": 905.2,
+        "compute_monthly_usd": 6424.0,
         "storage_monthly_usd": 0.23,
-        "total_monthly_usd": 905.43,
-        "min_acu": 2.2,
-        "max_acu": 13.3,
-        "avg_acu": 7.8
+        "total_monthly_usd": 6424.23,
+        "min_acu": 15.7,
+        "max_acu": 94.3,
+        "avg_acu": 55.0
       },
       "provisioned": {
         "compute_monthly_usd": 492.75,
@@ -1228,16 +1358,16 @@
         "source": "AWS Price List",
         "region": "us-east-1",
         "pricing_model": "on-demand",
-        "retrieved_on": "2026-10-25"
+        "retrieved_on": "2026-11-04"
       }
     },
     "pricing_assumptions": [
       "Aurora Mysql \u2014 us-east-1",
-      "Serverless v2: $0.16/ACU-hr, 2.2-13.3 ACU range",
+      "Serverless v2: $0.16/ACU-hr, 15.7-94.3 ACU range",
       "Provisioned: db.r6g.xlarge at $0.675/hr",
       "Aurora I/O-Optimized storage: $0.225/GB/month",
-      "Total data size: 0.14 GB",
-      "Total query throughput: 222.0 calls/second"
+      "Total data size: 0.30 GB",
+      "Total query throughput: 1571.4 calls/second"
     ]
   },
   "load_test_results": null,

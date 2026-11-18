@@ -30,7 +30,8 @@ REPO = Path(__file__).resolve().parents[3]
 SAVED_REPORTS = (
     # A job an older release wrote (v0.4.0-beta.2, contract 1.69).
     REPO / "tests/fixtures/old_jobs/v0.4.0-beta.2/wordpress/aa4e840a/synthesis/v2/report.json",
-    REPO / "docs/examples/wordpress/sample-run/synthesis/v2/report.json",
+    # The WordPress sample run as v0.4.0-beta.1 shipped it (contract 1.69).
+    REPO / "tests/unit/report/fixtures/wordpress_sample_run_0_4_beta_1_report.json",
     REPO / "tests/fixtures/real_runs/wordpress-both/report.json",
 )
 

@@ -28,7 +28,9 @@ from src.shared.report_facts import (
 )
 
 REPO = Path(__file__).resolve().parents[3]
-SAMPLE = REPO / "docs/examples/wordpress/sample-run/synthesis/v2/report.json"
+# The WordPress sample run as v0.4.0-beta.1 shipped it (contract 1.69), frozen when the
+# help site's sample was refreshed for v0.5.0-beta.1.
+SAMPLE = REPO / "tests/unit/report/fixtures/wordpress_sample_run_0_4_beta_1_report.json"
 PRE_212 = REPO / "tests/unit/report/fixtures/wordpress_sample_run_0_3_report.json"
 
 
