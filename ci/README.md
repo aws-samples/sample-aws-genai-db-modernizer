@@ -697,4 +697,5 @@ obvious entries lives here instead:
   `<job>/_logs/dispatch_ledger.json` (atomically), take only subagent ids
   (letters, digits, `_.:-`) and print one JSON line; `--wait-for-report` reads
   that ledger and returns `nothing_pending` only when it lists no outstanding
-  subagent. No new allow rule is needed.
+  subagent. It re-reads the ledger at every poll, so a report recorded while it
+  waits ends the wait within a poll (#2435). No new allow rule is needed.
