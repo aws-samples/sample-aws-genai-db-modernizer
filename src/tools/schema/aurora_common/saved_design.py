@@ -603,6 +603,15 @@ def check_design_ddl(payload: Mapping[str, Any], engine: str) -> Mapping[str, An
         raise SavedDesignError("generated_ddl", None, str(exc), kind=DDL_KIND) from None
     # A table's stored statements (``ddl_statements``) are the script's own cut of it: a
     # design saved before the field existed has none; one that has it must match exactly.
+    # The merge writes the field on every table or on none, so a mix is a dropped field.
+    carried = [isinstance(t, Mapping) and t.get("ddl_statements") is not None for t in tables]
+    if any(carried) and not all(carried):
+        raise SavedDesignError(
+            f"table_definitions[{carried.index(False)}].ddl_statements",
+            None,
+            "is missing while other tables of the design carry theirs",
+            kind=DDL_KIND,
+        )
     for i, table in enumerate(tables):
         stored = table.get("ddl_statements") if isinstance(table, Mapping) else None
         if stored is not None and stored != per_table[i]:

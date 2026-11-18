@@ -54,6 +54,8 @@ def test_a_join_query_is_in_each_tables_row_and_once_in_the_engine_total() -> No
 
 
 def test_a_name_reads_the_same_with_a_schema_or_quotes_or_another_case() -> None:
+    # Dropping the schema also merges two schemas' tables of one name into one row:
+    # known bug #2455 (https://github.com/aws-samples/sample-aws-genai-db-modernizer/issues/2455).
     report = {
         "query_groups": [
             _group("g", "aurora_mysql", {"q1": ["Shop.`WP_Posts`"], "q2": ["wp_posts"]}),

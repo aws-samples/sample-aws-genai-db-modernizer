@@ -912,3 +912,56 @@ def test_1169_the_summary_names_the_table_map_and_states_the_split() -> None:
     # A count that is not the table map's is left alone.
     other = "7 source tables mapped to DynamoDB."
     assert label_summary_counts(other, _with_facts(_mapped_merged_report())) == other
+
+
+def _table_query_report() -> dict[str, Any]:
+    """An Aurora MySQL report with a join query, for #2325's per-table query rows."""
+    report = _merged_report()
+    report["query_groups"] = [
+        {
+            "group_name": "wp_posts",
+            "engines": ["aurora_mysql"],
+            "access_patterns": [
+                {"engine": "aurora_mysql", "query_ids": ["q1"], "design_rps": 1},
+                {"engine": "aurora_mysql", "query_ids": ["q2"], "design_rps": 1},
+            ],
+            "source_queries": [
+                {"query_id": "q1", "tables_accessed": ["wp_posts"]},
+                {"query_id": "q2", "tables_accessed": ["wp_posts", "wp_users"]},
+            ],
+        }
+    ]
+    return _with_facts(report)
+
+
+@pytest.mark.parametrize("stored", ["missing", None, []], ids=["missing", "none", "empty"])
+def test_an_old_query_group_counts_block_gets_its_table_queries(stored: Any) -> None:
+    """A block written before #2325 has ``query_group_counts`` without ``table_queries``
+    (or, re-dumped through the contract, an empty list). The reader fills the per-table
+    rows from the same function, so the UI never shows 0 queries for an Aurora table
+    (ADR-032 Decision 4)."""
+    fresh = _table_query_report()
+    expected = fresh["facts"]["query_group_counts"]["table_queries"]
+    assert [(r["table"], r["query_count"]) for r in expected] == [
+        ("wp_posts", 2),
+        ("wp_users", 1),
+    ]
+    old = copy.deepcopy(fresh)
+    block = old["facts"]["query_group_counts"]
+    if stored == "missing":
+        block.pop("table_queries")
+    else:
+        block["table_queries"] = stored
+    filled = report_facts(old)["query_group_counts"]
+    assert filled["table_queries"] == expected
+    assert {k: v for k, v in filled.items() if k != "table_queries"} == {
+        k: v for k, v in block.items() if k != "table_queries"
+    }
+
+
+@pytest.mark.passes_on_main
+def test_stored_table_queries_are_read_as_stored() -> None:
+    report = _table_query_report()
+    stored = [{"engine": "aurora_mysql", "table": "t", "query_count": 7, "query_ids": ["x"]}]
+    report["facts"]["query_group_counts"]["table_queries"] = stored
+    assert report_facts(report)["query_group_counts"]["table_queries"] == stored

@@ -596,6 +596,7 @@ def test_a_foreign_key_on_a_column_its_table_lacks_is_refused(tmp_path: Path) ->
     )
 
 
+@pytest.mark.passes_on_main
 def test_a_long_script_of_comments_is_checked_in_linear_time() -> None:
     """The comment loop reads each line once, so a script of many comments (an upload goes
     through the same read) is checked in time linear in its length."""
@@ -1231,7 +1232,12 @@ def test_a_quoted_name_with_a_space_keeps_its_statements(tmp_path: Path, engine:
 
 def test_two_tables_with_the_same_name_each_store_a_cut_and_load(tmp_path: Path) -> None:
     """Two schemas can share a bare table name. The cut is stored on each table definition,
-    by position, so a reader never looks a table up by its name in the script."""
+    by position, so a reader never looks a table up by its name in the script.
+
+    Known bug #2455 (https://github.com/aws-samples/sample-aws-genai-db-modernizer/issues/2455):
+    the merge keys each table's statements on the bare name, so both tables carry the same
+    ``CREATE TABLE "orders"`` and the script creates it twice. This test pins today's
+    behaviour, not the right one; change it when #2455 keeps the schema."""
     design = _merged(
         "aurora_postgresql",
         [_table("orders", "sales.orders"), _table("orders", "archive.orders")],
@@ -1274,6 +1280,23 @@ def test_table_statements_with_no_script_are_refused(tmp_path: Path) -> None:
     design = _merged("aurora_mysql", [_table("a")])
     del design["generated_ddl"]
     _refused(tmp_path, "aurora_mysql", design, "table_definitions[0].ddl_statements", "CREATE")
+
+
+@pytest.mark.parametrize("dropped", [0, 1])
+def test_a_design_where_only_some_tables_carry_their_statements_is_refused(
+    tmp_path: Path, dropped: int
+) -> None:
+    """The merge writes ``ddl_statements`` on every table or on none, so a mix is a dropped
+    field, refused at the table that lacks it."""
+    design = _merged("aurora_mysql", [_table("a"), _table("b")])
+    del design["table_definitions"][dropped]["ddl_statements"]
+    _refused(
+        tmp_path,
+        "aurora_mysql",
+        design,
+        f"table_definitions[{dropped}].ddl_statements",
+        "CREATE TABLE",
+    )
 
 
 @pytest.mark.passes_on_main
