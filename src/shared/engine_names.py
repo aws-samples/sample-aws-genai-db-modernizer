@@ -147,6 +147,15 @@ SOURCE_ENGINE_DISPLAY_NAMES: dict[str, str] = {
 }
 
 
+def source_engine_label(source: object) -> str | None:
+    """The display name of a source engine id ("sqlserver" -> "SQL Server"), the id itself
+    for one this table does not know, and None for no id. The assessments list and the
+    assessment detail both call it, so they cannot name a source differently (#2317)."""
+    if not isinstance(source, str) or not source:
+        return None
+    return SOURCE_ENGINE_DISPLAY_NAMES.get(source, source)
+
+
 def display_source_database(engine: str) -> str:
     """ "the source MySQL database" phrasing for a raw source-engine key.
 

@@ -41,7 +41,7 @@ import PendingEngineChoices from "../components/PendingEngineChoices";
 import UnservableAssignmentNotice from "../components/UnservableAssignmentNotice";
 import ApiManager from "../classes/ApiManager";
 import { failureFlash, upsertFlash } from "../utils/requestFailure";
-import ChartSankey from "../components/ChartSankey";
+import QueryFlow from "../components/QueryFlow";
 import {
   buildAssignmentSummary,
   countTieUnresolvedQueries,
@@ -344,7 +344,7 @@ const AssignmentGatePage = memo(() => {
 
   // ---- Handle Sankey node click ----
   const handleSankeyNodeClick = useCallback((nodeId) => {
-    if (nodeId && nodeId !== 'patterns') {
+    if (nodeId && nodeId !== 'queries') {
       // #2300: the engine's part of the results page, in a new tab: leaving this one
       // would discard the overrides not yet saved.
       window.open(resultsEngineHref(jobId, nodeId), '_blank', 'noopener');
@@ -859,8 +859,7 @@ const AssignmentGatePage = memo(() => {
             </Header>
           }
         >
-          <ChartSankey
-            width={900}
+          <QueryFlow
             height={Math.max(250, Object.keys(survivingAfterDist).length * 120)}
             data={sankeyData}
             onNodeClick={resultsExist ? handleSankeyNodeClick : undefined}

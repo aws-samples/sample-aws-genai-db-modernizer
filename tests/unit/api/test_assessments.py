@@ -553,6 +553,26 @@ class TestGetAssessment:
         assert data["progress"]["current_stage"] == "RunRefereeTriage"
         assert data["progress"]["stages"][0]["duration_seconds"] == 900
 
+    def _detail(self, mock_services, source):
+        mock_services["sfn"].describe_execution.return_value = {
+            **MOCK_EXECUTION,
+            "input": {"database_name": "wp", "source_database_type": source},
+        }
+        mock_services["sfn"].get_execution_history.return_value = MOCK_HISTORY[:1]
+        mock_services["sfn"]._execution_arn.return_value = "arn:test"
+        return client.get("/api/v1/assessments/job-1").json()
+
+    def test_names_the_source_engine_as_the_list_does(self, mock_services):
+        """#2317: the progress page's summary names the source engine ("SQL Server"),
+        never its raw id, from the same display names the assessments list uses."""
+        data = self._detail(mock_services, "sqlserver")
+        assert data["source_database_type"] == "sqlserver"
+        assert data["source_database_label"] == "SQL Server"
+
+    def test_an_unknown_source_engine_keeps_its_id_and_none_has_no_label(self, mock_services):
+        assert self._detail(mock_services, "exotic")["source_database_label"] == "exotic"
+        assert self._detail(mock_services, None)["source_database_label"] is None
+
     def test_404_when_not_found(self, mock_services):
         mock_services["sfn"].describe_execution.return_value = None
         assert client.get("/api/v1/assessments/nope").status_code == 404

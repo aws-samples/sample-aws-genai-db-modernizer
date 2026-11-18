@@ -40,7 +40,7 @@ from src.api.services.local_s3 import LocalS3Service
 from src.report.deliverables import deliverable_report
 from src.report.facts import report_facts
 from src.shared.contract_versioning import ContractVersionError
-from src.shared.engine_names import SOURCE_ENGINE_DISPLAY_NAMES
+from src.shared.engine_names import source_engine_label
 from src.shared.ranking import fit_text, main_engine
 from src.shared.report_facts import analysis_overview_facts
 
@@ -386,9 +386,7 @@ def list_assessments(
             AssessmentSummary(
                 job_id=ex["job_id"],
                 source_database_type=source,
-                source_database_label=(
-                    SOURCE_ENGINE_DISPLAY_NAMES.get(source, source) if source else None
-                ),
+                source_database_label=source_engine_label(source),
                 target_engines=engines,
                 projected_monthly_cost_usd=cost,
                 database_name=ex.get("database_name"),
@@ -457,10 +455,12 @@ async def get_assessment(job_id: str = Depends(job_id_param)):
             cause=execution.get("cause"),
         )
 
+    source = sfn_input.get("source_database_type")
     return AssessmentDetail(
         job_id=job_id,
         status=execution["status"],
-        source_database_type=sfn_input.get("source_database_type"),
+        source_database_type=source,
+        source_database_label=source_engine_label(source),
         database_name=sfn_input.get("database_name"),
         created_at=execution.get("started_at"),
         execution_arn=sfn_svc._execution_arn(job_id),

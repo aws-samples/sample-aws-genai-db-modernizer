@@ -49,10 +49,6 @@ code {
   --dbm-accent-orange: #ec7211;
   --dbm-accent-green: #1d8102;
   --dbm-signal-badge-muted-bg: rgba(0, 0, 0, 0.06);
-  /* ProgressState pipeline arrows */
-  --ps02-arrow-bg: #d5dbdb;
-  --ps02-label-inactive: #5f6b7a;
-  --ps02-label-active: #ffffff;
 }
 
 .awsui-dark-mode {
@@ -74,24 +70,6 @@ code {
   --dbm-accent-orange: #ec7211;
   --dbm-accent-green: #1d8102;
   --dbm-signal-badge-muted-bg: rgba(255, 255, 255, 0.06);
-  /* ProgressState pipeline arrows */
-  --ps02-arrow-bg: #414d5c;
-  --ps02-label-inactive: #9ba7b6;
-  --ps02-label-active: #ffffff;
-}
-
-/* ============================================ */
-/* Progress State Slider Full Width */
-/* ============================================ */
-
-.progress-state-slider [class*="awsui_slider-wrapper"] {
-  max-width: none !important;
-  width: 100% !important;
-}
-
-.progress-state-slider [class*="awsui_root"] {
-  max-width: none !important;
-  width: 100% !important;
 }
 
 /* ============================================ */

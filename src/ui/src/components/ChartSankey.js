@@ -1,7 +1,7 @@
 // Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
 // SPDX-License-Identifier: MIT-0
 
-import { useMemo, useState, useEffect } from 'react';
+import { useMemo, useRef, useState, useEffect } from 'react';
 import { sankey, sankeyCenter, sankeyLinkHorizontal } from 'd3-sankey';
 import { displayEngine } from '../utils/engineNames';
 import { ENGINE_HEX } from '../utils/engineCatalog.generated';
@@ -13,6 +13,13 @@ const MARGIN_X = 5;
 const NODE_WIDTH = 26;
 const LABEL_GAP = 6;
 const LABEL_FONT_SIZE = 12;
+const CACHE_EDGE_WIDTH = 1.5;
+// #2317: the diagram is laid out at the width its container has, but never narrower
+// than this: below it the labels would run into the nodes. A narrower container scales
+// the whole drawing down through its viewBox instead, so it never scrolls the page.
+const MIN_LAYOUT_WIDTH = 560;
+// Under this layout width the source label sits above its node, clear of the owner labels.
+const COMPACT_LAYOUT_WIDTH = 720;
 
 // #1245: the cache layer is the diagram's last column, at the right edge, and its
 // label used to sit left of the node, on top of the dashed overlay flows converging
@@ -43,7 +50,26 @@ export const NODE_COLORS = {
   ...ENGINE_HEX,
 };
 
-const ChartSankey = ({ width = 800, height = 400, data, onNodeClick, unavailableTitle }) => {
+// `width` is the layout width used until the container's own width is known (and where
+// there is no layout, as in a test). `ariaLabel` names the drawing as one image for a
+// screen reader (#2317); QueryFlow gives the same numbers as a table under it, so the
+// nodes here stay a mouse shortcut and the table holds the keyboard-reachable links.
+const ChartSankey = ({ width = 800, height = 400, data, onNodeClick, unavailableTitle, ariaLabel }) => {
+  const containerRef = useRef(null);
+  const [measured, setMeasured] = useState(0);
+  useEffect(() => {
+    const el = containerRef.current;
+    if (!el) return undefined;
+    const read = () => setMeasured(Math.floor(el.clientWidth));
+    read();
+    if (typeof ResizeObserver === 'undefined') return undefined;
+    const observer = new ResizeObserver(read);
+    observer.observe(el);
+    return () => observer.disconnect();
+  }, []);
+  const layoutWidth = Math.max(measured > 0 ? measured : width, MIN_LAYOUT_WIDTH);
+  const compact = layoutWidth < COMPACT_LAYOUT_WIDTH;
+
   // Theme detection for text color
   const [isDark, setIsDark] = useState(() => document.body.classList.contains('awsui-dark-mode'));
   useEffect(() => {
@@ -62,14 +88,14 @@ const ChartSankey = ({ width = 800, height = 400, data, onNodeClick, unavailable
       .nodePadding(29)
       .extent([
         [MARGIN_X, MARGIN_Y],
-        [width - MARGIN_X - cacheLabelRoom(data), height - MARGIN_Y],
+        [layoutWidth - MARGIN_X - cacheLabelRoom(data), height - MARGIN_Y],
       ])
       .nodeId((node) => node.id) // Accessor function: how to retrieve the id that defines each node
       .nodeAlign(sankeyCenter); // Algorithm used to decide node position
 
     // Compute nodes and links positions
     return sankeyGenerator(data);
-  }, [data, width, height]);
+  }, [data, layoutWidth, height]);
 
   // Calculate total values for each node. Before #330 every node was either
   // a pure source (the "queries"/"patterns" root) or a pure target (an owner
@@ -122,24 +148,18 @@ const ChartSankey = ({ width = 800, height = 400, data, onNodeClick, unavailable
       // The source and the cache layer (the first and last columns) are labelled on
       // their outer side, an owner engine on its left (#1245).
       const labelOutside = isSource || isCache;
-      const labelX = labelOutside ? node.x1 + LABEL_GAP : node.x0 - LABEL_GAP;
+      // A narrow drawing puts the source label above its node: beside it, it would run
+      // into the owner labels.
+      const labelAbove = isSource && compact;
+      const labelX = labelAbove ? node.x0 : labelOutside ? node.x1 + LABEL_GAP : node.x0 - LABEL_GAP;
       const labelAnchor = labelOutside ? 'start' : 'end';
+      const labelY = labelAbove ? node.y0 - LABEL_GAP * 1.5 : (node.y1 + node.y0) / 2;
 
       return (
         <g
           key={node.index}
           data-sankey-node={node.id}
           onClick={isClickable ? () => onNodeClick(node.id) : undefined}
-          // #2300: a link is reachable and usable from the keyboard.
-          role={isClickable ? 'link' : undefined}
-          tabIndex={isClickable ? 0 : undefined}
-          aria-label={isClickable ? label : undefined}
-          onKeyDown={isClickable ? (e) => {
-            if (e.key === 'Enter' || e.key === ' ') {
-              e.preventDefault();
-              onNodeClick(node.id);
-            }
-          } : undefined}
           style={{ cursor: isClickable ? 'pointer' : 'default', pointerEvents: 'all' }}
         >
           {/* #2300: why an engine node is not a link (no results page yet). */}
@@ -157,8 +177,8 @@ const ChartSankey = ({ width = 800, height = 400, data, onNodeClick, unavailable
           />
           <text
             x={labelX}
-            y={(node.y1 + node.y0) / 2}
-            dy="0.35em"
+            y={labelY}
+            dy={labelAbove ? undefined : '0.35em'}
             textAnchor={labelAnchor}
             fontSize={LABEL_FONT_SIZE}
             fill={textFill}
@@ -181,7 +201,10 @@ const ChartSankey = ({ width = 800, height = 400, data, onNodeClick, unavailable
         </g>
       );
     });
-  }, [nodes, width, nodeValues, onNodeClick, unavailableTitle, textFill]);
+    // d3-sankey lays out in place, so `nodes` keeps its identity when the width changes:
+    // the width is a dependency of its own (#2317).
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [nodes, layoutWidth, compact, nodeValues, onNodeClick, unavailableTitle, textFill]);
 
   // Draw the links
   const allLinks = useMemo(() => {
@@ -192,9 +215,23 @@ const ChartSankey = ({ width = 800, height = 400, data, onNodeClick, unavailable
       const targetId = typeof link.target === 'object' ? link.target.id : link.target;
       const linkColor = NODE_COLORS[targetId] || DEFAULT_ENGINE_HEX;
       // #330: a link into the cache layer is a cached-reads overlay on top of
-      // its owner engine's flow, not a flow from the query source -- dash it
-      // so it reads as a second, overlaid layer rather than another owner flow.
-      const isCacheLink = isCacheEngine(targetId);
+      // its owner engine's flow, not a flow from the query source. #2317: it is drawn
+      // as the two thin dashed edges of its band, so it reads as a second layer and
+      // never outweighs the owner flows it crosses.
+      if (isCacheEngine(targetId)) {
+        const half = link.width / 2;
+        return [-half, half].map((offset) => (
+          <path
+            key={`${i}-${offset}`}
+            d={linkGenerator({ ...link, y0: link.y0 + offset, y1: link.y1 + offset })}
+            stroke={linkColor}
+            fill="none"
+            strokeOpacity={0.9}
+            strokeWidth={CACHE_EDGE_WIDTH}
+            strokeDasharray="6,4"
+          />
+        ));
+      }
 
       return (
         <path
@@ -204,15 +241,22 @@ const ChartSankey = ({ width = 800, height = 400, data, onNodeClick, unavailable
           fill="none"
           strokeOpacity={isDark ? 0.3 : 0.4}
           strokeWidth={link.width}
-          strokeDasharray={isCacheLink ? '6,4' : undefined}
         />
       );
     });
-  }, [links, isDark]);
+    // The same in-place layout as above: a new width moves the links too.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [links, layoutWidth, isDark]);
 
   return (
-    <div style={{ width: '100%', display: 'flex', justifyContent: 'center', alignItems: 'center' }}>
-      <svg width={width} height={height}>
+    <div ref={containerRef} style={{ width: '100%', minWidth: 0 }}>
+      <svg
+        viewBox={`0 0 ${layoutWidth} ${height}`}
+        width="100%"
+        style={{ display: 'block', height: 'auto', maxWidth: '100%' }}
+        role={ariaLabel ? 'img' : undefined}
+        aria-label={ariaLabel || undefined}
+      >
         {allLinks}
         {allNodes}
       </svg>

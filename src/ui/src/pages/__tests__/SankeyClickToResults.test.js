@@ -60,7 +60,6 @@ jest.mock('@cloudscape-design/components/button', () => ({
 jest.mock('@cloudscape-design/components/select', () => ({ __esModule: true, default: () => null }));
 jest.mock('../../components/SummaryFallbackNotice', () => ({ __esModule: true, default: () => null }));
 jest.mock('../../components/AppHeader', () => ({ __esModule: true, default: () => null }));
-jest.mock('../../components/ProgressState', () => ({ __esModule: true, default: () => null }));
 jest.mock('../../components/UnservableAssignmentNotice', () => ({ __esModule: true, default: () => null }));
 jest.mock('../../components/PendingEngineChoices', () => ({ __esModule: true, default: () => null }));
 jest.mock('../../components/ChartSankey', () => ({

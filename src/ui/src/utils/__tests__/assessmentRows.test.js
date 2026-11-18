@@ -58,12 +58,12 @@ describe('copyJobIdLabel (#2340 review)', () => {
   it('gives each row its own accessible name, even for two jobs on one database', () => {
     const a = copyJobIdLabel(t, 'wordpress', 'b4f93edf');
     const b = copyJobIdLabel(t, 'wordpress', '22222222');
-    expect(a).toBe('Copy job ID for wordpress (b4f93edf)');
+    expect(a).toBe('Copy assessment id for wordpress (b4f93edf)');
     expect(a).not.toBe(b);
   });
 
   it('names the job id when the API has no database name', () => {
-    expect(copyJobIdLabel(t, null, 'b4f93edf')).toBe('Copy job ID for b4f93edf (b4f93edf)');
+    expect(copyJobIdLabel(t, null, 'b4f93edf')).toBe('Copy assessment id for b4f93edf (b4f93edf)');
   });
 
   it('the Dashboard uses it for every row', () => {

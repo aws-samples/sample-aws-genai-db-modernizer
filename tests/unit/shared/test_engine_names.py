@@ -53,3 +53,15 @@ def test_heterogeneous_source_clause_is_one_wording_for_wave_and_summary() -> No
     assert heterogeneous_source_clause("oracle", "19.3").startswith(
         "The source Oracle database (19.3) has no Aurora engine"
     )
+
+
+def test_source_engine_label_names_known_sources_and_keeps_unknown_ids():
+    """#2317: the assessments list and the assessment detail share one label rule."""
+    from src.shared.engine_names import source_engine_label
+
+    assert source_engine_label("sqlserver") == "SQL Server"
+    assert source_engine_label("mysql") == "MySQL"
+    assert source_engine_label("exotic") == "exotic"
+    assert source_engine_label(None) is None
+    assert source_engine_label("") is None
+    assert source_engine_label(7) is None

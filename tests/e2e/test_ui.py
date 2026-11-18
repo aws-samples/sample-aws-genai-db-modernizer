@@ -2464,6 +2464,114 @@ def test_job_pages_have_no_accessibility_violations(
         assert "Projected cost, not sorted." in sort_labels, sort_labels
 
 
+def _page_fits_viewport(page: Page) -> bool:
+    return bool(page.evaluate("document.documentElement.scrollWidth <= window.innerWidth + 1"))
+
+
+@pytest.mark.parametrize("width", [1440, 390])
+def test_progress_page_of_a_finished_job_has_a_summary_and_a_readable_flow_chart(
+    page: Page, ui: str, all_runs: list[PipelineResult], width: int
+) -> None:
+    """#2317: a finished job's progress page summarizes the database, source, target engines,
+    monthly cost and overall risk from the report facts, with "View results" in the header and
+    no phase tracker. The query flow fills its container (no fixed 900 px), is one named image
+    that states the split, and "Show as a table" lists the same numbers. The page never scrolls
+    sideways at a phone width."""
+    page.set_viewport_size({"width": width, "height": 900})
+    page.emulate_media(reduced_motion="reduce")
+    for r in all_runs:
+        facts = json.loads((r.artifact_root / r.report["report"]).read_text())["facts"]
+        ev = _watch(page)
+        page.goto(f"{ui}/analysis/monitor/summary/{r.job_id}")
+        expect(page.get_by_role("heading", level=2, name="Summary")).to_be_visible(timeout=READY_MS)
+        cost = facts.get("projected_monthly_cost_usd")
+        expected_cost = f"${cost:,.2f}/mo" if isinstance(cost, (int, float)) else "—"
+        body = page.inner_text("body")
+        where = (r.db, width)
+        assert r.db in body, where
+        assert expected_cost in body, (where, expected_cost)
+        for engine in facts.get("target_engines") or []:
+            assert ENGINE_LABELS.get(engine, engine) in body, (where, engine)
+        assert "Overall risk" in body and "Assessment id" in body, where
+        assert page.get_by_role("link", name="View results").count() == 1, where
+        assert page.get_by_role("list", name="Assessment phases").count() == 0, where
+        assert "Analyse" not in body and "patterns (" not in body, where
+
+        chart = page.locator("svg[role=img]")
+        expect(chart).to_have_count(1)
+        label = chart.get_attribute("aria-label") or ""
+        assert re.match(r"Query flow of [\d,]+ quer(y|ies), split as ", label), (where, label)
+        placed = facts.get("in_scope_query_count")
+        if isinstance(placed, int):
+            assert label.startswith(f"Query flow of {placed:,} quer"), (where, placed, label)
+        box = chart.bounding_box()
+        assert box is not None and box["x"] >= 0 and box["x"] + box["width"] <= width + 1, (
+            where,
+            box,
+        )
+        if width == 1440:
+            assert box["width"] > 950, (where, box)
+        assert _page_fits_viewport(page), (where, "the page scrolls sideways")
+
+        page.get_by_role("button", name="Show as a table").click()
+        rows = page.locator("table tbody tr")
+        expect(rows.first).to_be_visible()
+        engines = [
+            tuple(c.inner_text() for c in rows.nth(i).locator("td").all())
+            for i in range(rows.count())
+        ]
+        owners = [(e, n) for e, n in engines if "(cache layer)" not in e]
+        assert owners, (where, engines)
+        # The table is the report's own final engine counts, the ones the results page shows.
+        counts = {
+            ENGINE_LABELS.get(e, e): n for e, n in (facts.get("engine_query_counts") or {}).items()
+        }
+        for engine_name, queries in owners:
+            if engine_name in counts:
+                assert queries == f"{counts[engine_name]:,}", (where, engine_name, queries, counts)
+            assert f"{engine_name} {queries}" in label, (where, engine_name, queries, label)
+        assert _page_fits_viewport(page), (where, "the page scrolls sideways with the table")
+        assert ev == {"console": [], "pageerror": [], "failed": []}, (where, ev)
+
+
+@pytest.mark.parametrize("width", [1440, 390])
+def test_progress_page_of_a_running_job_lists_its_phases_without_overlap(
+    page: Page, ui: str, all_runs: list[PipelineResult], width: int
+) -> None:
+    """#2317: a running job's phases are Cloudscape Steps, one per row, "Analyze" spelled that
+    way, the current one marked in progress; no label runs into another at a phone width.
+    The job's own detail response is cut to its first two stages for this check."""
+    r = all_runs[0]
+
+    def running(route: playwright.sync_api.Route) -> None:
+        response = route.fetch()
+        body = response.json()
+        stages = body["progress"]["stages"][:2]
+        stages[-1]["status"] = "in-progress"
+        body["progress"]["stages"] = stages
+        route.fulfill(response=response, json=body)
+
+    page.route(re.compile(rf"/api/v1/assessments/{re.escape(r.job_id)}$"), running)
+    page.set_viewport_size({"width": width, "height": 900})
+    page.emulate_media(reduced_motion="reduce")
+    page.goto(f"{ui}/analysis/monitor/summary/{r.job_id}")
+    steps = page.get_by_role("list", name="Assessment phases").get_by_role("listitem")
+    expect(steps).to_have_count(5, timeout=READY_MS)
+    names = [steps.nth(i).inner_text() for i in range(5)]
+    assert [n.split("\n")[0] for n in names] == ["Collect", "Analyze", "Select", "Design", "Review"]
+    assert steps.nth(1).get_by_role("img", name="In progress").count() == 1
+    assert steps.nth(0).get_by_role("img", name="Done").count() == 1
+    boxes = [steps.nth(i).bounding_box() for i in range(5)]
+    for above, below in zip(boxes, boxes[1:], strict=False):
+        assert above["y"] + above["height"] <= below["y"] + 1, (width, above, below)
+    assert page.get_by_role("link", name="View results").count() == 0
+    assert "Monthly cost" not in page.inner_text("body")
+    assert _page_fits_viewport(page), (width, "the page scrolls sideways")
+    if width == 390:
+        for box in boxes:
+            assert box["x"] + box["width"] <= width + 1, box
+
+
 def test_results_page_has_no_accessibility_violations_with_an_earlier_path_picked(
     page: Page, ui: str, all_runs: list[PipelineResult]
 ) -> None:
