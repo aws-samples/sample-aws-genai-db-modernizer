@@ -313,6 +313,7 @@ _NEWER_THAN_THE_RECORDING = (
     "slice_plan",  # #1128
     "adoption",  # #1128
     "engine_query_counts",  # #2358
+    "target_engines",  # #2345
 )
 # Fields added inside a recorded fact, filled in the same way (#399).
 _NEWER_FIELDS_THAN_THE_RECORDING = {

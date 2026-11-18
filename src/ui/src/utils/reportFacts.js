@@ -35,6 +35,17 @@ export function finalEngineCounts(synthesis) {
   return (synthesis && synthesis.reality_check && synthesis.reality_check.after_distribution) || {};
 }
 
+// #2345: the target engines, one fact (facts.target_engines) the results page and the
+// assessments list both read: each as `{ engine, isCacheLayer }`. null when the report
+// states none (a block saved before it; the /results API fills one in for a real report),
+// and the page then builds them from the counts as it did.
+export function targetEngineEntriesOf(synthesis) {
+  const ids = factsOf(synthesis) && factsOf(synthesis).target_engines;
+  if (!Array.isArray(ids)) return null;
+  const cacheEngine = synthesis.cache_overlay?.engine;
+  return ids.map((engine) => ({ engine, isCacheLayer: !!cacheEngine && engine === cacheEngine }));
+}
+
 // #2363: the count a results tab shows in its label (facts.results_tab_counts, by tab id), or
 // null when the facts state none (a block saved before them, or a tab with nothing to count).
 export function resultsTabCountOf(synthesis, tabId) {

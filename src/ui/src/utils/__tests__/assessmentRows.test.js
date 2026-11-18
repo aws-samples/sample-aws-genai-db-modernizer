@@ -34,8 +34,11 @@ describe('databaseLabel (#2305)', () => {
 describe('Dashboard table (#2305)', () => {
   const source = fs.readFileSync(path.join(__dirname, '../../pages/Dashboard.js'), 'utf8');
 
-  it('leads with the database column and keeps the job id second', () => {
-    expect(source).toMatch(/useState\(\['databaseName', 'jobId', 'status'/);
+  it('leads with the database column and keeps the job id a secondary column (#2345)', () => {
+    // The desktop list: database first, then the engines and cost (#2345), then the job id.
+    expect(source).toMatch(/\['databaseName', 'sourceEngine', 'targetEngines', 'projectedCost', 'jobId', 'status', 'created', 'duration'\]/);
+    // The phone list drops the job id, dates and source and keeps the database first.
+    expect(source).toMatch(/\['databaseName', 'targetEngines', 'projectedCost', 'status'\]/);
   });
 
   it('links a row through assessmentHref and wraps lines', () => {

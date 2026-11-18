@@ -40,3 +40,20 @@ test('a report with neither has no counts', () => {
   expect(finalEngineCounts({})).toEqual({});
   expect(finalEngineCounts(null)).toEqual({});
 });
+
+// #2345: the target engines are one fact the results page and the assessments list read.
+const { targetEngineEntriesOf } = require('../reportFacts');
+
+test('the target engines come from facts.target_engines, the cache layer marked', () => {
+  const synthesis = { facts: { target_engines: ['dynamodb', 'elasticache'] }, cache_overlay: { engine: 'elasticache' } };
+  expect(targetEngineEntriesOf(synthesis)).toEqual([
+    { engine: 'dynamodb', isCacheLayer: false },
+    { engine: 'elasticache', isCacheLayer: true },
+  ]);
+});
+
+test('a report with no such fact has none, and an empty list is a list', () => {
+  expect(targetEngineEntriesOf({ facts: {} })).toBeNull();
+  expect(targetEngineEntriesOf(null)).toBeNull();
+  expect(targetEngineEntriesOf({ facts: { target_engines: [] } })).toEqual([]);
+});
