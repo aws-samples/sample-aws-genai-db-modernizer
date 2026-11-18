@@ -1,6 +1,0 @@
-# A pending contract version bump (ADR-008 Decision 8). The number is assigned by
-# uv run python scripts/resolve_contract_versions.py --release at release (a MAJOR: in its pull request).
-contract = "synthesis_output.SynthesisOutputContract"
-kind = "minor"
-reason = "Added optional ``facts.engine_query_counts``: each owner engine's final query count, from the final assignment version, which the results page reads instead of the reality check's after_distribution (#2358). Backward compatible: None in a report written before."
-issue = 2358

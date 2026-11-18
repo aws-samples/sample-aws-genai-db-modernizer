@@ -1,6 +1,0 @@
-# A pending contract version bump (ADR-008 Decision 8). The number is assigned by
-# uv run python scripts/resolve_contract_versions.py --release at release (a MAJOR: in its pull request).
-contract = "routine_repair.RoutineRepairContract"
-kind = "minor"
-reason = "Added the optional RoutineRepairContract.refused_candidates (the candidates refused in any round, a routine that then got no answer included) and the attention code signature_mismatch (a routine never sent because its text does not carry the signature the routine-migration artifact read). Backward compatible: a new value and an optional field; a result written before reads refused_candidates from its rows"
-issue = 2444

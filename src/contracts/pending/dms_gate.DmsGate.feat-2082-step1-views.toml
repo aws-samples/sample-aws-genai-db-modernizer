@@ -1,6 +1,0 @@
-# A pending contract version bump (ADR-008 Decision 8). The number is assigned by
-# uv run python scripts/resolve_contract_versions.py --release at release (a MAJOR: in its pull request).
-contract = "dms_gate.DmsGate"
-kind = "minor"
-reason = "Added the ``views`` check id, after parity and before routines, for a contract with a views section; a view exception's reason is then ``VIEW_CARRIED`` or starts ``not carried: `` with its reasons and what to do."
-issue = 2082

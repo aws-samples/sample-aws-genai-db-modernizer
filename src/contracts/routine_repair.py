@@ -59,6 +59,20 @@ answer, shows in it while ``counts`` lists it as ``no_answer``.
 
 Version History:
 - 1.0 (2026-11-16, #1940): First version.
+- 1.1 (2026-11-18, #1941, #2384, #2444): Added the repair loop's states model_repaired
+  (the side-by-side proof accepted the repair on the rebuilt exact text) and
+  needs_attention (not rebuildable by position, or every attempt failed), RepairAttempt
+  and the optional RoutineRepairRow.attempts, diff, attention, attention_detail and
+  proof_source, and RoutineRepairContract.proof and rounds (#1941). Backward compatible:
+  new values and optional fields; a result written before lists counts for the first
+  four states only, and the missing ones read as 0 Added the proof target test-cluster:
+  the original on a disposable engine of the source, the repair on the job's throwaway
+  Aurora test cluster. Added the optional RoutineRepairContract.refused_candidates (the
+  candidates refused in any round, a routine that then got no answer included) and the
+  attention code signature_mismatch (a routine never sent because its text does not
+  carry the signature the routine-migration artifact read). Backward compatible: a new
+  value and an optional field; a result written before reads refused_candidates from its
+  rows
 """
 
 from __future__ import annotations
@@ -290,7 +304,7 @@ class RoutineRepairContract(BaseModel):
     """The routine repair seam's result for one assignment version (#1940)."""
 
     contract_version: str = Field(
-        default="1.0", pattern=r"^\d+\.\d+$", description="Contract version (MAJOR.MINOR)"
+        default="1.1", pattern=r"^\d+\.\d+$", description="Contract version (MAJOR.MINOR)"
     )
     job_id: str = Field(..., min_length=1, description="The job")
     database_name: str = Field(..., min_length=1, description="The job's database name")

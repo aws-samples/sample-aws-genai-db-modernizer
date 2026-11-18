@@ -6028,6 +6028,40 @@
                                 ]
                               }
                             },
+                            "character_set": {
+                              "required": false,
+                              "schema": {
+                                "kind": "anyOf",
+                                "members": [
+                                  {
+                                    "kind": "scalar",
+                                    "maxLength": 64,
+                                    "type": "string"
+                                  },
+                                  {
+                                    "kind": "scalar",
+                                    "type": "null"
+                                  }
+                                ]
+                              }
+                            },
+                            "collation": {
+                              "required": false,
+                              "schema": {
+                                "kind": "anyOf",
+                                "members": [
+                                  {
+                                    "kind": "scalar",
+                                    "maxLength": 64,
+                                    "type": "string"
+                                  },
+                                  {
+                                    "kind": "scalar",
+                                    "type": "null"
+                                  }
+                                ]
+                              }
+                            },
                             "column_name": {
                               "required": true,
                               "schema": {
@@ -6380,6 +6414,25 @@
                                     "type": "boolean"
                                   }
                                 },
+                                "included_columns": {
+                                  "required": false,
+                                  "schema": {
+                                    "kind": "anyOf",
+                                    "members": [
+                                      {
+                                        "items": {
+                                          "kind": "scalar",
+                                          "type": "string"
+                                        },
+                                        "kind": "array"
+                                      },
+                                      {
+                                        "kind": "scalar",
+                                        "type": "null"
+                                      }
+                                    ]
+                                  }
+                                },
                                 "index_def": {
                                   "required": false,
                                   "schema": {
@@ -6429,6 +6482,7 @@
                                         "values": [
                                           "brin",
                                           "btree",
+                                          "columnstore",
                                           "fulltext",
                                           "gin",
                                           "gist",
@@ -7069,6 +7123,27 @@
                     "items": {
                       "kind": "object",
                       "properties": {
+                        "body_status": {
+                          "required": false,
+                          "schema": {
+                            "kind": "anyOf",
+                            "members": [
+                              {
+                                "kind": "enum",
+                                "values": [
+                                  "collected",
+                                  "not_readable",
+                                  "not_supported",
+                                  "opted_out"
+                                ]
+                              },
+                              {
+                                "kind": "scalar",
+                                "type": "null"
+                              }
+                            ]
+                          }
+                        },
                         "column_list": {
                           "required": false,
                           "schema": {
@@ -7088,11 +7163,72 @@
                             ]
                           }
                         },
+                        "columns": {
+                          "required": false,
+                          "schema": {
+                            "kind": "anyOf",
+                            "members": [
+                              {
+                                "items": {
+                                  "kind": "object",
+                                  "properties": {
+                                    "data_type": {
+                                      "required": false,
+                                      "schema": {
+                                        "kind": "anyOf",
+                                        "members": [
+                                          {
+                                            "kind": "scalar",
+                                            "maxLength": 512,
+                                            "type": "string"
+                                          },
+                                          {
+                                            "kind": "scalar",
+                                            "type": "null"
+                                          }
+                                        ]
+                                      }
+                                    },
+                                    "name": {
+                                      "required": true,
+                                      "schema": {
+                                        "kind": "scalar",
+                                        "minLength": 1,
+                                        "type": "string"
+                                      }
+                                    }
+                                  }
+                                },
+                                "kind": "array"
+                              },
+                              {
+                                "kind": "scalar",
+                                "type": "null"
+                              }
+                            ]
+                          }
+                        },
                         "definition": {
                           "required": true,
                           "schema": {
                             "kind": "scalar",
                             "type": "string"
+                          }
+                        },
+                        "extension_owned": {
+                          "required": false,
+                          "schema": {
+                            "kind": "anyOf",
+                            "members": [
+                              {
+                                "kind": "scalar",
+                                "type": "boolean"
+                              },
+                              {
+                                "kind": "scalar",
+                                "type": "null"
+                              }
+                            ]
                           }
                         },
                         "is_updatable": {
@@ -7197,6 +7333,25 @@
                               {
                                 "kind": "scalar",
                                 "type": "string"
+                              }
+                            ]
+                          }
+                        },
+                        "security_type": {
+                          "required": false,
+                          "schema": {
+                            "kind": "anyOf",
+                            "members": [
+                              {
+                                "kind": "enum",
+                                "values": [
+                                  "DEFINER",
+                                  "INVOKER"
+                                ]
+                              },
+                              {
+                                "kind": "scalar",
+                                "type": "null"
                               }
                             ]
                           }
@@ -7708,6 +7863,40 @@
                           "kind": "scalar",
                           "minimum": 0,
                           "type": "number"
+                        },
+                        {
+                          "kind": "scalar",
+                          "type": "null"
+                        }
+                      ]
+                    }
+                  },
+                  "default_character_set": {
+                    "required": false,
+                    "schema": {
+                      "kind": "anyOf",
+                      "members": [
+                        {
+                          "kind": "scalar",
+                          "maxLength": 64,
+                          "type": "string"
+                        },
+                        {
+                          "kind": "scalar",
+                          "type": "null"
+                        }
+                      ]
+                    }
+                  },
+                  "default_collation": {
+                    "required": false,
+                    "schema": {
+                      "kind": "anyOf",
+                      "members": [
+                        {
+                          "kind": "scalar",
+                          "maxLength": 64,
+                          "type": "string"
                         },
                         {
                           "kind": "scalar",
@@ -10960,8 +11149,8 @@
         }
       }
     },
-    "schema_hash": "b300cd755dda8bc69736a92aec74b6bc01847f8a559e66e4bf9cd05e12d52423",
-    "version": "5.18"
+    "schema_hash": "397b30bb13509c130e2b8d958f9d0714debd3c64273273b5421f454d6eb99a55",
+    "version": "5.19"
   },
   "data_movement_plan.DataMovementPlan": {
     "fields": {
@@ -13209,7 +13398,8 @@
                     "lag",
                     "load",
                     "parity",
-                    "routines"
+                    "routines",
+                    "views"
                   ]
                 }
               },
@@ -13535,8 +13725,8 @@
         }
       }
     },
-    "schema_hash": "7ea50e46eb1750a36cffb209f8f7a3c411e24bd6aec01052a0ad8b0345c7f3c7",
-    "version": "1.4"
+    "schema_hash": "5bb1b9fc8e7c06728b459f5d834beec27caad432f1fa2de92e1c443fccbfe007",
+    "version": "1.5"
   },
   "dms_preflight.DmsPreflight": {
     "fields": {
@@ -24459,8 +24649,12 @@
       "label": {
         "required": false,
         "schema": {
-          "kind": "const",
-          "value": "checked, not load-tested"
+          "kind": "enum",
+          "values": [
+            "checked, not load-tested",
+            "checked, not tested yet",
+            "tested on a test Aurora"
+          ]
         }
       },
       "mismatches": {
@@ -24593,8 +24787,8 @@
         }
       }
     },
-    "schema_hash": "5678374a57c5e5fd8a8f9350cf72bee8fd5720758a486df9056c77e60fe24c5d",
-    "version": "1.1"
+    "schema_hash": "9071e751ec844d19ad7140bc2c53711846f4a30cce4d58607bbeb65e81a89b1a",
+    "version": "1.2"
   },
   "routine_migration.RoutineMigrationContract": {
     "fields": {
@@ -24672,6 +24866,119 @@
           "kind": "scalar",
           "minLength": 1,
           "type": "string"
+        }
+      },
+      "proof_run": {
+        "required": false,
+        "schema": {
+          "kind": "anyOf",
+          "members": [
+            {
+              "kind": "object",
+              "properties": {
+                "counts": {
+                  "required": true,
+                  "schema": {
+                    "additional": {
+                      "kind": "scalar",
+                      "type": "integer"
+                    },
+                    "kind": "object"
+                  }
+                },
+                "coverage_limits": {
+                  "required": false,
+                  "schema": {
+                    "items": {
+                      "kind": "scalar",
+                      "type": "string"
+                    },
+                    "kind": "array"
+                  }
+                },
+                "not_carried": {
+                  "required": false,
+                  "schema": {
+                    "kind": "scalar",
+                    "minimum": 0,
+                    "type": "integer"
+                  }
+                },
+                "proved_at": {
+                  "required": true,
+                  "schema": {
+                    "kind": "scalar",
+                    "type": "string"
+                  }
+                },
+                "routine_sources_sha256": {
+                  "required": false,
+                  "schema": {
+                    "kind": "anyOf",
+                    "members": [
+                      {
+                        "kind": "scalar",
+                        "pattern": "^[0-9a-f]{64}$",
+                        "type": "string"
+                      },
+                      {
+                        "kind": "scalar",
+                        "type": "null"
+                      }
+                    ]
+                  }
+                },
+                "seconds": {
+                  "required": true,
+                  "schema": {
+                    "kind": "scalar",
+                    "minimum": 0,
+                    "type": "number"
+                  }
+                },
+                "source": {
+                  "required": false,
+                  "schema": {
+                    "kind": "anyOf",
+                    "members": [
+                      {
+                        "kind": "scalar",
+                        "type": "null"
+                      },
+                      {
+                        "kind": "scalar",
+                        "type": "string"
+                      }
+                    ]
+                  }
+                },
+                "strict_check": {
+                  "required": true,
+                  "schema": {
+                    "kind": "enum",
+                    "values": [
+                      "not_applicable",
+                      "not_available",
+                      "plpgsql_check",
+                      "plpgsql_extra_errors"
+                    ]
+                  }
+                },
+                "target": {
+                  "required": true,
+                  "schema": {
+                    "kind": "scalar",
+                    "minLength": 1,
+                    "type": "string"
+                  }
+                }
+              }
+            },
+            {
+              "kind": "scalar",
+              "type": "null"
+            }
+          ]
         }
       },
       "routine_sources": {
@@ -24926,6 +25233,202 @@
                     "value": "runs_as_target_user"
                   },
                   "kind": "array"
+                }
+              },
+              "proof": {
+                "required": false,
+                "schema": {
+                  "kind": "anyOf",
+                  "members": [
+                    {
+                      "kind": "object",
+                      "properties": {
+                        "calls_failed_on_both": {
+                          "required": false,
+                          "schema": {
+                            "kind": "scalar",
+                            "minimum": 0,
+                            "type": "integer"
+                          }
+                        },
+                        "calls_run": {
+                          "required": false,
+                          "schema": {
+                            "kind": "scalar",
+                            "minimum": 0,
+                            "type": "integer"
+                          }
+                        },
+                        "calls_succeeded": {
+                          "required": false,
+                          "schema": {
+                            "kind": "scalar",
+                            "minimum": 0,
+                            "type": "integer"
+                          }
+                        },
+                        "error_states": {
+                          "required": false,
+                          "schema": {
+                            "items": {
+                              "kind": "scalar",
+                              "type": "string"
+                            },
+                            "kind": "array"
+                          }
+                        },
+                        "failed_calls": {
+                          "required": false,
+                          "schema": {
+                            "items": {
+                              "kind": "object",
+                              "properties": {
+                                "call": {
+                                  "required": true,
+                                  "schema": {
+                                    "kind": "scalar",
+                                    "minLength": 1,
+                                    "type": "string"
+                                  }
+                                },
+                                "call_index": {
+                                  "required": true,
+                                  "schema": {
+                                    "kind": "scalar",
+                                    "minimum": 1,
+                                    "type": "integer"
+                                  }
+                                },
+                                "error_state": {
+                                  "required": true,
+                                  "schema": {
+                                    "kind": "scalar",
+                                    "maxLength": 16,
+                                    "minLength": 1,
+                                    "type": "string"
+                                  }
+                                },
+                                "message": {
+                                  "required": false,
+                                  "schema": {
+                                    "kind": "anyOf",
+                                    "members": [
+                                      {
+                                        "kind": "scalar",
+                                        "maxLength": 300,
+                                        "type": "string"
+                                      },
+                                      {
+                                        "kind": "scalar",
+                                        "type": "null"
+                                      }
+                                    ]
+                                  }
+                                }
+                              }
+                            },
+                            "kind": "array"
+                          }
+                        },
+                        "mismatches": {
+                          "required": false,
+                          "schema": {
+                            "kind": "scalar",
+                            "minimum": 0,
+                            "type": "integer"
+                          }
+                        },
+                        "mode": {
+                          "required": true,
+                          "schema": {
+                            "kind": "enum",
+                            "values": [
+                              "load_and_run",
+                              "side_by_side"
+                            ]
+                          }
+                        },
+                        "outcome": {
+                          "required": true,
+                          "schema": {
+                            "kind": "enum",
+                            "values": [
+                              "needs_attention",
+                              "not_proved",
+                              "proved"
+                            ]
+                          }
+                        },
+                        "reason": {
+                          "required": true,
+                          "schema": {
+                            "kind": "scalar",
+                            "minLength": 1,
+                            "type": "string"
+                          }
+                        },
+                        "reason_code": {
+                          "required": false,
+                          "schema": {
+                            "kind": "anyOf",
+                            "members": [
+                              {
+                                "kind": "scalar",
+                                "type": "null"
+                              },
+                              {
+                                "kind": "scalar",
+                                "type": "string"
+                              }
+                            ]
+                          }
+                        },
+                        "repair_sha256": {
+                          "required": false,
+                          "schema": {
+                            "kind": "anyOf",
+                            "members": [
+                              {
+                                "kind": "scalar",
+                                "pattern": "^[0-9a-f]{64}$",
+                                "type": "string"
+                              },
+                              {
+                                "kind": "scalar",
+                                "type": "null"
+                              }
+                            ]
+                          }
+                        },
+                        "strict_check": {
+                          "required": false,
+                          "schema": {
+                            "kind": "enum",
+                            "values": [
+                              "failed",
+                              "not_applicable",
+                              "not_available",
+                              "passed"
+                            ]
+                          }
+                        },
+                        "strict_check_errors": {
+                          "required": false,
+                          "schema": {
+                            "items": {
+                              "kind": "scalar",
+                              "type": "string"
+                            },
+                            "kind": "array"
+                          }
+                        }
+                      }
+                    },
+                    {
+                      "kind": "scalar",
+                      "type": "null"
+                    }
+                  ]
                 }
               },
               "reasons": {
@@ -25287,8 +25790,8 @@
         }
       }
     },
-    "schema_hash": "a33701d878204440bf56b76aa873c22b6b493871c77472ef77765bf9006719da",
-    "version": "1.0"
+    "schema_hash": "7cec0fe4be250115bf5bff34dc8622adda2fca611a47599b28e50598bf28cb0d",
+    "version": "1.1"
   },
   "routine_repair.RoutineRepairContract": {
     "fields": {
@@ -25353,12 +25856,177 @@
           ]
         }
       },
+      "proof": {
+        "required": false,
+        "schema": {
+          "kind": "anyOf",
+          "members": [
+            {
+              "kind": "enum",
+              "values": [
+                "local",
+                "none",
+                "test-cluster"
+              ]
+            },
+            {
+              "kind": "scalar",
+              "type": "null"
+            }
+          ]
+        }
+      },
+      "refused_candidates": {
+        "required": false,
+        "schema": {
+          "kind": "anyOf",
+          "members": [
+            {
+              "kind": "scalar",
+              "minimum": 0,
+              "type": "integer"
+            },
+            {
+              "kind": "scalar",
+              "type": "null"
+            }
+          ]
+        }
+      },
+      "rounds": {
+        "required": false,
+        "schema": {
+          "kind": "scalar",
+          "maximum": 3,
+          "minimum": 0,
+          "type": "integer"
+        }
+      },
       "routines": {
         "required": false,
         "schema": {
           "items": {
             "kind": "object",
             "properties": {
+              "attempts": {
+                "required": false,
+                "schema": {
+                  "items": {
+                    "kind": "object",
+                    "properties": {
+                      "attempt": {
+                        "required": true,
+                        "schema": {
+                          "kind": "scalar",
+                          "maximum": 3,
+                          "minimum": 1,
+                          "type": "integer"
+                        }
+                      },
+                      "code": {
+                        "required": false,
+                        "schema": {
+                          "kind": "anyOf",
+                          "members": [
+                            {
+                              "kind": "scalar",
+                              "maxLength": 64,
+                              "type": "string"
+                            },
+                            {
+                              "kind": "scalar",
+                              "type": "null"
+                            }
+                          ]
+                        }
+                      },
+                      "error": {
+                        "required": false,
+                        "schema": {
+                          "kind": "anyOf",
+                          "members": [
+                            {
+                              "kind": "scalar",
+                              "maxLength": 300,
+                              "type": "string"
+                            },
+                            {
+                              "kind": "scalar",
+                              "type": "null"
+                            }
+                          ]
+                        }
+                      },
+                      "outcome": {
+                        "required": true,
+                        "schema": {
+                          "kind": "enum",
+                          "values": [
+                            "failed",
+                            "no_answer",
+                            "pending",
+                            "proved"
+                          ]
+                        }
+                      },
+                      "stage": {
+                        "required": true,
+                        "schema": {
+                          "kind": "enum",
+                          "values": [
+                            "answer",
+                            "proof",
+                            "rebuild",
+                            "recheck",
+                            "rescreen",
+                            "screen"
+                          ]
+                        }
+                      }
+                    }
+                  },
+                  "kind": "array",
+                  "maxItems": 3
+                }
+              },
+              "attention": {
+                "required": false,
+                "schema": {
+                  "kind": "anyOf",
+                  "members": [
+                    {
+                      "kind": "enum",
+                      "values": [
+                        "attempts_used",
+                        "not_rebuildable",
+                        "not_verified",
+                        "signature_mismatch"
+                      ]
+                    },
+                    {
+                      "kind": "scalar",
+                      "type": "null"
+                    }
+                  ]
+                }
+              },
+              "attention_detail": {
+                "required": false,
+                "schema": {
+                  "kind": "anyOf",
+                  "members": [
+                    {
+                      "kind": "scalar",
+                      "maxLength": 300,
+                      "type": "string"
+                    },
+                    {
+                      "kind": "scalar",
+                      "type": "null"
+                    }
+                  ]
+                }
+              },
               "change_note": {
                 "required": false,
                 "schema": {
@@ -25367,6 +26035,23 @@
                     {
                       "kind": "scalar",
                       "maxLength": 300,
+                      "type": "string"
+                    },
+                    {
+                      "kind": "scalar",
+                      "type": "null"
+                    }
+                  ]
+                }
+              },
+              "diff": {
+                "required": false,
+                "schema": {
+                  "kind": "anyOf",
+                  "members": [
+                    {
+                      "kind": "scalar",
+                      "maxLength": 200000,
                       "type": "string"
                     },
                     {
@@ -25385,6 +26070,23 @@
                     "function",
                     "procedure",
                     "trigger"
+                  ]
+                }
+              },
+              "proof_source": {
+                "required": false,
+                "schema": {
+                  "kind": "anyOf",
+                  "members": [
+                    {
+                      "kind": "scalar",
+                      "maxLength": 200,
+                      "type": "string"
+                    },
+                    {
+                      "kind": "scalar",
+                      "type": "null"
+                    }
                   ]
                 }
               },
@@ -25407,6 +26109,7 @@
                       "kind": "enum",
                       "values": [
                         "adds_calls",
+                        "adds_dynamic_sql",
                         "adds_objects",
                         "adds_statements",
                         "changes_privileges",
@@ -25474,6 +26177,8 @@
                 "schema": {
                   "kind": "enum",
                   "values": [
+                    "model_repaired",
+                    "needs_attention",
                     "no_answer",
                     "not_repaired",
                     "refused",
@@ -25539,8 +26244,8 @@
         }
       }
     },
-    "schema_hash": "19bafa828863cc39c7a023256f030c49a9b469cbd196f048121ae984a236cb1c",
-    "version": "1.0"
+    "schema_hash": "fd69ddcc045335d5c41c56e09c3bd0497885387a491413f2e4d4101019c1f78a",
+    "version": "1.1"
   },
   "routine_repair.RoutineRepairResponse": {
     "fields": {
@@ -25671,7 +26376,8 @@
                     "event_trigger",
                     "function",
                     "procedure",
-                    "trigger"
+                    "trigger",
+                    "view"
                   ]
                 }
               },
@@ -25684,6 +26390,7 @@
                     "pg_event_trigger",
                     "pg_get_functiondef",
                     "pg_get_triggerdef",
+                    "pg_get_viewdef",
                     "show_create"
                   ]
                 }
@@ -25768,6 +26475,26 @@
                         ]
                       }
                     },
+                    "search_path": {
+                      "required": false,
+                      "schema": {
+                        "kind": "anyOf",
+                        "members": [
+                          {
+                            "items": {
+                              "kind": "scalar",
+                              "type": "string"
+                            },
+                            "kind": "array",
+                            "maxItems": 64
+                          },
+                          {
+                            "kind": "scalar",
+                            "type": "null"
+                          }
+                        ]
+                      }
+                    },
                     "sql_mode": {
                       "required": false,
                       "schema": {
@@ -25829,8 +26556,8 @@
         }
       }
     },
-    "schema_hash": "c539d3e0cb830d9db853a3fd9327d7f670a35acf1d4ed1988cf7e266951083bb",
-    "version": "1.1"
+    "schema_hash": "024311c1ec4b44619fedc3bac55db186002affd0abf91ef36923e3a7399900f4",
+    "version": "1.2"
   },
   "routine_sources.RoutineSourcesContract": {
     "fields": {
@@ -25928,7 +26655,8 @@
                               "event_trigger",
                               "function",
                               "procedure",
-                              "trigger"
+                              "trigger",
+                              "view"
                             ]
                           }
                         },
@@ -26025,8 +26753,8 @@
         }
       }
     },
-    "schema_hash": "bdc72077a2467a4f2b8d2f9cac480b262b288abd9fb7e75ea9614d051fdb73e0",
-    "version": "1.1"
+    "schema_hash": "26c42ab53f74abba543eadc631807f28e82f4de023eb9d58877b22e646da8dfe",
+    "version": "1.2"
   },
   "schema_design_input.SchemaDesignGroupsManifest": {
     "fields": {
@@ -28564,6 +29292,41 @@
                       {
                         "kind": "object",
                         "properties": {
+                          "cost_basis": {
+                            "required": false,
+                            "schema": {
+                              "kind": "anyOf",
+                              "members": [
+                                {
+                                  "kind": "enum",
+                                  "values": [
+                                    "full_target_estimates",
+                                    "per_path_sizing"
+                                  ]
+                                },
+                                {
+                                  "kind": "scalar",
+                                  "type": "null"
+                                }
+                              ]
+                            }
+                          },
+                          "cost_basis_note": {
+                            "required": false,
+                            "schema": {
+                              "kind": "anyOf",
+                              "members": [
+                                {
+                                  "kind": "scalar",
+                                  "type": "null"
+                                },
+                                {
+                                  "kind": "scalar",
+                                  "type": "string"
+                                }
+                              ]
+                            }
+                          },
                           "default_path_id": {
                             "required": false,
                             "schema": {
@@ -28824,6 +29587,116 @@
                                       "type": "integer"
                                     }
                                   },
+                                  "engine_costs": {
+                                    "required": false,
+                                    "schema": {
+                                      "items": {
+                                        "kind": "object",
+                                        "properties": {
+                                          "engine": {
+                                            "required": true,
+                                            "schema": {
+                                              "kind": "scalar",
+                                              "type": "string"
+                                            }
+                                          },
+                                          "monthly_cost_usd": {
+                                            "required": true,
+                                            "schema": {
+                                              "kind": "scalar",
+                                              "minimum": 0,
+                                              "type": "number"
+                                            }
+                                          },
+                                          "sizing": {
+                                            "required": false,
+                                            "schema": {
+                                              "kind": "anyOf",
+                                              "members": [
+                                                {
+                                                  "kind": "object",
+                                                  "properties": {
+                                                    "basis": {
+                                                      "required": true,
+                                                      "schema": {
+                                                        "kind": "enum",
+                                                        "values": [
+                                                          "assigned_queries",
+                                                          "cache_overlay",
+                                                          "no_in_scope_queries"
+                                                        ]
+                                                      }
+                                                    },
+                                                    "calls_per_second": {
+                                                      "required": true,
+                                                      "schema": {
+                                                        "kind": "scalar",
+                                                        "minimum": 0,
+                                                        "type": "number"
+                                                      }
+                                                    },
+                                                    "read_calls_per_second": {
+                                                      "required": true,
+                                                      "schema": {
+                                                        "kind": "scalar",
+                                                        "minimum": 0,
+                                                        "type": "number"
+                                                      }
+                                                    },
+                                                    "sized_query_count": {
+                                                      "required": true,
+                                                      "schema": {
+                                                        "kind": "scalar",
+                                                        "minimum": 0,
+                                                        "type": "integer"
+                                                      }
+                                                    },
+                                                    "sized_table_count": {
+                                                      "required": true,
+                                                      "schema": {
+                                                        "kind": "scalar",
+                                                        "minimum": 0,
+                                                        "type": "integer"
+                                                      }
+                                                    },
+                                                    "storage_gb": {
+                                                      "required": true,
+                                                      "schema": {
+                                                        "kind": "scalar",
+                                                        "minimum": 0,
+                                                        "type": "number"
+                                                      }
+                                                    },
+                                                    "unqueried_table_count": {
+                                                      "required": false,
+                                                      "schema": {
+                                                        "kind": "scalar",
+                                                        "minimum": 0,
+                                                        "type": "integer"
+                                                      }
+                                                    },
+                                                    "write_calls_per_second": {
+                                                      "required": true,
+                                                      "schema": {
+                                                        "kind": "scalar",
+                                                        "minimum": 0,
+                                                        "type": "number"
+                                                      }
+                                                    }
+                                                  }
+                                                },
+                                                {
+                                                  "kind": "scalar",
+                                                  "type": "null"
+                                                }
+                                              ]
+                                            }
+                                          }
+                                        }
+                                      },
+                                      "kind": "array"
+                                    }
+                                  },
                                   "engines": {
                                     "required": true,
                                     "schema": {
@@ -28951,6 +29824,33 @@
                                     }
                                   }
                                 }
+                              },
+                              "kind": "array"
+                            }
+                          },
+                          "relational_monthly_cost_usd": {
+                            "required": false,
+                            "schema": {
+                              "kind": "anyOf",
+                              "members": [
+                                {
+                                  "kind": "scalar",
+                                  "minimum": 0,
+                                  "type": "number"
+                                },
+                                {
+                                  "kind": "scalar",
+                                  "type": "null"
+                                }
+                              ]
+                            }
+                          },
+                          "summary_path_ids": {
+                            "required": false,
+                            "schema": {
+                              "items": {
+                                "kind": "scalar",
+                                "type": "string"
                               },
                               "kind": "array"
                             }
@@ -30256,6 +31156,25 @@
                     "type": "integer"
                   }
                 },
+                "engine_query_counts": {
+                  "required": false,
+                  "schema": {
+                    "kind": "anyOf",
+                    "members": [
+                      {
+                        "additional": {
+                          "kind": "scalar",
+                          "type": "integer"
+                        },
+                        "kind": "object"
+                      },
+                      {
+                        "kind": "scalar",
+                        "type": "null"
+                      }
+                    ]
+                  }
+                },
                 "engine_scope": {
                   "required": false,
                   "schema": {
@@ -30414,6 +31333,25 @@
                                 "kind": "scalar",
                                 "minimum": 0,
                                 "type": "integer"
+                              },
+                              {
+                                "kind": "scalar",
+                                "type": "null"
+                              }
+                            ]
+                          }
+                        },
+                        "kept_in_sync_counted_under": {
+                          "required": false,
+                          "schema": {
+                            "kind": "anyOf",
+                            "members": [
+                              {
+                                "additional": {
+                                  "kind": "scalar",
+                                  "type": "integer"
+                                },
+                                "kind": "object"
                               },
                               {
                                 "kind": "scalar",
@@ -30600,6 +31538,14 @@
                               "items": {
                                 "kind": "object",
                                 "properties": {
+                                  "count": {
+                                    "required": false,
+                                    "schema": {
+                                      "kind": "scalar",
+                                      "minimum": 1,
+                                      "type": "integer"
+                                    }
+                                  },
                                   "engine": {
                                     "required": false,
                                     "schema": {
@@ -30630,6 +31576,16 @@
                                           "type": "string"
                                         }
                                       ]
+                                    }
+                                  },
+                                  "risk_ids": {
+                                    "required": false,
+                                    "schema": {
+                                      "items": {
+                                        "kind": "scalar",
+                                        "type": "string"
+                                      },
+                                      "kind": "array"
                                     }
                                   },
                                   "risk_type": {
@@ -30686,6 +31642,16 @@
                                           "type": "null"
                                         }
                                       ]
+                                    }
+                                  },
+                                  "waves": {
+                                    "required": false,
+                                    "schema": {
+                                      "items": {
+                                        "kind": "scalar",
+                                        "type": "integer"
+                                      },
+                                      "kind": "array"
                                     }
                                   }
                                 }
@@ -32891,6 +33857,25 @@
                     "kind": "object"
                   }
                 },
+                "results_tab_counts": {
+                  "required": false,
+                  "schema": {
+                    "kind": "anyOf",
+                    "members": [
+                      {
+                        "additional": {
+                          "kind": "scalar",
+                          "type": "integer"
+                        },
+                        "kind": "object"
+                      },
+                      {
+                        "kind": "scalar",
+                        "type": "null"
+                      }
+                    ]
+                  }
+                },
                 "retired_in_use_engines": {
                   "required": false,
                   "schema": {
@@ -33111,6 +34096,238 @@
                               "kind": "object"
                             }
                           },
+                          "executive_line": {
+                            "required": false,
+                            "schema": {
+                              "kind": "anyOf",
+                              "members": [
+                                {
+                                  "kind": "scalar",
+                                  "type": "null"
+                                },
+                                {
+                                  "kind": "scalar",
+                                  "type": "string"
+                                }
+                              ]
+                            }
+                          },
+                          "interventions": {
+                            "required": false,
+                            "schema": {
+                              "items": {
+                                "kind": "object",
+                                "properties": {
+                                  "attempt_lines": {
+                                    "required": false,
+                                    "schema": {
+                                      "items": {
+                                        "kind": "scalar",
+                                        "type": "string"
+                                      },
+                                      "kind": "array"
+                                    }
+                                  },
+                                  "attempts": {
+                                    "required": false,
+                                    "schema": {
+                                      "items": {
+                                        "kind": "object",
+                                        "properties": {
+                                          "attempt": {
+                                            "required": true,
+                                            "schema": {
+                                              "kind": "scalar",
+                                              "minimum": 1,
+                                              "type": "integer"
+                                            }
+                                          },
+                                          "code": {
+                                            "required": false,
+                                            "schema": {
+                                              "kind": "anyOf",
+                                              "members": [
+                                                {
+                                                  "kind": "scalar",
+                                                  "type": "null"
+                                                },
+                                                {
+                                                  "kind": "scalar",
+                                                  "type": "string"
+                                                }
+                                              ]
+                                            }
+                                          },
+                                          "error": {
+                                            "required": false,
+                                            "schema": {
+                                              "kind": "anyOf",
+                                              "members": [
+                                                {
+                                                  "kind": "scalar",
+                                                  "type": "null"
+                                                },
+                                                {
+                                                  "kind": "scalar",
+                                                  "type": "string"
+                                                }
+                                              ]
+                                            }
+                                          },
+                                          "outcome": {
+                                            "required": true,
+                                            "schema": {
+                                              "kind": "scalar",
+                                              "type": "string"
+                                            }
+                                          },
+                                          "stage": {
+                                            "required": true,
+                                            "schema": {
+                                              "kind": "scalar",
+                                              "type": "string"
+                                            }
+                                          }
+                                        }
+                                      },
+                                      "kind": "array"
+                                    }
+                                  },
+                                  "attention": {
+                                    "required": false,
+                                    "schema": {
+                                      "kind": "anyOf",
+                                      "members": [
+                                        {
+                                          "kind": "scalar",
+                                          "type": "null"
+                                        },
+                                        {
+                                          "kind": "scalar",
+                                          "type": "string"
+                                        }
+                                      ]
+                                    }
+                                  },
+                                  "attention_detail": {
+                                    "required": false,
+                                    "schema": {
+                                      "kind": "anyOf",
+                                      "members": [
+                                        {
+                                          "kind": "scalar",
+                                          "type": "null"
+                                        },
+                                        {
+                                          "kind": "scalar",
+                                          "type": "string"
+                                        }
+                                      ]
+                                    }
+                                  },
+                                  "change_note": {
+                                    "required": false,
+                                    "schema": {
+                                      "kind": "scalar",
+                                      "type": "string"
+                                    }
+                                  },
+                                  "deploy_gate": {
+                                    "required": false,
+                                    "schema": {
+                                      "kind": "anyOf",
+                                      "members": [
+                                        {
+                                          "kind": "enum",
+                                          "values": [
+                                            "depends_on_held",
+                                            "deployed",
+                                            "needs_attention",
+                                            "not_proved",
+                                            "not_tested",
+                                            "rebuild_differs"
+                                          ]
+                                        },
+                                        {
+                                          "kind": "scalar",
+                                          "type": "null"
+                                        }
+                                      ]
+                                    }
+                                  },
+                                  "kind": {
+                                    "required": true,
+                                    "schema": {
+                                      "kind": "scalar",
+                                      "type": "string"
+                                    }
+                                  },
+                                  "line": {
+                                    "required": false,
+                                    "schema": {
+                                      "kind": "anyOf",
+                                      "members": [
+                                        {
+                                          "kind": "scalar",
+                                          "type": "null"
+                                        },
+                                        {
+                                          "kind": "scalar",
+                                          "type": "string"
+                                        }
+                                      ]
+                                    }
+                                  },
+                                  "proof_source": {
+                                    "required": false,
+                                    "schema": {
+                                      "kind": "anyOf",
+                                      "members": [
+                                        {
+                                          "kind": "scalar",
+                                          "type": "null"
+                                        },
+                                        {
+                                          "kind": "scalar",
+                                          "type": "string"
+                                        }
+                                      ]
+                                    }
+                                  },
+                                  "reasons": {
+                                    "required": false,
+                                    "schema": {
+                                      "items": {
+                                        "kind": "scalar",
+                                        "type": "string"
+                                      },
+                                      "kind": "array"
+                                    }
+                                  },
+                                  "routine_id": {
+                                    "required": true,
+                                    "schema": {
+                                      "kind": "scalar",
+                                      "minLength": 1,
+                                      "type": "string"
+                                    }
+                                  },
+                                  "state": {
+                                    "required": true,
+                                    "schema": {
+                                      "kind": "enum",
+                                      "values": [
+                                        "model_repaired",
+                                        "needs_attention",
+                                        "repaired_pending_proof"
+                                      ]
+                                    }
+                                  }
+                                }
+                              },
+                              "kind": "array"
+                            }
+                          },
                           "line": {
                             "required": true,
                             "schema": {
@@ -33217,8 +34434,32 @@
                           "proof": {
                             "required": false,
                             "schema": {
-                              "kind": "const",
-                              "value": "checked, not load-tested"
+                              "kind": "enum",
+                              "values": [
+                                "checked, not load-tested",
+                                "checked, not tested yet",
+                                "load-tested on a test Aurora",
+                                "tested on a test Aurora"
+                              ]
+                            }
+                          },
+                          "proof_counts": {
+                            "required": false,
+                            "schema": {
+                              "kind": "anyOf",
+                              "members": [
+                                {
+                                  "additional": {
+                                    "kind": "scalar",
+                                    "type": "integer"
+                                  },
+                                  "kind": "object"
+                                },
+                                {
+                                  "kind": "scalar",
+                                  "type": "null"
+                                }
+                              ]
                             }
                           },
                           "reason_counts": {
@@ -33317,6 +34558,22 @@
                                       "kind": "scalar",
                                       "minimum": 1,
                                       "type": "integer"
+                                    }
+                                  },
+                                  "held_back": {
+                                    "required": false,
+                                    "schema": {
+                                      "kind": "anyOf",
+                                      "members": [
+                                        {
+                                          "kind": "scalar",
+                                          "type": "null"
+                                        },
+                                        {
+                                          "kind": "scalar",
+                                          "type": "string"
+                                        }
+                                      ]
                                     }
                                   },
                                   "kind": {
@@ -33860,6 +35117,16 @@
                                 }
                               },
                               "kind": "array"
+                            }
+                          },
+                          "metric_labels": {
+                            "required": false,
+                            "schema": {
+                              "additional": {
+                                "kind": "scalar",
+                                "type": "string"
+                              },
+                              "kind": "object"
                             }
                           },
                           "move_units": {
@@ -34558,12 +35825,187 @@
                                       ]
                                     }
                                   },
+                                  "ties": {
+                                    "required": false,
+                                    "schema": {
+                                      "kind": "anyOf",
+                                      "members": [
+                                        {
+                                          "kind": "object",
+                                          "properties": {
+                                            "dependent_step_count": {
+                                              "required": false,
+                                              "schema": {
+                                                "kind": "scalar",
+                                                "minimum": 0,
+                                                "type": "integer"
+                                              }
+                                            },
+                                            "dependent_steps": {
+                                              "required": false,
+                                              "schema": {
+                                                "items": {
+                                                  "kind": "scalar",
+                                                  "type": "integer"
+                                                },
+                                                "kind": "array"
+                                              }
+                                            },
+                                            "fronted_step": {
+                                              "required": false,
+                                              "schema": {
+                                                "kind": "anyOf",
+                                                "members": [
+                                                  {
+                                                    "kind": "scalar",
+                                                    "type": "integer"
+                                                  },
+                                                  {
+                                                    "kind": "scalar",
+                                                    "type": "null"
+                                                  }
+                                                ]
+                                              }
+                                            },
+                                            "fronted_table_count": {
+                                              "required": false,
+                                              "schema": {
+                                                "kind": "scalar",
+                                                "minimum": 0,
+                                                "type": "integer"
+                                              }
+                                            },
+                                            "fronted_tables": {
+                                              "required": false,
+                                              "schema": {
+                                                "items": {
+                                                  "kind": "scalar",
+                                                  "type": "string"
+                                                },
+                                                "kind": "array"
+                                              }
+                                            },
+                                            "later_step_count": {
+                                              "required": false,
+                                              "schema": {
+                                                "kind": "scalar",
+                                                "minimum": 0,
+                                                "type": "integer"
+                                              }
+                                            },
+                                            "ordered_with_steps": {
+                                              "required": false,
+                                              "schema": {
+                                                "items": {
+                                                  "kind": "scalar",
+                                                  "type": "integer"
+                                                },
+                                                "kind": "array"
+                                              }
+                                            },
+                                            "replica_table_count": {
+                                              "required": false,
+                                              "schema": {
+                                                "kind": "anyOf",
+                                                "members": [
+                                                  {
+                                                    "kind": "scalar",
+                                                    "minimum": 0,
+                                                    "type": "integer"
+                                                  },
+                                                  {
+                                                    "kind": "scalar",
+                                                    "type": "null"
+                                                  }
+                                                ]
+                                              }
+                                            },
+                                            "runs_after_steps": {
+                                              "required": false,
+                                              "schema": {
+                                                "items": {
+                                                  "kind": "scalar",
+                                                  "type": "integer"
+                                                },
+                                                "kind": "array"
+                                              }
+                                            },
+                                            "shared_table_count": {
+                                              "required": false,
+                                              "schema": {
+                                                "kind": "scalar",
+                                                "minimum": 0,
+                                                "type": "integer"
+                                              }
+                                            },
+                                            "shared_tables": {
+                                              "required": false,
+                                              "schema": {
+                                                "items": {
+                                                  "kind": "scalar",
+                                                  "type": "string"
+                                                },
+                                                "kind": "array"
+                                              }
+                                            },
+                                            "shared_with_steps": {
+                                              "required": false,
+                                              "schema": {
+                                                "items": {
+                                                  "kind": "scalar",
+                                                  "type": "integer"
+                                                },
+                                                "kind": "array"
+                                              }
+                                            },
+                                            "write_site_count": {
+                                              "required": false,
+                                              "schema": {
+                                                "kind": "anyOf",
+                                                "members": [
+                                                  {
+                                                    "kind": "scalar",
+                                                    "minimum": 0,
+                                                    "type": "integer"
+                                                  },
+                                                  {
+                                                    "kind": "scalar",
+                                                    "type": "null"
+                                                  }
+                                                ]
+                                              }
+                                            }
+                                          }
+                                        },
+                                        {
+                                          "kind": "scalar",
+                                          "type": "null"
+                                        }
+                                      ]
+                                    }
+                                  },
                                   "unit_count": {
                                     "required": true,
                                     "schema": {
                                       "kind": "scalar",
                                       "minimum": 1,
                                       "type": "integer"
+                                    }
+                                  },
+                                  "why": {
+                                    "required": false,
+                                    "schema": {
+                                      "kind": "anyOf",
+                                      "members": [
+                                        {
+                                          "kind": "scalar",
+                                          "type": "null"
+                                        },
+                                        {
+                                          "kind": "scalar",
+                                          "type": "string"
+                                        }
+                                      ]
                                     }
                                   }
                                 }
@@ -34734,6 +36176,454 @@
                         "kind": "scalar",
                         "minimum": 0,
                         "type": "integer"
+                      },
+                      {
+                        "kind": "scalar",
+                        "type": "null"
+                      }
+                    ]
+                  }
+                },
+                "step_gate": {
+                  "required": false,
+                  "schema": {
+                    "kind": "anyOf",
+                    "members": [
+                      {
+                        "kind": "object",
+                        "properties": {
+                          "brief_result_line": {
+                            "required": false,
+                            "schema": {
+                              "kind": "scalar",
+                              "type": "string"
+                            }
+                          },
+                          "brief_validation_line": {
+                            "required": false,
+                            "schema": {
+                              "kind": "scalar",
+                              "type": "string"
+                            }
+                          },
+                          "cutover_message": {
+                            "required": true,
+                            "schema": {
+                              "kind": "scalar",
+                              "minLength": 1,
+                              "type": "string"
+                            }
+                          },
+                          "exception_count": {
+                            "required": false,
+                            "schema": {
+                              "kind": "scalar",
+                              "minimum": 0,
+                              "type": "integer"
+                            }
+                          },
+                          "failed_table_count": {
+                            "required": false,
+                            "schema": {
+                              "kind": "scalar",
+                              "minimum": 0,
+                              "type": "integer"
+                            }
+                          },
+                          "full_load_percent": {
+                            "required": true,
+                            "schema": {
+                              "kind": "scalar",
+                              "type": "string"
+                            }
+                          },
+                          "gate_findings": {
+                            "required": false,
+                            "schema": {
+                              "items": {
+                                "kind": "object",
+                                "properties": {
+                                  "check": {
+                                    "required": true,
+                                    "schema": {
+                                      "kind": "enum",
+                                      "values": [
+                                        "lag",
+                                        "load",
+                                        "parity",
+                                        "routines",
+                                        "views"
+                                      ]
+                                    }
+                                  },
+                                  "check_text": {
+                                    "required": true,
+                                    "schema": {
+                                      "kind": "scalar",
+                                      "minLength": 1,
+                                      "type": "string"
+                                    }
+                                  },
+                                  "text": {
+                                    "required": true,
+                                    "schema": {
+                                      "kind": "scalar",
+                                      "minLength": 1,
+                                      "type": "string"
+                                    }
+                                  }
+                                }
+                              },
+                              "kind": "array"
+                            }
+                          },
+                          "gate_findings_not_shown": {
+                            "required": false,
+                            "schema": {
+                              "kind": "scalar",
+                              "minimum": 0,
+                              "type": "integer"
+                            }
+                          },
+                          "gate_tables": {
+                            "required": false,
+                            "schema": {
+                              "items": {
+                                "kind": "object",
+                                "properties": {
+                                  "failed_records": {
+                                    "required": false,
+                                    "schema": {
+                                      "kind": "scalar",
+                                      "minimum": 0,
+                                      "type": "integer"
+                                    }
+                                  },
+                                  "rows_loaded": {
+                                    "required": false,
+                                    "schema": {
+                                      "kind": "anyOf",
+                                      "members": [
+                                        {
+                                          "kind": "scalar",
+                                          "minimum": 0,
+                                          "type": "integer"
+                                        },
+                                        {
+                                          "kind": "scalar",
+                                          "type": "null"
+                                        }
+                                      ]
+                                    }
+                                  },
+                                  "status": {
+                                    "required": true,
+                                    "schema": {
+                                      "kind": "enum",
+                                      "values": [
+                                        "exception",
+                                        "fail",
+                                        "pass",
+                                        "pending"
+                                      ]
+                                    }
+                                  },
+                                  "status_text": {
+                                    "required": true,
+                                    "schema": {
+                                      "kind": "scalar",
+                                      "minLength": 1,
+                                      "type": "string"
+                                    }
+                                  },
+                                  "suspended_records": {
+                                    "required": false,
+                                    "schema": {
+                                      "kind": "scalar",
+                                      "minimum": 0,
+                                      "type": "integer"
+                                    }
+                                  },
+                                  "table": {
+                                    "required": true,
+                                    "schema": {
+                                      "kind": "scalar",
+                                      "type": "string"
+                                    }
+                                  },
+                                  "validation_state": {
+                                    "required": false,
+                                    "schema": {
+                                      "kind": "anyOf",
+                                      "members": [
+                                        {
+                                          "kind": "scalar",
+                                          "type": "null"
+                                        },
+                                        {
+                                          "kind": "scalar",
+                                          "type": "string"
+                                        }
+                                      ]
+                                    }
+                                  }
+                                }
+                              },
+                              "kind": "array"
+                            }
+                          },
+                          "keyed_table_count": {
+                            "required": false,
+                            "schema": {
+                              "kind": "scalar",
+                              "minimum": 0,
+                              "type": "integer"
+                            }
+                          },
+                          "lag_line": {
+                            "required": true,
+                            "schema": {
+                              "kind": "scalar",
+                              "minLength": 1,
+                              "type": "string"
+                            }
+                          },
+                          "load_line": {
+                            "required": true,
+                            "schema": {
+                              "kind": "scalar",
+                              "minLength": 1,
+                              "type": "string"
+                            }
+                          },
+                          "max_lag_seconds": {
+                            "required": true,
+                            "schema": {
+                              "kind": "scalar",
+                              "minimum": 0,
+                              "type": "integer"
+                            }
+                          },
+                          "named_exceptions": {
+                            "required": false,
+                            "schema": {
+                              "items": {
+                                "kind": "object",
+                                "properties": {
+                                  "column": {
+                                    "required": false,
+                                    "schema": {
+                                      "kind": "anyOf",
+                                      "members": [
+                                        {
+                                          "kind": "scalar",
+                                          "type": "null"
+                                        },
+                                        {
+                                          "kind": "scalar",
+                                          "type": "string"
+                                        }
+                                      ]
+                                    }
+                                  },
+                                  "kind": {
+                                    "required": true,
+                                    "schema": {
+                                      "kind": "enum",
+                                      "values": [
+                                        "keyless_lob",
+                                        "not_moved",
+                                        "skipped_rule",
+                                        "table",
+                                        "unsupported_field",
+                                        "view"
+                                      ]
+                                    }
+                                  },
+                                  "kind_text": {
+                                    "required": true,
+                                    "schema": {
+                                      "kind": "scalar",
+                                      "minLength": 1,
+                                      "type": "string"
+                                    }
+                                  },
+                                  "reason": {
+                                    "required": true,
+                                    "schema": {
+                                      "kind": "scalar",
+                                      "minLength": 1,
+                                      "type": "string"
+                                    }
+                                  },
+                                  "rows_loaded": {
+                                    "required": false,
+                                    "schema": {
+                                      "kind": "anyOf",
+                                      "members": [
+                                        {
+                                          "kind": "scalar",
+                                          "minimum": 0,
+                                          "type": "integer"
+                                        },
+                                        {
+                                          "kind": "scalar",
+                                          "type": "null"
+                                        }
+                                      ]
+                                    }
+                                  },
+                                  "table": {
+                                    "required": true,
+                                    "schema": {
+                                      "kind": "scalar",
+                                      "type": "string"
+                                    }
+                                  }
+                                }
+                              },
+                              "kind": "array"
+                            }
+                          },
+                          "read_at": {
+                            "required": true,
+                            "schema": {
+                              "kind": "scalar",
+                              "type": "string"
+                            }
+                          },
+                          "read_at_text": {
+                            "required": true,
+                            "schema": {
+                              "kind": "scalar",
+                              "minLength": 1,
+                              "type": "string"
+                            }
+                          },
+                          "result_line": {
+                            "required": true,
+                            "schema": {
+                              "kind": "scalar",
+                              "minLength": 1,
+                              "type": "string"
+                            }
+                          },
+                          "rows_loaded": {
+                            "required": false,
+                            "schema": {
+                              "kind": "scalar",
+                              "minimum": 0,
+                              "type": "integer"
+                            }
+                          },
+                          "source_lag_seconds": {
+                            "required": false,
+                            "schema": {
+                              "kind": "anyOf",
+                              "members": [
+                                {
+                                  "kind": "scalar",
+                                  "type": "null"
+                                },
+                                {
+                                  "kind": "scalar",
+                                  "type": "string"
+                                }
+                              ]
+                            }
+                          },
+                          "status": {
+                            "required": true,
+                            "schema": {
+                              "kind": "enum",
+                              "values": [
+                                "fail",
+                                "pass",
+                                "pending"
+                              ]
+                            }
+                          },
+                          "status_text": {
+                            "required": true,
+                            "schema": {
+                              "kind": "scalar",
+                              "minLength": 1,
+                              "type": "string"
+                            }
+                          },
+                          "step": {
+                            "required": false,
+                            "schema": {
+                              "kind": "scalar",
+                              "minimum": 1,
+                              "type": "integer"
+                            }
+                          },
+                          "table_count": {
+                            "required": false,
+                            "schema": {
+                              "kind": "scalar",
+                              "minimum": 0,
+                              "type": "integer"
+                            }
+                          },
+                          "tables_reported": {
+                            "required": false,
+                            "schema": {
+                              "kind": "scalar",
+                              "minimum": 0,
+                              "type": "integer"
+                            }
+                          },
+                          "target_lag_seconds": {
+                            "required": false,
+                            "schema": {
+                              "kind": "anyOf",
+                              "members": [
+                                {
+                                  "kind": "scalar",
+                                  "type": "null"
+                                },
+                                {
+                                  "kind": "scalar",
+                                  "type": "string"
+                                }
+                              ]
+                            }
+                          },
+                          "validated_table_count": {
+                            "required": false,
+                            "schema": {
+                              "kind": "scalar",
+                              "minimum": 0,
+                              "type": "integer"
+                            }
+                          },
+                          "validating_table_count": {
+                            "required": false,
+                            "schema": {
+                              "kind": "scalar",
+                              "minimum": 0,
+                              "type": "integer"
+                            }
+                          },
+                          "validation_line": {
+                            "required": true,
+                            "schema": {
+                              "kind": "scalar",
+                              "minLength": 1,
+                              "type": "string"
+                            }
+                          },
+                          "window_minutes": {
+                            "required": true,
+                            "schema": {
+                              "kind": "scalar",
+                              "minimum": 1,
+                              "type": "integer"
+                            }
+                          }
+                        }
                       },
                       {
                         "kind": "scalar",
@@ -35010,6 +36900,23 @@
                                       ]
                                     }
                                   },
+                                  "replica_read_count": {
+                                    "required": false,
+                                    "schema": {
+                                      "kind": "anyOf",
+                                      "members": [
+                                        {
+                                          "kind": "scalar",
+                                          "minimum": 0,
+                                          "type": "integer"
+                                        },
+                                        {
+                                          "kind": "scalar",
+                                          "type": "null"
+                                        }
+                                      ]
+                                    }
+                                  },
                                   "table": {
                                     "required": true,
                                     "schema": {
@@ -35052,6 +36959,25 @@
                                 }
                               },
                               "kind": "array"
+                            }
+                          },
+                          "unwritten_owner_rule": {
+                            "required": false,
+                            "schema": {
+                              "kind": "anyOf",
+                              "members": [
+                                {
+                                  "kind": "enum",
+                                  "values": [
+                                    "most_queries",
+                                    "relational_step"
+                                  ]
+                                },
+                                {
+                                  "kind": "scalar",
+                                  "type": "null"
+                                }
+                              ]
                             }
                           }
                         }
@@ -35162,6 +37088,22 @@
                               "kind": "array"
                             }
                           },
+                          "shared_risk_sentence": {
+                            "required": false,
+                            "schema": {
+                              "kind": "anyOf",
+                              "members": [
+                                {
+                                  "kind": "scalar",
+                                  "type": "null"
+                                },
+                                {
+                                  "kind": "scalar",
+                                  "type": "string"
+                                }
+                              ]
+                            }
+                          },
                           "single_engine_table_count": {
                             "required": false,
                             "schema": {
@@ -35219,6 +37161,25 @@
                     "kind": "scalar",
                     "minimum": 0,
                     "type": "integer"
+                  }
+                },
+                "target_engines": {
+                  "required": false,
+                  "schema": {
+                    "kind": "anyOf",
+                    "members": [
+                      {
+                        "items": {
+                          "kind": "scalar",
+                          "type": "string"
+                        },
+                        "kind": "array"
+                      },
+                      {
+                        "kind": "scalar",
+                        "type": "null"
+                      }
+                    ]
                   }
                 },
                 "tied_query_count": {
@@ -39878,6 +41839,23 @@
                   "type": "string"
                 }
               },
+              "replica_read_count": {
+                "required": false,
+                "schema": {
+                  "kind": "anyOf",
+                  "members": [
+                    {
+                      "kind": "scalar",
+                      "minimum": 0,
+                      "type": "integer"
+                    },
+                    {
+                      "kind": "scalar",
+                      "type": "null"
+                    }
+                  ]
+                }
+              },
               "source_table": {
                 "required": true,
                 "schema": {
@@ -41388,8 +43366,8 @@
         }
       }
     },
-    "schema_hash": "589e2a8646915d834272c8eadccc5b3488b648406eab9ba94d3588521a0a833a",
-    "version": "1.99"
+    "schema_hash": "5f4eff5b6a24295d1474cff1b261598203aa3117d16f2e4d747cc4f49d801b42",
+    "version": "1.100"
   },
   "transformation_contract.StepContract": {
     "fields": {
@@ -41591,6 +43569,7 @@
                                 "kind": "enum",
                                 "values": [
                                   "as_is",
+                                  "model_repaired",
                                   "rewritten"
                                 ]
                               },
@@ -41634,6 +43613,13 @@
                               "type": "string"
                             },
                             "kind": "array"
+                          }
+                        },
+                        "repaired": {
+                          "required": false,
+                          "schema": {
+                            "kind": "scalar",
+                            "type": "boolean"
                           }
                         },
                         "returns": {
@@ -41785,12 +43771,78 @@
           "items": {
             "kind": "object",
             "properties": {
+              "collation": {
+                "required": false,
+                "schema": {
+                  "kind": "anyOf",
+                  "members": [
+                    {
+                      "kind": "object",
+                      "properties": {
+                        "character_set": {
+                          "required": true,
+                          "schema": {
+                            "kind": "scalar",
+                            "pattern": "^[a-z0-9]{1,32}$",
+                            "type": "string"
+                          }
+                        },
+                        "collation": {
+                          "required": true,
+                          "schema": {
+                            "kind": "scalar",
+                            "pattern": "^[a-z0-9_]{1,64}$",
+                            "type": "string"
+                          }
+                        }
+                      }
+                    },
+                    {
+                      "kind": "scalar",
+                      "type": "null"
+                    }
+                  ]
+                }
+              },
               "fields": {
                 "required": false,
                 "schema": {
                   "items": {
                     "kind": "object",
                     "properties": {
+                      "collation": {
+                        "required": false,
+                        "schema": {
+                          "kind": "anyOf",
+                          "members": [
+                            {
+                              "kind": "object",
+                              "properties": {
+                                "character_set": {
+                                  "required": true,
+                                  "schema": {
+                                    "kind": "scalar",
+                                    "pattern": "^[a-z0-9]{1,32}$",
+                                    "type": "string"
+                                  }
+                                },
+                                "collation": {
+                                  "required": true,
+                                  "schema": {
+                                    "kind": "scalar",
+                                    "pattern": "^[a-z0-9_]{1,64}$",
+                                    "type": "string"
+                                  }
+                                }
+                              }
+                            },
+                            {
+                              "kind": "scalar",
+                              "type": "null"
+                            }
+                          ]
+                        }
+                      },
                       "op": {
                         "required": true,
                         "schema": {
@@ -42134,12 +44186,78 @@
         "schema": {
           "kind": "object",
           "properties": {
+            "collation": {
+              "required": false,
+              "schema": {
+                "kind": "anyOf",
+                "members": [
+                  {
+                    "kind": "object",
+                    "properties": {
+                      "character_set": {
+                        "required": true,
+                        "schema": {
+                          "kind": "scalar",
+                          "pattern": "^[a-z0-9]{1,32}$",
+                          "type": "string"
+                        }
+                      },
+                      "collation": {
+                        "required": true,
+                        "schema": {
+                          "kind": "scalar",
+                          "pattern": "^[a-z0-9_]{1,64}$",
+                          "type": "string"
+                        }
+                      }
+                    }
+                  },
+                  {
+                    "kind": "scalar",
+                    "type": "null"
+                  }
+                ]
+              }
+            },
+            "collation_note": {
+              "required": false,
+              "schema": {
+                "kind": "anyOf",
+                "members": [
+                  {
+                    "kind": "scalar",
+                    "type": "null"
+                  },
+                  {
+                    "kind": "scalar",
+                    "type": "string"
+                  }
+                ]
+              }
+            },
             "engine": {
               "required": true,
               "schema": {
                 "kind": "scalar",
                 "minLength": 1,
                 "type": "string"
+              }
+            },
+            "engine_line": {
+              "required": false,
+              "schema": {
+                "kind": "anyOf",
+                "members": [
+                  {
+                    "kind": "scalar",
+                    "maxLength": 16,
+                    "type": "string"
+                  },
+                  {
+                    "kind": "scalar",
+                    "type": "null"
+                  }
+                ]
               }
             }
           }
@@ -42161,6 +44279,201 @@
             "type": "string"
           },
           "kind": "array"
+        }
+      },
+      "views_section": {
+        "required": false,
+        "schema": {
+          "kind": "anyOf",
+          "members": [
+            {
+              "kind": "object",
+              "properties": {
+                "carried": {
+                  "required": false,
+                  "schema": {
+                    "kind": "scalar",
+                    "minimum": 0,
+                    "type": "integer"
+                  }
+                },
+                "not_carried": {
+                  "required": false,
+                  "schema": {
+                    "kind": "scalar",
+                    "minimum": 0,
+                    "type": "integer"
+                  }
+                },
+                "source": {
+                  "required": true,
+                  "schema": {
+                    "kind": "enum",
+                    "values": [
+                      "collection",
+                      "none"
+                    ]
+                  }
+                },
+                "total": {
+                  "required": false,
+                  "schema": {
+                    "kind": "scalar",
+                    "minimum": 0,
+                    "type": "integer"
+                  }
+                },
+                "views": {
+                  "required": false,
+                  "schema": {
+                    "items": {
+                      "kind": "object",
+                      "properties": {
+                        "carry": {
+                          "required": true,
+                          "schema": {
+                            "kind": "enum",
+                            "values": [
+                              "carried",
+                              "not_carried"
+                            ]
+                          }
+                        },
+                        "columns": {
+                          "required": false,
+                          "schema": {
+                            "items": {
+                              "kind": "object",
+                              "properties": {
+                                "data_type": {
+                                  "required": false,
+                                  "schema": {
+                                    "kind": "anyOf",
+                                    "members": [
+                                      {
+                                        "kind": "scalar",
+                                        "type": "null"
+                                      },
+                                      {
+                                        "kind": "scalar",
+                                        "type": "string"
+                                      }
+                                    ]
+                                  }
+                                },
+                                "name": {
+                                  "required": true,
+                                  "schema": {
+                                    "kind": "scalar",
+                                    "minLength": 1,
+                                    "type": "string"
+                                  }
+                                }
+                              }
+                            },
+                            "kind": "array"
+                          }
+                        },
+                        "name": {
+                          "required": true,
+                          "schema": {
+                            "kind": "scalar",
+                            "minLength": 1,
+                            "type": "string"
+                          }
+                        },
+                        "order": {
+                          "required": false,
+                          "schema": {
+                            "kind": "anyOf",
+                            "members": [
+                              {
+                                "kind": "scalar",
+                                "minimum": 1,
+                                "type": "integer"
+                              },
+                              {
+                                "kind": "scalar",
+                                "type": "null"
+                              }
+                            ]
+                          }
+                        },
+                        "reads": {
+                          "required": false,
+                          "schema": {
+                            "items": {
+                              "kind": "scalar",
+                              "type": "string"
+                            },
+                            "kind": "array"
+                          }
+                        },
+                        "reasons": {
+                          "required": false,
+                          "schema": {
+                            "items": {
+                              "kind": "scalar",
+                              "type": "string"
+                            },
+                            "kind": "array"
+                          }
+                        },
+                        "schema_name": {
+                          "required": false,
+                          "schema": {
+                            "kind": "anyOf",
+                            "members": [
+                              {
+                                "kind": "scalar",
+                                "type": "null"
+                              },
+                              {
+                                "kind": "scalar",
+                                "type": "string"
+                              }
+                            ]
+                          }
+                        },
+                        "source_security": {
+                          "required": false,
+                          "schema": {
+                            "kind": "anyOf",
+                            "members": [
+                              {
+                                "kind": "enum",
+                                "values": [
+                                  "DEFINER",
+                                  "INVOKER"
+                                ]
+                              },
+                              {
+                                "kind": "scalar",
+                                "type": "null"
+                              }
+                            ]
+                          }
+                        },
+                        "view_id": {
+                          "required": true,
+                          "schema": {
+                            "kind": "scalar",
+                            "minLength": 1,
+                            "type": "string"
+                          }
+                        }
+                      }
+                    },
+                    "kind": "array"
+                  }
+                }
+              }
+            },
+            {
+              "kind": "scalar",
+              "type": "null"
+            }
+          ]
         }
       },
       "wave": {
@@ -42197,8 +44510,8 @@
         }
       }
     },
-    "schema_hash": "5f97c8ec8f60f88beca82deb39995d10e58cfe6b5a6982a505e48b8eb171dd4f",
-    "version": "1.5"
+    "schema_hash": "1c595a9ff40c48e41ac851ed66559ac8e3020a8397c11f8783725a23270577bc",
+    "version": "1.6"
   },
   "triage_output.TriageOutputContract": {
     "fields": {

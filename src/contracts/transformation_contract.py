@@ -31,6 +31,19 @@ Version History:
   and ACTION_ORDER), which the triggers-enable script reads; left out of the dump when None.
 - 1.5 (2026-11-10, #2107): Rule.moves_rows description no longer says when to rebuild
   (no cutover timing)
+- 1.6 (2026-11-18, #2082, #2276, #2384): Added optional ``StepContract.views_section``
+  (``StepViews``, ``StepView``, ``StepViewColumn``, with ``StepView.source_security``):
+  the views step 1 creates in its views deploy script, in dependency order, with their
+  columns, and why each other one is not; left out of the dump when None. Added optional
+  ``CharacterSet`` and ``TargetSpec.collation`` / ``collation_note`` / ``engine_line``,
+  ``Rule.collation`` and ``FieldRule.collation``: the source's character set and
+  collation that step-1.ddl.sql and the routine scripts give the Aurora MySQL databases
+  they create, and the tables and columns that differ on the source, with the
+  ``collation_not_carried`` warning finding for one the target does not offer (#2276).
+  Left out of the dump when None, so an older contract keeps its bytes.
+  StepRoutine.migration_status accepts model_repaired, and optional StepRoutine.repaired
+  marks a carried or deferred routine as the repair loop's repair: step 1 writes it only
+  from the rebuilt repair the test on a test Aurora ran, never from the original.
 """
 
 import unicodedata
@@ -500,7 +513,7 @@ class StepContract(BaseModel):
     """The transformation contract of one migration step."""
 
     contract_version: str = Field(
-        default="1.5", pattern=r"^\d+\.\d+$", description="Contract version (MAJOR.MINOR format)"
+        default="1.6", pattern=r"^\d+\.\d+$", description="Contract version (MAJOR.MINOR format)"
     )
     job_id: str = Field(..., description="The assessment job this contract belongs to")
     assignment_version: int = Field(

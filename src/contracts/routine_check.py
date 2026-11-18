@@ -31,6 +31,9 @@ Version History:
 - 1.1 (2026-11-11, #2113): Added the problem code ``present_before_triggers_enable``,
   written in place of ``present_before_cutover``, which a result saved before #2113
   still holds and is read as the new code.
+- 1.2 (2026-11-18, #2429): ``label`` takes the routine test's state in the shared words,
+  ``checked, not tested yet`` or ``tested on a test Aurora``; a result saved with
+  ``checked, not load-tested`` is read as ``checked, not tested yet``.
 """
 
 from __future__ import annotations
@@ -102,7 +105,7 @@ class RoutineCheckResult(BaseModel):
     """Step 1's routine check, read from the customer's output file."""
 
     contract_version: str = Field(
-        default="1.1", pattern=r"^\d+\.\d+$", description="Contract version (MAJOR.MINOR)"
+        default="1.2", pattern=r"^\d+\.\d+$", description="Contract version (MAJOR.MINOR)"
     )
     job_id: str = Field(..., min_length=1, description="The job")
     database_name: str = Field(..., min_length=1, description="The job's database name")

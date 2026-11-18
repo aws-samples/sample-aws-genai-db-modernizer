@@ -1,6 +1,0 @@
-# A pending contract version bump (ADR-008 Decision 8). The number is assigned by
-# uv run python scripts/resolve_contract_versions.py --release at release (a MAJOR: in its pull request).
-contract = "collector_output.CollectorOutputContract"
-kind = "minor"
-reason = "Added optional ``Index.included_columns``: the columns a SQL Server index stores but does not key (``sys.index_columns.key_ordinal`` 0 on both the live and the offline path: INCLUDE columns, and the partitioning column SQL Server adds), kept out of ``columns`` so no key length counts them; and the ``IndexType`` value ``columnstore`` (SQL Server clustered and nonclustered columnstore, sys.indexes.type 5 and 6), which was read as btree. Backward compatible: included_columns defaults to None, and a collection saved before listed those columns in ``columns``; release notes: re-ingest the raw collection to split them."
-issue = 2227

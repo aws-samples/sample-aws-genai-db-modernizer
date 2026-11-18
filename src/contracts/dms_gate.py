@@ -28,6 +28,9 @@ Version History:
   records still wait for validation; the pending-record evidence is gone; the cutover
   message id is ``cutover-decision-v2`` (a saved ``cutover-decision-v1`` shows the same
   sentence).
+- 1.5 (2026-11-18, #2082): Added the ``views`` check id, after parity and before
+  routines, for a contract with a views section; a view exception's reason is then
+  ``VIEW_CARRIED`` or starts ``not carried: `` with its reasons and what to do.
 """
 
 from datetime import datetime
@@ -139,7 +142,7 @@ class DmsGate(BaseModel):
     """Step 1's gate result (#1800)."""
 
     contract_version: str = Field(
-        default="1.4", pattern=r"^\d+\.\d+$", description="Contract version"
+        default="1.5", pattern=r"^\d+\.\d+$", description="Contract version"
     )
     job_id: str = Field(..., description="The assessment job")
     database_name: str = Field(..., description="The source database")

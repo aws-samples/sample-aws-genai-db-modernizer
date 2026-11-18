@@ -151,7 +151,7 @@
       "postgresql",
       "sqlserver"
     ],
-    "version": "5.18"
+    "version": "5.19"
   },
   "collector_output.DeploymentType": {
     "module": "collector_output",
@@ -160,7 +160,7 @@
       "on_premises",
       "rds_instance"
     ],
-    "version": "5.18"
+    "version": "5.19"
   },
   "collector_output.EventStatus": {
     "module": "collector_output",
@@ -168,7 +168,7 @@
       "disabled",
       "enabled"
     ],
-    "version": "5.18"
+    "version": "5.19"
   },
   "collector_output.ForeignKeyAction": {
     "module": "collector_output",
@@ -179,13 +179,14 @@
       "SET DEFAULT",
       "SET NULL"
     ],
-    "version": "5.18"
+    "version": "5.19"
   },
   "collector_output.IndexType": {
     "module": "collector_output",
     "values": [
       "brin",
       "btree",
+      "columnstore",
       "fulltext",
       "gin",
       "gist",
@@ -194,7 +195,7 @@
       "spatial",
       "spgist"
     ],
-    "version": "5.18"
+    "version": "5.19"
   },
   "collector_output.NonDmlTriggerScope": {
     "module": "collector_output",
@@ -203,7 +204,7 @@
       "schema",
       "table"
     ],
-    "version": "5.18"
+    "version": "5.19"
   },
   "collector_output.NormalizedDataType": {
     "module": "collector_output",
@@ -223,7 +224,7 @@
       "uuid",
       "xml"
     ],
-    "version": "5.18"
+    "version": "5.19"
   },
   "collector_output.ParameterMode": {
     "module": "collector_output",
@@ -232,7 +233,7 @@
       "INOUT",
       "OUT"
     ],
-    "version": "5.18"
+    "version": "5.19"
   },
   "collector_output.ProcedureType": {
     "module": "collector_output",
@@ -241,7 +242,7 @@
       "PROCEDURE",
       "TRIGGER_FUNCTION"
     ],
-    "version": "5.18"
+    "version": "5.19"
   },
   "collector_output.QueryLogSource": {
     "module": "collector_output",
@@ -255,7 +256,7 @@
       "slow_query_log",
       "v_dollar_sql"
     ],
-    "version": "5.18"
+    "version": "5.19"
   },
   "collector_output.QueryType": {
     "module": "collector_output",
@@ -267,7 +268,7 @@
       "SELECT",
       "UPDATE"
     ],
-    "version": "5.18"
+    "version": "5.19"
   },
   "collector_output.RoutineBodyStatus": {
     "module": "collector_output",
@@ -277,7 +278,7 @@
       "not_supported",
       "opted_out"
     ],
-    "version": "5.18"
+    "version": "5.19"
   },
   "collector_output.RoutineStatsStatus": {
     "module": "collector_output",
@@ -286,7 +287,7 @@
       "offline",
       "tracked"
     ],
-    "version": "5.18"
+    "version": "5.19"
   },
   "collector_output.StorageType": {
     "module": "collector_output",
@@ -297,7 +298,7 @@
       "io2",
       "magnetic"
     ],
-    "version": "5.18"
+    "version": "5.19"
   },
   "collector_output.TriggerEnabledMode": {
     "module": "collector_output",
@@ -307,7 +308,7 @@
       "O",
       "R"
     ],
-    "version": "5.18"
+    "version": "5.19"
   },
   "collector_output.TriggerEventType": {
     "module": "collector_output",
@@ -316,7 +317,7 @@
       "INSERT",
       "UPDATE"
     ],
-    "version": "5.18"
+    "version": "5.19"
   },
   "collector_output.TriggerForEach": {
     "module": "collector_output",
@@ -324,7 +325,7 @@
       "ROW",
       "STATEMENT"
     ],
-    "version": "5.18"
+    "version": "5.19"
   },
   "collector_output.TriggerTiming": {
     "module": "collector_output",
@@ -333,7 +334,7 @@
       "BEFORE",
       "INSTEAD OF"
     ],
-    "version": "5.18"
+    "version": "5.19"
   },
   "dms_gate.GateStatus": {
     "module": "dms_gate",
@@ -342,7 +343,7 @@
       "pass",
       "pending"
     ],
-    "version": "1.4"
+    "version": "1.5"
   },
   "dms_preflight.CheckId": {
     "module": "dms_preflight",
@@ -844,7 +845,7 @@
       "not_key_eligible",
       "rewritten_by_write"
     ],
-    "version": "1.99"
+    "version": "1.100"
   },
   "query_trace.TraceBasis": {
     "module": "query_trace",
@@ -852,7 +853,7 @@
       "group_mean",
       "query"
     ],
-    "version": "1.99"
+    "version": "1.100"
   },
   "reality_check_marker.MarkerStatus": {
     "module": "reality_check_marker",
@@ -924,7 +925,7 @@
       "signature_mismatch",
       "trigger_enabled"
     ],
-    "version": "1.1"
+    "version": "1.2"
   },
   "routine_migration.MigrationStatus": {
     "module": "routine_migration",
@@ -934,7 +935,7 @@
       "needs_attention",
       "rewritten"
     ],
-    "version": "1.0"
+    "version": "1.1"
   },
   "routine_migration.RoutineKind": {
     "module": "routine_migration",
@@ -944,7 +945,7 @@
       "procedure",
       "trigger"
     ],
-    "version": "1.0"
+    "version": "1.1"
   },
   "routine_migration.SourceText": {
     "module": "routine_migration",
@@ -953,7 +954,7 @@
       "not_collected",
       "not_exact"
     ],
-    "version": "1.0"
+    "version": "1.1"
   },
   "routine_repair.AttemptStage": {
     "module": "routine_repair",
@@ -965,20 +966,23 @@
       "rescreen",
       "screen"
     ],
-    "version": "1.0"
+    "version": "1.1"
   },
   "routine_repair.AttentionCode": {
     "module": "routine_repair",
     "values": [
       "attempts_used",
-      "not_rebuildable"
+      "not_rebuildable",
+      "not_verified",
+      "signature_mismatch"
     ],
-    "version": "1.0"
+    "version": "1.1"
   },
   "routine_repair.RefusalCode": {
     "module": "routine_repair",
     "values": [
       "adds_calls",
+      "adds_dynamic_sql",
       "adds_objects",
       "adds_statements",
       "changes_privileges",
@@ -991,17 +995,19 @@
       "signature_changed",
       "unchanged"
     ],
-    "version": "1.0"
+    "version": "1.1"
   },
   "routine_repair.RepairState": {
     "module": "routine_repair",
     "values": [
+      "model_repaired",
+      "needs_attention",
       "no_answer",
       "not_repaired",
       "refused",
       "repaired_pending_proof"
     ],
-    "version": "1.0"
+    "version": "1.1"
   },
   "routine_repair.RoutineKind": {
     "module": "routine_repair",
@@ -1011,7 +1017,7 @@
       "procedure",
       "trigger"
     ],
-    "version": "1.0"
+    "version": "1.1"
   },
   "schema_design_input.Confidence": {
     "module": "schema_design_input",
@@ -1146,9 +1152,10 @@
   "synthesis_output.AdoptionCostBasis": {
     "module": "synthesis_output",
     "values": [
-      "full_target_estimates"
+      "full_target_estimates",
+      "per_path_sizing"
     ],
-    "version": "1.96"
+    "version": "1.100"
   },
   "synthesis_output.GapImpactLevel": {
     "module": "synthesis_output",
@@ -1158,7 +1165,7 @@
       "informational",
       "needs_rewrite"
     ],
-    "version": "1.99"
+    "version": "1.100"
   },
   "synthesis_output.KeptWholeKind": {
     "module": "synthesis_output",
@@ -1167,7 +1174,7 @@
       "routine_unit",
       "write_group"
     ],
-    "version": "1.99"
+    "version": "1.100"
   },
   "synthesis_output.MoveUnitKind": {
     "module": "synthesis_output",
@@ -1178,7 +1185,7 @@
       "replica_reads",
       "whole_database"
     ],
-    "version": "1.99"
+    "version": "1.100"
   },
   "synthesis_output.OneStepRule": {
     "module": "synthesis_output",
@@ -1187,7 +1194,7 @@
       "no_open_critical_high_risk",
       "no_reverse_replica_stage"
     ],
-    "version": "1.99"
+    "version": "1.100"
   },
   "synthesis_output.RoutineCategory": {
     "module": "synthesis_output",
@@ -1201,7 +1208,7 @@
       "repaired",
       "rewritten"
     ],
-    "version": "1.99"
+    "version": "1.100"
   },
   "synthesis_output.RoutineRiskClass": {
     "module": "synthesis_output",
@@ -1211,7 +1218,7 @@
       "migrate_yourself",
       "opted_out"
     ],
-    "version": "1.99"
+    "version": "1.100"
   },
   "synthesis_output.SliceStageKind": {
     "module": "synthesis_output",
@@ -1223,7 +1230,7 @@
       "whole_database",
       "with_reverse_replica"
     ],
-    "version": "1.99"
+    "version": "1.100"
   },
   "synthesis_output.SliceStepKind": {
     "module": "synthesis_output",
@@ -1233,7 +1240,7 @@
       "relational_step",
       "slice"
     ],
-    "version": "1.99"
+    "version": "1.100"
   },
   "synthesis_output.UnitDependencyKind": {
     "module": "synthesis_output",
@@ -1244,7 +1251,7 @@
       "reverse_replica",
       "shared_table"
     ],
-    "version": "1.99"
+    "version": "1.100"
   },
   "transformation_contract.InputSchema": {
     "module": "transformation_contract",
@@ -1252,7 +1259,7 @@
       "collector",
       "step-1"
     ],
-    "version": "1.5"
+    "version": "1.6"
   },
   "transformation_contract.RoutineCarry": {
     "module": "transformation_contract",
@@ -1261,7 +1268,7 @@
       "deferred_to_cutover",
       "not_carried"
     ],
-    "version": "1.5"
+    "version": "1.6"
   },
   "transformation_contract.RoutineEnabledAs": {
     "module": "transformation_contract",
@@ -1270,7 +1277,7 @@
       "disabled",
       "enabled"
     ],
-    "version": "1.5"
+    "version": "1.6"
   },
   "transformation_contract.RuleStatus": {
     "module": "transformation_contract",
@@ -1278,7 +1285,7 @@
       "blocked",
       "valid"
     ],
-    "version": "1.5"
+    "version": "1.6"
   },
   "transformation_contract.Severity": {
     "module": "transformation_contract",
@@ -1286,7 +1293,7 @@
       "error",
       "warning"
     ],
-    "version": "1.5"
+    "version": "1.6"
   },
   "transformation_contract.StepStatus": {
     "module": "transformation_contract",
@@ -1296,7 +1303,7 @@
       "staged_move_pending",
       "valid"
     ],
-    "version": "1.5"
+    "version": "1.6"
   },
   "transformation_contract.TableClass": {
     "module": "transformation_contract",
@@ -1306,7 +1313,7 @@
       "stays",
       "unread"
     ],
-    "version": "1.5"
+    "version": "1.6"
   },
   "triggers_enable_check.TriggersEnableLeftOutReason": {
     "module": "triggers_enable_check",

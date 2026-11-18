@@ -1,6 +1,0 @@
-# A pending contract version bump (ADR-008 Decision 8). The number is assigned by
-# uv run python scripts/resolve_contract_versions.py --release at release (a MAJOR: in its pull request).
-contract = "routine_repair.RoutineRepairContract"
-kind = "minor"
-reason = "Added the proof target test-cluster: the original on a disposable engine of the source, the repair on the job's throwaway Aurora test cluster."
-issue = 2384
