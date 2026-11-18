@@ -46,6 +46,28 @@ export function targetEngineEntriesOf(synthesis) {
   return ids.map((engine) => ({ engine, isCacheLayer: !!cacheEngine && engine === cacheEngine }));
 }
 
+// #2317: the projected monthly cost (facts.projected_monthly_cost_usd) the progress page's
+// summary and the assessments list both print; null when the report states none.
+export function projectedMonthlyCostOf(synthesis) {
+  const n = factsOf(synthesis) && factsOf(synthesis).projected_monthly_cost_usd;
+  return typeof n === 'number' && Number.isFinite(n) ? n : null;
+}
+
+// #2317: the overall risk level the results page, the engineering report and the executive
+// report print: the risk assessment's own (it can be raised above the highest open severity).
+// null when the report states none.
+export function overallRiskLevelOf(synthesis) {
+  const level = synthesis && synthesis.risk_assessment && synthesis.risk_assessment.overall_risk_level;
+  return level || null;
+}
+
+// #2317: the queries placed on an engine (facts.in_scope_query_count), the total the query
+// flow's split adds up to. null when the report states none.
+export function placedQueryCountOf(synthesis) {
+  const n = factsOf(synthesis) && factsOf(synthesis).in_scope_query_count;
+  return Number.isInteger(n) ? n : null;
+}
+
 // #2363: the count a results tab shows in its label (facts.results_tab_counts, by tab id), or
 // null when the facts state none (a block saved before them, or a tab with nothing to count).
 export function resultsTabCountOf(synthesis, tabId) {

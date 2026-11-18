@@ -31,9 +31,12 @@ import UnservableAssignmentNotice from "../components/UnservableAssignmentNotice
 import AppHeader from "../components/AppHeader";
 import ApiManager from "../classes/ApiManager";
 import { failureFlash, upsertFlash } from "../utils/requestFailure";
-import ProgressState from "../components/ProgressState";
-import ChartSankey from "../components/ChartSankey";
-import { getCacheOverlay, addCacheOverlayNode } from "../utils/cacheLayer";
+import AssessmentSummary, { AssessmentId } from "../components/AssessmentSummary";
+import PipelineSteps from "../components/PipelineSteps";
+import QueryFlow from "../components/QueryFlow";
+import { stepOfStage } from "../utils/pipelineSteps";
+import { getCacheOverlay, addCacheOverlayNode, ownerDistribution } from "../utils/cacheLayer";
+import { finalEngineCounts, placedQueryCountOf } from "../utils/reportFacts";
 import { resultsEngineHref } from "../utils/resultsLinks";
 import { engineHex } from "../utils/engineColors";
 import { collectorRowTotals, totalRowsText } from '../utils/collectorRowTotals';
@@ -86,9 +89,6 @@ const JobMonitoringSummaryPage = memo(() => {
   // #330: the cache_overlay off the same assignment fetch, so the Sankey can
   // show ElastiCache as a node fed by its owner engines' flows.
   const [cacheOverlay, setCacheOverlay] = useState(null);
-
-  //-- Auto-dismiss complete alert
-  const [completeDismissed, setCompleteDismissed] = useState(false);
 
   //-- Use ref for last update timestamp (doesn't need re-render)
   const lastUpdateTimestamp = useRef(null);
@@ -299,7 +299,7 @@ const JobMonitoringSummaryPage = memo(() => {
 
   //##-- Handle Sankey node click
   const handleSankeyNodeClick = useCallback((nodeId) => {
-    if (nodeId && nodeId !== 'patterns') {
+    if (nodeId && nodeId !== 'queries') {
       // #2300: the engine's part of the results page, in this tab.
       navigate(resultsEngineHref(jobId, nodeId));
     }
@@ -399,35 +399,6 @@ const JobMonitoringSummaryPage = memo(() => {
   ], [jobId, t]);
 
 
-  //--## Pipeline stages list with customer-facing labels
-  //   Collect → Analyse → Select → Design → Review
-  const pipelineStepsList = useMemo(() => [
-    'Collect',
-    'Analyse',
-    'Select',
-    'Design',
-    'Review'
-  ], []);
-
-  //--## Which stages require human input
-  const humanStages = useMemo(() => new Set(['Select', 'Review']), []);
-
-  //--## Map API stage names to customer-facing labels
-  const stageNameMapping = useMemo(() => ({
-    'RunCollector': 'Collect',
-    'RunRefereeTriage': 'Analyse',
-    'LoadTriageOutput': 'Analyse',
-    'RunAnalysis': 'Analyse',
-    'RunAssignmentResolution': 'Analyse',
-    'RunRealityCheck': 'Analyse',
-    'UpdateAssignmentVersionAfterRealityCheck': 'Analyse',
-    'WaitForAssignmentApproval': 'Select',
-    'RunSchemaDesign': 'Design',
-    'RunRefereeSynthesis': 'Review',
-    'LoadSynthesisOutput': 'Review'
-  }), []);
-
-
   //--## Get current pipeline step from job data
   const currentPipelineStep = useMemo(() => {
     if (!jobData?.progress?.stages || jobData.progress.stages.length === 0) {
@@ -438,57 +409,10 @@ const JobMonitoringSummaryPage = memo(() => {
     const lastStage = stages[stages.length - 1];
     const apiStageName = lastStage?.name || null;
 
-    // Map API stage name to customer-facing label
-    return apiStageName ? (stageNameMapping[apiStageName] || apiStageName) : null;
-  }, [jobData, stageNameMapping]);
+    // The phase the stage belongs to (null for a stage no phase knows)
+    return stepOfStage(apiStageName);
+  }, [jobData]);
 
-
-  //--## Calculate completed stages based on pipeline stages
-  const completedStagesCount = useMemo(() => {
-    if (!jobData?.progress?.stages || jobData.progress.stages.length === 0) {
-      return 0;
-    }
-
-    // Get all API stage names (both completed and in-progress)
-    const allApiStageNames = jobData.progress.stages.map(stage => stage.name);
-
-    // Check which customer-facing stages are completed
-    const completedCustomerStages = new Set();
-
-    // For each pipeline stage, check if it should be counted as completed
-    pipelineStepsList.forEach((customerStage) => {
-      // Find all API stages that map to this customer stage
-      const apiStagesForThisCustomer = Object.entries(stageNameMapping)
-        .filter(([_, mappedName]) => mappedName === customerStage)
-        .map(([apiName, _]) => apiName);
-
-      // Check if any of these API stages exist and are completed
-      const hasCompletedApiStage = apiStagesForThisCustomer.some(apiStageName => {
-        const apiStage = jobData.progress.stages.find(s => s.name === apiStageName);
-        return apiStage && apiStage.status === 'completed';
-      });
-
-      // Special case: Assignment Review might not be in API if auto-approved
-      // Count it as completed if Schema Design (the next stage) is completed
-      if (customerStage === 'Assignment Review' && !apiStagesForThisCustomer.some(name => allApiStageNames.includes(name))) {
-        const schemaDesignCompleted = jobData.progress.stages.some(
-          s => s.name === 'RunSchemaDesign' && s.status === 'completed'
-        );
-        if (schemaDesignCompleted) {
-          completedCustomerStages.add(customerStage);
-        }
-      } else if (hasCompletedApiStage) {
-        completedCustomerStages.add(customerStage);
-      }
-    });
-
-    return completedCustomerStages.size;
-  }, [jobData, stageNameMapping, pipelineStepsList]);
-
-  //--## Total stages is always the full pipeline
-  const totalStagesCount = useMemo(() => {
-    return pipelineStepsList.length;
-  }, [pipelineStepsList]);
 
   //--## Check if job is complete
   //    NOTE: jobData.status is the HTTP status (200) because ApiManager spreads
@@ -498,17 +422,8 @@ const JobMonitoringSummaryPage = memo(() => {
     if (!jobData?.progress?.stages) return false;
     const stages = jobData.progress.stages;
     const lastStage = stages[stages.length - 1];
-    const lastMapped = lastStage?.name ? stageNameMapping[lastStage.name] : null;
-    return lastMapped === 'Review' && lastStage?.status === 'completed';
-  }, [jobData, stageNameMapping]);
-
-  //--## Auto-dismiss complete alert after 60 seconds
-  useEffect(() => {
-    if (isJobComplete && !completeDismissed) {
-      const timer = setTimeout(() => setCompleteDismissed(true), 60000);
-      return () => clearTimeout(timer);
-    }
-  }, [isJobComplete, completeDismissed]);
+    return stepOfStage(lastStage?.name) === 'review' && lastStage?.status === 'completed';
+  }, [jobData]);
 
   //--## Check if waiting for assignment approval
   const isWaitingForApproval = useMemo(() => {
@@ -517,14 +432,27 @@ const JobMonitoringSummaryPage = memo(() => {
 
   //--## Check if schema design is in progress (uses same mapping as progress bar)
   const isDesigning = useMemo(() => {
-    return currentPipelineStep === 'Design';
+    return currentPipelineStep === 'design';
   }, [currentPipelineStep]);
 
 
   //--## Build ranking from post-reality-check assignment distribution only
+  // A finished job reads the final engine counts from its report facts, as the results page
+  // does (#2358, ADR-032); only a running job, with no report, uses the assignment's own.
+  const finalCounts = useMemo(() => {
+    const synthesis = isJobComplete ? jobData?.synthesis : null;
+    if (!synthesis) return null;
+    return ownerDistribution(finalEngineCounts(synthesis), !!getCacheOverlay(synthesis));
+  }, [isJobComplete, jobData]);
+  const flowCacheOverlay = useMemo(
+    () => (finalCounts ? getCacheOverlay(jobData.synthesis) : cacheOverlay),
+    [finalCounts, jobData, cacheOverlay],
+  );
+  const flowTotal = finalCounts ? placedQueryCountOf(jobData.synthesis) : null;
   const ranking = useMemo(() => {
-    if (assignmentDistribution) {
-      return Object.entries(assignmentDistribution)
+    const distribution = finalCounts || assignmentDistribution;
+    if (distribution) {
+      return Object.entries(distribution)
         .sort(([, a], [, b]) => b - a)
         .map(([engine, count]) => ({
           target: engine,
@@ -532,39 +460,24 @@ const JobMonitoringSummaryPage = memo(() => {
         }));
     }
     return [];
-  }, [assignmentDistribution]);
+  }, [finalCounts, assignmentDistribution]);
 
 
   //--## Generate Sankey chart data from ranking
   const sankeyData = useMemo(() => {
-    if (ranking.length === 0) {
-      // Return demo data if no ranking available
-      return {
-        nodes: [
-          { id: "patterns" },
-          { id: "dynamodb" },
-          { id: "elasticache" },
-          { id: "documentdb" }
-        ],
-        links: [
-          { source: "patterns", target: "dynamodb", value: 4 },
-          { source: "patterns", target: "elasticache", value: 20 },
-          { source: "patterns", target: "documentdb", value: 10 }
-        ]
-      };
-    }
+    if (ranking.length === 0) return null;
 
-    // Build nodes: root "patterns" + all targets from ranking
-    const nodes = [{ id: "patterns" }];
+    // Build nodes: the root "queries" + all targets from ranking
+    const nodes = [{ id: "queries" }];
     const links = [];
 
     ranking.forEach((item) => {
       // Add target node
       nodes.push({ id: item.target });
 
-      // Add link from patterns to target with access_patterns as value
+      // Add link from the queries to the target with its query count as value
       links.push({
-        source: "patterns",
+        source: "queries",
         target: item.target,
         value: item.access_patterns || 0
       });
@@ -572,8 +485,8 @@ const JobMonitoringSummaryPage = memo(() => {
 
     // #330: show the cache layer in the diagram, fed by its owner engines'
     // flows, instead of leaving ElastiCache absent from it entirely.
-    return addCacheOverlayNode({ nodes, links }, cacheOverlay);
-  }, [ranking, cacheOverlay]);
+    return addCacheOverlayNode({ nodes, links }, flowCacheOverlay);
+  }, [ranking, flowCacheOverlay]);
 
 
 
@@ -652,19 +565,6 @@ const JobMonitoringSummaryPage = memo(() => {
               </Alert>
             )}
 
-            {/* Report ready alert — auto-dismisses after 60s */}
-            {isJobComplete && !completeDismissed && (
-              <Alert
-                type="success"
-                header={t("job-summary.alert.complete-header")}
-                dismissible
-                dismissAriaLabel={t("common.actions.dismiss")}
-                onDismiss={() => setCompleteDismissed(true)}
-              >
-                {t("job-summary.alert.complete-body")}
-              </Alert>
-            )}
-
             <Header
               variant="h1"
               actions={
@@ -681,23 +581,30 @@ const JobMonitoringSummaryPage = memo(() => {
               {t("job-summary.header.title")}
             </Header>
 
-            <Container>
-              {jobData && (
-                <ProgressState
-                  stepsList={pipelineStepsList}
-                  stepCurrent={currentPipelineStep}
-                  humanStages={humanStages}
-                  jobId={jobId}
-                  jobIdLabel={t("job-summary.progress.job-id-label")}
-                  status={isJobComplete ? 'success' : 'in-progress'}
-                  statusLine={
-                    <span style={{ fontSize: '13px', color: 'var(--dbm-text-secondary)' }}>
-                      {jobData.source_database_type} · {jobData.database_name} · {formatTimeAgo(jobData.created_at)}
-                    </span>
-                  }
-                />
-              )}
-            </Container>
+            {/* #2317: a finished job shows what it found; a running one its phases. */}
+            {jobData && isJobComplete && (
+              <AssessmentSummary jobId={jobId} jobData={jobData} synthesis={jobData.synthesis} />
+            )}
+            {jobData && !isJobComplete && (
+              <Container
+                header={
+                  <Header
+                    variant="h2"
+                    description={[jobData.source_database_label || jobData.source_database_type, jobData.database_name, formatTimeAgo(jobData.created_at)].filter(Boolean).join(' · ')}
+                  >
+                    {t("job-summary.progress.title")}
+                  </Header>
+                }
+              >
+                <SpaceBetween size="m">
+                  <SpaceBetween direction="horizontal" size="xs" alignItems="center">
+                    <Box variant="awsui-key-label">{t("job-summary.progress.job-id-label")}</Box>
+                    <AssessmentId jobId={jobId} databaseName={jobData.database_name} />
+                  </SpaceBetween>
+                  <PipelineSteps current={currentPipelineStep} />
+                </SpaceBetween>
+              </Container>
+            )}
 
             {/* Inline animation keyframes */}
             {/* nosemgrep: missing-template-string-indicator */}
@@ -793,8 +700,8 @@ const JobMonitoringSummaryPage = memo(() => {
                   }
 
                 >
-                  <ChartSankey
-                    width={900}
+                  <QueryFlow
+                    total={flowTotal}
                     height={280}
                     data={sankeyData}
                     // #2300: an engine is a link once the job's results exist, as "View results".

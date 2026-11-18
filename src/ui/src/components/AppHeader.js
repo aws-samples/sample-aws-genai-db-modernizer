@@ -18,7 +18,7 @@ function AppHeader() {
     localStorage.setItem('dbm-theme', newTheme);
     applyMode(newTheme === 'light' ? Mode.Light : Mode.Dark);
     setIsDark(!isDark);
-    // Notify components that read theme from localStorage (e.g. ProgressState)
+    // Notify components that read theme from localStorage (e.g. the query flow chart)
     window.dispatchEvent(new Event('dbm-theme-change'));
   };
 

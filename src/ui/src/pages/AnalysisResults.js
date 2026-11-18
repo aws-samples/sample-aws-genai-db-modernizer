@@ -42,7 +42,7 @@ import StatusIndicator from "@cloudscape-design/components/status-indicator";
 import { SideNavigationConfigurations, ApiConfigurations } from "../config/GlobalConfigurations";
 import AppHeader from "../components/AppHeader";
 import ApiManager from "../classes/ApiManager";
-import ChartSankey from "../components/ChartSankey";
+import QueryFlow from "../components/QueryFlow";
 import SummaryFallbackNotice from "../components/SummaryFallbackNotice";
 import QueryRoutingTable from "../components/QueryRoutingTable";
 import ExploreGraphButton from "../components/ExploreGraphButton";
@@ -97,7 +97,7 @@ import DestinationTables from "../components/DestinationTables";
 import { destinationOf, destinationKey } from "../utils/destinations";
 import { optimizationLabel } from "../utils/optimizationLabels";
 import { displayTables } from "../utils/tableNames";
-import { accessPatternTotals, assumptionItemsOf, cacheLayerFactsOf, costScopeLabelOf, defaultRiskSeverity, derivedCopySyncOf, finalEngineCounts, noEngineInScopeOf, openRiskCountAt, procedureInternalQueryCountOf, procedureInternalRoutineCountOn, procedureInternalRoutineCountsOf, queryPatternCountsOf, rateWindowRiskNoteOf, resolvedRiskCountOf, resolvedRisksBySeverityText, routingHistoryRecorded, routingKindsById, targetEngineEntriesOf, tradeOffsByTab, tradeOffTabLabel, tradeOffTabsShown, tradeOffTopicGroupsOf } from "../utils/reportFacts";
+import { accessPatternTotals, assumptionItemsOf, cacheLayerFactsOf, costScopeLabelOf, defaultRiskSeverity, derivedCopySyncOf, finalEngineCounts, noEngineInScopeOf, openRiskCountAt, overallRiskLevelOf, placedQueryCountOf, procedureInternalQueryCountOf, procedureInternalRoutineCountOn, procedureInternalRoutineCountsOf, queryPatternCountsOf, rateWindowRiskNoteOf, resolvedRiskCountOf, resolvedRisksBySeverityText, routingHistoryRecorded, routingKindsById, targetEngineEntriesOf, tradeOffsByTab, tradeOffTabLabel, tradeOffTabsShown, tradeOffTopicGroupsOf } from "../utils/reportFacts";
 
 // ============================================
 // Constants
@@ -491,7 +491,7 @@ const AnalysisResultsPage = memo(() => {
   // CRITICAL risk is never styled or tabbed the way #270 found HIGH/MEDIUM/LOW
   // treated it (a plain warning, no tab at all).
   const riskAssessment = synthesis?.risk_assessment || {};
-  const overallRiskLevel = riskAssessment.overall_risk_level;
+  const overallRiskLevel = overallRiskLevelOf(synthesis);
   const openRisks = useMemo(
     () => filterRisksWithContent(riskAssessment.risks),
     [riskAssessment]
@@ -1971,8 +1971,8 @@ const AnalysisResultsPage = memo(() => {
               {t('analysis-results.query-flow.title')}
             </Header>
           }>
-            <ChartSankey
-              width={900}
+            <QueryFlow
+              total={placedQueryCountOf(synthesis)}
               height={Math.max(250, Object.keys(afterDist).length * 120)}
               data={sankeyData}
             />

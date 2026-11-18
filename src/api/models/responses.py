@@ -48,6 +48,8 @@ class AssessmentDetail(BaseModel):
     job_id: str
     status: str
     source_database_type: str | None = None
+    # #2317: the display name of the source engine, as the assessments list has it.
+    source_database_label: str | None = None
     database_name: str | None = None
     created_at: str | None = None
     execution_arn: str | None = None

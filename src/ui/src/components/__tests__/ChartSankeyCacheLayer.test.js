@@ -79,8 +79,9 @@ test('links into the cache node are dashed; links into owner nodes are not', () 
   render(dataWithCacheLayer);
   const dashedPaths = Array.from(container.querySelectorAll('path')).filter((p) => p.getAttribute('stroke-dasharray'));
   const plainPaths = Array.from(container.querySelectorAll('path')).filter((p) => !p.getAttribute('stroke-dasharray'));
-  // 2 owner->cache links are dashed, 2 queries->owner links are not
-  expect(dashedPaths).toHaveLength(2);
+  // 2 owner->cache links are dashed, each as the two edges of its band (#2317);
+  // 2 queries->owner links are solid bands
+  expect(dashedPaths).toHaveLength(4);
   expect(plainPaths).toHaveLength(2);
 });
 
@@ -153,7 +154,7 @@ test('the sub-label sits a full line below the engine name, not over it', () => 
 test('the layout keeps room on the right for the whole cache label', () => {
   render(dataWithCacheLayer);
   const { name } = groupParts('ElastiCache (13)');
-  const svgWidth = Number(container.querySelector('svg').getAttribute('width'));
+  const svgWidth = Number(container.querySelector('svg').getAttribute('viewBox').split(' ')[2]);
   expect(Number(name.getAttribute('x')) + estimateLabelWidth('ElastiCache (13)')).toBeLessThanOrEqual(svgWidth);
 });
 
