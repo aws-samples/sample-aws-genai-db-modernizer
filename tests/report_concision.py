@@ -24,6 +24,9 @@ _FENCE = re.compile(r"^(```|~~~).*?^\1\s*$", re.M | re.S)
 # A code span of any number of backticks: a run opens it, a run of the same length closes it.
 _CODE_SPAN = re.compile(r"(?<!`)(`+)(?!`)[^\n]*?(?<!`)\1(?!`)")
 _NUMBER = re.compile(r"\d[\d,.]*")
+# The step a line is about (#2468): "- Step 4 moves ...". Its number is kept, so each
+# step's own line is a record of that step, like a table row, and not a repeat.
+_STEP_SUBJECT = re.compile(r"^[\s*-]*(Step \d+)\b")
 
 
 def md_sections(md: str, level: int) -> list[tuple[str, str]]:
@@ -47,13 +50,20 @@ def repeated_sentences(text: str, min_words: int = MIN_WORDS) -> list[tuple[str,
     """Each sentence of at least ``min_words`` words that ``text`` states more than
     once, with how often. Code spans (table names, ids) and numbers are dropped
     before comparing, so "- `wp_posts`: 28 reads ..." and "- `wp_users`: 1 read
-    ..." are the same sentence; table rows and code blocks are not prose."""
+    ..." are the same sentence; table rows and code blocks are not prose. A sentence
+    that opens with the step it is about keeps that step's number (#2468): "Step 4
+    moves ..." and "Step 5 moves ..." state two steps, but the same step's sentence
+    twice, or a sentence that only names a step further in, is still a repeat."""
     prose = "\n".join(
         line for line in _FENCE.sub("", text).splitlines() if not line.startswith("|")
     )
     seen: Counter[str] = Counter()
     for raw in re.split(r"(?<=[.!?])\s+|\n", prose):
-        sentence = _NUMBER.sub("#", _CODE_SPAN.sub("", raw))
+        subject = _STEP_SUBJECT.match(raw)
+        rest = raw[subject.end() :] if subject else raw
+        sentence = (subject.group(1) if subject else "") + _NUMBER.sub(
+            "#", _CODE_SPAN.sub("", rest)
+        )
         sentence = re.sub(r"\s+", " ", sentence).strip(" -*:,")
         if sum(1 for w in sentence.split() if re.search(r"[A-Za-z]", w)) >= min_words:
             seen[sentence] += 1

@@ -23,6 +23,7 @@ from typing import Any
 
 import pytest
 
+from src.report.adoption_paths_md import _why_lines
 from src.report.escaping import md_text
 from src.report.renderers import render_engineering_report_md
 from src.report.roadmap import GATE_LIST_POINTER
@@ -30,6 +31,7 @@ from src.shared.engine_names import display_engine
 from src.shared.gate_facts import GATE_LIST_MAX
 from src.shared.move_reasons import consolidation_reason
 from src.shared.report_facts import replica_risk_text, shared_replica_risk_text, shares_replica_risk
+from src.shared.step_explanations import step_why
 from tests.report_concision import (
     bare_ids,
     known_query_ids,
@@ -115,6 +117,67 @@ def test_the_guards_find_what_they_look_for() -> None:
     # A span of two backticks is a code span too (#1981); an unpaired run is not one.
     assert bare_ids("see ``f31a66f5`` for it", ids) == []
     assert bare_ids("see `` f31a66f5 ` for it", ids) == ["f31a66f5"]
+
+
+# --- A wave's step lines (#2468) -------------------------------------------------
+
+
+def _moving_step(number: int, queries: int, tables: int, share: float, shared_with: int) -> dict:
+    """A DynamoDB slice step of wave 3 whose sentence takes the plural shape the
+    discourse run printed for two of its steps."""
+    return {
+        "step_number": number,
+        "kind": "slice",
+        "engine": "dynamodb",
+        "query_count": queries,
+        "owned_table_count": tables,
+        "phase_wave": 3,
+        "metrics": {"value_call_share_percent": share},
+        "ties": {
+            "replica_table_count": tables * 3,
+            "write_site_count": tables + 5,
+            "ordered_with_steps": [3, 4, 5, 6],
+            "shared_with_steps": [shared_with],
+            "shared_tables": [f"t{i}" for i in range(tables)],
+            "shared_table_count": tables,
+            "runs_after_steps": [],
+        },
+    }
+
+
+def _step_lines(*steps: dict) -> str:
+    plan = {"plan_steps": list(steps), "metric_labels": {}}
+    told = [{**s, "why": step_why(plan, s)} for s in steps]
+    return "\n".join(_why_lines(plan, told))
+
+
+# Guards the test helper (tests/report_concision.py), not src/: it fails with the
+# helper of main, which masks the leading step number too.
+@pytest.mark.passes_on_main
+def test_two_steps_of_one_shape_are_two_statements() -> None:
+    """Steps 4 and 5 of the discourse wave 3 read the same once their figures are
+    masked; each line states its own step, like a table row, so neither repeats."""
+    body = _step_lines(_moving_step(4, 50, 2, 1.7, 6), _moving_step(5, 409, 48, 37.0, 7))
+    assert body.count("ordered in that wave by those calls") == 2
+    assert repeated_sentences(body) == []
+
+
+@pytest.mark.passes_on_main  # the power #2468 keeps: a real repeat still fails
+def test_one_step_stated_twice_is_still_a_repeat() -> None:
+    step = _moving_step(4, 50, 2, 1.7, 6)
+    body = _step_lines(step, step)
+    assert [n for _, n in repeated_sentences(body)] == [2]
+
+
+@pytest.mark.passes_on_main  # the power #2468 keeps: only the leading step is kept
+def test_a_step_named_inside_a_sentence_is_still_masked() -> None:
+    """Only the step a line is about keeps its number; a sentence that differs in a
+    step it merely names is still the same sentence."""
+    rows = [
+        "- It shares 2 tables with step 6, and each of them is read as a copy by CDC.",
+        "- It shares 9 tables with step 7, and each of them is read as a copy by CDC.",
+    ]
+    assert [n for _, n in repeated_sentences("\n".join(rows))] == [2]
 
 
 # --- Sources of truth and replicas ---------------------------------------------
