@@ -19,7 +19,7 @@ uv run python scripts/run_assessment.py --file docs/examples/wordpress/wordpress
 
 Or in Claude Code: `/modernize docs/examples/wordpress/wordpress-collection.json`.
 
-`sample-run/` (the help site's sample report, described in its own README) and `load-test-results/` were recorded from the earlier, 107-statement collection of the same shop.
+`sample-run/` (the help site's sample report, described in its own README) is the v0.5.0-beta.1 run of this 163-statement collection. `load-test-results/` is a synthetic DynamoDB design that `tests/fixtures/generate_wordpress_dynamodb_schema.py` writes from the contract, so it does not come from a collection.
 
 ## The routine set
 
