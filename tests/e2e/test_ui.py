@@ -774,17 +774,16 @@ def test_a_querys_trace_opens_from_the_routing_table(
     _goto_results(page, ui, r, "queries")
     section = page.locator("#query-routing-section")
     expect(section).to_be_visible(timeout=READY_MS)
-    # #1028: the section opens collapsed; its header expands it.
-    assert not section.get_by_role("table", name="Query routing").is_visible()
-    _expand_query_routing(page)
+    # #2319: the table is open when the tab opens, with nothing to expand first.
+    assert section.locator("button[aria-expanded]").count() == 0
+    section.get_by_role("table", name="Query routing").wait_for(timeout=READY_MS)
     _wait_for_query_routing_rows(section, r, ev)
     if not r.external:  # wordpress lists 107 queries: more than one page of 25
         section.get_by_role("button", name="Next page").wait_for(timeout=READY_MS)
         section.get_by_role("button", name="Previous page").wait_for(timeout=READY_MS)
     if trace is not None:
         qid = trace["query_id"]
-        section.get_by_role("button", name="Routing changed or decided").click()
-        section.get_by_label("Filter queries").fill(qid[:16])
+        _filter_queries(section, qid[:16])
         opener = section.get_by_role("button", name=f"{OPEN_TRACE}{qid}")
     else:
         opener = section.get_by_role("button", name=re.compile(f"^{OPEN_TRACE}")).first
@@ -792,8 +791,7 @@ def test_a_querys_trace_opens_from_the_routing_table(
     opener.focus()
     page.keyboard.press("Enter")
 
-    modal = page.get_by_role("dialog")
-    modal.get_by_text(f"Query Journey: {qid}").wait_for(timeout=READY_MS)
+    modal = _query_panel(page, qid)
     modal.get_by_role("tab", name="Why this engine").click()
     modal.get_by_test_id("query-trace-final").first.wait_for(timeout=READY_MS)
     first = modal.get_by_test_id("query-trace-first")
@@ -856,16 +854,13 @@ def test_a_consolidated_querys_journey_shows_its_new_engines_fit(
     _goto_results(page, ui, r, "queries")
     section = page.locator("#query-routing-section")
     expect(section).to_be_visible(timeout=READY_MS)
-    _expand_query_routing(page)
     section.get_by_role("table", name="Query routing").wait_for(timeout=READY_MS)
-    section.get_by_role("button", name="Routing changed or decided").click()
-    section.get_by_label("Filter queries").fill(qid[:16])
+    _filter_queries(section, qid[:16])
     section.get_by_role("button", name=f"{OPEN_TRACE}{qid}").click()
-    modal = page.get_by_role("dialog")
-    modal.get_by_text(f"Query Journey: {qid}").wait_for(timeout=READY_MS)
-    expect(modal).to_contain_text("Workload Fit", timeout=READY_MS)
+    modal = _query_panel(page, qid)
+    expect(modal).to_contain_text("Workload fit", timeout=READY_MS)
     text = modal.inner_text()
-    fit = re.search(r"Workload Fit\s+(\d+)%", text)
+    fit = re.search(r"Workload fit\s+(\d+)%", text)
     assert fit is not None, text[:2000]
     assert int(fit.group(1)) == score, (qid, "shown", fit.group(1), "engine it left", left)
     assert ev == {"console": [], "pageerror": [], "failed": []}, (r.db, ev)
@@ -901,24 +896,95 @@ def test_a_utility_pins_journey_shows_pinned_not_a_percentage(
     _goto_results(page, ui, r, "queries")
     section = page.locator("#query-routing-section")
     expect(section).to_be_visible(timeout=READY_MS)
-    _expand_query_routing(page)
     section.get_by_role("table", name="Query routing").wait_for(timeout=READY_MS)
-    section.get_by_label("Filter queries").fill(qid[:16])
+    _filter_queries(section, qid[:16])
     section.get_by_role("button", name=f"{OPEN_TRACE}{qid}").click()
-    modal = page.get_by_role("dialog")
-    modal.get_by_text(f"Query Journey: {qid}").wait_for(timeout=READY_MS)
-    expect(modal).to_contain_text("Workload Fit", timeout=READY_MS)
+    modal = _query_panel(page, qid)
+    expect(modal).to_contain_text("Workload fit", timeout=READY_MS)
     text = modal.inner_text()
-    assert re.search(r"Workload Fit\s+pinned \(utility\)", text), text[:2000]
-    assert not re.search(r"Workload Fit\s+\d+%", text), text[:2000]
+    assert re.search(r"Workload fit\s+pinned \(utility\)", text), text[:2000]
+    assert not re.search(r"Workload fit\s+\d+%", text), text[:2000]
     assert ev == {"console": [], "pageerror": [], "failed": []}, (r.db, ev)
 
 
-def _expand_query_routing(page: Page) -> None:
-    """Open the query routing section, collapsed when the page opens (#1028)."""
-    header = page.locator('#query-routing-section [aria-expanded="false"]').first
-    header.click()
-    page.locator('#query-routing-section [aria-expanded="true"]').first.wait_for(timeout=READY_MS)
+def test_a_selected_query_opens_in_a_split_panel_beside_the_table(
+    page: Page, ui: str, all_runs: list[PipelineResult]
+) -> None:
+    """#2319: selecting a query from the keyboard opens its detail in a split panel, not a
+    dialog: the table stays on the page, the title is the short id and the operation, the
+    raw JSON is behind "Developer details", axe finds nothing blocking with the panel
+    open, and closing the panel leaves the table as it was."""
+    r = next((x for x in all_runs if x.db == "wordpress"), all_runs[0])
+    ev = _watch(page)
+    _goto_results(page, ui, r, "queries")
+    section = page.locator("#query-routing-section")
+    expect(section).to_be_visible(timeout=READY_MS)
+    _wait_for_query_routing_rows(section, r, ev)
+    opener = section.get_by_role("button", name=re.compile(f"^{OPEN_TRACE}")).first
+    qid = (opener.get_attribute("aria-label") or "")[len(OPEN_TRACE) :]
+    opener.focus()
+    page.keyboard.press("Enter")
+
+    panel = _query_panel(page, qid)
+    assert page.get_by_role("dialog").count() == 0, "a query opens in a split panel, not a dialog"
+    expect(section.get_by_role("table", name="Query routing")).to_be_visible()
+    title = panel.get_by_role("heading", level=2).first.inner_text()
+    assert re.fullmatch(rf"Query {re.escape(qid[:8])}( · \S.*)?", title.strip()), title
+    assert qid not in title, "the title uses the short id"
+    expect(panel).to_contain_text("Calls per hour", timeout=READY_MS)
+    text = panel.inner_text()
+    assert "Assigned Engine" not in text and "Frequency (per hour)" not in text, text[:600]
+    assert panel.get_by_role("tab", name="JSON").count() == 0
+    dev = panel.get_by_role("button", name="Developer details")
+    assert dev.get_attribute("aria-expanded") == "false"
+    blocking, where, _ = _axe_blocking(page)
+    assert blocking == [], (r.db, blocking, where)
+
+    page.get_by_role("button", name="Close the query details").click()
+    expect(panel).to_be_hidden(timeout=READY_MS)
+    expect(section.get_by_role("table", name="Query routing")).to_be_visible()
+    assert ev == {"console": [], "pageerror": [], "failed": []}, (r.db, ev)
+
+
+def test_the_query_table_filters_and_pages_a_large_job(
+    page: Page, ui: str, all_runs: list[PipelineResult]
+) -> None:
+    """#2319: discourse lists 1,654 queries. The table renders one page of rows, not all of
+    them, and a property filter token narrows the list and its counter."""
+    r = next((x for x in all_runs if x.db == "discourse"), all_runs[0])
+    ev = _watch(page)
+    _goto_results(page, ui, r, "queries")
+    section = page.locator("#query-routing-section")
+    expect(section).to_be_visible(timeout=READY_MS)
+    _wait_for_query_routing_rows(section, r, ev)
+    table = section.get_by_role("table", name="Query routing")
+    rows = table.locator("tbody tr")
+    assert 0 < rows.count() <= 25, rows.count()
+    counter = section.get_by_role("heading", level=2).first
+    total = int(re.search(r"\(([\d,]+)\)", counter.inner_text()).group(1).replace(",", ""))
+    if not r.external:
+        assert total > 1000, total
+        section.get_by_role("button", name="Next page").wait_for(timeout=READY_MS)
+    _filter_queries(section, "SELECT")
+    expect(counter).to_contain_text(f"of {total:,}", timeout=READY_MS)
+    assert rows.count() <= 25
+    assert ev == {"console": [], "pageerror": [], "failed": []}, (r.db, ev)
+
+
+def _filter_queries(section: Locator, text: str) -> None:
+    """Free text in the query table's property filter (#2319): type it and press Enter,
+    which turns it into a token."""
+    box = section.get_by_label("Filter queries")
+    box.fill(text)
+    box.press("Enter")
+
+
+def _query_panel(page: Page, qid: str) -> Locator:
+    """The split panel a selected query opens (#2319): titled with the short id, which
+    is the first eight characters of the query id."""
+    panel = page.get_by_role("region", name=re.compile(f"^Query {re.escape(qid[:8])}"))
+    panel.first.wait_for(timeout=READY_MS)
+    return panel.first
 
 
 # #887: the table lists GET /assessments/{job_id}/query-journeys, read from the
@@ -1565,7 +1631,7 @@ def test_results_page_shows_the_headline_first(
     buttons. Each tab holds its own sections, in the order of the decision (Summary: the
     executive summary, the cost breakdown, the query flow, the assumptions; Plan: the
     roadmap, then the fallback-engine warning and close-call banners when the report has
-    them, ...; Queries: query routing, collapsed, then the explorer; Data model: the
+    them, ...; Queries: the open query table, then the explorer; Data model: the
     table owners and Sources of truth, collapsed, then the Table design; Risks and
     decisions), and no other tab's. The close-call banner names its first 3 queries by a
     5-character id, then "+N more"."""
@@ -1614,8 +1680,10 @@ def test_results_page_shows_the_headline_first(
             )
         _show_tab(page, "queries")
         routing = page.locator("#query-routing-section")
-        assert routing.locator('[aria-expanded="false"]').count() >= 1, r.db
-        assert not routing.get_by_role("table", name="Query routing").is_visible(), r.db
+        # #2319: the query table is open, with nothing to expand first.
+        assert routing.locator('button[aria-expanded="false"]').count() == 0, r.db
+        routing.get_by_role("table", name="Query routing").wait_for(timeout=READY_MS)
+        assert routing.get_by_role("table", name="Query routing").is_visible(), r.db
         _show_tab(page, "data-model")
         sources = page.locator("#sources-of-truth-section")
         assert sources.locator('[aria-expanded="false"]').count() == 1, r.db
@@ -2399,7 +2467,6 @@ def test_query_routing_table_fits_its_card_at_1440(
         _goto_results(page, ui, r, "queries")
         section = page.locator("#query-routing-section")
         expect(section).to_be_visible(timeout=READY_MS)
-        _expand_query_routing(page)
         _wait_for_query_routing_rows(section, r, ev)
         m = page.evaluate("""() => {
               const table = document.querySelector('#query-routing-section table');

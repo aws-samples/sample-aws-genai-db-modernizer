@@ -22,15 +22,15 @@ describe('Approval gate states the definition (AssignmentGate.js, via i18n)', ()
   });
 });
 
-describe('React results page states the definition (AnalysisResults.js)', () => {
+describe('React results page states the definition (QueryDetailPanel.js)', () => {
   it('imports and renders the shared workload-fit definition', async () => {
     const fs = require('fs');
     const path = require('path');
     const source = fs.readFileSync(
-      path.join(__dirname, '..', '..', 'pages', 'AnalysisResults.js'),
+      path.join(__dirname, '..', '..', 'components', 'QueryDetailPanel.js'),
       'utf8',
     );
-    expect(source).toMatch(/import\s*{\s*WORKLOAD_FIT_DEFINITION\s*}\s*from\s*"\.\.\/utils\/workloadFitLabels"/);
+    expect(source).toMatch(/import\s*{[^}]*WORKLOAD_FIT_DEFINITION[^}]*}\s*from\s*['"]\.\.\/utils\/workloadFitLabels['"]/);
     expect(source).toMatch(/WORKLOAD_FIT_DEFINITION/);
   });
 });

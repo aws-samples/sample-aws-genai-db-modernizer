@@ -37,7 +37,6 @@ import KeyValuePairs from "@cloudscape-design/components/key-value-pairs";
 import Tabs from "@cloudscape-design/components/tabs";
 import CodeEditor from "@cloudscape-design/components/code-editor";
 import StatusIndicator from "@cloudscape-design/components/status-indicator";
-import CopyToClipboard from "@cloudscape-design/components/copy-to-clipboard";
 
 //##-- Custom
 import { SideNavigationConfigurations, ApiConfigurations } from "../config/GlobalConfigurations";
@@ -45,7 +44,6 @@ import AppHeader from "../components/AppHeader";
 import ApiManager from "../classes/ApiManager";
 import ChartSankey from "../components/ChartSankey";
 import SummaryFallbackNotice from "../components/SummaryFallbackNotice";
-import QueryDecisionTrace from "../components/QueryDecisionTrace";
 import QueryRoutingTable from "../components/QueryRoutingTable";
 import ExploreGraphButton from "../components/ExploreGraphButton";
 import useGraphExplorerFlag from "../hooks/useGraphExplorerFlag";
@@ -74,11 +72,11 @@ import ExecutiveSummaryStats from "../components/ExecutiveSummaryStats";
 import SourcesOfTruthCallout from "../components/SourcesOfTruthCallout";
 import TableOwnersCallout from "../components/TableOwnersCallout";
 import DeliverablesPanel from "../components/DeliverablesPanel";
-import RequestError from "../components/RequestError";
 import AssumptionsPanel from "../components/AssumptionsPanel";
 import TradeOffDecisions from "../components/TradeOffDecisions";
 import TradeOffsEmptyNote from "../components/TradeOffsEmptyNote";
-import { buildQueryRoutingRows, journeyWorkloadFit } from "../utils/queryRouting";
+import { buildQueryRoutingRows, queryPatternLinks } from "../utils/queryRouting";
+import QueryDetailPanel from "../components/QueryDetailPanel";
 import { getCacheOverlay, ownerDistribution, formatCacheLayerLine, cacheChangeSentence, targetEngineEntries, resolveCostBreakdown, ownerSchemaDesigns, cacheAccessPatternCount, addCacheOverlayNode, cacheLayerAccessPatterns } from "../utils/cacheLayer";
 import { summaryFallbackInfo } from "../utils/summaryFallback";
 import { fallbackWithheldReason } from "../utils/fallbackWithheldReason";
@@ -89,13 +87,12 @@ import { costBaselineStats } from "../utils/tcoAnalysis";
 // #358: engine display names come from the shared mapping (checked against
 // src/shared/engine_names.py by tests/unit/report/test_engine_names_js_sync.py)
 // rather than this page's own hand-kept copy.
-import { ENGINE_LABELS, displayEngine } from "../utils/engineNames";
+import { ENGINE_LABELS } from "../utils/engineNames";
 import { formatMoney, formatRate } from "../utils/format";
 import { engineHex } from "../utils/engineColors";
 import EngineBadge from "../components/EngineBadge";
 import DestinationTables from "../components/DestinationTables";
 import { destinationOf, destinationKey } from "../utils/destinations";
-import { WORKLOAD_FIT_DEFINITION } from "../utils/workloadFitLabels";
 import { optimizationLabel } from "../utils/optimizationLabels";
 import { displayTables } from "../utils/tableNames";
 import { accessPatternTotals, assumptionLinesOf, cacheLayerFactsOf, costAssumptionsOf, rateWindowRiskNoteOf, rateWindowScenarioOf, rateWindowStatementOf, rowCountStatementOf, derivedCopySyncOf, costCaveatOf, costScopeLabelOf, costSizingOf, costSizingText, defaultRiskSeverity, finalEngineCounts, noEngineInScopeOf, openRiskCountAt, procedureInternalQueryCountOf, procedureInternalRoutineCountOn, procedureInternalRoutineCountsOf, queryPatternCountsOf, resolvedRiskCountOf, resolvedRisksBySeverityText, routingHistoryRecorded, routingKindsById, tradeOffsByTab, tradeOffTabLabel, tradeOffTabsShown, tradeOffTopicGroupsOf } from "../utils/reportFacts";
@@ -275,8 +272,8 @@ const AnalysisResultsPage = memo(() => {
   const [currentPage, setCurrentPage] = useState(1);
   const [filterQuery, setFilterQuery] = useState({ tokens: [], operation: 'and' });
 
-  // Query journey modal state
-  const [showQueryJourneyModal, setShowQueryJourneyModal] = useState(false);
+  // Query detail split panel state (#2319)
+  const [splitPanelOpen, setSplitPanelOpen] = useState(false);
   const [queryJourneyData, setQueryJourneyData] = useState(null);
   const [queryJourneyLoading, setQueryJourneyLoading] = useState(false);
   // #339: the journey's "Why this engine" section (graph/queries/{id}/trace)
@@ -425,10 +422,6 @@ const AnalysisResultsPage = memo(() => {
   // ---- Derived data ----
 
   const synthesis = resultsData?.synthesis || {};
-  const queryRoutingRows = useMemo(
-    () => buildQueryRoutingRows(queryJourneyList.items, routingKindsById(resultsData?.synthesis), ENGINE_LABELS),
-    [queryJourneyList.items, resultsData],
-  );
   // #296 cache overlay: a top-level synthesis.cache_overlay signals that
   // ElastiCache is a cache layer here, not an owner -- defensively strip it
   // from the owner distribution so it can't show up as its own Sankey/target
@@ -680,6 +673,18 @@ const AnalysisResultsPage = memo(() => {
       opCategory: getOpCategory(ap.operation),
     }));
   }, [activeDesigns, cacheOverlay]);
+
+  // #2319: the query table's rows, with each query's destination tables and its
+  // cache engine from the schema design's patterns (a dash when none was designed).
+  const queryRoutingRows = useMemo(
+    () => buildQueryRoutingRows(
+      queryJourneyList.items,
+      routingKindsById(resultsData?.synthesis),
+      ENGINE_LABELS,
+      queryPatternLinks(allAccessPatterns, cacheLayerPatterns),
+    ),
+    [queryJourneyList.items, resultsData, allAccessPatterns, cacheLayerPatterns],
+  );
 
   // Owner rows followed by the cache-layer rows -- the explorer's combined
   // browsing set. Everything that must stay owner-only (the "Access
@@ -1135,7 +1140,7 @@ const AnalysisResultsPage = memo(() => {
 
   const fetchQueryJourney = useCallback(async (queryId) => {
     setSelectedQueryId(queryId);
-    setShowQueryJourneyModal(true);
+    setSplitPanelOpen(true);
     setQueryJourneyLoading(true);
     setQueryJourneyData(null);
     setQueryTrace({ data: null, error: null });
@@ -1171,8 +1176,8 @@ const AnalysisResultsPage = memo(() => {
     }
   }, [jobId, t]);
 
-  const handleCloseQueryJourneyModal = useCallback(() => {
-    setShowQueryJourneyModal(false);
+  const handleCloseQueryDetail = useCallback(() => {
+    setSplitPanelOpen(false);
     setQueryJourneyData(null);
     setQueryTrace({ data: null, error: null });
     setSelectedQueryId(null);
@@ -1710,17 +1715,6 @@ const AnalysisResultsPage = memo(() => {
     if (sectionId && sectionId !== hashId(locationHash)) goToSection(sectionId);
   }, [loading, locationSearch, locationHash, explorerPatterns, auroraDesigns, afterDist, engineOptions, addFlashbarMessage, goToSection, t]);
 
-  const enginePieData = useMemo(() => {
-    const engines = Object.entries(filteredEngineDist);
-    return engines.map(([engine, count]) => ({
-      id: engine,
-      title: ENGINE_LABELS[engine] || engine,
-      value: count,
-      color: engineHex(engine),
-      engine: engine
-    }));
-  }, [filteredEngineDist]);
-
   const handleEngineChartClick = useCallback((event) => {
     console.log('Engine chart clicked - full event:', event);
 
@@ -1769,7 +1763,7 @@ const AnalysisResultsPage = memo(() => {
   }, [filterQuery]);
 
   const renderEngineBar = () => {
-    if (enginePieData.length === 0) return null;
+    if (Object.keys(filteredEngineDist).length === 0) return null;
 
     return (
       <>
@@ -1784,86 +1778,9 @@ const AnalysisResultsPage = memo(() => {
           filteringType="auto"
           tokenLimit={3}
         />
-        <Box margin={{ top: 's' }}>
-          <div style={{ cursor: 'pointer' }} onClick={(e) => {
-            // Get the clicked element
-            const target = e.target;
-
-            // Try to find if we clicked on a legend item or segment
-            let legendText = null;
-
-            // Check if clicked on legend text
-            if (target.tagName === 'text' || target.closest('text')) {
-              const textElement = target.tagName === 'text' ? target : target.closest('text');
-              legendText = textElement.textContent;
-            }
-
-            // Check if clicked on a path (segment)
-            if (target.tagName === 'path' || target.closest('path')) {
-              // Try to find associated legend text from the chart data
-              const pathElement = target.tagName === 'path' ? target : target.closest('path');
-              const fill = pathElement.getAttribute('fill');
-
-              // Find the engine by color
-              const engine = enginePieData.find(e => e.color === fill);
-              if (engine) {
-                legendText = engine.title;
-              }
-            }
-
-            if (legendText) {
-              // Find the engine from the legend text
-              const engine = enginePieData.find(e => e.title === legendText);
-              if (engine) {
-                console.log('Clicked engine:', engine.id);
-
-                // Add to PropertyFilter
-                const newToken = {
-                  propertyKey: 'engine',
-                  operator: '=',
-                  value: engine.id
-                };
-
-                // Check if this filter already exists
-                const existingTokens = filterQuery.tokens || [];
-                const alreadyExists = existingTokens.some(
-                  t => t.propertyKey === 'engine' && t.value === engine.id
-                );
-
-                if (!alreadyExists) {
-                  console.log('Adding filter token:', newToken);
-                  setFilterQuery({
-                    tokens: [...existingTokens, newToken],
-                    operation: filterQuery.operation || 'and'
-                  });
-                  setCurrentPage(1);
-                }
-              }
-            }
-          }}>
-            <PieChart
-              data={enginePieData}
-              variant="pie"
-              size="medium"
-              hideFilter
-              hideLegend={false}
-              segmentDescription={(datum, sum) => `${datum.value} patterns, ${((datum.value / sum) * 100).toFixed(0)}%`}
-              detailPopoverContent={(datum, sum) => [
-                { key: 'Engine', value: datum.title },
-                { key: 'Patterns', value: datum.value },
-                { key: 'Percentage', value: `${((datum.value / sum) * 100).toFixed(1)}%` }
-              ]}
-              empty={<Box textAlign="center" color="inherit">{t('common.labels.no-data')}</Box>}
-              noMatch={<Box textAlign="center" color="inherit">{t('common.labels.no-data')}</Box>}
-              ariaLabel="Engine distribution"
-            />
-          </div>
-        </Box>
-        {/* #429 part 2: the cache layer stays out of the pie's shares (it
-            never owned a query) but still needs to be visible here -- a
-            legend-style entry with its own count, next to the pie rather
-            than a slice inside it, so the owner shares still read as 100% of
-            owned workload. */}
+        {/* #429 part 2: the cache layer never owned a query, so it gets its
+            own legend-style entry with its count under the engine filter.
+            #2319: the engine pie is gone; the summary shows the split. */}
         {cacheOverlay?.engine && (
           <Box margin={{ top: 'xs' }} fontSize="body-s" color="text-body-secondary">
             <span
@@ -1917,6 +1834,10 @@ const AnalysisResultsPage = memo(() => {
           // keeps this layout when its results arrive), so On this page can open then.
           toolsOpen={false}
           toolsHide
+          // The query detail's split panel is controlled from the first render for the
+          // same reason, so it can open once the results are in (#2319).
+          splitPanelOpen={false}
+          onSplitPanelToggle={() => {}}
         />
       </>
     );
@@ -2173,16 +2094,16 @@ const AnalysisResultsPage = memo(() => {
     ),
     queries: (
       <SpaceBetween size="l">
-        {/* Query routing (#822): every query, and the way into its
-            journey and decision trace without schema design. #1028:
-            collapsed when the page opens. */}
+        {/* Query table (#822, #2319): every query, open, with a property
+            filter; the selected query's detail opens in the split panel. */}
         <QueryRoutingTable
           rows={queryRoutingRows}
           loading={queryJourneyList.loading}
           error={queryJourneyList.error}
           hasLedger={routingHistoryRecorded(resultsData?.synthesis)}
           truncated={queryJourneyList.truncated}
-          onOpen={fetchQueryJourney}
+          selectedId={selectedQueryId}
+          onSelect={fetchQueryJourney}
           t={t}
         />
 
@@ -3133,6 +3054,20 @@ const AnalysisResultsPage = memo(() => {
         toolsOpen={toolsOpen && !toolsHidden}
         onToolsChange={({ detail }) => setToolsOpen(detail.open)}
         toolsHide={toolsHidden}
+        splitPanel={selectedQueryId ? (
+          <QueryDetailPanel
+            queryId={selectedQueryId}
+            journey={queryJourneyData}
+            loading={queryJourneyLoading}
+            trace={queryTrace}
+            t={t}
+          />
+        ) : undefined}
+        splitPanelOpen={splitPanelOpen && Boolean(selectedQueryId)}
+        onSplitPanelToggle={({ detail }) => {
+          if (detail.open) setSplitPanelOpen(true);
+          else handleCloseQueryDetail();
+        }}
       />
 
       {/* Pattern Detail Modal */}
@@ -3150,178 +3085,6 @@ const AnalysisResultsPage = memo(() => {
       >
         {selectedPattern && renderPatternDetail(selectedPattern)}
         {selectedSourceTable && renderSourceTableDetail(selectedSourceTable)}
-      </Modal>
-
-      {/* Query Journey Modal */}
-      <Modal
-        visible={showQueryJourneyModal}
-        onDismiss={handleCloseQueryJourneyModal}
-        header={`Query Journey: ${selectedQueryId || 'Loading...'}`}
-        size="max"
-      >
-        {queryJourneyLoading ? (
-          <Box textAlign="center" padding="xxl">
-            <StatusIndicator type="loading">{t('analysis-results.query-journey.loading')}</StatusIndicator>
-          </Box>
-        ) : queryJourneyData?.error ? (
-          <Box textAlign="center" padding="l">
-            <RequestError inline failure={queryJourneyData.error} lead={t('analysis-results.query-journey.error')} t={t} />
-          </Box>
-        ) : (
-          <Tabs
-            tabs={[
-              {
-                id: 'general',
-                label: 'General Information',
-                content: (
-                  <SpaceBetween size="m">
-                    <KeyValuePairs
-                      columns={2}
-                      items={[
-                        {
-                          label: 'SQL ID',
-                          value: (
-                            <SpaceBetween direction="horizontal" size="xs" alignItems="center">
-                              <Box fontFamily="monospace" fontSize="body-s">
-                                {selectedQueryId}
-                              </Box>
-                              <CopyToClipboard
-                                copyButtonAriaLabel={t('common.actions.copy-sql-id')}
-                                copyErrorText={t('common.errors.copy-failed')}
-                                copySuccessText={t('common.success.copied')}
-                                textToCopy={selectedQueryId}
-                                variant="icon"
-                              />
-                            </SpaceBetween>
-                          )
-                        },
-                        {
-                          label: 'Query Type',
-                          value: queryJourneyData?.source?.query_type || '—'
-                        },
-                        {
-                          label: 'Tables Accessed',
-                          value: displayTables(queryJourneyData?.source?.tables_accessed, { short: false }).join(', ') || '—'
-                        },
-                        {
-                          label: 'Frequency (per hour)',
-                          value: formatRate(queryJourneyData?.source?.frequency_per_hour)
-                        },
-                        {
-                          label: 'Calls per Second',
-                          value: formatRate(queryJourneyData?.source?.calls_per_second)
-                        },
-                        {
-                          label: 'Assigned Engine',
-                          value: queryJourneyData?.assignment?.assigned_engine ? displayEngine(queryJourneyData.assignment.assigned_engine) : '—'
-                        },
-                        {
-                          label: 'Workload Fit',
-                          value: journeyWorkloadFit(queryJourneyData, t) ? (
-                            <SpaceBetween size="xxxs">
-                              <Box>{journeyWorkloadFit(queryJourneyData, t)}</Box>
-                              <Box fontSize="body-s" color="text-status-inactive">
-                                {WORKLOAD_FIT_DEFINITION}
-                              </Box>
-                            </SpaceBetween>
-                          ) : '—'
-                        },
-                        {
-                          label: 'In Scope',
-                          value: queryJourneyData?.assignment?.in_scope ? 'Yes' : 'No'
-                        }
-                      ]}
-                    />
-                    {queryJourneyData?.source?.query_text && (
-                      <Container header={<Header variant="h3">{t('analysis-results.pattern-detail.query-text')}</Header>}>
-                        <CodeBlock>
-                          {queryJourneyData.source.query_text}
-                        </CodeBlock>
-                      </Container>
-                    )}
-                  </SpaceBetween>
-                )
-              },
-              {
-                id: 'performance',
-                label: 'Performance',
-                content: (
-                  <KeyValuePairs
-                    columns={3}
-                    items={
-                      queryJourneyData?.source?.performance
-                        ? Object.entries(queryJourneyData.source.performance).map(([key, value]) => ({
-                            label: key.split('_').map(word => word.charAt(0).toUpperCase() + word.slice(1)).join(' '),
-                            value: typeof value === 'number' ? value.toFixed(3) : (value?.toString() || '—')
-                          }))
-                        : [{ label: 'No performance data', value: '—' }]
-                    }
-                  />
-                )
-              },
-              {
-                id: 'characteristics',
-                label: 'Characteristics',
-                content: (
-                  <KeyValuePairs
-                    columns={3}
-                    items={
-                      queryJourneyData?.source?.characteristics
-                        ? Object.entries(queryJourneyData.source.characteristics).map(([key, value]) => ({
-                            label: key.split('_').map(word => word.charAt(0).toUpperCase() + word.slice(1)).join(' '),
-                            value: typeof value === 'boolean'
-                              ? (value ? 'Yes' : 'No')
-                              : Array.isArray(value)
-                              ? value.join(', ') || '—'
-                              : (value?.toString() || '—')
-                          }))
-                        : [{ label: 'No characteristics data', value: '—' }]
-                    }
-                  />
-                )
-              },
-              {
-                id: 'why-this-engine',
-                label: t('analysis-results.query-trace.tab'),
-                content: (
-                  <QueryDecisionTrace
-                    trace={queryTrace.data}
-                    error={queryTrace.error}
-                    loading={queryJourneyLoading}
-                    t={t}
-                  />
-                )
-              },
-              {
-                id: 'json',
-                label: 'JSON',
-                content: aceLoading ? (
-                  <Box textAlign="center" padding="l">
-                    <StatusIndicator type="loading">{t('analysis-results.query-journey.loading-editor')}</StatusIndicator>
-                  </Box>
-                ) : (
-                  <CodeEditor
-                    ace={ace}
-                    language="json"
-                    value={JSON.stringify(queryJourneyData, null, 2)}
-                    preferences={{
-                      wrapLines: false,
-                      theme: 'cloud_editor_dark'
-                    }}
-                    editorContentHeight={600}
-                    i18nStrings={codeEditorI18nStrings(t, {
-                      loadingState: t('analysis-results.query-journey.loading'),
-                      errorState: t('analysis-results.query-journey.error'),
-                      errorStateRecovery: t('common.actions.retry')
-                    })}
-                    loading={queryJourneyLoading}
-                    readOnly
-                  />
-                )
-              }
-            ]}
-          />
-        )}
       </Modal>
 
     </>

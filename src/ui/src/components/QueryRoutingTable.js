@@ -5,45 +5,53 @@ import { memo, useMemo, useState } from 'react';
 import Box from "@cloudscape-design/components/box";
 import SpaceBetween from "@cloudscape-design/components/space-between";
 import Badge from "@cloudscape-design/components/badge";
-import ExpandableSection from "@cloudscape-design/components/expandable-section";
-import Select from "@cloudscape-design/components/select";
+import Container from "@cloudscape-design/components/container";
+import Header from "@cloudscape-design/components/header";
 import Alert from "@cloudscape-design/components/alert";
 import StatusIndicator from "@cloudscape-design/components/status-indicator";
-import TextFilter from "@cloudscape-design/components/text-filter";
-import SegmentedControl from "@cloudscape-design/components/segmented-control";
+import PropertyFilter from "@cloudscape-design/components/property-filter";
 import Pagination from "@cloudscape-design/components/pagination";
-import { failureMessageKey } from '../utils/requestFailure';
 import Link from "@cloudscape-design/components/link";
 import Table from "@cloudscape-design/components/table";
-import { filterQueryRoutingRows, queryRoutingFilterOptions } from "../utils/queryRouting";
+import { failureMessageKey } from '../utils/requestFailure';
+import { filterQueryRows, queryFilterOptions } from "../utils/queryRouting";
+import { propertyFilterStrings } from '../utils/propertyFilterStrings';
+import { formatCount, formatShortId } from '../utils/format';
+import EngineBadge from './EngineBadge';
+import DestinationTables from './DestinationTables';
 
 /**
- * "Query routing" (#822): every query of the assessment with the engine it is
- * assigned to, and a control per query that opens its journey and "Why this
- * engine" decision trace. Unlike the access-pattern explorer and the
- * trade-off chips, it needs no schema design, so a deterministic run
- * (`--llm-mode none`) or a run whose schema design was skipped reaches every
- * query's trace too.
+ * The Queries tab's one query table (#2319, ADR-031: the query is the unit).
+ * Every query of the assessment, open when the tab opens, with a property filter
+ * over its columns (engine, operation, table, destination, cached, routing
+ * changed) and free text over the id and the statement. A row's id button or
+ * its radio selects the query; the page shows the selected query in a split
+ * panel (QueryDetailPanel) so this table stays visible. Unlike the access
+ * pattern explorer, the table needs no schema design: a deterministic run (or
+ * one whose schema design was skipped) lists every query, with a dash where the
+ * destination or the cache would be.
  *
- * The open control is a Cloudscape Link without an href: a focusable
- * `role="button"` that Enter and Space activate. Rows come from
- * `buildQueryRoutingRows` (utils/queryRouting.js); the routing column only
- * names the facts layer's own reasons a query is listed.
- *
- * The section opens collapsed (#1028), below the query flow. Inside it, the
- * table is the query explorer every run has, with or without schema design:
- * text search (id, statement, table, engine), plus a query type filter and an
- * engine filter whose options are the values the rows hold.
+ * Rows come from `buildQueryRoutingRows` (utils/queryRouting.js) and only
+ * format what the API, the facts layer and the schema design hold. The page
+ * shows 25 rows at a time, so a job with 1,654 queries renders 25 rows, and the
+ * filter compares one lower-cased string per row.
  *
  * Callers pass `t` (the page's own `useTranslation` function), like
  * QueryDecisionTrace.
  */
 
 const PAGE_SIZE = 25;
-const SHORT_ID_CHARS = 12;
 
-function shortId(id) {
-  return id.length > SHORT_ID_CHARS ? `${id.slice(0, SHORT_ID_CHARS)}…` : id;
+// A table name that can wrap at its underscores, never in the middle of a word.
+function WrappableName({ name }) {
+  const parts = String(name).split('_');
+  return (
+    <>
+      {parts.map((part, i) => (
+        <span key={`${i}-${part}`}>{i > 0 && <wbr />}{i > 0 ? `_${part}` : part}</span>
+      ))}
+    </>
+  );
 }
 
 function RoutingBadges({ kinds, hasLedger, t }) {
@@ -67,34 +75,46 @@ function RoutingBadges({ kinds, hasLedger, t }) {
   );
 }
 
-const QueryRoutingTable = memo(({ rows, loading, error, hasLedger, truncated, onOpen, t }) => {
-  const [filterText, setFilterText] = useState('');
-  const [mode, setMode] = useState('all');
+const QueryRoutingTable = memo(({ rows, loading, error, hasLedger, truncated, selectedId, onSelect, t }) => {
+  const [query, setQuery] = useState({ tokens: [], operation: 'and' });
   const [page, setPage] = useState(1);
-  const [queryType, setQueryType] = useState(null);
-  const [engine, setEngine] = useState(null);
 
-  const options = useMemo(() => queryRoutingFilterOptions(rows || []), [rows]);
-  const filtered = useMemo(
-    () => filterQueryRoutingRows(rows || [], filterText, mode, { queryType, engine }),
-    [rows, filterText, mode, queryType, engine],
-  );
+  const filterOptions = useMemo(() => {
+    const yes = t('analysis-results.query-routing.yes');
+    const no = t('analysis-results.query-routing.no');
+    return [
+      ...queryFilterOptions(rows || []),
+      { propertyKey: 'cached', value: 'yes', label: yes },
+      { propertyKey: 'cached', value: 'no', label: no },
+      ...(hasLedger ? [
+        { propertyKey: 'routing', value: 'yes', label: yes },
+        { propertyKey: 'routing', value: 'no', label: no },
+      ] : []),
+    ];
+  }, [rows, hasLedger, t]);
+  const filteringProperties = useMemo(() => [
+    { key: 'engine', propertyLabel: t('analysis-results.query-routing.col-engine'), groupValuesLabel: t('analysis-results.query-routing.group-engine'), operators: ['=', '!='] },
+    { key: 'operation', propertyLabel: t('analysis-results.query-routing.col-operation'), groupValuesLabel: t('analysis-results.query-routing.group-operation'), operators: ['=', '!='] },
+    { key: 'table', propertyLabel: t('analysis-results.query-routing.col-tables'), groupValuesLabel: t('analysis-results.query-routing.group-table'), operators: ['=', '!=', ':'] },
+    { key: 'destination', propertyLabel: t('analysis-results.query-routing.col-destination'), groupValuesLabel: t('analysis-results.query-routing.group-destination'), operators: ['=', '!=', ':'] },
+    { key: 'cached', propertyLabel: t('analysis-results.query-routing.col-cached'), groupValuesLabel: t('analysis-results.query-routing.group-cached'), operators: ['='] },
+    ...(hasLedger ? [{ key: 'routing', propertyLabel: t('analysis-results.query-routing.prop-routing'), groupValuesLabel: t('analysis-results.query-routing.group-routing'), operators: ['='] }] : []),
+  ], [hasLedger, t]);
+  const i18nStrings = useMemo(() => propertyFilterStrings(t, {
+    ariaLabel: t('analysis-results.query-routing.filter-label'),
+    placeholder: t('analysis-results.query-routing.filter-placeholder'),
+  }), [t]);
+
+  const filtered = useMemo(() => filterQueryRows(rows || [], query), [rows, query]);
   const pagesCount = Math.max(1, Math.ceil(filtered.length / PAGE_SIZE));
   const currentPage = Math.min(page, pagesCount);
   const pageRows = filtered.slice((currentPage - 1) * PAGE_SIZE, currentPage * PAGE_SIZE);
-  const isFiltered = Boolean(filterText.trim()) || mode !== 'all' || Boolean(queryType) || Boolean(engine);
-  const anyType = { value: '', label: t('analysis-results.query-routing.type-any') };
-  const typeOptions = [anyType, ...options.queryTypes.map(q => ({ value: q, label: q }))];
-  const anyEngine = { value: '', label: t('analysis-results.query-routing.engine-any') };
-  const engineOptions = [anyEngine, ...options.engines.map(e => ({ value: e.engine, label: e.engineName }))];
+  const isFiltered = query.tokens.length > 0;
   // No count while the list loads or when it could not be read: a "(0)" there reads as
   // "no queries" (#2308).
-  const counter = (loading || error) ? undefined : isFiltered ? `(${filtered.length} of ${(rows || []).length})` : `(${(rows || []).length})`;
+  const counter = (loading || error) ? undefined : isFiltered ? t('analysis-results.query-routing.counter-filtered', { shown: formatCount(filtered.length), total: formatCount((rows || []).length) }) : `(${formatCount((rows || []).length)})`;
+  const selectedItems = pageRows.filter(r => r.queryId === selectedId);
 
-  // #1244: Engine and Routing, the columns a reader opens this table for, come right
-  // after the query id, and long text wraps (the Table's wrapLines) instead of widening
-  // the table past its card: at 1440 px the whole table fits with no horizontal scroll.
-  // The id column stays pinned for narrower windows.
   const columnDefinitions = [
     {
       id: 'query',
@@ -102,56 +122,78 @@ const QueryRoutingTable = memo(({ rows, loading, error, hasLedger, truncated, on
       cell: item => (
         <Link
           ariaLabel={t('analysis-results.query-routing.open-label', { id: item.queryId })}
-          onFollow={(e) => { e.preventDefault(); onOpen(item.queryId); }}
+          onFollow={(e) => { e.preventDefault(); onSelect(item.queryId); }}
         >
-          <span style={{ fontFamily: 'monospace' }} title={item.queryId}>{shortId(item.queryId)}</span>
+          <span style={{ fontFamily: 'monospace' }} title={item.queryId}>{formatShortId(item.queryId)}</span>
         </Link>
       ),
-      width: 150,
+      width: 90,
+    },
+    {
+      id: 'operation',
+      header: t('analysis-results.query-routing.col-operation'),
+      cell: item => item.queryType || '—',
+      width: 90,
     },
     {
       id: 'engine',
       header: t('analysis-results.query-routing.col-engine'),
-      cell: item => item.engineName || '—',
-      width: 150,
+      // An engine's name stays on one line: the badge never wraps to several.
+      cell: item => (item.engine ? <span style={{ whiteSpace: 'nowrap' }}><EngineBadge engine={item.engine} /></span> : '—'),
+      width: 170,
+    },
+    {
+      id: 'destination',
+      header: t('analysis-results.query-routing.col-destination'),
+      cell: item => <DestinationTables destinations={item.destinations} />,
+      width: 130,
+    },
+    {
+      id: 'cached',
+      header: t('analysis-results.query-routing.col-cached'),
+      cell: item => (item.cacheEngine ? <span style={{ whiteSpace: 'nowrap' }}><EngineBadge engine={item.cacheEngine} /></span> : '—'),
+      width: 130,
     },
     {
       id: 'routing',
       header: t('analysis-results.query-routing.col-routing'),
       cell: item => <RoutingBadges kinds={item.kinds} hasLedger={hasLedger} t={t} />,
-      width: 190,
-    },
-    {
-      id: 'type',
-      header: t('analysis-results.query-routing.col-type'),
-      cell: item => item.queryType || '—',
-      width: 100,
+      width: 120,
     },
     {
       id: 'tables',
       header: t('analysis-results.query-routing.col-tables'),
-      cell: item => (item.tables.length > 0 ? item.tables.join(', ') : '—'),
-      width: 230,
+      cell: item => (item.tables.length > 0
+        ? item.tables.map((name, i) => (
+          <span key={name}>{i > 0 && ', '}<WrappableName name={name} /></span>
+        ))
+        : '—'),
+      width: 130,
     },
     {
       id: 'statement',
       header: t('analysis-results.query-routing.col-statement'),
       cell: item => (
         <Box fontSize="body-s">
-          <span style={{ fontFamily: 'monospace', overflowWrap: 'anywhere' }}>{item.excerpt || '—'}</span>
+          <span style={{ fontFamily: 'monospace', overflowWrap: 'break-word' }}>{item.excerpt || '—'}</span>
         </Box>
       ),
+      minWidth: 120,
     },
   ];
 
   return (
     <div id="query-routing-section">
-      <ExpandableSection
-        variant="container"
-        defaultExpanded={false}
-        headerText={t('analysis-results.query-routing.title')}
-        headerCounter={counter}
-        headerDescription={t('analysis-results.query-routing.description')}
+      <Container
+        header={(
+          <Header
+            variant="h2"
+            counter={counter}
+            description={t('analysis-results.query-routing.description')}
+          >
+            {t('analysis-results.query-routing.title')}
+          </Header>
+        )}
       >
         {error ? (
           <Alert type="warning" header={t('analysis-results.query-routing.unavailable-title')}>
@@ -160,35 +202,16 @@ const QueryRoutingTable = memo(({ rows, loading, error, hasLedger, truncated, on
           </Alert>
         ) : (
           <SpaceBetween size="m">
-            <SpaceBetween direction="horizontal" size="s">
-              <TextFilter
-                filteringText={filterText}
-                filteringPlaceholder={t('analysis-results.query-routing.filter-placeholder')}
-                filteringAriaLabel={t('analysis-results.query-routing.filter-label')}
-                onChange={({ detail }) => { setFilterText(detail.filteringText); setPage(1); }}
-              />
-              <Select
-                ariaLabel={t('analysis-results.query-routing.type-label')}
-                selectedOption={typeOptions.find(o => o.value === (queryType || '')) || anyType}
-                options={typeOptions}
-                onChange={({ detail }) => { setQueryType(detail.selectedOption.value || null); setPage(1); }}
-              />
-              <Select
-                ariaLabel={t('analysis-results.query-routing.engine-label')}
-                selectedOption={engineOptions.find(o => o.value === (engine || '')) || anyEngine}
-                options={engineOptions}
-                onChange={({ detail }) => { setEngine(detail.selectedOption.value || null); setPage(1); }}
-              />
-              <SegmentedControl
-                label={t('analysis-results.query-routing.mode-label')}
-                selectedId={mode}
-                onChange={({ detail }) => { setMode(detail.selectedId); setPage(1); }}
-                options={[
-                  { id: 'all', text: t('analysis-results.query-routing.mode-all') },
-                  { id: 'listed', text: t('analysis-results.query-routing.mode-listed') },
-                ]}
-              />
-            </SpaceBetween>
+            <PropertyFilter
+              query={query}
+              onChange={({ detail }) => { setQuery(detail); setPage(1); }}
+              filteringProperties={filteringProperties}
+              filteringOptions={filterOptions}
+              i18nStrings={i18nStrings}
+              filteringPlaceholder={t('analysis-results.query-routing.filter-placeholder')}
+              countText={t('analysis-results.query-routing.count-text', { count: filtered.length, shown: formatCount(filtered.length) })}
+              expandToViewport
+            />
             {!hasLedger && !loading && (
               <Box color="text-body-secondary">{t('analysis-results.query-trace.no-ledger')}</Box>
             )}
@@ -197,13 +220,26 @@ const QueryRoutingTable = memo(({ rows, loading, error, hasLedger, truncated, on
             )}
             <Table
               variant="embedded"
-              ariaLabels={{ tableLabel: t('analysis-results.query-routing.title') }}
+              ariaLabels={{
+                tableLabel: t('analysis-results.query-routing.title'),
+                selectionGroupLabel: t('analysis-results.query-routing.selection-group'),
+                itemSelectionLabel: (data, item) => t('analysis-results.query-routing.select-item', { id: formatShortId(item.queryId) }),
+                resizerRoleDescription: t('analysis-results.query-routing.resizer'),
+              }}
+              // Column widths apply only to a resizable table. They keep the engine badge
+              // on one line, and a reader can widen a column that cuts a statement.
+              resizableColumns
               trackBy="queryId"
               loading={loading}
               loadingText={t('analysis-results.query-routing.loading')}
               columnDefinitions={columnDefinitions}
               wrapLines
-              stickyColumns={{ first: 1 }}
+              selectionType="single"
+              selectedItems={selectedItems}
+              onSelectionChange={({ detail }) => {
+                const picked = detail.selectedItems[0];
+                if (picked) onSelect(picked.queryId);
+              }}
               items={pageRows}
               empty={<Box textAlign="center" padding="l">{t('analysis-results.query-routing.empty')}</Box>}
             />
@@ -224,7 +260,7 @@ const QueryRoutingTable = memo(({ rows, loading, error, hasLedger, truncated, on
             )}
           </SpaceBetween>
         )}
-      </ExpandableSection>
+      </Container>
     </div>
   );
 });

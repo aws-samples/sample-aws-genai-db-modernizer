@@ -30,7 +30,7 @@ afterEach(() => {
 });
 
 const render = (props) => act(() => {
-  root.render(<QueryRoutingTable rows={[]} loading={false} error={null} hasLedger truncated={false} onOpen={() => {}} t={t} {...props} />);
+  root.render(<QueryRoutingTable rows={[]} loading={false} error={null} hasLedger truncated={false} onSelect={() => {}} t={t} {...props} />);
 });
 
 test('an unreadable list shows the alert and no "(0)"', () => {

@@ -77,7 +77,7 @@ describe('formatPercent, formatCount, formatShortId (#2309)', () => {
 describe('toFixed is not spreading (#2309)', () => {
   const ALLOWED = {
     'components/QueryDecisionTrace.js': 1,
-    'pages/AnalysisResults.js': 5,
+    'pages/AnalysisResults.js': 2,
     'pages/AssignmentGate.js': 3,
     'pages/JobMonitoringSummary.js': 2,
     'utils/cacheLayer.js': 4,
@@ -130,10 +130,10 @@ describe('the audited spots use the formatter (#2309)', () => {
   });
 
   it('the query journey prints rates through formatRate and the engine by its display name', () => {
-    const page = read('pages/AnalysisResults.js');
-    expect(page).toMatch(/formatRate\(queryJourneyData\?\.source\?\.frequency_per_hour\)/);
-    expect(page).toMatch(/formatRate\(queryJourneyData\?\.source\?\.calls_per_second\)/);
-    expect(page).toMatch(/displayEngine\(queryJourneyData\.assignment\.assigned_engine\)/);
+    const panel = read('components/QueryDetailPanel.js');
+    expect(panel).toMatch(/formatRate\(source\.frequency_per_hour\)/);
+    expect(panel).toMatch(/formatRate\(source\.calls_per_second\)/);
+    expect(panel).toMatch(/<EngineBadge engine=\{assignment\.assigned_engine\}/);
   });
 });
 
