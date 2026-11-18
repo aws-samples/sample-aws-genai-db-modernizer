@@ -1,7 +1,7 @@
 # Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
 # SPDX-License-Identifier: MIT-0
 
-"""The built help site (#325): home page, search, the sample report, and nav links.
+"""The built help site (#325): front page, overview, search, the sample report, and nav links.
 
 Run via `ci/e2e.sh`, which builds the site first (`mkdocs build --strict`, then
 `scripts/build_docs_sample.py`) -- this file only serves and checks the result,
@@ -90,8 +90,28 @@ def _nav_links(page: Page, origin: str) -> list[str]:
     return [h for h in hrefs if h.startswith(origin) and not h.startswith("mailto:")]
 
 
+def test_the_front_page_is_the_committed_recorded_run_page(page: Page, docs_site: str) -> None:
+    # The site root serves docs/index.html as it is committed: MkDocs copies a non-Markdown
+    # file byte for byte, so the recorded-run page is the front page, not a rendered one.
+    resp = page.request.get(f"{docs_site}/")
+    assert resp.status == 200
+    assert resp.body() == (REPO / "docs" / "index.html").read_bytes()
+
+
+def test_the_nav_opens_on_the_overview_and_links_the_front_page(page: Page, docs_site: str) -> None:
+    page.goto(f"{docs_site}/get-started/")
+    page.wait_for_load_state("networkidle")
+    primary = page.locator(".md-nav--primary > .md-nav__list > .md-nav__item > a.md-nav__link")
+    labels = [" ".join(t.split()) for t in primary.all_inner_texts()]
+    assert labels[:2] == ["Overview", "Watch a run"], labels
+    root = f"{docs_site}/"
+    watch = primary.nth(1).evaluate("e => e.href")
+    logo = page.eval_on_selector("a.md-logo", "e => e.href")
+    assert watch == root and logo == root, (watch, logo)
+
+
 def test_home_shows_claude_code_cta(page: Page, docs_site: str) -> None:
-    page.goto(docs_site)
+    page.goto(f"{docs_site}/overview/")
     page.wait_for_load_state("networkidle")
     content = page.content()
     assert "/modernize" in content
@@ -101,7 +121,7 @@ def test_home_shows_claude_code_cta(page: Page, docs_site: str) -> None:
 
 
 def test_search_returns_results(page: Page, docs_site: str) -> None:
-    page.goto(docs_site)
+    page.goto(f"{docs_site}/overview/")
     page.wait_for_load_state("networkidle")
     page.keyboard.press("/")  # Material's search shortcut
     search_input = page.locator("input[data-md-component='search-query']")
@@ -149,9 +169,9 @@ def test_sample_report_deliverables_resolve(page: Page, docs_site: str) -> None:
 
 
 def test_no_nav_link_returns_404(page: Page, docs_site: str) -> None:
-    # Not the home page: its front matter hides the nav sidebar for a clean
-    # hero layout (docs/index.md's `hide: [navigation]`), so it has no nav
-    # links of its own to check.
+    # Not the overview page: its front matter hides the nav sidebar for a clean
+    # hero layout (docs/overview.md's `hide: [navigation]`), and the front page
+    # is a standalone HTML file, so neither has nav links of its own to check.
     page.goto(f"{docs_site}/get-started/")
     page.wait_for_load_state("networkidle")
     hrefs = _nav_links(page, docs_site)

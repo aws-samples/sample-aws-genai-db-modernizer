@@ -4,7 +4,7 @@ Claude Code is the main way to run the tool, but the pipeline itself is a set of
 
 === "Deterministic CLI (no LLM)"
 
-    No setup, no credentials and no network calls. It runs Collect through Reality Check and gives the engine recommendations in seconds, which suits a quick check or CI:
+    No setup, no credentials and no network calls. It runs Collect through Reality Check and gives the engine recommendations, which suits a quick check or CI:
 
     ```bash
     uv run python scripts/run_assessment.py \
