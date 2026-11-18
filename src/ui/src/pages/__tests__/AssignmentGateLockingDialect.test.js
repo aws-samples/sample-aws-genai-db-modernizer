@@ -80,7 +80,7 @@ const PLAIN_LOCK = 'SELECT * FROM t WHERE id = 1 FOR UPDATE';
 function payloads(engine, queryText) {
   const metadata = engine === undefined ? {} : { source_database: { engine } };
   return {
-    job: { database_name: 'db' },
+    job: { database_name: 'db', progress: { stages: [{ name: 'WaitForAssignmentApproval', status: 'in-progress' }] } },
     assignments: {
       success: true,
       assignment: {
@@ -126,7 +126,7 @@ async function pickerOptions(engine, queryText) {
     root.render(<AssignmentGate />);
   });
   const toDetail = [...container.querySelectorAll('button')].find((b) =>
-    b.textContent.includes('assignment-gate.actions.review-in-detail'),
+    b.textContent.includes('assignment-gate.actions.review-per-query'),
   );
   await act(async () => {
     toDetail.click();

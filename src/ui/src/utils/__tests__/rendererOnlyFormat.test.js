@@ -97,14 +97,19 @@ const COMPARISONS = new Set(['<', '<=', '>', '>=', '===', '!==', '==', '!=']);
 const ASSIGN_ARITHMETIC = new Set(['+=', '-=', '*=', '/=']);
 const PRAGMA = /\/\/\s*facts:\s*presentation\b(?:\s*\(([^)]*)\))?/;
 
-// Every `// facts: presentation` exemption in use, by file and reason (none today).
-const PINNED_EXEMPTIONS = new Set([]);
+// Every `// facts: presentation` exemption in use, by file and reason.
+const PINNED_EXEMPTIONS = new Set([
+  // #2326: the Sankey's height grows with its engine nodes; no figure is shown.
+  'src/ui/src/pages/AssignmentGate.js|the chart is 120 px tall per engine node',
+]);
 
 // The files the guard covers: every non-test UI source file that renders or
 // reads report.json.
 // Files not listed here must not read an owned key (checked below).
 const GUARDED_UI_FILES = [
   'pages/AnalysisResults.js',
+  // #2326: the assignment review gate (GATE_UI_FILES below).
+  'pages/AssignmentGate.js',
   'components/CostBreakdown.js',
   'components/AssumptionsTable.js',
   'components/AssumptionsPanel.js',
@@ -245,7 +250,21 @@ const EXPLORER_UI_FILES = [
 ];
 const EXPLORER_OWNED_KEYS = new Set([...OWNED_KEYS, ...EXPLORER_FIGURE_KEYS]);
 
+// #2326: the assignment review gate's own figures. The assignments API computes them
+// (`gate_facts`, src/shared/gate_facts.py's gate_block_facts, the chat gate's source too);
+// the gate may only format them. Also owned there: the inputs they are computed from, the
+// reality check's distributions and the collector's tables, so the page cannot total a
+// distribution or count the tables instead of reading the facts.
+const GATE_FIGURE_KEYS = new Set([
+  'gate_facts', 'total_after', 'total_before', 'query_total_count', 'source_table_count',
+  'unservable_query_count', 'read_count', 'share_percent', 'calls_per_second',
+  'call_share_percent', 'before_distribution', 'after_distribution', 'tables',
+]);
+const GATE_UI_FILES = ['pages/AssignmentGate.js', 'utils/assignmentSummary.js'];
+const GATE_OWNED_KEYS = new Set([...OWNED_KEYS, ...GATE_FIGURE_KEYS]);
+
 function ownedKeysFor(label) {
+  if (GATE_UI_FILES.some(f => label === `src/ui/src/${f}`)) return GATE_OWNED_KEYS;
   return EXPLORER_UI_FILES.some(f => label === `src/ui/src/${f}`) ? EXPLORER_OWNED_KEYS : OWNED_KEYS;
 }
 
@@ -831,6 +850,36 @@ describe('renderers only format (#748, ADR-032)', () => {
     expect(violationsIn(questions, 'src/ui/src/components/GraphExplorerQuestions.js').join(' ')).toMatch('result.max_rows - result.row_count');
     // Formatting one is fine.
     expect(violationsIn(`const s = (b) => t('x', { count: b.query_count });`, 'src/ui/src/utils/graphExplorer.js')).toEqual([]);
+  });
+
+  // #2326: the gate's figures come from the API's gate facts; totalling a distribution or
+  // counting the collector's tables on the page is caught.
+  test('every assignment gate file is guarded with the gate figures owned', () => {
+    GATE_UI_FILES.forEach(f => {
+      expect(GUARDED_UI_FILES).toContain(f);
+      expect(ownedKeysFor(`src/ui/src/${f}`)).toBe(GATE_OWNED_KEYS);
+    });
+    expect(ownedKeysFor('src/ui/src/pages/AnalysisResults.js')).toBe(OWNED_KEYS);
+  });
+
+  test('a total of the distributions or a count of the tables on the gate is caught', () => {
+    const gate = 'src/ui/src/pages/AssignmentGate.js';
+    const total = `export function Gate({ realityCheck }) {
+  return Object.values(realityCheck.after_distribution).reduce((a, b) => a + b, 0);
+}`;
+    const tables = `export function Gate({ collectorData }) {
+  const tables = collectorData?.database_schema?.tables || [];
+  return tables.length;
+}`;
+    const facts = `export function Gate({ gateFacts }) {
+  return gateFacts.total_after - gateFacts.unservable_query_count;
+}`;
+    expect(violationsIn(total, gate).length).toBeGreaterThan(0);
+    expect(violationsIn(tables, gate).length).toBeGreaterThan(0);
+    expect(violationsIn(facts, gate).length).toBeGreaterThan(0);
+    expect(violationsIn(total, 'src/ui/src/utils/assignmentSummary.js').length).toBeGreaterThan(0);
+    // Formatting a fact is fine.
+    expect(violationsIn(`const s = (f) => t('x', { count: f.total_after });`, gate)).toEqual([]);
   });
 
   test('presentation exemptions carry a reason and are pinned', () => {

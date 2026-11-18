@@ -8,6 +8,8 @@ Requirements: 14.1, 14.2, 3.2
 
 from __future__ import annotations
 
+import logging
+
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel, Field
 
@@ -35,10 +37,17 @@ from src.shared.assumptions import (
     read_assumptions,
 )
 from src.shared.contract_versioning import load_contract
-from src.shared.gate_facts import cache_candidate_reads
+from src.shared.gate_facts import cache_candidate_reads, gate_block_facts
+from src.shared.gate_status import gate_status
+from src.shared.job_status import assignment_approval_recorded
 from src.storage.artifact_store import ArtifactStore
-from src.storage.assignment_versioning import resolve_effective_assignment_version
+from src.storage.assignment_versioning import (
+    latest_synthesis_version,
+    resolve_effective_assignment_version,
+)
 from src.storage.collector_for_models import read_collector_for_models
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/api/v1/assessments", tags=["assignments"])
 
@@ -169,6 +178,35 @@ class AssignmentResponse(BaseModel):
             "each, for the gate's assumptions table; `assumptions` holds their lines"
         ),
     )
+    results_version: int | None = Field(
+        None,
+        description=(
+            "The assignment version the job's synthesis report was written for (#2326); "
+            "None before synthesis has run. The gate page compares it with assignment.version "
+            "to say whether the results are the current version's."
+        ),
+    )
+    gate_facts: dict | None = Field(
+        None,
+        description=(
+            "The gate's figures (#2326) for assignment.version, from "
+            "src.shared.gate_facts.gate_block_facts over src.shared.gate_status, the chat "
+            "gate's source too: per-engine rows (before, after, share_percent, dropped), "
+            "total_after (the in-scope queries), surviving, cache_candidates (read_count, "
+            "call_share_percent, reads, more), unservable_query_count, query_total_count "
+            "and source_table_count. The version's report's facts once synthesis wrote it. "
+            "Computed on read, so an older job has them too; None when its artifacts "
+            "cannot give them"
+        ),
+    )
+    approval_recorded: bool = Field(
+        False,
+        description=(
+            "Whether the assignment gate is recorded as passed (#2326): the progression's "
+            "assignment_review completed, or a decisions/ review or approval record. The "
+            "gate page says Approved only then"
+        ),
+    )
     pending_choices: list[PendingEngineChoice] = Field(
         default_factory=list,
         description=(
@@ -198,19 +236,41 @@ def _read_assignment(store: ArtifactStore, db: str, job_id: str, version: int) -
     )
 
 
-def _cache_reads(store: ArtifactStore, db: str, job_id: str, assignment: Assignment):
+def _cache_reads(assignment: Assignment, collector: dict):
     """The gate's hottest cache candidates, from the assignment and the collector's rates."""
-    collector = read_collector_for_models(store, db, job_id, missing_ok=True)
     patterns = (collector.get("queries") or {}).get("query_patterns") or []
     return cache_candidate_reads(
         [qa.model_dump(mode="json") for qa in assignment.query_assignments], patterns
     )
 
 
-def _gate_assumption_items(store: ArtifactStore, db: str, job_id: str) -> list[dict]:
-    """The assumptions block the gate states (#1990); its lines are the chat gate's."""
-    collector = read_collector_for_models(store, db, job_id, missing_ok=True)
-    return gate_assumption_items(collector, read_assumptions(store, db, job_id))
+def _gate_facts(
+    store: ArtifactStore,
+    db: str,
+    job_id: str,
+    version: int,
+    assignment: Assignment,
+    collector: dict,
+) -> dict | None:
+    """The gate's figures (#2326) for ``version``, from the status data the chat gate's
+    status line reads too (``src.shared.gate_status``), plus the source tables.
+
+    None when the job's artifacts cannot give them (an unreadable old record): the page
+    then shows no figures rather than failing to load.
+    """
+    try:
+        gate = gate_status(
+            store,
+            db,
+            job_id,
+            version,
+            collector=collector,
+            query_assignments=[qa.model_dump(mode="json") for qa in assignment.query_assignments],
+        )
+        return gate_block_facts(gate, collector=collector)
+    except Exception:
+        logger.warning("assignments: no gate figures for %s/%s", db, job_id, exc_info=True)
+        return None
 
 
 # ---------------------------------------------------------------------------
@@ -227,23 +287,32 @@ async def get_assignments(
     store = _require_store()
     # A saved assignment that split a table's writes is re-routed to one source of
     # truth before it is shown (#992), so the customer reviews and edits that version.
-    try:
-        reroute_split_writes(store, database_name, job_id)
-    except AssignmentOverrideError as exc:  # a reroute outside the engine scope (#1327)
-        raise HTTPException(status_code=409, detail=str(exc)) from None
+    # Only while the gate is open: past it, the resumed schema design re-routes, and a
+    # finished job's page states the version it approved, not one this read wrote.
+    approved = assignment_approval_recorded(store, database_name, job_id)
+    if not approved and latest_synthesis_version(store, database_name, job_id) is None:
+        try:
+            reroute_split_writes(store, database_name, job_id)
+        except AssignmentOverrideError as exc:  # a reroute outside the engine scope (#1327)
+            raise HTTPException(status_code=409, detail=str(exc)) from None
     version = _latest_assignment_version(store, database_name, job_id)
     if version == 0:
         raise HTTPException(status_code=404, detail="No assignment artifact found")
 
     assignment = _read_assignment(store, database_name, job_id, version)
     choices, _ = pending_choices_for_job(store, database_name, job_id, version)
-    items = _gate_assumption_items(store, database_name, job_id)
+    # The collection, read once for the cache reads, the figures and the assumptions.
+    collector = read_collector_for_models(store, database_name, job_id, missing_ok=True)
+    items = gate_assumption_items(collector, read_assumptions(store, database_name, job_id))
     return AssignmentResponse(
         assignment=assignment,
         pending_choices=choices,
-        cache_reads=_cache_reads(store, database_name, job_id, assignment),
+        cache_reads=_cache_reads(assignment, collector),
+        gate_facts=_gate_facts(store, database_name, job_id, version, assignment, collector),
         assumptions=assumption_lines(items),
         assumption_items=[GateAssumptionItem(**i) for i in items],
+        results_version=latest_synthesis_version(store, database_name, job_id),
+        approval_recorded=approved,
     )
 
 

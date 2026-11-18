@@ -31,7 +31,9 @@ import PropertyFilter from "@cloudscape-design/components/property-filter";
 import Pagination from "@cloudscape-design/components/pagination";
 import Modal from "@cloudscape-design/components/modal";
 import Tabs from "@cloudscape-design/components/tabs";
+import SegmentedControl from "@cloudscape-design/components/segmented-control";
 import ExpandableSection from "@cloudscape-design/components/expandable-section";
+import KeyValuePairs from "@cloudscape-design/components/key-value-pairs";
 
 //##-- Custom
 import { SideNavigationConfigurations, paginationLabels } from "../config/GlobalConfigurations";
@@ -51,17 +53,18 @@ import {
   engineOptionsForQuery,
   survivingDistribution,
 } from "../utils/assignmentSummary";
+import { gateState, offersDecision } from "../utils/gateState";
 import { sourceEngineOf } from "../utils/sqlLocking";
 import { ENGINE_STYLES, engineHex } from "../utils/engineColors";
 import EngineBadge from "../components/EngineBadge";
 import SignalChips from "../components/SignalChips";
 import { resultsEngineHref, awaitsApproval, synthesisRan } from "../utils/resultsLinks";
-import { getCacheOverlay, ownerDistribution, getQueryCacheInfo, formatCacheLayerLine, formatCacheReadLine, formatCacheReadsMore, formatCachedByLine, isCacheEngine, buildOverrideList, addCacheOverlayNode } from "../utils/cacheLayer";
+import { getCacheOverlay, ownerDistribution, getQueryCacheInfo, formatCacheReadsMore, formatCachedByLine, isCacheEngine, buildOverrideList, addCacheOverlayNode } from "../utils/cacheLayer";
 import { summaryFallbackInfo } from "../utils/summaryFallback";
 import { reroutedQueryIds, rowMoveKind } from "../utils/postSchemaReroutes";
 import { pinnedFitLabel } from "../utils/queryRouting";
 import { displayTables } from "../utils/tableNames";
-import { formatRate } from "../utils/format";
+import { formatRate, formatPercent, formatCount } from "../utils/format";
 import Checkbox from "@cloudscape-design/components/checkbox";
 
 import './AssignmentGate.css';
@@ -150,6 +153,8 @@ const AssignmentGatePage = memo(() => {
   // (results that exist then belong to an earlier version).
   const [resultsExist, setResultsExist] = useState(false);
   const [decisionPending, setDecisionPending] = useState(false);
+  // #2326: the job as the API returned it, to say where the decision stands.
+  const [jobData, setJobData] = useState(null);
 
   // View mode
   const [viewMode, setViewMode] = useState('summary'); // 'summary' | 'advanced'
@@ -196,6 +201,7 @@ const AssignmentGatePage = memo(() => {
       const dbName = jobResult['job']?.database_name || '';
       setDatabaseName(dbName);
       setDecisionPending(awaitsApproval(jobResult['job']));
+      setJobData(jobResult['job'] || null);
 
       if (!dbName) {
         addFlash('error', t('assignment-gate.flash.missing-db-name'), t('assignment-gate.flash.missing-db-name-detail'));
@@ -365,7 +371,9 @@ const AssignmentGatePage = memo(() => {
   // artifacts (no cache_overlay, ElastiCache still a real owner) keep
   // rendering exactly as before.
   const cacheOverlay = useMemo(() => getCacheOverlay(assignmentData?.assignment), [assignmentData]);
-  const cacheReads = assignmentData?.cache_reads || null;
+  // #2326: the gate's figures, computed once by the API (src/shared/gate_facts.py, the chat
+  // gate's source too); the page only formats them.
+  const gateFacts = assignmentData?.gate_facts || null;
   // #1990: the assumptions block the chat gate prints too (src/shared/assumptions.py).
   const gateAssumptions = assignmentData?.assumption_items || [];
   // #381 review round 2: never offer the losing Aurora engine as a per-query
@@ -383,7 +391,6 @@ const AssignmentGatePage = memo(() => {
     () => ownerDistribution(realityCheck?.after_distribution, !!cacheOverlay),
     [realityCheck, cacheOverlay],
   );
-  const cacheLayerLine = useMemo(() => formatCacheLayerLine(cacheOverlay, { t, kind: 'candidates' }), [cacheOverlay, t]);
 
   // The current assignment's own in-scope engines (#235) -- a later customer
   // edit can be newer than the reality check's own before/after snapshot, so
@@ -417,35 +424,27 @@ const AssignmentGatePage = memo(() => {
     [survivingAfterDist],
   );
 
-  // Table count from collector
-  const tableCount = useMemo(() => {
-    const tables = collectorData?.database_schema?.tables || collectorData?.schema?.tables || [];
-    return tables.length;
-  }, [collectorData]);
-
-  // Build headline
+  // Build headline. #2326: the engines the gate facts keep (the figures under it name the
+  // same ones), else the page's own derivation for an API without them.
   const headline = useMemo(() => {
-    if (survivingEngines.length === 0) return 'Analyzing your workload...';
-    const engineNames = survivingEngines.map(e => ENGINE_COLORS[e]?.label || e);
+    const engines = gateFacts ? (gateFacts.surviving || []) : survivingEngines;
+    if (engines.length === 0) return 'Analyzing your workload...';
+    const engineNames = engines.map(e => ENGINE_COLORS[e]?.label || e);
     if (engineNames.length === 1) return `Recommended architecture: ${engineNames[0]}`;
     const last = engineNames.pop();
     return `Recommended architecture: ${engineNames.join(', ')} and ${last}`;
-  }, [survivingEngines]);
+  }, [gateFacts, survivingEngines]);
 
-  // Build executive summary — the fact line (database, size) always leads; the
-  // LLM-generated reality-check summary follows it when available (#250).
-  // afterDist -> survivingAfterDist (#235): the deterministic "We map N to X"
-  // sentence must not list an eliminated engine's leftover out-of-scope count.
+  // Build executive summary: the fact line (database, size) always leads; the
+  // LLM-generated reality-check summary follows it when available (#250). #2326: the
+  // sizes are the gate facts', never counted here.
   const executiveSummary = useMemo(() => buildAssignmentSummary({
     llmSummary: realityCheck?.executive_summary,
     databaseName,
-    afterDist: survivingAfterDist,
-    tableCount,
-    patterns,
-    cacheOverlay,
-    engineLabel: (engine) => ENGINE_COLORS[engine]?.label || engine,
+    queryCount: gateFacts?.query_total_count,
+    tableCount: gateFacts?.source_table_count,
     t,
-  }), [realityCheck, databaseName, survivingAfterDist, tableCount, patterns, cacheOverlay, t]);
+  }), [realityCheck, databaseName, gateFacts, t]);
 
   // #269: whether that LLM-generated reality-check summary was itself replaced
   // by its deterministic fallback (a grounding check rejected it against the
@@ -458,20 +457,111 @@ const AssignmentGatePage = memo(() => {
 
   // Sankey data from after_distribution. #330: the cache layer is added as a
   // node fed by its owner engines' flows (never a flow source itself), so
-  // cache coverage is visible in the diagram instead of only in cacheLayerLine.
+  // cache coverage is visible in the diagram.
+  // #2326: the flows are the gate facts' kept engines and their queries, the figures the
+  // page states, else the page's own distribution for an API without them.
+  const flowDist = useMemo(() => {
+    if (!gateFacts) return survivingAfterDist;
+    const kept = {};
+    (gateFacts.rows || []).forEach((r) => {
+      if (!r.dropped && r.after) kept[r.engine] = r.after;
+    });
+    return kept;
+  }, [gateFacts, survivingAfterDist]);
   const sankeyData = useMemo(() => {
-    if (Object.keys(survivingAfterDist).length === 0) return null;
+    if (Object.keys(flowDist).length === 0) return null;
 
     const nodes = [{ id: 'queries' }];
     const links = [];
 
-    Object.entries(survivingAfterDist).forEach(([engine, count]) => {
+    Object.entries(flowDist).forEach(([engine, count]) => {
       nodes.push({ id: engine });
       links.push({ source: 'queries', target: engine, value: count });
     });
 
     return addCacheOverlayNode({ nodes, links }, cacheOverlay);
-  }, [survivingAfterDist, cacheOverlay]);
+  }, [flowDist, cacheOverlay]);
+  const sankeyHeight = Math.max(250, Object.keys(flowDist).length * 120); // facts: presentation (the chart is 120 px tall per engine node)
+
+  // #2326: the figures under the recommendation, each read from the gate facts.
+  const engineLabel = useCallback((e) => ENGINE_COLORS[e]?.label || e, []);
+  const gateFigures = useMemo(() => {
+    if (!gateFacts) return [];
+    const rows = gateFacts.rows || [];
+    const kept = rows.filter((r) => !r.dropped && (gateFacts.surviving || []).includes(r.engine));
+    const removed = rows.filter((r) => r.dropped);
+    const cache = gateFacts.cache_candidates;
+    const items = [
+      { id: 'queries', label: t('assignment-gate.figures.queries'), value: formatCount(gateFacts.query_total_count) },
+    ];
+    if (typeof gateFacts.source_table_count === 'number') {
+      items.push({ id: 'source-tables', label: t('assignment-gate.figures.source-tables'), value: formatCount(gateFacts.source_table_count) });
+    }
+    items.push({
+      id: 'engines-kept',
+      label: t('assignment-gate.figures.engines-kept'),
+      value: kept.length > 0 ? (
+        <SpaceBetween size="xxs">
+          {kept.map((r) => (
+            <span key={r.engine} data-engine={r.engine}>
+              <EngineBadge engine={r.engine} /> {formatCount(r.after)}
+            </span>
+          ))}
+        </SpaceBetween>
+      ) : t('assignment-gate.figures.none'),
+    });
+    items.push({
+      id: 'engines-removed',
+      label: t('assignment-gate.figures.engines-removed'),
+      value: removed.length > 0 ? (
+        <SpaceBetween size="xxs">
+          {removed.map((r) => (
+            <span key={r.engine} data-engine={r.engine}>
+              {engineLabel(r.engine)} ({t('assignment-gate.figures.removed-queries', { count: r.before })})
+            </span>
+          ))}
+        </SpaceBetween>
+      ) : t('assignment-gate.figures.none'),
+    });
+    if (cache) {
+      items.push({
+        id: 'cache-candidates',
+        label: t('assignment-gate.figures.cache-candidates'),
+        value: (
+          <SpaceBetween size="xxs">
+            <span>{formatCount(cache.read_count)}</span>
+            {typeof cache.call_share_percent === 'number' && (
+              <Box color="text-body-secondary" fontSize="body-s">
+                {t('assignment-gate.figures.share-of-calls', { percent: formatPercent(cache.call_share_percent) })}
+              </Box>
+            )}
+          </SpaceBetween>
+        ),
+      });
+    }
+    return items;
+  }, [gateFacts, engineLabel, t]);
+
+  // #462, #2326: the hottest cache candidates as a table, "and N more" under it.
+  const cacheTop = useMemo(() => {
+    const cache = gateFacts?.cache_candidates;
+    return { reads: cache?.reads || [], more: formatCacheReadsMore(cache?.more, { t }) };
+  }, [gateFacts, t]);
+  const cacheColumns = useMemo(() => [
+    {
+      id: 'table',
+      header: t('assignment-gate.cache-table.table'),
+      cell: (read) => <code>{displayTables(read.tables).join(', ') || '-'}</code>,
+    },
+    { id: 'owner', header: t('assignment-gate.cache-table.owner'), cell: (read) => engineLabel(read.owner) },
+    {
+      id: 'pattern',
+      header: t('assignment-gate.cache-table.pattern'),
+      cell: (read) => (read.pattern || '').replace(/_/g, ' '),
+    },
+    { id: 'calls', header: t('assignment-gate.cache-table.calls'), cell: (read) => formatRate(read.calls_per_second) },
+    { id: 'share', header: t('assignment-gate.cache-table.share'), cell: (read) => formatPercent(read.call_share_percent) },
+  ], [engineLabel, t]);
 
   // Consolidated query IDs (for highlighting in advanced view)
   const consolidatedQueryIds = useMemo(() => {
@@ -788,6 +878,19 @@ const AssignmentGatePage = memo(() => {
   // Has pending overrides
   const hasPendingOverrides = overrideCount > 0;
 
+  // #2326: where the decision stands; approval and overrides are offered only while the
+  // assessment waits at the gate.
+  const gate = gateState({
+    job: jobData,
+    assignmentVersion: assignmentData?.assignment?.version,
+    assignmentStatus: assignmentData?.assignment?.status,
+    previousVersion: assignmentData?.assignment?.previous_version,
+    approvalRecorded: assignmentData?.approval_recorded,
+    resultsVersion: assignmentData?.results_version,
+    resultsExist,
+  });
+  const canDecide = offersDecision(gate);
+
 
   // ---- Breadcrumbs ----
   const breadcrumbItems = useMemo(() => [
@@ -830,6 +933,93 @@ const AssignmentGatePage = memo(() => {
   }
 
 
+  // ---- Render: the gate state (#2326) ----
+  const resultsPath = `/analysis/results/${encodeURIComponent(jobId)}`;
+  const progressPath = `/analysis/monitor/summary/${jobId}`;
+  const goTo = (path) => ({
+    href: path,
+    onFollow: (event) => { event.preventDefault(); navigate(path); },
+  });
+  const renderGateState = () => {
+    if (gate.kind === 'unknown') return null;
+    const link = (path, label) => (
+      <Button variant="normal" {...goTo(path)}>{label}</Button>
+    );
+    if (gate.kind === 'waiting') {
+      return (
+        <Alert type="info" data-gate-state="waiting" header={t('assignment-gate.state.waiting-header')}>
+          {t('assignment-gate.state.waiting-body', { version: gate.version })}
+        </Alert>
+      );
+    }
+    if (gate.kind === 'later') {
+      return (
+        <Alert
+          type="warning"
+          data-gate-state="later"
+          header={t('assignment-gate.state.later-header', { version: gate.version })}
+          action={link(resultsPath, t('assignment-gate.state.view-results'))}
+        >
+          {t('assignment-gate.state.later-body', { version: gate.version, resultsVersion: gate.resultsVersion })}
+        </Alert>
+      );
+    }
+    if (gate.kind === 'failed') {
+      return (
+        <Alert
+          type="error"
+          data-gate-state="failed"
+          header={t('assignment-gate.state.failed-header')}
+          action={link(progressPath, t('assignment-gate.state.view-progress'))}
+        >
+          {t('assignment-gate.state.failed-body', { version: gate.version })}
+        </Alert>
+      );
+    }
+    if (gate.kind === 'running') {
+      return (
+        <Alert
+          type="info"
+          data-gate-state="running"
+          header={t('assignment-gate.state.running-header', { version: gate.version })}
+          action={link(progressPath, t('assignment-gate.state.view-progress'))}
+        >
+          {t('assignment-gate.state.not-recorded-body')}
+        </Alert>
+      );
+    }
+    if (gate.kind === 'rerouted') {
+      return (
+        <Alert
+          type="info"
+          data-gate-state="rerouted"
+          header={t('assignment-gate.state.rerouted-header', { version: gate.version })}
+          action={gate.resultsCurrent
+            ? link(resultsPath, t('assignment-gate.state.view-results'))
+            : link(progressPath, t('assignment-gate.state.view-progress'))}
+        >
+          {gate.approvedVersion
+            ? t('assignment-gate.state.rerouted-body', { approvedVersion: gate.approvedVersion })
+            : t('assignment-gate.state.rerouted-body-unknown')}
+        </Alert>
+      );
+    }
+    const done = gate.kind === 'done';
+    return (
+      <Alert
+        type="info"
+        data-gate-state={gate.kind}
+        header={t('assignment-gate.state.approved-header', { version: gate.version })}
+        action={done
+          ? link(resultsPath, t('assignment-gate.state.view-results'))
+          : link(progressPath, t('assignment-gate.state.view-progress'))}
+      >
+        {done ? t('assignment-gate.state.done-body') : t('assignment-gate.state.running-body')}
+      </Alert>
+    );
+  };
+
+
   // ---- Render: CTO Summary View ----
   const renderSummaryView = () => (
     <SpaceBetween size="l">
@@ -839,6 +1029,11 @@ const AssignmentGatePage = memo(() => {
         <div className="gate-hero">
           <div className="gate-hero__headline">{headline}</div>
           <div className="gate-hero__summary"><ProseText text={executiveSummary} /></div>
+          {gateFigures.length > 0 && (
+            <div className="gate-hero__figures" data-figure="gate-figures">
+              <KeyValuePairs columns={gateFigures.length} items={gateFigures} />
+            </div>
+          )}
           {summaryFallback.isFallback && (
             <SummaryFallbackNotice
               className="gate-hero__fallback-note"
@@ -860,7 +1055,7 @@ const AssignmentGatePage = memo(() => {
           }
         >
           <QueryFlow
-            height={Math.max(250, Object.keys(survivingAfterDist).length * 120)}
+            height={sankeyHeight}
             data={sankeyData}
             onNodeClick={resultsExist ? handleSankeyNodeClick : undefined}
             unavailableTitle={t('assignment-gate.query-flow.details-after-completion')}
@@ -877,35 +1072,22 @@ const AssignmentGatePage = memo(() => {
               {t('assignment-gate.query-flow.older-version-note')}
             </Box>
           )}
-          {/* #296/#330: ElastiCache never owns a query, so it's never a flow
-              source -- the Sankey instead shows it as a node fed by its owner
-              engines' flows (addCacheOverlayNode); this caption adds the
-              overlay's call-share stat, which the diagram doesn't carry. */}
-          {cacheLayerLine && (
-            <Box padding={{ top: 's' }} textAlign="center" color="text-body-secondary" fontSize="body-s">
-              {cacheLayerLine}
-            </Box>
-          )}
-          {/* #462: the hottest cache candidates, the same compact list the chat gate prints
-              (assignments response `cache_reads`, from src/shared/gate_facts.py). */}
-          {cacheReads?.reads?.length > 0 && (
-            <Box padding={{ top: 'xs' }} color="text-body-secondary" fontSize="body-s">
-              <div className="cache-candidate-reads">
-                <strong>{t('cache-layer.hottest-reads', { defaultValue: 'Hottest cache candidates' })}</strong>
-                <ul>
-                  {cacheReads.reads.map(read => (
-                    <li key={read.query_id}>
-                      {formatCacheReadLine(read, { t, engineLabel: (e) => ENGINE_COLORS[e]?.label || e })}
-                    </li>
-                  ))}
-                  {formatCacheReadsMore(cacheReads.more, { t }) && (
-                    <li>{formatCacheReadsMore(cacheReads.more, { t })}</li>
-                  )}
-                </ul>
-              </div>
-            </Box>
-          )}
         </Container>
+      )}
+
+      {/* #462, #2326: the hottest cache candidates, the same reads the chat gate names
+          (gate_facts.cache_candidates, from src/shared/gate_facts.py). */}
+      {cacheTop.reads.length > 0 && (
+        <div className="cache-candidate-reads" data-figure="gate-cache-candidates">
+          <Table
+            variant="container"
+            header={<Header variant="h2">{t('cache-layer.hottest-reads', { defaultValue: 'Hottest cache candidates' })}</Header>}
+            items={cacheTop.reads}
+            trackBy="query_id"
+            columnDefinitions={cacheColumns}
+            footer={cacheTop.more}
+          />
+        </div>
       )}
 
       {/* #1990: the assumptions the plan rests on, each with its origin; approving the
@@ -1011,34 +1193,38 @@ const AssignmentGatePage = memo(() => {
       />
 
       {/* #1003: one engine choice per table */}
-      <PendingEngineChoices
-        choices={pendingChoices}
-        decided={autoDecided}
-        engineLabel={(e) => ENGINE_COLORS[e]?.label || e}
-        onSubmit={handleSaveChoices}
-        saving={savingOverrides}
-        t={t}
-      />
+      {canDecide && (
+        <PendingEngineChoices
+          choices={pendingChoices}
+          decided={autoDecided}
+          engineLabel={(e) => ENGINE_COLORS[e]?.label || e}
+          onSubmit={handleSaveChoices}
+          saving={savingOverrides}
+          t={t}
+        />
+      )}
 
-      {/* Action Bar */}
-      <Container>
-        <div className="gate-actions">
-          <Button
-            variant="primary"
-            onClick={() => setShowResumeModal(true)}
-            loading={resuming}
-            iconName="status-positive"
-          >
-            {t('assignment-gate.actions.continue-with-recommendation')}
-          </Button>
-          <button
-            className="gate-actions__detail-link"
-            onClick={() => setViewMode('advanced')}
-          >
-            {t('assignment-gate.actions.review-in-detail')} &rarr;
-          </button>
-        </div>
-      </Container>
+      {/* Action Bar: only while the assessment waits at the gate (#2326) */}
+      {canDecide && (
+        <Container>
+          <div className="gate-actions">
+            <Button
+              variant="primary"
+              onClick={() => setShowResumeModal(true)}
+              loading={resuming}
+              iconName="status-positive"
+            >
+              {t('assignment-gate.actions.approve-assignment')}
+            </Button>
+            <button
+              className="gate-actions__detail-link"
+              onClick={() => setViewMode('advanced')}
+            >
+              {t('assignment-gate.actions.review-per-query')} &rarr;
+            </button>
+          </div>
+        </Container>
+      )}
     </SpaceBetween>
   );
 
@@ -1047,16 +1233,8 @@ const AssignmentGatePage = memo(() => {
   const renderAdvancedView = () => (
     <SpaceBetween size="l">
 
-      {/* Back to summary */}
-      <Alert
-        type="info"
-        action={
-          <Button variant="normal" onClick={() => setViewMode('summary')}>
-            {t('assignment-gate.actions.back-to-summary')}
-          </Button>
-        }
-      >
-        {t('assignment-gate.advanced.info-alert-body')}
+      <Alert type="info">
+        {canDecide ? t('assignment-gate.advanced.info-alert-body') : t('assignment-gate.advanced.read-only-body')}
         {hasPendingOverrides && (
           <Box margin={{ top: 'xxs' }}>
             <StatusIndicator type="warning">{t('assignment-gate.advanced.unsaved-overrides', { count: overrideCount })}</StatusIndicator>
@@ -1227,35 +1405,41 @@ const AssignmentGatePage = memo(() => {
                       )}
                     </div>
                     <div className="query-list-col query-list-col--engine" onClick={e => e.stopPropagation()}>
-                      <Select
-                        selectedOption={{
-                          label: ENGINE_COLORS[currentEngine]?.label || currentEngine,
-                          value: currentEngine,
-                        }}
-                        onChange={({ detail: d }) => {
-                          const newEngine = d.selectedOption.value;
-                          if (newEngine === item.assigned_engine) {
-                            setOverrides(prev => { const next = { ...prev }; delete next[item.query_id]; return next; });
-                          } else {
-                            setOverrides(prev => ({ ...prev, [item.query_id]: newEngine }));
-                          }
-                        }}
-                        options={rowEngineOptions}
-                        triggerVariant="option"
-                        expandToViewport
-                      />
-                      <Checkbox
-                        checked={isCached}
-                        onChange={({ detail: d }) => {
-                          if (d.checked === !!item.cache_engine) {
-                            setCacheOverrides(prev => { const next = { ...prev }; delete next[item.query_id]; return next; });
-                          } else {
-                            setCacheOverrides(prev => ({ ...prev, [item.query_id]: d.checked }));
-                          }
-                        }}
-                      >
-                        {t('assignment-gate.table.cache-toggle', { defaultValue: 'Cache with ElastiCache' })}
-                      </Checkbox>
+                      {canDecide ? (
+                        <>
+                          <Select
+                            selectedOption={{
+                              label: ENGINE_COLORS[currentEngine]?.label || currentEngine,
+                              value: currentEngine,
+                            }}
+                            onChange={({ detail: d }) => {
+                              const newEngine = d.selectedOption.value;
+                              if (newEngine === item.assigned_engine) {
+                                setOverrides(prev => { const next = { ...prev }; delete next[item.query_id]; return next; });
+                              } else {
+                                setOverrides(prev => ({ ...prev, [item.query_id]: newEngine }));
+                              }
+                            }}
+                            options={rowEngineOptions}
+                            triggerVariant="option"
+                            expandToViewport
+                          />
+                          <Checkbox
+                            checked={isCached}
+                            onChange={({ detail: d }) => {
+                              if (d.checked === !!item.cache_engine) {
+                                setCacheOverrides(prev => { const next = { ...prev }; delete next[item.query_id]; return next; });
+                              } else {
+                                setCacheOverrides(prev => ({ ...prev, [item.query_id]: d.checked }));
+                              }
+                            }}
+                          >
+                            {t('assignment-gate.table.cache-toggle', { defaultValue: 'Cache with ElastiCache' })}
+                          </Checkbox>
+                        </>
+                      ) : (
+                        <EngineBadge engine={currentEngine} />
+                      )}
                       {cacheInfo && (
                         <span
                           className="cache-overlay-indicator"
@@ -1364,26 +1548,22 @@ const AssignmentGatePage = memo(() => {
         </SpaceBetween>
       </Container>
 
-      {/* Approve and Continue */}
-      <Container>
-        <div className="gate-actions">
-          <Button
-            variant="primary"
-            onClick={() => setShowResumeModal(true)}
-            loading={resuming}
-            disabled={hasPendingOverrides}
-            iconName="status-positive"
-          >
-            {hasPendingOverrides ? t('assignment-gate.actions.save-overrides-first') : t('assignment-gate.actions.approve-and-continue')}
-          </Button>
-          <button
-            className="gate-actions__detail-link"
-            onClick={() => setViewMode('summary')}
-          >
-            &larr; {t('assignment-gate.actions.back-to-summary')}
-          </button>
-        </div>
-      </Container>
+      {/* Approve and Continue: only while the assessment waits at the gate (#2326) */}
+      {canDecide && (
+        <Container>
+          <div className="gate-actions">
+            <Button
+              variant="primary"
+              onClick={() => setShowResumeModal(true)}
+              loading={resuming}
+              disabled={hasPendingOverrides}
+              iconName="status-positive"
+            >
+              {hasPendingOverrides ? t('assignment-gate.actions.save-overrides-first') : t('assignment-gate.actions.approve-assignment')}
+            </Button>
+          </div>
+        </Container>
+      )}
     </SpaceBetween>
   );
 
@@ -1424,20 +1604,22 @@ const AssignmentGatePage = memo(() => {
               actions={
                 <SpaceBetween direction="horizontal" size="xs">
                   <Button iconName="refresh" variant="normal" ariaLabel={t('common.actions.refresh')} onClick={fetchData} />
-                  {viewMode === 'summary' ? (
-                    <Button variant="normal" onClick={() => setViewMode('advanced')}>
-                      {t('assignment-gate.actions.advanced-review')}
-                    </Button>
-                  ) : (
-                    <Button variant="normal" onClick={() => setViewMode('summary')}>
-                      {t('assignment-gate.actions.summary-view')}
-                    </Button>
-                  )}
+                  <SegmentedControl
+                    selectedId={viewMode}
+                    onChange={({ detail }) => setViewMode(detail.selectedId)}
+                    label={t('assignment-gate.view.label')}
+                    options={[
+                      { id: 'summary', text: t('assignment-gate.view.summary') },
+                      { id: 'advanced', text: t('assignment-gate.view.per-query') },
+                    ]}
+                  />
                 </SpaceBetween>
               }
             >
               {t('assignment-gate.header.title')}
             </Header>
+
+            {renderGateState()}
 
             {viewMode === 'summary' ? renderSummaryView() : renderAdvancedView()}
 

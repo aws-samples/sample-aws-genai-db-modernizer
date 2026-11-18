@@ -63,7 +63,7 @@ from src.shared.bedrock_guardrail import (  # noqa: E402
 )
 from src.shared.collection_database_name import resolve_database_name  # noqa: E402
 from src.shared.database_name import validate_database_name  # noqa: E402
-from src.shared.gate_facts import cache_candidate_reads  # noqa: E402
+from src.shared.gate_status import GATE_OVERLAY_FIELDS  # noqa: E402
 from src.shared.job_id import validate_job_id  # noqa: E402
 from src.shared.placeholder_tables import choice_table_label  # noqa: E402
 from src.shared.run_limits import RunLimitConfigError, RunLimitExceeded, RunLimits  # noqa: E402
@@ -868,13 +868,8 @@ def _truncate(text: str, limit: int = _REASON_LIMIT) -> str:
     return text if len(text) <= limit else text[: limit - 1].rstrip() + "…"
 
 
-_CACHE_OVERLAY_FIELDS = (
-    "query_count",
-    "calls_per_second",
-    "call_share_percent",
-    "candidate_query_count",
-    "candidate_call_share_percent",
-)
+# The cache overlay fields the gate reads, one list with the UI gate's (#2326).
+_CACHE_OVERLAY_FIELDS = GATE_OVERLAY_FIELDS
 
 
 def _compact_consolidations(consolidations: list[dict]) -> list[dict]:
@@ -958,14 +953,25 @@ def _reality_check_artifact(store, job_id: str, db: str) -> dict:
     line's growth in check -- the full cache_overlay object (owners,
     patterns, min/max) and repeated reason text are not needed to approve.
     """
+    from src.shared.gate_status import gate_status
     from src.storage.assignment_versioning import (
-        assignment_artifact_path,
         reality_check_output_candidates,
         resolve_downstream_assignment_version,
     )
+    from src.storage.collector_for_models import read_collector_for_models
 
     version = resolve_downstream_assignment_version(store, db, job_id)
     out: dict = {"assignment_version": version}
+    # #2326: the gate's figures describe this version (src.shared.gate_status, the UI
+    # gate's source too): its report's facts once synthesis wrote them, else its own
+    # in-scope queries, so a customer edit newer than the reality-check record counts.
+    status = gate_status(
+        store,
+        db,
+        job_id,
+        version,
+        collector=read_collector_for_models(store, db, job_id, missing_ok=True),
+    )
     # The record of the run this version descends from (#193, #215), as synthesis,
     # the UI and the graph read it.
     key = next(
@@ -976,47 +982,28 @@ def _reality_check_artifact(store, job_id: str, db: str) -> dict:
         out["artifact"] = _path(store, key)
         _log_artifact("reality-check", out["artifact"])
         rc = store.read_json(key)
-        out["before_distribution"] = rc.get("before_distribution", {})
-        out["after_distribution"] = rc.get("after_distribution", {})
-        # #235: before/after_distribution count ANY query, in or out of scope, so
-        # an engine can show a nonzero after_distribution entry and still be
-        # eliminated -- eliminated_engines (contract 1.8+) is the settled answer
-        # (src.shared.engine_elimination) a chat-only approval gate reads for its
-        # survived/dropped labels instead of re-deriving one from the counts.
-        out["eliminated_engines"] = rc.get("eliminated_engines", [])
+        # #235: eliminated_engines is the settled answer a chat-only approval gate reads
+        # for its survived/dropped labels instead of re-deriving one from the counts.
+        for field in ("before_distribution", "after_distribution", "eliminated_engines"):
+            out[field] = status[field]
         out["consolidations"] = _compact_consolidations(rc.get("consolidations", []))
         # #589: the sanity sweep's own reason for KEEPING a tiny orphan engine
         # (contract 1.10+) -- compacted the same way as consolidations, so a
         # kept engine's reason reaches the approval gate too, not only a
         # removed one's.
         out["sweep_kept"] = _compact_sweep_kept(rc.get("sweep_decisions", []))
-
     # #1574: the customer's engine scope, as triage recorded it, for the gate block.
-    from src.agents.referee.engine_scope import scope_from_store
-
-    scope = scope_from_store(store, db, job_id)
-    if scope is not None:
-        out["engine_scope"] = sorted(scope)
-    assignment_path = assignment_artifact_path(db, job_id, version)
-    if store.exists(assignment_path):
-        assignment = store.read_json(assignment_path)
-        unservable = len(assignment.get("unservable_queries") or [])
-        if unservable:
-            # #1329: the queries no engine in the scope can serve (no engine, so in no
-            # engine's count); the gate block states how many (#1574).
-            out["unservable_queries"] = unservable
-        overlay = assignment.get("cache_overlay")
-        if overlay:
-            out["cache_overlay"] = {k: overlay[k] for k in _CACHE_OVERLAY_FIELDS if k in overlay}
-            # #462: the hottest cached reads, named; the rest are counted.
-            from src.storage.collector_for_models import read_collector_for_models
-
-            collector = read_collector_for_models(store, db, job_id, missing_ok=True)
-            queries = (collector.get("queries") or {}).get("query_patterns") or []
-            reads = cache_candidate_reads(assignment.get("query_assignments") or [], queries)
-            if reads:
-                out["cache_reads"] = reads
-    out["schema_design_engines"] = _schema_design_engines(store, job_id, db, version)
+    if "engine_scope" in status:
+        out["engine_scope"] = status["engine_scope"]
+    if status.get("unservable_query_count"):
+        # #1329: the queries no engine in the scope can serve (no engine, so in no
+        # engine's count); the gate block states how many (#1574).
+        out["unservable_queries"] = status["unservable_query_count"]
+    for field in ("cache_overlay", "cache_reads", "source_table_count"):
+        # #462: the hottest cached reads, named; the rest are counted.
+        if field in status:
+            out[field] = status[field]
+    out["schema_design_engines"] = status["schema_design_engines"]
     out["pending_choices"] = _compact_pending_choices(store, job_id, db)
     return out
 

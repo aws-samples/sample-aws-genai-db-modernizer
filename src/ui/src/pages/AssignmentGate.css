@@ -105,6 +105,11 @@
   line-height: 1.5;
 }
 
+/* #2326: the recommendation's figures under its one sentence */
+.gate-hero__figures {
+  margin-top: 16px;
+}
+
 /* #269: notice shown when the summary above is the deterministic fallback */
 .gate-hero__fallback-note {
   margin-top: 8px;
