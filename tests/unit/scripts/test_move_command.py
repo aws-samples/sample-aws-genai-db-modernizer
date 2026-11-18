@@ -768,3 +768,14 @@ def test_prove_writes_the_view_scripts_before_the_routine_scripts() -> None:
     assert "the gate's views and routines checks stay `pending`" in _flat(
         _section("Headless (`--auto`)")
     )
+
+
+def test_a_held_routine_is_shown_once_as_held_back() -> None:
+    """#2429: ``routines`` and ``triggers-scripts`` list a held routine only in
+    ``held_back_routines``; /move shows that list for both, never the held one as refused."""
+    flat = " ".join(MOVE.read_text().split())
+    assert "a routine held back is in `held_back_routines` only" in flat
+    assert (
+        "then `held_back` and every entry of `held_back_routines` with its `reason` and `why` verbatim (the ones `/test-routines` has not tested with no difference found, each listed there only)"
+        in flat
+    )

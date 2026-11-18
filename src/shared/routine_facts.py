@@ -61,7 +61,8 @@ routine names, counts, and the catalog's reason and fix hint for each rule the r
 Never a routine's text, a diff of it, a hash of it or what a check found in it (the
 artifact's ``findings``): the exact text stays in the routine sources (the two-file
 decision, ADR-034 Decision 4). Verdicts rest on the static checks, labelled
-:data:`PROOF_LABEL` until the load-and-run proof (#1945).
+:data:`NOT_TESTED_STATE` until a test on a test Aurora ran on the job's routines file, then
+:data:`TESTED_STATE` (#1945, #2429: the same words as step 1's lines).
 
 **Tested before deployed** (#2411, the maintainer decision of 2026-11-17 on #1925). Step 1
 deploys a carried routine only once the latest proof on a test Aurora for the job found no
@@ -114,15 +115,28 @@ from collections import Counter
 from collections.abc import Iterable, Mapping
 from typing import Any
 
+from src.contracts.routine_check import NOT_TESTED_LABEL, TESTED_LABEL
 from src.contracts.routine_migration import REASON_CODES, RoutineMigrationContract
 from src.contracts.routine_repair import RoutineRepairContract
 from src.shared.cutover_message import CUTOVER_MESSAGE
 
-#: What every routine verdict rests on until the load-and-run proof (#1945); the step 1
-#: gate's routines check uses the same label.
-PROOF_LABEL = "checked, not load-tested"
-#: What the verdicts rest on once the routine proof ran on a test cluster (#1945).
-PROOF_RUN_LABEL = "load-tested on a test Aurora"
+#: What a carried routine is before a test on a test Aurora: never more than checked
+#: (#2411). One label per state everywhere (#2429): ``facts.routines.proof``, the
+#: deliverables' sentences and the step 1 lines' ``label`` (:func:`routine_test_state`).
+NOT_TESTED_STATE = NOT_TESTED_LABEL
+#: What the verdicts rest on once a test on the job's routines file as it is now ran (#2429).
+TESTED_STATE = TESTED_LABEL
+#: The older names of the two labels (#1945).
+PROOF_LABEL = NOT_TESTED_STATE
+PROOF_RUN_LABEL = TESTED_STATE
+
+
+def routine_test_state(tested: bool) -> str:
+    """The one label for the routines' test state (#2429): :data:`TESTED_STATE` once a test
+    ran on the job's routines file as it is now, else :data:`NOT_TESTED_STATE`."""
+    return TESTED_STATE if tested else NOT_TESTED_STATE
+
+
 PROOF_OUTCOMES = ("proved", "needs_attention", "not_proved")
 #: Why step 1's deploy gate holds a carried routine back (#2411): no current proof tested it,
 #: the proof could not prove it, or it found a difference or an error.
@@ -134,6 +148,14 @@ DEPENDS_ON_HELD = "depends_on_held"
 #: the one the test ran (#2384): the test ran another repair or the original, or the rebuild
 #: from the routines file and the repair no longer passes its checks.
 REBUILD_DIFFERS = "rebuild_differs"
+#: A held-back reason in the plain words the carried-routines risk counts it by (#2429).
+HELD_WORDS: dict[str, str] = {
+    "not_tested": "the test did not run it on this routines file",
+    "not_proved": "the test could not run or compare it, or a call failed",
+    "needs_attention": "the test found a difference or an error",
+    DEPENDS_ON_HELD: "it calls a routine that is held back",
+    REBUILD_DIFFERS: "its repair is not the one the test ran",
+}
 
 #: A routine risk class -> its severity, in the order the risks are raised.
 ROUTINE_RISK_SEVERITY: dict[str, str] = {
@@ -279,8 +301,6 @@ def migrate_yourself_lines(count: int, wave: int | None) -> tuple[str | None, st
 
 #: The command that tests the carried routines on a test Aurora (#2411).
 TEST_COMMAND = "/test-routines"
-#: What a routine is before a test on a test Aurora: never more than checked (#2411).
-NOT_TESTED_STATE = "checked, not tested yet"
 
 
 def repaired_not_tested_sentence(where: str | None = None) -> str:
@@ -831,6 +851,15 @@ def routine_facts(
     # A routine the repair loop carried is carried, repaired (#2384): one overlay, read by the
     # counts and the deploy gate's holds alike.
     artifact_rows = with_repairs(data.get("routines") or [], repaired_routines(repair, version))
+    run = data.get("proof_run")
+    current = isinstance(run, Mapping) and proof_is_current(run, sources_digest)
+    proved = (
+        {k: int((run.get("counts") or {}).get(k, 0)) for k in PROOF_OUTCOMES}
+        if isinstance(run, Mapping) and current
+        else None
+    )
+    # What step 1's deploy gate holds back for calling a held routine (#2411): the same rule.
+    holds = routine_holds(artifact_rows, current, forced)
     for row in artifact_rows:
         category = _category(row)
         counts[category] += 1
@@ -842,6 +871,12 @@ def routine_facts(
         else:
             reasons.update(str(r) for r in row.get("reasons") or [])
         classes, basis = _classes(row, category, impacts)
+        # After a current test (#2429), a carried routine step 1 holds back is one of the
+        # carried routines to check, with its reason; one with no difference keeps its row
+        # (its rewrite note stays) but no longer holds the risk.
+        held = holds.get((str(row["kind"]), str(row["routine_id"]))) if current else None
+        if held and category in ("as_is", "rewritten", "repaired") and not classes:
+            classes, basis = ["carried_review"], [held]
         if not classes:
             continue
         classes_n[classes[0]] += 1
@@ -870,18 +905,10 @@ def routine_facts(
                     }
                 ),
                 "deploy_order": row["deploy_order"],
+                "held_back": held,
             }
         )
     named = {r for row in rows for r in (*row["reasons"], *row["rewrites"], *row["unknown_checks"])}
-    run = data.get("proof_run")
-    current = isinstance(run, Mapping) and proof_is_current(run, sources_digest)
-    proved = (
-        {k: int((run.get("counts") or {}).get(k, 0)) for k in PROOF_OUTCOMES}
-        if isinstance(run, Mapping) and current
-        else None
-    )
-    # What step 1's deploy gate holds back for calling a held routine (#2411): the same rule.
-    holds = routine_holds(artifact_rows, current, forced)
     interventions = routine_interventions(repair, version, holds)
     depends_held = sum(1 for reason in holds.values() if reason == DEPENDS_ON_HELD)
     carried_rows = [r for r in artifact_rows if r.get("status") in _CARRIED]
@@ -914,7 +941,7 @@ def routine_facts(
         "migrate_yourself_step": step,
         "counts_by_kind": dict(sorted(kinds.items())),
         "reason_counts": dict(sorted(reasons.items())),
-        "proof": PROOF_LABEL if proved is None else PROOF_RUN_LABEL,
+        "proof": routine_test_state(proved is not None),
         "proof_counts": proved,
         "line": " ".join(
             p
@@ -1205,7 +1232,14 @@ def needs_routine_words(facts: Any) -> bool:
         return True
     if int(facts.get("migrate_yourself_count") or 0) and not facts.get("to_do_routines"):
         return True
-    if int(facts.get("carried_review_count") or 0) and not facts.get("check_notes"):
+    # A carried routine to check with a rewrite or a check that could not run has a note;
+    # one held back after a test with neither has none (#2429).
+    noted = any(
+        "carried_review" in (r.get("risk_classes") or [])
+        and (r.get("rewrites") or r.get("unknown_checks"))
+        for r in rows
+    )
+    if noted and not facts.get("check_notes"):
         return True
     if any(isinstance(i, Mapping) and not i.get("line") for i in facts.get("interventions") or []):
         return True

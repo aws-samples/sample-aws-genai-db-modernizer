@@ -168,7 +168,7 @@ def test_the_proof_lands_in_the_artifact_and_the_routine_facts():
     migration = _migration(
         _row("f", "as_is", 1), _row("h", "rewritten", 2), _row("x", "needs_attention", 3)
     )
-    assert routine_facts(migration, 2)["proof"] == "checked, not load-tested"
+    assert routine_facts(migration, 2)["proof"] == "checked, not tested yet"
     entries = {
         "public.f(integer)": pr.RoutineProofEntry(mode="load_and_run", outcome="proved", reason="ran"),
         "public.h(integer)": pr.RoutineProofEntry(mode="side_by_side", outcome="needs_attention",
@@ -191,7 +191,7 @@ def test_the_proof_lands_in_the_artifact_and_the_routine_facts():
     assert [r.proof is not None for r in again.routines] == [True, True, False]
     assert again.proof_run.routine_sources_sha256 == DIGEST
     facts = routine_facts(again, 2, sources_digest=DIGEST)
-    assert facts["proof"] == "load-tested on a test Aurora"
+    assert facts["proof"] == "tested on a test Aurora"
     assert facts["proof_counts"] == {"proved": 1, "needs_attention": 1, "not_proved": 0}
     assert (
         "On a test Aurora, of 2 carried routines: 1 showed no difference on the calls made"

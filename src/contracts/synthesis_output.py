@@ -719,6 +719,7 @@ from pydantic import (
     ConfigDict,
     Field,
     SerializerFunctionWrapHandler,
+    field_validator,
     model_serializer,
     model_validator,
 )
@@ -735,6 +736,7 @@ from src.contracts.assignment_models import (  # re-exported, see docstring belo
 from . import schema_design_output
 from .analysis_output import CarriedWrite
 from .query_trace import QueryTraceDigest, QueryTraceListing
+from .routine_check import LEGACY_TEST_LABELS
 from .schema_design_output import TradeOff
 
 
@@ -3321,6 +3323,16 @@ class RoutineFactRow(BaseModel):
             "the carried routines to check roll up into check_notes"
         ),
     )
+    held_back: str | None = Field(
+        None,
+        description=(
+            "After a test on a test Aurora on the job's routines file as it is now (#2429): "
+            "why step 1 holds this carried routine back (not_tested, not_proved, "
+            "needs_attention, depends_on_held, rebuild_differs); None when that test found "
+            "no difference on the calls made, before any such test, or for a routine not "
+            "carried"
+        ),
+    )
 
 
 class RoutineNoteFact(BaseModel):
@@ -3475,11 +3487,18 @@ class RoutineFacts(BaseModel):
     reason_counts: dict[str, int] = Field(
         default_factory=dict, description="A reason (rule id or reason code) -> routines"
     )
-    proof: Literal["checked, not load-tested", "load-tested on a test Aurora"] = Field(
+    proof: Literal[
+        "checked, not tested yet",
+        "tested on a test Aurora",
         "checked, not load-tested",
+        "load-tested on a test Aurora",
+    ] = Field(
+        "checked, not tested yet",
         description=(
-            "What the verdicts rest on: the static checks, or (#1945) also the routine "
-            "proof on a throwaway Aurora test cluster"
+            "What the verdicts rest on: the static checks, or (#1945) also a test on a "
+            "throwaway Aurora test cluster on the job's routines file as it is now. The "
+            "same words as step 1's lines (#2429); a report saved before them holds "
+            "'checked, not load-tested' or 'load-tested on a test Aurora', read as today's"
         ),
     )
     proof_counts: dict[str, int] | None = Field(
@@ -3531,6 +3550,12 @@ class RoutineFacts(BaseModel):
             "repair, in the artifact's order; empty when no repair ran"
         ),
     )
+
+    @field_validator("proof", mode="before")
+    @classmethod
+    def _todays_label(cls, value: object) -> object:
+        """A label a report saved before #2429 holds, read as today's."""
+        return LEGACY_TEST_LABELS.get(value, value) if isinstance(value, str) else value
 
     @model_validator(mode="after")
     def _counts_split_the_total(self) -> "RoutineFacts":

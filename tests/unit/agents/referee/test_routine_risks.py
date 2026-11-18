@@ -38,7 +38,7 @@ from src.shared.prose_style import find_style_hits
 from src.shared.report_facts import compute_report_facts
 from src.shared.routine_facts import ROUTINE_DETAILS_LISTED, ROUTINE_RISK_SEVERITY, routine_facts
 from src.shared.wave_readiness import NON_HOLDING_RULES, wave_readiness
-from tests.unit.shared.test_routine_facts import MIXED, _artifact, _fail, _row
+from tests.unit.shared.test_routine_facts import MIXED, REWRITE, _artifact, _fail, _row
 
 MY = "aurora_mysql"
 PG = "aurora_postgresql"
@@ -98,7 +98,7 @@ def test_the_texts_count_by_kind_and_name_no_routine_or_table() -> None:
 def test_the_low_risk_rolls_up_with_counts_and_no_per_routine_detail() -> None:
     low = routine_risks(FACTS)[-1]
     assert low["description"] == (
-        f"[{PG}] Wave 1: 2 routines are carried to Aurora PostgreSQL and need a check on the "
+        f"[{PG}] Wave 1: 2 of the 3 routines carried to Aurora PostgreSQL need a check on the "
         "target: 1 has a safe header rewrite (the owner or DEFINER set to the target user, "
         "so it runs with that user's privileges); for 2, not every check could run."
     )
@@ -276,3 +276,21 @@ def test_a_risk_with_no_to_do_dumps_as_it_did_before() -> None:
     assert "to_do" not in Risk.model_validate(plain).model_dump(mode="json")
     to_do = Risk.model_validate({**plain, "to_do": "migrate 1 routine yourself"})
     assert to_do.model_dump(mode="json")["to_do"] == "migrate 1 routine yourself"
+
+
+def test_the_low_risk_counts_out_of_every_carried_routine_with_its_verb() -> None:
+    """#2429 (the real run on #2411): "3 routines are carried" read as if 3 were carried
+    when 4 were, and "1 routine is carried ... and need a check" broke the verb. The count
+    is out of ``carried_count``, the headline's, and the verb agrees."""
+    one = routine_facts(_artifact(_row("public.plain()"), _row("public.owned()", "rewritten",
+                                  rewrites=[REWRITE])), 1, WAVES)  # fmt: skip
+    [low] = [r for r in routine_risks(one) if r["rule"] == "routines.carried"]
+    assert "Wave 1: 1 of the 2 routines carried to Aurora PostgreSQL needs a check on the " in (
+        low["description"]
+    )
+    alone = routine_facts(_artifact(_row("public.owned()", "rewritten", rewrites=[REWRITE])), 1,
+                          WAVES)  # fmt: skip
+    [low] = [r for r in routine_risks(alone) if r["rule"] == "routines.carried"]
+    assert "Wave 1: The routine carried to Aurora PostgreSQL needs a check on the " in (
+        low["description"]
+    )

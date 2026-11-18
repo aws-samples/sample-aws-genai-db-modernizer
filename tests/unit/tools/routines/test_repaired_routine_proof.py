@@ -99,6 +99,14 @@ def test_a_repair_that_does_not_rebuild_is_not_tested_and_stays_held(tmp_path):
 # --------------------------------------------------------------------------- the repair loop
 
 
+@pytest.fixture(autouse=True)
+def _restore_aws_profile(monkeypatch):
+    """The helper sets AWS_PROFILE from the inputs file: put the caller's back afterwards,
+    so a later test in the same worker never reads this module's profile (#2429 run)."""
+    monkeypatch.setenv("AWS_PROFILE", "unset-by-test")
+    monkeypatch.delenv("AWS_PROFILE")
+
+
 @pytest.fixture
 def model(monkeypatch):
     from src.agents.routine_repair import handler

@@ -50,3 +50,18 @@ def test_an_old_routines_check_json_loads_with_todays_code(tmp_path) -> None:
     result = RoutineCheckResult.model_validate(loaded)
     assert [m.problem for m in result.mismatches] == ["present_before_triggers_enable"]
     assert OLD_CODE not in result.model_dump_json()
+
+
+def test_an_old_routines_check_json_reads_todays_label(tmp_path) -> None:
+    """#2429: one label per state. A result saved with "checked, not load-tested" loads
+    and reads "checked, not tested yet", the words the reports use."""
+    from src.contracts.routine_check import LEGACY_TEST_LABELS, NOT_TESTED_LABEL
+
+    path = tmp_path / KEY
+    path.parent.mkdir(parents=True)
+    path.write_text(json.dumps(OLD_FILE))
+    result = RoutineCheckResult.model_validate(
+        LocalArtifactStore(base_dir=str(tmp_path)).read_json(KEY)
+    )
+    assert result.label == NOT_TESTED_LABEL == LEGACY_TEST_LABELS["checked, not load-tested"]
+    assert "load-tested" not in result.model_dump_json()

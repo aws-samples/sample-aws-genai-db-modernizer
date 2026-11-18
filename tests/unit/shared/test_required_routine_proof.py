@@ -120,7 +120,7 @@ def test_a_stale_or_undated_test_reads_as_not_tested(tmp_path) -> None:
     for digest in ("e" * 64, None):  # another routines file; a test before #2411 named none
         _tested(store, digest=digest)
         facts = read_routine_facts(store, "shop", "j1", 1)
-        assert facts is not None and facts["proof"] == "checked, not load-tested"
+        assert facts is not None and facts["proof"] == "checked, not tested yet"
         assert facts["proof_counts"] is None and NOT_TESTED in facts["line"]
 
 

@@ -2377,7 +2377,7 @@ def routines(clients: MoveClients, root: str, db: str, job_id: str, inputs: Move
     """Write step 1's routine scripts (``routine_scripts``) once the task's full load is at
     100%: the deploy script, the read-only check script and their instructions, for the
     customer to run. Read-only in AWS (the task's status); it never connects to a database."""
-    from src.contracts.routine_check import STATIC_LABEL
+    from src.shared.routine_facts import routine_test_state
     from src.storage.local_store import LocalArtifactStore
     from src.tools.data_movement.dms_step import load_step1
     from src.tools.data_movement.routine_scripts import (
@@ -2400,7 +2400,8 @@ def routines(clients: MoveClients, root: str, db: str, job_id: str, inputs: Move
                         "Prepare's three commands again")  # fmt: skip
     not_carried = _not_carried(section)
     base = {"carried": section.carried, "not_carried": len(not_carried), "deferred": section.deferred,
-            "not_carried_routines": not_carried[:ROUTINES_SHOWN], "label": STATIC_LABEL}  # fmt: skip
+            "not_carried_routines": not_carried[:ROUTINES_SHOWN],
+            "label": routine_test_state(False)}  # fmt: skip
     if section.carried == 0 and section.deferred == 0:
         return {"status": "nothing_to_deploy", **base}
     now = status(clients, name)
@@ -2415,26 +2416,40 @@ def routines(clients: MoveClients, root: str, db: str, job_id: str, inputs: Move
     # A routine left out for a case-only database clash, or for naming one, says why (#2148).
     clashes = case_differs_keys(step.contract, read_migration(store, db, job_id, section),
                                 inputs.target_database_name)  # fmt: skip
-    refused = [{"routine_id": i, "kind": k, "reason": c,
-                **({"why": CASE_DIFFERS_WHY} if c in (CASE_DIFFERS, "depends_on_refused")
-                   and (k, i) in clashes else {}),
-                **({"why": VIEW_LEFT_OUT_WHY} if c == VIEW_LEFT_OUT else {}),
-                **({"why": HELD_WHY[c]} if c in HELD_WHY else {})}
-               for k, i, c in scripts.refused]  # fmt: skip
-    # The deploy gate (#2411): only routines the current test proved are in the scripts.
-    held = [r for r in refused if r["reason"] in HELD_WHY]
-    return {"status": "ready", **base, "in_script": scripts.in_script, "refused": len(refused),
+    left_out = [{"routine_id": i, "kind": k, "reason": c,
+                 **({"why": CASE_DIFFERS_WHY} if c in (CASE_DIFFERS, "depends_on_refused")
+                    and (k, i) in clashes else {}),
+                 **({"why": VIEW_LEFT_OUT_WHY} if c == VIEW_LEFT_OUT else {}),
+                 **({"why": HELD_WHY[c]} if c in HELD_WHY else {})}
+                for k, i, c in scripts.refused]  # fmt: skip
+    # The deploy gate (#2411): only routines the current test proved are in the scripts. A
+    # routine it holds back is listed once, as held back with its reason (#2429).
+    held = [r for r in left_out if r["reason"] in HELD_WHY]
+    refused = [r for r in left_out if r["reason"] not in HELD_WHY]
+    return {"status": "ready", **base, "label": routine_test_state(scripts.proof == "current"),
+            "in_script": scripts.in_script, "refused": len(refused),
             "refused_routines": refused[:ROUTINES_SHOWN], "proof": scripts.proof,
             "held_back": len(held), "held_back_routines": held[:ROUTINES_SHOWN],
             "proof_line": proof_line(scripts.proof, scripts.held), "test_with": TEST_COMMAND,
             "files": scripts.files}  # fmt: skip
 
 
+def _test_label(store: Any, db: str, job_id: str, migration: Any) -> str:
+    """The routine test's state in the facts' words (#2429): tested on a test Aurora only
+    when a test ran on the job's routines file as it is now."""
+    from src.shared.routine_facts import routine_test_state
+    from src.tools.data_movement.routine_test_gate import proof_state
+
+    return routine_test_state(
+        migration is not None and proof_state(store, db, job_id, migration) == "current"
+    )
+
+
 def routines_check(root: str, db: str, job_id: str, inputs: MoveInputs) -> dict[str, Any]:
     """Read the customer's output of the routine check script (``routines-check.tsv``),
     strictly, and write ``routines-check.json`` for the gate. No AWS call. A refused file
     removes an earlier result, so the gate never reads a check the file contradicts."""
-    from src.contracts.routine_check import STATIC_LABEL, RoutineCheckResult
+    from src.contracts.routine_check import RoutineCheckResult
     from src.storage.local_store import LocalArtifactStore
     from src.tools.data_movement.dms_step import load_step1
     from src.tools.data_movement.routine_check import RoutineCheckOutputError, read_check
@@ -2451,31 +2466,33 @@ def routines_check(root: str, db: str, job_id: str, inputs: MoveInputs) -> dict[
     step = load_step1(store, db, job_id, with_ddl=False)
     output = _step_dir(root, db, job_id) / CHECK_OUTPUT
     key = f"{db}/{job_id}/data-movement/step-1/routines-check.json"
-    try:
-        result = read_check(output, step.contract, job_id=job_id, database_name=db,
-                            contract_sha=step.contract_sha256,
-                            target_database=inputs.target_database_name)  # fmt: skip
-    except RoutineCheckOutputError as exc:
-        store.delete(key)
-        raise MoveError(f"{output}: refused: {exc}") from None
-    if result is None:
-        store.delete(key)
-        return {"status": "no_output", "expected": str(output), "label": STATIC_LABEL}
-    checked: RoutineCheckResult = result
-    store.write_json(key, checked.model_dump(mode="json"))
-    # A routine the deploy left out for a case-only database clash, or for naming one, is
-    # missing on the target: its line says why, as `routines` did.
     section = step.contract.routines
-    clashes: set[tuple[str, str]] = set()
-    held: dict[tuple[str, str], str] = {}
+    migration = None
     if section is not None and section.carried:
         try:
             migration = read_migration(store, db, job_id, section)
         except RoutineScriptError:  # no artifact: the check still reads, with no `why`
             migration = None
-        if migration is not None:
-            clashes = case_differs_keys(step.contract, migration, inputs.target_database_name)
-            held = held_routines(store, db, job_id, migration)  # the deploy gate (#2411)
+    label = _test_label(store, db, job_id, migration)  # one label per state (#2429)
+    try:
+        result = read_check(output, step.contract, job_id=job_id, database_name=db,
+                            contract_sha=step.contract_sha256,
+                            target_database=inputs.target_database_name, label=label)  # fmt: skip
+    except RoutineCheckOutputError as exc:
+        store.delete(key)
+        raise MoveError(f"{output}: refused: {exc}") from None
+    if result is None:
+        store.delete(key)
+        return {"status": "no_output", "expected": str(output), "label": label}
+    checked: RoutineCheckResult = result
+    store.write_json(key, checked.model_dump(mode="json"))
+    # A routine the deploy left out for a case-only database clash, or for naming one, is
+    # missing on the target: its line says why, as `routines` did.
+    clashes: set[tuple[str, str]] = set()
+    held: dict[tuple[str, str], str] = {}
+    if migration is not None:
+        clashes = case_differs_keys(step.contract, migration, inputs.target_database_name)
+        held = held_routines(store, db, job_id, migration)  # the deploy gate (#2411)
 
     def why(m: Any) -> dict[str, str]:
         key = (m.kind, m.routine_id)
@@ -2721,12 +2738,22 @@ def triggers_scripts(root: str, db: str, job_id: str, inputs: MoveInputs,
     from src.tools.data_movement.routine_scripts import CASE_DIFFERS_TRIGGERS_WHY
     from src.tools.data_movement.routine_test_gate import HELD_WHY, TEST_COMMAND
 
-    excluded = [{"routine_id": i, "kind": k, "reason": c,
+    left_out = [{"routine_id": i, "kind": k, "reason": c,
                  **({"why": CASE_DIFFERS_TRIGGERS_WHY} if (k, i) in scripts.case_differs else {}),
                  **({"why": HELD_WHY[c]} if c in HELD_WHY else {})}
                 for k, i, c in scripts.excluded]  # fmt: skip
-    held = [e for e in excluded if e["reason"] in HELD_WHY]
+    # A trigger or event the deploy gate holds back is listed once, as held back (#2429).
+    held = [e for e in left_out if e["reason"] in HELD_WHY]
+    excluded = [e for e in left_out if e["reason"] not in HELD_WHY]
+    from src.tools.data_movement.routine_scripts import RoutineScriptError, read_migration
+
+    section = step.contract.routines
+    try:
+        migration = read_migration(store, db, job_id, section) if section is not None else None
+    except RoutineScriptError:
+        migration = None
     out: dict[str, Any] = {"status": scripts.status, "expected": scripts.expected,
+                           "label": _test_label(store, db, job_id, migration),
                            "excluded": len(excluded), "excluded_routines": excluded[:ROUTINES_SHOWN],
                            "held_back": len(held), "held_back_routines": held[:ROUTINES_SHOWN],
                            "test_with": TEST_COMMAND,

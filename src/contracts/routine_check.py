@@ -20,7 +20,8 @@ the body checked: ``check_function_bodies`` on PostgreSQL, the whole body parsed
 MySQL, so it compiled), with its source signature, and, for a PostgreSQL trigger,
 disabled. A MySQL trigger or event is left to the triggers-enable script and must be absent.
 A routine step 1 cannot carry fails the result as a mismatch does. ``proof`` is
-``static``: checked, not load-tested, until the load-and-run proof (#1945) exists.
+``static``: the check confirms what exists and runs nothing; ``label`` is the routine
+test's state in the shared words (#2429).
 
 No row holds a routine's text, a hash of it or a line of the customer's file: only the
 contract's routine ids, fixed problem codes and counts.
@@ -48,8 +49,18 @@ RoutineProblem = Literal[
 ]
 #: Problem codes a result saved before #2113 holds, read as today's code.
 LEGACY_PROBLEMS = {"present_before_cutover": "present_before_triggers_enable"}  # legacy alias
-#: What the label of a routine check says while no load-and-run proof exists (#1945).
-STATIC_LABEL: Literal["checked, not load-tested"] = "checked, not load-tested"
+#: The one label per state of the routine test (#2429), for every deliverable, step 1
+#: line and stored result: before a test on a test Aurora on the job's routines file as it
+#: is now, and after one. ``src.shared.routine_facts`` reads them from here.
+NOT_TESTED_LABEL: Literal["checked, not tested yet"] = "checked, not tested yet"
+TESTED_LABEL: Literal["tested on a test Aurora"] = "tested on a test Aurora"
+#: The labels an artifact saved before #2429 holds -> today's (the one copy of the map).
+LEGACY_TEST_LABELS: dict[str, str] = {
+    "checked, not load-tested": NOT_TESTED_LABEL,
+    "load-tested on a test Aurora": TESTED_LABEL,
+}
+#: What a check result says until a test ran (#1945; the words since #2429).
+STATIC_LABEL = NOT_TESTED_LABEL
 
 
 class RoutineMismatch(BaseModel):
@@ -106,10 +117,22 @@ class RoutineCheckResult(BaseModel):
     )
     checked_at: datetime = Field(..., description="When the output file was read")
     proof: Literal["static"] = Field(
-        "static", description="static: checked, not load-tested (no load-and-run proof yet)"
+        "static",
+        description=(
+            "static: this check confirms what exists on Aurora and runs nothing; whether a "
+            "test on a test Aurora ran is the label"
+        ),
     )
-    label: Literal["checked, not load-tested"] = Field(
-        STATIC_LABEL, description="The words every deliverable shows for this proof"
+    label: Literal[
+        "checked, not tested yet", "tested on a test Aurora", "checked, not load-tested"
+    ] = Field(
+        NOT_TESTED_LABEL,
+        description=(
+            "The routine test's state in the words every deliverable shows (#2429): "
+            "checked, not tested yet, or tested on a test Aurora on the job's routines "
+            "file as it is now; a result saved before #2429 holds 'checked, not "
+            "load-tested', read as 'checked, not tested yet'"
+        ),
     )
     status: Literal["pass", "fail"] = Field(
         ..., description="pass: every carried routine confirmed and none not carried"
@@ -126,6 +149,12 @@ class RoutineCheckResult(BaseModel):
     not_carried: list[RoutineNotCarried] = Field(
         default_factory=list, description="Routines step 1 does not carry, by routine id"
     )
+
+    @field_validator("label", mode="before")
+    @classmethod
+    def _todays_label(cls, value: object) -> object:
+        """A label a result saved before #2429 holds, read as today's."""
+        return LEGACY_TEST_LABELS.get(value, value) if isinstance(value, str) else value
 
     @model_validator(mode="after")
     def _consistent(self) -> RoutineCheckResult:

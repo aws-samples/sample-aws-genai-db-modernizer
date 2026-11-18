@@ -253,3 +253,20 @@ def test_a_trigger_left_out_for_calling_a_case_clash_procedure_says_why_too(tmp_
     (left_out,) = line["excluded_routines"]
     assert (left_out["routine_id"], left_out["reason"]) == ("shop.orders_bi", "depends_on_refused")
     assert left_out["why"] == CASE_DIFFERS_TRIGGERS_WHY
+
+
+def test_a_trigger_held_back_is_listed_once_as_held_back(tmp_path, capsys):
+    """#2429: as for ``routines``, a trigger the deploy gate holds back is in
+    ``held_back_routines`` with its reason, and not also in ``excluded_routines``."""
+    from tests.unit.scripts.test_run_dms_step_routines import _job as routines_job
+    from tests.unit.tools.data_movement.routine_fixtures import mysql_source
+
+    trigger = mysql_source("orders.orders_bi", "CREATE DEFINER=`app`@`%` TRIGGER `orders_bi` BEFORE "
+                           "INSERT ON `orders` FOR EACH ROW SET NEW.n = 1", kind="trigger")  # fmt: skip
+    routines_job(tmp_path, _rows()[:2], tested=False, extra=[trigger])
+    code, line = base._run(tmp_path, "triggers-scripts", capsys=capsys)
+    assert code == 0, line
+    held = {(r["routine_id"], r["reason"]) for r in line["held_back_routines"]}
+    assert held == {("shop.orders_bi", "not_tested")}, line
+    assert line["held_back"] == 1 and line["excluded"] == 0
+    assert all(r["reason"] != "not_tested" for r in line["excluded_routines"])
