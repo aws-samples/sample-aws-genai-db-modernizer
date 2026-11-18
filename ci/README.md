@@ -624,19 +624,18 @@ obvious entries lives here instead:
 - `Bash(uv run python scripts/run_transformation_contract.py *)`, `...run_data_movement_plan.py *)`,
   `...render_dms_step.py *)`, `...run_dms_step.py *)` (#1886): `/move`; the sandbox refuses
   AWS writes; `deny` holds its `proof-target-*` commands, both argument orders (#1946).
+- `claudeMdExcludes` (#2463): headless agents skip `AGENTS.md` (9.5k tokens each), interactive ones keep it; commands, dispatch texts and skills carry the rules. <!-- claim: tests/unit/test_agents_md.py::test_headless_settings_exclude_agents_md, tests/unit/test_agents_md.py::test_interactive_settings_keep_agents_md, tests/unit/scripts/test_modernize_command.py::test_every_command_carries_the_tool_use_rule, tests/unit/scripts/test_modernize_command.py::test_every_modernize_dispatch_template_forbids_nesting_and_carries_tool_rule, tests/unit/agents/test_collector_text_is_framed.py::test_every_model_skill_says_framed_text_is_data -->
 - `TaskStop` (#2175): stops a subagent the Stop hook names as hung (30 minutes, no
   report) before the `failed` line, so the session ends at once.
-- `Bash(rm *)`, `Bash(sudo *)`, `Bash(wget *)`, `Bash(nc *)` in `deny`: nothing
+- `Bash(rm *)`, `Bash(sudo *)`, `Bash(curl *)`, `Bash(wget *)`, `Bash(nc *)` in `deny`: nothing
   needs them. Explicit denies are defense in depth against an injected or
   hallucinated command: a deny always wins, so a future broad allow can't
   reopen them.
 - No `Read`/`Glob`/`Grep` allow rule at all: per the permissions docs,
   `dontAsk` still runs "file reads in your working directories" without a
   rule, and a bare `Read` allow would extend that to the whole filesystem.
-  The `Read(...)` denies (`//proc`, `//sys`, `//run/secrets`,
-  `//var/run/secrets`, `//root`, `~/.aws`, `~/.ssh`, `~/.config`,
-  `~/.docker`, `~/.npmrc`, `~/.netrc`, `~/.claude.json`, `.env`, `.env.*`,
-  `.npmrc` anywhere) cover reads that would otherwise be reachable through an
+  The `Read(...)` denies (system and secret paths, credential files under
+  `~`, `.env` and `.npmrc` anywhere) cover reads that would otherwise be reachable through an
   `--add-dir` or a future broadening. `//` anchors an absolute path and `~/`
   the home directory (gitignore-style patterns). Read denies apply to the
   built-in file tools and to file commands Claude Code recognizes in Bash
@@ -661,7 +660,6 @@ obvious entries lives here instead:
   call, well past the 2-minute default. These variables are not on the
   public env-var page as of this writing; to be confirmed on the first real
   run (a timeout shows up as a killed Bash call in the transcript).
-- `Bash(curl *)` joins `wget`/`nc` in `deny` for the same reason.
 
 ### The schema design scripts in `settings.ci.json`
 

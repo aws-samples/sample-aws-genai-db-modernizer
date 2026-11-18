@@ -3,17 +3,24 @@
 
 """AGENTS.md / CLAUDE.md stay accurate and never contradict the headless commands (#300).
 
-Claude Code loads CLAUDE.md (which imports AGENTS.md) in every session,
-including headless ``/modernize --auto`` runs, so AGENTS.md must carry the
-shared tool-use rule word for word, must not ask or wait for the user, and must
-not suggest Bash tools the rule forbids. Every command, path, flag and name it
-cites must exist in the repo, so the guide cannot silently go stale.
+Claude Code loads CLAUDE.md (which imports AGENTS.md) in every interactive
+session, including a ``/modernize`` run started by hand, so AGENTS.md must carry
+the shared tool-use rule word for word, must not ask or wait for the user, and
+must not suggest Bash tools the rule forbids. Headless runs leave it out
+(``claudeMdExcludes`` in ``.claude/settings.ci.json``, #2463): the commands carry
+every rule the pipeline follows, and the guide would cost every agent context
+about 9.5k tokens. Every command, path, flag and name it cites must exist in the
+repo, so the guide cannot silently go stale.
 """
 
 from __future__ import annotations
 
+import json
 import re
 from pathlib import Path
+from typing import Any
+
+import pytest
 
 from tests.unit.scripts.test_modernize_command import (
     AUTO_EXEMPTION_PATTERN,
@@ -70,6 +77,32 @@ def _make_targets() -> set[str]:
 
 
 def test_claude_md_imports_agents_md() -> None:
+    assert CLAUDE_MD.read_text().strip() == "@AGENTS.md"
+
+
+def _settings(name: str) -> dict[str, Any]:
+    settings: dict[str, Any] = json.loads((REPO_ROOT / ".claude" / name).read_text())
+    return settings
+
+
+def test_headless_settings_exclude_agents_md() -> None:
+    """#2463: pipeline agents never load the contributor guide.
+
+    ``ci/e2e-llm.sh`` passes settings.ci.json with ``--settings``; the pattern is
+    matched against the absolute path of each memory file, so it must reach the
+    repo's AGENTS.md wherever the clone lives.
+    """
+    excludes = _settings("settings.ci.json")["claudeMdExcludes"]
+    assert excludes == ["**/AGENTS.md"]
+    e2e_llm = (REPO_ROOT / "ci" / "e2e-llm.sh").read_text()
+    assert '--settings "$REPO_ROOT/.claude/settings.ci.json"' in e2e_llm
+
+
+# Guards what main already does: the exclusion stays out of interactive sessions.
+@pytest.mark.passes_on_main
+def test_interactive_settings_keep_agents_md() -> None:
+    """Contributor sessions still load the guide through CLAUDE.md's import."""
+    assert "claudeMdExcludes" not in _settings("settings.json")
     assert CLAUDE_MD.read_text().strip() == "@AGENTS.md"
 
 

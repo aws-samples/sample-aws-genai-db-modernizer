@@ -1,4 +1,7 @@
 {
+  "claudeMdExcludes": [
+    "**/AGENTS.md"
+  ],
   "permissions": {
     "allow": [
       "Edit(artifacts/**)",
