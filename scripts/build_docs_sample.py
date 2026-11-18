@@ -243,10 +243,9 @@ def update_scan_baseline(
     Returns the number of entries per file.
     """
     from detect_secrets import SecretsCollection
-    from detect_secrets.core import baseline as ds_baseline
+    from detect_secrets.settings import transient_settings
 
     data = json.loads(baseline_file.read_text(encoding="utf-8"))
-    ds_baseline.load(data, str(baseline_file))  # the baseline's plugins and filters
     prefix = run_dir.resolve().relative_to(root.resolve()).as_posix() + "/"
     files = sorted(
         p.resolve().relative_to(root.resolve()).as_posix()
@@ -254,8 +253,11 @@ def update_scan_baseline(
         if p.is_file()
     )
     scanned = SecretsCollection(root=str(root))
-    for rel in files:
-        scanned.scan_file(rel)
+    # The baseline's plugins and filters apply for this scan only: detect-secrets keeps
+    # them process-wide, and later scans in the process must not inherit them (#2422).
+    with transient_settings(data):
+        for rel in files:
+            scanned.scan_file(rel)
     # The collection names each entry by its scanned (absolute) path; the baseline
     # names files relative to the repository, and must carry no local path.
     found = {_relative_to(name, root): entries for name, entries in scanned.json().items()}
