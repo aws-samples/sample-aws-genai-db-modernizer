@@ -8,9 +8,12 @@ import Box from "@cloudscape-design/components/box";
 import SpaceBetween from "@cloudscape-design/components/space-between";
 import ExpandableSection from "@cloudscape-design/components/expandable-section";
 import Badge from "@cloudscape-design/components/badge";
+import StatusIndicator from "@cloudscape-design/components/status-indicator";
 import EngineBadge from "./EngineBadge";
 import AdoptionPathPanel from "./AdoptionPathPanel";
 import WaveStages from "./WaveStages";
+import RoutineMigrationSection from "./RoutineMigrationSection";
+import EngineChoicesNote from "./EngineChoicesNote";
 import {
   heterogeneousNote, migrationWaves, waveCount, waveGaps, waveHeadline, waveMovesNothing, waveReadiness,
   waveTitle,
@@ -44,7 +47,11 @@ import {
  * next step (facts.waves[].readiness_line, #1992), and the rule is stated once.
  *
  * The plan states once that the cutover is the customer's (facts.cutover_responsibility,
- * #2107), as both reports do.
+ * #2107), as both reports do, in the roadmap header's description (#2318).
+ *
+ * #2318: a wave's readiness is a status ("Suggested, 5 warnings to accept") beside the
+ * facts' readiness line, shown whole as the reports print it. Wave 1 also holds what the plan has to do before it, in the plan itself: the
+ * routines (facts.routines) and the engine choices made automatically.
  *
  * #1132: above the wave cards, the adoption paths (AdoptionPathPanel): a selector, the
  * selected path's tiles and the one-step option; each card states its steps and stages
@@ -69,9 +76,37 @@ const INLINE_TOGGLE_STYLE = {
   textDecoration: 'underline dotted',
 };
 
-// #1992: a suggested wave reads as success, a held one as a warning; a wave not designed
-// or not reviewed yet is neither.
-const READINESS_COLOR = { suggested: 'text-status-success', held: 'text-status-warning' };
+// #1992, #2318: a suggested wave is a success unless a warning is still to accept; a held
+// one is a warning; a wave not designed or not reviewed yet is pending.
+function readinessType(view) {
+  if (view.readiness === 'suggested') return view.openWarnings > 0 ? 'warning' : 'success';
+  if (view.readiness === 'held') return 'warning';
+  return view.readiness ? 'pending' : 'info';
+}
+
+function readinessText(view, t) {
+  if (view.readiness === 'suggested') {
+    return view.openWarnings > 0
+      ? t('analysis-results.waves.readiness-status.suggested-warnings', { count: view.openWarnings })
+      : t('analysis-results.waves.readiness-status.suggested');
+  }
+  return view.readiness ? t(`analysis-results.waves.readiness-status.${view.readiness}`) : null;
+}
+
+// The wave's readiness: a status, and the facts' line whole beside it, as every report
+// prints it. The status never replaces or trims the line.
+function WaveReadiness({ view, t }) {
+  const text = readinessText(view, t);
+  return (
+    <div data-figure="wave-readiness" data-readiness={view.readiness || ''}>
+      <SpaceBetween size="xxs">
+        <Box variant="awsui-key-label">{t('analysis-results.waves.readiness-label')}</Box>
+        {text && <StatusIndicator type={readinessType(view)}>{text}</StatusIndicator>}
+        <Box><span data-figure="wave-readiness-line">{view.line}</span></Box>
+      </SpaceBetween>
+    </div>
+  );
+}
 
 const HIDE_TOGGLE_STYLE = { ...INLINE_TOGGLE_STYLE, textDecoration: 'none', marginLeft: '0.2em' };
 
@@ -150,7 +185,15 @@ const MigrationWavePlan = memo(({ synthesis, t, schemaSectionId }) => {
   const [chosenPathId, setChosenPathId] = useState(null);
   const [showAllPaths, setShowAllPaths] = useState(false);
   const waves = migrationWaves(synthesis);
-  if (waves.length === 0) return null;
+  // No waves: the routines and the pending engine choices still show, on their own.
+  if (waves.length === 0) {
+    return (
+      <>
+        <RoutineMigrationSection synthesis={synthesis} t={t} />
+        <EngineChoicesNote synthesis={synthesis} t={t} />
+      </>
+    );
+  }
   const count = waveCount(synthesis);
   const adoption = adoptionOf(synthesis);
   const plan = slicePlanOf(synthesis);
@@ -165,11 +208,17 @@ const MigrationWavePlan = memo(({ synthesis, t, schemaSectionId }) => {
           <Header
             variant="h2"
             counter={count === null ? undefined : t('analysis-results.waves.counter', { count })}
-            description={adoption && adoption.one_step
-              ? t('analysis-results.waves.suggested-path-adoption')
-              : t('analysis-results.waves.suggested-path', {
-                section: t('analysis-results.executive-summary.title'),
-              })}
+            description={(
+              <>
+                {adoption && adoption.one_step
+                  ? t('analysis-results.waves.suggested-path-adoption')
+                  : t('analysis-results.waves.suggested-path', {
+                    section: t('analysis-results.executive-summary.title'),
+                  })}
+                {' '}
+                <span data-figure="cutover-responsibility">{cutoverResponsibilityOf(synthesis)}</span>
+              </>
+            )}
           >
             {t('analysis-results.waves.title')}
           </Header>
@@ -195,15 +244,12 @@ const MigrationWavePlan = memo(({ synthesis, t, schemaSectionId }) => {
               t={t}
             />
           )}
-          <Box>
-            <span data-figure="cutover-responsibility">{cutoverResponsibilityOf(synthesis)}</span>
-          </Box>
           {waves.some(w => waveReadiness(synthesis, w)) && (
             <Box fontSize="body-s" color="text-body-secondary">
               <span data-figure="wave-readiness-rule">{t('analysis-results.waves.readiness-rule')}</span>
             </Box>
           )}
-          {waves.map((wave) => {
+          {waves.map((wave, index) => {
             const phase = wavePhase(plan, wave.wave);
             const leftOut = pathLeavesWaveOut(greying, phase);
             return (
@@ -253,14 +299,7 @@ const MigrationWavePlan = memo(({ synthesis, t, schemaSectionId }) => {
                   <div data-figure="wave-gate"><GateText wave={wave} t={t} /></div>
                 )}
                 {waveReadiness(synthesis, wave) && (
-                  <Box color={READINESS_COLOR[waveReadiness(synthesis, wave).readiness] || 'text-body-secondary'}>
-                    <span
-                      data-figure="wave-readiness"
-                      data-readiness={waveReadiness(synthesis, wave).readiness || ''}
-                    >
-                      {t('analysis-results.waves.readiness', { line: waveReadiness(synthesis, wave).line })}
-                    </span>
-                  </Box>
+                  <WaveReadiness view={waveReadiness(synthesis, wave)} t={t} />
                 )}
                 {heterogeneousNote(synthesis, wave) && (
                   <div data-figure="wave-heterogeneous-note">{heterogeneousNote(synthesis, wave)}</div>
@@ -281,6 +320,8 @@ const MigrationWavePlan = memo(({ synthesis, t, schemaSectionId }) => {
                     </ul>
                   </div>
                 )}
+                {index === 0 && <RoutineMigrationSection synthesis={synthesis} t={t} />}
+                {index === 0 && <EngineChoicesNote synthesis={synthesis} t={t} />}
                 {phase && <WaveStages plan={plan} wave={wave.wave} path={greying} t={t} />}
                 {!waveMovesNothing(synthesis, wave) && (wave.tables || []).length > 0 && (
                   <ExpandableSection headerText={t('analysis-results.waves.tables')} variant="footer">

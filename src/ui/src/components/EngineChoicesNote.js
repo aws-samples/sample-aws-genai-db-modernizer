@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: MIT-0
 
 import { memo } from 'react';
-import Alert from "@cloudscape-design/components/alert";
+import StatusIndicator from "@cloudscape-design/components/status-indicator";
 import { engineChoiceCountsOf } from "../utils/reportFacts";
 
 /**
@@ -10,6 +10,7 @@ import { engineChoiceCountsOf } from "../utils/reportFacts";
  * engineering report and the PDF state, from report.json's facts: the tables
  * whose queries still tie between engines (a choice for the customer), and the
  * choices the decide-for-me rule settled (decided automatically, review if needed).
+ * #2318: two status lines inside wave 1 of the roadmap, not alerts of their own.
  */
 // #2147: "2 tables and 1 statement with no source table", from the facts' split.
 function choiceScope(tables, noTable, t) {
@@ -27,7 +28,7 @@ const EngineChoicesNote = memo(({ synthesis, t }) => {
   return (
     <div id="engine-choices-note">
       {n.pendingTables > 0 && (
-        <Alert type="warning">
+        <div><StatusIndicator type="warning">
           {n.pendingNoTable > 0
             ? t('analysis-results.pending-choices-split', {
                 count: n.pendingTables,
@@ -38,10 +39,10 @@ const EngineChoicesNote = memo(({ synthesis, t }) => {
                 count: n.pendingTables,
                 queries: t('analysis-results.choice-queries', { count: n.pendingQueries }),
               })}
-        </Alert>
+        </StatusIndicator></div>
       )}
       {n.decidedTables > 0 && (
-        <Alert type="info">
+        <div><StatusIndicator type="info">
           {n.decidedNoTable > 0
             ? t('analysis-results.auto-decided-choices-split', {
                 what: choiceScope(n.decidedTableChoices, n.decidedNoTable, t),
@@ -51,7 +52,7 @@ const EngineChoicesNote = memo(({ synthesis, t }) => {
                 count: n.decidedTables,
                 queries: t('analysis-results.choice-queries', { count: n.decidedQueries }),
               })}
-        </Alert>
+        </StatusIndicator></div>
       )}
     </div>
   );

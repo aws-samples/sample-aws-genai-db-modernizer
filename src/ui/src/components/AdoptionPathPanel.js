@@ -5,7 +5,8 @@ import { useContext } from "react";
 import Box from "@cloudscape-design/components/box";
 import SpaceBetween from "@cloudscape-design/components/space-between";
 import ColumnLayout from "@cloudscape-design/components/column-layout";
-import ToggleButton from "@cloudscape-design/components/toggle-button";
+import SegmentedControl from "@cloudscape-design/components/segmented-control";
+import Select from "@cloudscape-design/components/select";
 import Button from "@cloudscape-design/components/button";
 import ExpandableSection from "@cloudscape-design/components/expandable-section";
 import Link from "@cloudscape-design/components/link";
@@ -35,6 +36,9 @@ import {
  */
 
 const CHIPS_STYLE = { display: 'flex', flexWrap: 'wrap', gap: '8px', alignItems: 'center' };
+// A SegmentedControl holds at most six segments; "Show all" can list more paths, and then
+// the same choice is a Select.
+const MAX_SEGMENTS = 6;
 const CHECKS_TABLE_STYLE = { borderCollapse: 'collapse' };
 const CELL_STYLE = { textAlign: 'left', padding: '2px 16px 2px 0' };
 
@@ -105,7 +109,11 @@ function OneStepOption({ adoption, pointer, schemaSectionId, t }) {
   };
   return (
     <div data-figure="one-step-option">
-      <ExpandableSection headerText={t('analysis-results.adoption.one-step.show')} variant="container">
+      <ExpandableSection
+        headerText={t('analysis-results.adoption.one-step.show')}
+        variant="container"
+        headingTagOverride="h4"
+      >
         <SpaceBetween size="s">
           <ul>
             <li data-figure="one-step-in-place">
@@ -191,17 +199,24 @@ export default function AdoptionPathPanel({
             <span>{introText(t, plan)}</span>
           </SpaceBetween>
         </Box>
-        <div role="group" aria-label={t('analysis-results.adoption.selector-label')} style={CHIPS_STYLE}>
-          {chips.map(path => (
-            <span key={path.path_id} data-path={path.path_id}>
-              <ToggleButton
-                pressed={path.path_id === selected.path_id}
-                onChange={() => onSelect(path.path_id)}
-              >
-                {pathLabel(t, path, defaultId)}
-              </ToggleButton>
-            </span>
-          ))}
+        <div style={CHIPS_STYLE}>
+          <span data-figure="adoption-path-selector">
+            {chips.length > MAX_SEGMENTS ? (
+              <Select
+                ariaLabel={t('analysis-results.adoption.selector-label')}
+                selectedOption={{ value: selected.path_id, label: pathLabel(t, selected, defaultId) }}
+                options={chips.map(path => ({ value: path.path_id, label: pathLabel(t, path, defaultId) }))}
+                onChange={({ detail }) => onSelect(detail.selectedOption.value)}
+              />
+            ) : (
+              <SegmentedControl
+                label={t('analysis-results.adoption.selector-label')}
+                selectedId={selected.path_id}
+                options={chips.map(path => ({ id: path.path_id, text: pathLabel(t, path, defaultId) }))}
+                onChange={({ detail }) => onSelect(detail.selectedId)}
+              />
+            )}
+          </span>
           {capped && (
             <span data-figure="adoption-show-all">
               <Button variant="inline-link" onClick={() => onShowAll(!showAll)}>

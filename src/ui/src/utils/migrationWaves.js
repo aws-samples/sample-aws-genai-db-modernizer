@@ -118,9 +118,15 @@ export function waveGaps(synthesis, wave) {
 
 // #1992: the wave's readiness (facts.waves[].readiness: suggested, held, not_designed
 // or not_reviewed) and its line, read as stored. Null for a report written before the
-// check.
+// check. #2318: `openWarnings` is the count the facts state of the design review
+// warnings still to accept; the page shows it in the status beside the line, and the
+// line itself is always shown whole, as the reports print it.
 export function waveReadiness(synthesis, wave) {
   const wf = waveFacts(synthesis, wave);
   if (!wf || typeof wf.readiness_line !== 'string' || !wf.readiness_line) return null;
-  return { readiness: wf.readiness || null, line: wf.readiness_line };
+  return {
+    readiness: wf.readiness || null,
+    line: wf.readiness_line,
+    openWarnings: typeof wf.open_warning_count === 'number' ? wf.open_warning_count : 0,
+  };
 }
