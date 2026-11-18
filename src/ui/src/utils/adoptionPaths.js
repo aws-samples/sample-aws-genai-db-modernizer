@@ -354,10 +354,10 @@ export function unitText(t, unit, plan) {
 // ---- The one-step option (#473) ----
 
 // The section of the results page the one-step option links to: the purpose-built
-// designs' explorer, else the table design, else none (the option then points at the
-// executive summary's target architecture).
-export function schemaSectionIdOf(hasExplorer, hasTableDesign) {
-  if (hasExplorer) return 'access-patterns-section';
+// designs' source tables (#2446), else the table design, else none (the option then
+// points at the executive summary's target architecture).
+export function schemaSectionIdOf(hasPatterns, hasTableDesign) {
+  if (hasPatterns) return 'source-tables-section';
   if (hasTableDesign) return 'table-design-section';
   return null;
 }

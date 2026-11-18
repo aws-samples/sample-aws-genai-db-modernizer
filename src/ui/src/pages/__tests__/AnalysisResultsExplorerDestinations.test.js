@@ -4,6 +4,8 @@
 /**
  * #2320: the explorer's "By source table" view lists each destination once per source
  * table, shows the first three and puts the rest behind "+N more", and wraps its lines.
+ * #2446: the view is the Data model tab's Source tables section now, with no mode to
+ * pick, and the cache layer's key designs join their source table's row.
  * The page's own grouping feeds the cell; the cell itself is covered in
  * components/__tests__/DestinationTables.test.js.
  *
@@ -87,7 +89,7 @@ jest.mock('@cloudscape-design/components/table', () => ({
         {items.map((item) => (
           <div key={item.table} data-row={item.table}>
             {col.cell(item)}
-            <span data-converge>{columnDefinitions.find((c) => c.id === 'convergence').cell(item)}</span>
+            <span data-converge>{columnDefinitions.find((c) => c.id === 'merged_with').cell(item)}</span>
           </div>
         ))}
       </div>
@@ -165,9 +167,6 @@ async function openSourceView(designs, cacheOverlay, synthesis) {
   await act(async () => {
     root.render(<AnalysisResults />);
   });
-  await act(async () => {
-    container.querySelector('[data-mode="source"]').click();
-  });
 }
 
 const rows = () => [...container.querySelectorAll('[data-row]')];
@@ -207,7 +206,7 @@ test('the source-table rows wrap', async () => {
   expect(container.querySelector('[data-source-table]').getAttribute('data-wrap')).toBe('true');
 });
 
-// The cache layer's own "By source table" section reads the same cell.
+// The cache layer's key designs join their source table's row (#2446) and read the same cell.
 const cachePattern = (id, keyPattern, sources) => ({
   pattern_id: id,
   engine: 'elasticache',
@@ -229,12 +228,8 @@ test('the cache layer rows list their key patterns', async () => {
     { engine: 'elasticache', query_count: 3, owners: { dynamodb: 3 }, patterns: {} },
   );
   const sections = [...container.querySelectorAll('[data-source-table]')];
-  expect(sections.length).toBe(2);
-  const cacheRow = sections[1].querySelector('[data-row="topics"]');
-  expect([...cacheRow.querySelectorAll('[data-testid="dest-name"]')].map((n) => n.textContent)).toEqual([
-    'topics:{id}',
-    'topics:by_user:{uid}',
-  ]);
+  expect(sections.length).toBe(1);
+  expect(rowNames('topics')).toEqual(['topics', 'topics:{id}', 'topics:by_user:{uid}']);
 });
 
 const fs = require('fs');
@@ -250,11 +245,14 @@ test('the saved wordpress run: no cache row loses its keys, and rows with a dest
   });
   await openSourceView(designs, report.cache_overlay, report);
   const sections = [...container.querySelectorAll('[data-source-table]')];
-  expect(sections.length).toBe(2);
-  const cacheRows = [...sections[1].querySelectorAll('[data-row]')];
-  expect(cacheRows.length).toBeGreaterThan(0);
-  cacheRows.forEach((r) => {
-    expect(r.querySelectorAll('[data-testid="dest-name"]').length).toBeGreaterThan(0);
+  expect(sections.length).toBe(1);
+  const cached = new Set(designs.find((d) => d.target_type === 'elasticache').content.access_patterns
+    .flatMap((ap) => ap.source_tables || []).map((t) => t.split('.').pop()));
+  expect(cached.size).toBeGreaterThan(0);
+  cached.forEach((table) => {
+    const row = container.querySelector(`[data-row="${table}"]`);
+    expect(row).not.toBeNull();
+    expect(row.querySelectorAll('[data-testid="dest-name"]').length).toBeGreaterThan(0);
   });
 });
 
@@ -265,8 +263,8 @@ test('two source tables on one destination of one engine converge', async () => 
   await openSourceView([
     designOf('dynamodb', [pat('A', 'dynamodb', 'orders', ['public.a']), pat('B', 'dynamodb', 'orders', ['public.b'])]),
   ]);
-  expect(converge('a')).toBe('analysis-results.explorer.merged-badge|1');
-  expect(converge('b')).toBe('analysis-results.explorer.merged-badge|1');
+  expect(converge('a')).toBe('b');
+  expect(converge('b')).toBe('a');
 });
 
 test('the same name on two engines is not a convergence', async () => {
@@ -292,5 +290,5 @@ test('a named destination still converges when an Aurora join reads the same tab
     designOf('aurora_mysql', [join]),
     designOf('dynamodb', [pat('A', 'dynamodb', 'orders', ['public.a']), pat('B', 'dynamodb', 'orders', ['public.b'])]),
   ]);
-  expect(converge('a')).toBe('analysis-results.explorer.merged-badge|1');
+  expect(converge('a')).toBe('b');
 });

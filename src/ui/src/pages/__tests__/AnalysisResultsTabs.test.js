@@ -98,8 +98,7 @@ test('the page\'s own jumps go through the tabs too', () => {
   expect(src(attr(provider[0], 'value').value)).toBe('{goToSection}');
   expect(provider[0].start).toBeLessThan(RESULTS_TABS_ELEMENT[0].start);
   expect(provider[0].end).toBeGreaterThan(RESULTS_TABS_ELEMENT[0].end);
-  expect(SOURCE).toMatch(/goToSection\('access-patterns-section'\)/);
-  expect(SOURCE).not.toMatch(/getElementById\('access-patterns-section'\)/);
+  expect(SOURCE).not.toMatch(/getElementById\(/);
 });
 
 test('the risk assessment and the trade-offs carry the ids their anchors use', () => {

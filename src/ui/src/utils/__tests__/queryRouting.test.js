@@ -180,3 +180,52 @@ test('the excerpt stops at a word, never inside a token, and the statement keeps
   expect(cut.slice(0, -1)).toMatch(/column_name,$|column_name$/);
   expect(flattenSql(sql).endsWith('FROM some_table')).toBe(true);
 });
+
+// #2446: the access pattern explorer's operation type filter is a property of the query
+// table: a query's types are its patterns' operation types, else its statement's.
+describe('operation types', () => {
+  const typed = [
+    { query_id: 't1', source: { query_text: 'SELECT 1', query_type: 'SELECT', tables_accessed: ['wp_posts'] }, assignment: { assigned_engine: 'opensearch' } },
+    { query_id: 't2', source: { query_text: 'SELECT 2', query_type: 'SELECT', tables_accessed: ['wp_posts'] }, assignment: { assigned_engine: 'dynamodb' } },
+    { query_id: 't3', source: { query_text: 'DELETE FROM t', query_type: 'DELETE', tables_accessed: ['t'] }, assignment: { assigned_engine: 'aurora_mysql' } },
+    { query_id: 't4', source: { query_text: 'x', tables_accessed: [] }, assignment: null },
+  ];
+  const typedLinks = queryPatternLinks(
+    [
+      { engine: 'opensearch', opCategory: 'search', queryIds: ['t1'], destNames: [] },
+      { engine: 'dynamodb', opCategory: 'read', queryIds: ['t2'], destNames: [] },
+    ],
+    [{ engine: 'elasticache', opCategory: 'write', queryIds: ['t2'] }],
+  );
+  const rows = buildQueryRoutingRows(typed, new Map(), labels, typedLinks);
+  const typeIds = (value, operator = '=') => filterQueryRows(rows, { operation: 'and', tokens: [{ propertyKey: 'opType', operator, value }] }).map(r => r.queryId);
+
+  test('a query takes the types of the patterns that serve it, in the filter\'s order', () => {
+    expect(rows.map(r => r.opTypes)).toEqual([['search'], ['read', 'write'], ['delete'], []]);
+  });
+
+  test('without a pattern a query has its statement\'s type, and without one none', () => {
+    const bare = buildQueryRoutingRows(typed, new Map(), labels);
+    expect(bare.map(r => r.opTypes)).toEqual([['read'], ['read'], ['delete'], []]);
+  });
+
+  // #2480 review: a MERGE writes, and OTHER (SHOW, SET SESSION) is no read.
+  test('without a pattern a MERGE is a write and OTHER is other, never read', () => {
+    const stmt = (id, type) => ({ query_id: id, source: { query_text: 'x', query_type: type, tables_accessed: [] }, assignment: null });
+    const bare = buildQueryRoutingRows(
+      [stmt('m', 'MERGE'), stmt('o', 'OTHER'), stmt('s', 'SHOW'), stmt('i', 'INSERT'), stmt('u', 'UPDATE')],
+      new Map(), labels,
+    );
+    expect(bare.map(r => r.opTypes)).toEqual([['write'], ['other'], ['other'], ['write'], ['update']]);
+    const ofType = value => filterQueryRows(bare, { operation: 'and', tokens: [{ propertyKey: 'opType', operator: '=', value }] }).map(r => r.queryId);
+    expect(ofType('other')).toEqual(['o', 's']);
+    expect(ofType('read')).toEqual([]);
+  });
+
+  test('the operation type token filters, and its negation keeps the rest', () => {
+    expect(typeIds('search')).toEqual(['t1']);
+    expect(typeIds('read')).toEqual(['t2']);
+    expect(typeIds('write')).toEqual(['t2']);
+    expect(typeIds('read', '!=')).toEqual(['t1', 't3', 't4']);
+  });
+});

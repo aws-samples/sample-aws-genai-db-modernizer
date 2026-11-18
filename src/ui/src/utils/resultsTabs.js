@@ -47,7 +47,6 @@ export const RESULTS_TABS = [
     labelKey: 'analysis-results.tabs.queries',
     sections: [
       section('query-routing-section', anchor('query-routing')),
-      section('access-patterns-section', anchor('access-patterns')),
     ],
   },
   {
@@ -56,6 +55,7 @@ export const RESULTS_TABS = [
     sections: [
       section('table-owners-section', anchor('table-owners')),
       section('table-design-section', anchor('table-design')),
+      section('source-tables-section', anchor('source-tables')),
     ],
   },
   {
@@ -97,15 +97,24 @@ export function tabOfAnchor(id) {
   return (id && Object.prototype.hasOwnProperty.call(TAB_OF_ANCHOR, id)) ? TAB_OF_ANCHOR[id] : null;
 }
 
-// The id a location hash names, without its '#', or null for none.
+// #2446: sections that were folded into another. A link made before keeps landing:
+// the access pattern explorer's rows are the query table's now.
+const SECTION_ALIASES = {
+  'access-patterns-section': 'query-routing-section',
+};
+
+// The id a location hash names, without its '#', or null for none. A folded
+// section's old id names the section that holds it now.
 export function hashId(hash) {
   const raw = String(hash || '').replace(/^#/, '');
   if (!raw) return null;
+  let id;
   try {
-    return decodeURIComponent(raw);
+    id = decodeURIComponent(raw);
   } catch {
-    return raw;
+    id = raw;
   }
+  return Object.prototype.hasOwnProperty.call(SECTION_ALIASES, id) ? SECTION_ALIASES[id] : id;
 }
 
 // The tab a URL opens: the tab of the section its hash names, else the tab `?tab=`

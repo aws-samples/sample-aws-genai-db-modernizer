@@ -111,8 +111,8 @@ TAB_SECTIONS = {
         "close-calls-section",
         "unreviewed-moves-note",
     ],
-    "queries": ["query-routing-section", "access-patterns-section"],
-    "data-model": ["table-owners-section", "table-design-section"],
+    "queries": ["query-routing-section"],
+    "data-model": ["table-owners-section", "table-design-section", "source-tables-section"],
     "risks": [
         "risk-assessment-section",
         "dynamodb-merge-conflicts",
@@ -664,11 +664,12 @@ def test_old_pattern_analysis_link_lands_on_the_engine_in_the_results_page(
     page: Page, ui: str, all_runs: list[PipelineResult]
 ) -> None:
     """#2300: the pattern-analysis page is gone; its old URL redirects to the results
-    page. A designed job lands on the explorer filtered to a NoSQL target, with the
-    counter and the token the explorer's own picker would show, and on the Table design
-    of an Aurora target; focus moves to that section. A job without a design only has to
-    reach the results page. #2313: the explorer is on the Queries tab and the Table design
-    on the Data model tab; the link opens that tab and the URL names it."""
+    page. A designed job lands on the query table filtered to a NoSQL target (#2446: the
+    explorer folded into it), with the counter and the token the table's own picker
+    would show, and on the Table design of an Aurora target; focus moves to that section.
+    A job without a design only has to reach the results page. #2313: the query table
+    is on the Queries tab and the Table design on the Data model tab; the link opens
+    that tab and the URL names it. The cache layer's link filters to cached queries."""
     checked = 0
     for r in all_runs:
         ev = _watch(page)
@@ -679,7 +680,7 @@ def test_old_pattern_analysis_link_lands_on_the_engine_in_the_results_page(
         expect(page.locator(TAB_READY["queries"])).to_be_visible(timeout=READY_MS)
         expect(page).to_have_url(
             re.compile(
-                rf"/analysis/results/{r.job_id}\?engine=dynamodb&tab=queries#access-patterns-section$"
+                rf"/analysis/results/{r.job_id}\?engine=dynamodb&tab=queries#query-routing-section$"
             ),
             timeout=READY_MS,
         )
@@ -691,18 +692,32 @@ def test_old_pattern_analysis_link_lands_on_the_engine_in_the_results_page(
             continue  # a real run's engine plan is its own; the deterministic job is fixed
         ev = _watch(page)
         page.goto(f"{ui}/analysis/patterns/{r.job_id}?target=dynamodb")
-        section = page.locator("#access-patterns-section")
+        section = page.locator("#query-routing-section")
         expect(section).to_be_visible(timeout=READY_MS)
+        _wait_for_query_routing_rows(section, r, ev)
         header = section.locator("h2").first
-        expect(header).to_contain_text(re.compile(r"\(\d+ of \d+\)"), timeout=READY_MS)
-        shown, total = map(int, re.search(r"\((\d+) of (\d+)\)", header.inner_text()).groups())  # type: ignore[union-attr]
+        expect(header).to_contain_text(re.compile(r"\([\d,]+ of [\d,]+\)"), timeout=READY_MS)
+        found = re.search(r"\(([\d,]+) of ([\d,]+)\)", header.inner_text())
+        assert found, header.inner_text()
+        shown, total = (int(g.replace(",", "")) for g in found.groups())
         assert 0 < shown < total, (r.job_id, shown, total)
-        # The token reads as the one the explorer's own engine picker gives.
-        expect(section.get_by_text(re.compile(r"^DynamoDB \(\d+\)$")).first).to_be_visible()
+        # The token reads as the engine's name, as the table's own engine picker gives.
+        expect(section).to_contain_text(re.compile(r"Engine\s*=\s*DynamoDB"))
         assert page.evaluate("document.activeElement && document.activeElement.id") == (
-            "access-patterns-section"
+            "query-routing-section"
         ), r.job_id
         assert ev == {"console": [], "pageerror": [], "failed": []}, (r.job_id, ev)
+        # #2480 review: the cache layer owns no query, so its link lists the queries it
+        # caches ("Cached = Yes"), never an engine filter that would match none.
+        overlay = json.loads(r.report_json().read_text()).get("cache_overlay")
+        cache = overlay.get("engine") if isinstance(overlay, dict) else None
+        if cache:
+            page.goto(f"{ui}/analysis/results/{r.job_id}?engine={cache}#query-routing-section")
+            _wait_for_query_routing_rows(section, r, ev)
+            expect(section).to_contain_text(re.compile(r"Cached\s*=\s*Yes"), timeout=READY_MS)
+            assert not re.search(r"Engine\s*=", section.inner_text()), r.job_id
+            # The filter's own words resolve: no raw locale key (e.g. its Clear filters).
+            assert "analysis-results." not in section.inner_text(), r.job_id
         for engine in _designed_aurora_engines(r):
             page.goto(f"{ui}/analysis/patterns/{r.job_id}?target={engine}")
             expect(page.locator("#table-design-section")).to_be_visible(timeout=READY_MS)
@@ -2836,10 +2851,10 @@ def test_the_designed_job_renders_the_schema_design_panels(
     loaded_results: OpenResults, all_runs: list[PipelineResult]
 ) -> None:
     """#987: the suite always has a job with schema designs, so the checks above
-    also cover the panels only a schema-designed run shows: the explorer with
-    its selection tables, the design trade-offs, the Table design when an
-    Aurora engine was designed, and the explorer's pager on the deterministic
-    fixture (which has more than one page). Fails when no such job renders them."""
+    also cover the panels only a schema-designed run shows: the source tables
+    (#2446, the explorer's by-source-table view), the design trade-offs and the
+    Table design when an Aurora engine was designed. Fails when no such job
+    renders them."""
     designed = _designed_runs(all_runs)
     assert designed, "no job with a schema design in this session"
     if not any(r.external for r in all_runs):
@@ -2848,7 +2863,7 @@ def test_the_designed_job_renders_the_schema_design_panels(
         page, ev = loaded_results(r)
         # #2313: the panels are on the Queries, Data model and Risks and decisions tabs.
         text = "\n".join(page.inner_text("body") for _ in _each_tab(page))
-        headings = ["Access pattern explorer", "Trade-offs and design decisions"]
+        headings = ["Source tables", "Trade-offs and design decisions"]
         aurora = any(
             p.parent.parent.name.startswith("schema-aurora_") for p in real_designs(r.job_dir())
         )
@@ -2865,9 +2880,103 @@ def test_the_designed_job_renders_the_schema_design_panels(
             assert design.locator('[aria-expanded="true"]').count() == 0, r.job_id
         _show_tab(page, "queries")
         assert page.get_by_role("radio").count() > 0, r.job_id
-        if not r.external:
-            assert page.get_by_role("button", name="Next page").count() > 0, r.job_id
+        # #2446: the explorer folded into the query table: one list on the Queries tab.
+        assert "Access pattern explorer" not in text, r.job_id
         assert ev == {"console": [], "pageerror": [], "failed": []}, (r.job_id, ev)
+
+
+def _a_designed_query(r: PipelineResult) -> tuple[str, str] | None:
+    """A query a NoSQL design's access pattern serves, and that design's engine, from the
+    job's schema_output.json files (#2446)."""
+    for path in real_designs(r.job_dir()):
+        engine = path.parent.parent.name.removeprefix("schema-")
+        if engine.startswith("aurora_"):
+            continue
+        design = json.loads(path.read_text())
+        for ap in design.get("access_patterns") or []:
+            ids = ap.get("source_query_ids") or ap.get("query_ids") or []
+            if ids:
+                return ids[0], engine
+    return None
+
+
+@pytest.mark.parametrize("width", [1440, 390])
+def test_a_querys_access_patterns_open_in_its_panel_and_source_tables_on_data_model(
+    page: Page, ui: str, all_runs: list[PipelineResult], width: int
+) -> None:
+    """#2446: the Queries tab lists queries once: the explorer's pattern and cache tables
+    are gone, and a query's access patterns open in its detail panel's Target design tab.
+    The explorer's by-source-table view is the Data model tab's Source tables section,
+    whose rows open their destination designs in a dialog. Axe finds nothing blocking
+    with the panel or the dialog open, and the page does not scroll sideways. #2480
+    review: the Target design tab and the dialog work from the keyboard, and a query
+    opened from the dialog moves focus into its panel."""
+    page.set_viewport_size({"width": width, "height": 900})
+    page.emulate_media(reduced_motion="reduce")
+    checked = 0
+    for r in _designed_runs(all_runs):
+        picked = _a_designed_query(r)
+        if not picked:
+            continue
+        qid, engine = picked
+        ev = _watch(page)
+        _goto_results(page, ui, r, "queries")
+        section = page.locator("#query-routing-section")
+        _wait_for_query_routing_rows(section, r, ev)
+        assert page.locator("#access-patterns-section").count() == 0
+        assert page.get_by_role("heading", name="Access pattern explorer").count() == 0
+        _filter_queries(section, qid)
+        opener = section.get_by_role("button", name=f"{OPEN_TRACE}{qid}")
+        expect(opener).to_be_visible(timeout=READY_MS)
+        opener.click()
+        panel = _query_panel(page, qid)
+        panel.get_by_role("tab", name="General").focus()
+        page.keyboard.press("ArrowRight")
+        page.keyboard.press("Enter")
+        expect(panel.get_by_role("tab", name="Target design")).to_have_attribute(
+            "aria-selected", "true", timeout=READY_MS
+        )
+        heading = re.compile(
+            rf"^{re.escape(ENGINE_LABELS[engine])}( \(cache layer\))? access pattern "
+        )
+        expect(panel.get_by_role("heading", name=heading).first).to_be_visible(timeout=READY_MS)
+        expect(panel).to_contain_text("Destination Table")
+        blocking, where, _ = _axe_blocking(page)
+        assert blocking == [], (r.db, width, "query panel", blocking, where)
+        page.get_by_role("button", name="Close the query details").click()
+        expect(panel).to_be_hidden(timeout=READY_MS)
+
+        _show_tab(page, "data-model")
+        tables = page.locator("#source-tables-section")
+        expect(tables).to_be_visible(timeout=READY_MS)
+        expect(tables.get_by_role("heading", name=re.compile(r"^Source tables"))).to_be_visible()
+        first = tables.get_by_role("button", name=re.compile(r"^Open the target design of ")).first
+        first.focus()
+        page.keyboard.press("Enter")
+        dialog = page.get_by_role("dialog")
+        expect(dialog).to_be_visible(timeout=READY_MS)
+        expect(dialog).to_contain_text("Source table ")
+        blocking, where, _ = _axe_blocking(page)
+        assert blocking == [], (r.db, width, "source table dialog", blocking, where)
+        page.keyboard.press("Escape")
+        expect(dialog).to_be_hidden(timeout=READY_MS)
+        expect(first).to_be_focused(timeout=READY_MS)
+        page.keyboard.press("Enter")
+        expect(dialog).to_be_visible(timeout=READY_MS)
+        query_link = dialog.get_by_role("button", name=re.compile(f"^{re.escape(OPEN_TRACE)}"))
+        expect(query_link.first).to_be_visible(timeout=READY_MS)
+        linked = (query_link.first.get_attribute("aria-label") or "").removeprefix(OPEN_TRACE)
+        query_link.first.focus()
+        page.keyboard.press("Enter")
+        expect(dialog).to_be_hidden(timeout=READY_MS)
+        panel = _query_panel(page, linked)
+        expect(panel.locator("[data-query-detail-focus]")).to_be_focused(timeout=READY_MS)
+        page.get_by_role("button", name="Close the query details").click()
+        expect(panel).to_be_hidden(timeout=READY_MS)
+        assert _page_fits_viewport(page), (width, "the page scrolls sideways")
+        assert ev == {"console": [], "pageerror": [], "failed": []}, (r.job_id, ev)
+        checked += 1
+    assert checked or any(r.external for r in all_runs), "no job with a NoSQL design"
 
 
 def _aurora_design_tables(r: PipelineResult) -> list[str]:

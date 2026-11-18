@@ -111,7 +111,7 @@ test('a query with no performance data says so instead of an empty tab', () => {
 test('the raw JSON is behind a collapsed Developer details section, and no JSON tab exists', () => {
   render();
   const tabs = createWrapper(container).findTabs().findTabLinks().map(l => l.getElement().textContent);
-  expect(tabs).toEqual(['General', 'Performance', 'Characteristics', 'Why this engine']);
+  expect(tabs).toEqual(['General', 'Target design', 'Performance', 'Characteristics', 'Why this engine']);
   const section = createWrapper(container).findExpandableSection();
   expect(section.getElement().textContent).toContain('Developer details');
   expect(section.findExpandedContent()).toBeNull();
@@ -137,4 +137,149 @@ test('loading and a failed read show their own state, not a blank panel', () => 
 test('humanizeKey writes a snake case key as one sentence', () => {
   expect(humanizeKey('avg_latency_ms')).toBe('Avg latency ms');
   expect(humanizeKey('rows')).toBe('Rows');
+});
+
+// #2446: the access pattern explorer's pattern and cache tables folded into the query
+// table; the query's own patterns, with their keys and indexes, are in its panel.
+const ownerPattern = {
+  id: 'ddb-ap-0001-abcdef',
+  engine: 'dynamodb',
+  operation: 'Query',
+  destTable: 'api_keys',
+  gsiName: 'by_user',
+  destDef: {
+    gsis: [{ gsi_name: 'by_user', partition_key: { attribute_name: 'user_id', attribute_type: 'S' }, sort_key: { attribute_name: 'last_access', attribute_type: 'N' }, projection: 'KEYS_ONLY' }],
+  },
+  keyCondition: 'user_id = :uid',
+  sourceTables: ['wp_woocommerce_api_keys'],
+  designRps: 12.3456,
+  itemSize: 2048,
+  avgItems: null,
+  patternGroup: 'api-keys',
+  description: 'Keys of one user, newest first',
+  patternDescription: 'Keys of one user, newest first',
+  queryIds: [ID],
+  inScope: true,
+};
+const cachePattern = {
+  id: 'ec-ap-0001',
+  engine: 'elasticache',
+  isCacheLayer: true,
+  operation: 'GET',
+  destTable: 'apikey:{id}',
+  ttlSeconds: 300,
+  keyDataType: 'hash',
+  sourceTables: ['wp_woocommerce_api_keys'],
+  description: '',
+  queryIds: [ID],
+};
+const openDesign = () => act(() => createWrapper(container).findTabs().findTabLinkById('design').click());
+
+test('the target design tab shows each pattern that serves the query, with its keys and indexes', () => {
+  render({ patterns: [ownerPattern, cachePattern] });
+  openDesign();
+  const shown = text();
+  expect(shown).toContain('DynamoDB access pattern ddb-ap-0');
+  expect(shown).toContain('api_keys');
+  expect(shown).toContain('by_user');
+  expect(shown).toContain('user_id = :uid');
+  expect(shown).toContain('user_id (S)');
+  expect(shown).toContain('last_access (N)');
+  expect(shown).toContain('KEYS_ONLY');
+  expect(shown).toContain('12.35');
+  expect(shown).not.toContain('12.3456');
+  expect(shown).toContain('2,048 bytes');
+  expect(shown).toContain('api-keys');
+  expect(shown).toContain('Keys of one user, newest first');
+});
+
+test('the cache layer key design shows its key, TTL and data type, named as the cache layer', () => {
+  render({ patterns: [ownerPattern, cachePattern] });
+  openDesign();
+  const shown = text();
+  expect(shown).toContain('ElastiCache (cache layer) access pattern ec-ap-00');
+  expect(shown).toContain('apikey:{id}');
+  expect(shown).toContain('TTL 300s');
+  expect(shown).toContain('hash');
+  expect(shown.indexOf('DynamoDB access pattern')).toBeLessThan(shown.indexOf('ElastiCache (cache layer)'));
+});
+
+test('a query no schema design serves says so instead of an empty tab', () => {
+  render({ patterns: [] });
+  openDesign();
+  expect(text()).toContain('No schema design lists an access pattern for this query.');
+  render({ patterns: undefined });
+  openDesign();
+  expect(text()).toContain('No schema design lists an access pattern for this query.');
+  render({ patterns: [], schemaDesigns: { dynamodb: { status: 'completed' } }, availability: 'available' });
+  openDesign();
+  expect(text()).toContain('No schema design lists an access pattern for this query.');
+});
+
+// #2480 review: the empty tab says which case applies.
+test('a skipped schema design says so, with the reason the report carries, as text', () => {
+  render({ patterns: [], schemaDesigns: { dynamodb: { status: 'skipped', reason: 'llm_mode=none: <b>every</b> schema designer needs a model' } }, availability: 'available' });
+  openDesign();
+  const shown = text();
+  expect(shown).toContain('Schema design was skipped for DynamoDB, so no access pattern is listed for this query.');
+  expect(shown).toContain('Reason: llm_mode=none: <b>every</b> schema designer needs a model');
+  expect(shown).not.toContain('No schema design lists');
+  expect(createWrapper(container).findTabs().findTabContent().getElement().querySelector('b')).toBeNull();
+});
+
+test('a skipped schema design with no reason leaves the reason out', () => {
+  render({ patterns: [], schemaDesigns: { dynamodb: { status: 'skipped' } }, availability: 'unavailable' });
+  openDesign();
+  expect(text()).toContain('Schema design was skipped for DynamoDB');
+  expect(text()).not.toContain('Reason');
+  expect(text()).not.toContain('could not be read');
+});
+
+test('design files the page could not read say so, not that no design lists the query', () => {
+  render({ patterns: [], schemaDesigns: {}, availability: 'unavailable' });
+  openDesign();
+  expect(text()).toContain('The schema design files could not be read, so this query\'s access patterns cannot be shown.');
+  expect(text()).not.toContain('No schema design lists');
+});
+
+test('design files read only in part say the query may have a pattern not shown', () => {
+  render({ patterns: [], schemaDesigns: {}, availability: 'partial' });
+  openDesign();
+  expect(text()).toContain('No access pattern for this query could be read. Some schema design files could not be read, so one may be missing here.');
+});
+
+// #2480 review: a query opened from the source table dialog moves focus into the panel.
+test('a focus request moves focus into the loaded panel, once', () => {
+  render({ focusRequest: 0 });
+  expect(document.activeElement).toBe(document.body);
+  render({ loading: true, focusRequest: 1 });
+  expect(document.activeElement).toBe(document.body);
+  render({ loading: false, focusRequest: 1 });
+  const target = container.querySelector('[data-query-detail-focus]');
+  expect(target).not.toBeNull();
+  expect(document.activeElement).toBe(target);
+  expect(target.getAttribute('aria-label')).toBe('Query 0452bed2 · UPDATE wp_woocommerce_api_keys');
+  act(() => document.body.focus());
+  act(() => target.blur());
+  render({ loading: false, focusRequest: 1 });
+  expect(document.activeElement).not.toBe(target);
+});
+
+test('an out of scope pattern says why, and markup in design text stays text', () => {
+  render({ patterns: [{ ...ownerPattern, inScope: false, outOfScopeReason: 'Scans <b>all</b> rows', keyCondition: '<i>k</i>' }] });
+  openDesign();
+  expect(text()).toContain('Out of scope');
+  expect(text()).toContain('Scans <b>all</b> rows');
+  expect(text()).toContain('<i>k</i>');
+  expect(container.querySelector('b')).toBeNull();
+  expect(container.querySelector('i')).toBeNull();
+});
+
+test('the tabs are named, and so are their scroll buttons on a narrow screen', () => {
+  render();
+  const list = container.querySelector('[role="tablist"]');
+  expect(list.getAttribute('aria-label')).toBe('Query details');
+  const source = require('fs').readFileSync(require('path').join(__dirname, '../QueryDetailPanel.js'), 'utf8');
+  expect(source).toMatch(/scrollLeftAriaLabel: t\('analysis-results\.tabs\.scroll-left'\)/);
+  expect(source).toMatch(/scrollRightAriaLabel: t\('analysis-results\.tabs\.scroll-right'\)/);
 });

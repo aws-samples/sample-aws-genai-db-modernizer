@@ -3,10 +3,10 @@
 
 import { hashId } from './resultsTabs';
 
-// #2300: where an engine lives on the results page. The access pattern explorer
-// (its container's id) has an engine filter, so a link carries the engine in
-// `?engine=` and the section in the hash; the results page reads both.
-export const RESULTS_ENGINE_SECTION_ID = 'access-patterns-section';
+// #2300: where an engine lives on the results page. The query table (its section's
+// id, #2446) has an engine filter, so a link carries the engine in `?engine=` and the
+// section in the hash; the results page reads both.
+export const RESULTS_ENGINE_SECTION_ID = 'query-routing-section';
 
 export function resultsEngineHref(jobId, engine) {
   const query = engine ? `?engine=${encodeURIComponent(engine)}` : '';
@@ -18,20 +18,21 @@ export function engineFromSearch(search) {
   return new URLSearchParams(search || '').get('engine') || null;
 }
 
-// Where a linked engine lands: its explorer rows, its Table design tab, 'not-designed'
-// (queries are routed to it but its schema design has not been made for this job), or
-// 'absent' (the plan has no part for it). 'none' when the link names no engine.
-export function linkedEngineTarget(engine, explorerEngines, designEngines, routedEngines = []) {
+// Where a linked engine lands: its queries ('queries', an engine whose schema design
+// lists access patterns), its Table design tab, 'not-designed' (queries are routed to
+// it but its schema design has not been made for this job), or 'absent' (the plan has
+// no part for it). 'none' when the link names no engine.
+export function linkedEngineTarget(engine, patternEngines, designEngines, routedEngines = []) {
   if (!engine) return 'none';
-  if (explorerEngines.includes(engine)) return 'explorer';
+  if (patternEngines.includes(engine)) return 'queries';
   if (designEngines.includes(engine)) return 'design';
   if (routedEngines.includes(engine)) return 'not-designed';
   return 'absent';
 }
 
 // #2313: the section a linked engine lands on: its Table design for a relational
-// engine with a design, else the section the link's hash names (the explorer for an
-// engine with rows), or null when it names none. The page opens the section's tab.
+// engine with a design, else the section the link's hash names (the query table for
+// an engine with queries), or null when it names none. The page opens the section's tab.
 export const TABLE_DESIGN_SECTION_ID = 'table-design-section';
 
 export function linkedSectionId(target, hash) {

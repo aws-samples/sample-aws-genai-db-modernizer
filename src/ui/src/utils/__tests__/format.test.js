@@ -77,7 +77,6 @@ describe('formatPercent, formatCount, formatShortId (#2309)', () => {
 describe('toFixed is not spreading (#2309)', () => {
   const ALLOWED = {
     'components/QueryDecisionTrace.js': 1,
-    'pages/AnalysisResults.js': 2,
     'pages/AssignmentGate.js': 3,
     'pages/JobMonitoringSummary.js': 2,
     'utils/cacheLayer.js': 4,

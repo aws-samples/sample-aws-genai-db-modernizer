@@ -1,7 +1,7 @@
 // Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
 // SPDX-License-Identifier: MIT-0
 
-import { memo, useMemo, useState } from 'react';
+import { memo, useEffect, useMemo, useState } from 'react';
 import Box from "@cloudscape-design/components/box";
 import SpaceBetween from "@cloudscape-design/components/space-between";
 import Badge from "@cloudscape-design/components/badge";
@@ -15,6 +15,7 @@ import Link from "@cloudscape-design/components/link";
 import Table from "@cloudscape-design/components/table";
 import { failureMessageKey } from '../utils/requestFailure';
 import { filterQueryRows, queryFilterOptions } from "../utils/queryRouting";
+import { OPERATION_TYPES } from '../utils/accessPatterns';
 import { propertyFilterStrings } from '../utils/propertyFilterStrings';
 import { formatCount, formatShortId } from '../utils/format';
 import EngineBadge from './EngineBadge';
@@ -35,6 +36,12 @@ import DestinationTables from './DestinationTables';
  * format what the API, the facts layer and the schema design hold. The page
  * shows 25 rows at a time, so a job with 1,654 queries renders 25 rows, and the
  * filter compares one lower-cased string per row.
+ *
+ * #2446: the table is the tab's one list of queries. The access pattern explorer's
+ * pattern and cache tables are folded in: a query's access patterns and cache key
+ * designs open in its detail panel, and the explorer's operation type filter is the
+ * "Operation type" property here. A link that names an engine (`linkedFilter`, a
+ * property filter token) opens the table filtered to it.
  *
  * Callers pass `t` (the page's own `useTranslation` function), like
  * QueryDecisionTrace. `queryPatterns` is facts.query_pattern_counts as
@@ -79,16 +86,25 @@ function RoutingBadges({ kinds, hasLedger, t }) {
 }
 
 const QueryRoutingTable = memo(({
-  rows, loading, error, hasLedger, truncated, selectedId, onSelect, t, queryPatterns,
+  rows, loading, error, hasLedger, truncated, selectedId, onSelect, linkedFilter, t, queryPatterns,
 }) => {
   const [query, setQuery] = useState({ tokens: [], operation: 'and' });
   const [page, setPage] = useState(1);
+  // A link's token replaces the filter once, when it arrives; the reader's own
+  // changes stand after that.
+  const linkedKey = linkedFilter ? `${linkedFilter.propertyKey}=${linkedFilter.value}` : null;
+  useEffect(() => {
+    if (!linkedFilter) return;
+    setQuery({ tokens: [{ propertyKey: linkedFilter.propertyKey, operator: '=', value: linkedFilter.value }], operation: 'and' });
+    setPage(1);
+  }, [linkedKey]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const filterOptions = useMemo(() => {
     const yes = t('analysis-results.query-routing.yes');
     const no = t('analysis-results.query-routing.no');
     return [
       ...queryFilterOptions(rows || []),
+      ...OPERATION_TYPES.filter(type => (rows || []).some(r => (r.opTypes || []).includes(type))).map(type => ({ propertyKey: 'opType', value: type, label: t(`analysis-results.query-routing.op-type-${type}`) })),
       { propertyKey: 'cached', value: 'yes', label: yes },
       { propertyKey: 'cached', value: 'no', label: no },
       ...(hasLedger ? [
@@ -97,14 +113,22 @@ const QueryRoutingTable = memo(({
       ] : []),
     ];
   }, [rows, hasLedger, t]);
-  const filteringProperties = useMemo(() => [
-    { key: 'engine', propertyLabel: t('analysis-results.query-routing.col-engine'), groupValuesLabel: t('analysis-results.query-routing.group-engine'), operators: ['=', '!='] },
+  // #2446: an engine or operation type token reads as its name ("Engine = DynamoDB"),
+  // as the option the reader picked does, also when a link set it. #2480 review: so do
+  // the yes/no tokens ("Cached = Yes", the cache layer's Sankey link).
+  const filteringProperties = useMemo(() => {
+    const labelOf = key => value => (filterOptions.find(o => o.propertyKey === key && o.value === value) || {}).label || value;
+    const labelled = key => ['=', '!='].map(operator => ({ operator, format: labelOf(key) }));
+    return [
+    { key: 'engine', propertyLabel: t('analysis-results.query-routing.col-engine'), groupValuesLabel: t('analysis-results.query-routing.group-engine'), operators: labelled('engine') },
     { key: 'operation', propertyLabel: t('analysis-results.query-routing.col-operation'), groupValuesLabel: t('analysis-results.query-routing.group-operation'), operators: ['=', '!='] },
+    { key: 'opType', propertyLabel: t('analysis-results.query-routing.prop-op-type'), groupValuesLabel: t('analysis-results.query-routing.group-op-type'), operators: labelled('opType') },
     { key: 'table', propertyLabel: t('analysis-results.query-routing.col-tables'), groupValuesLabel: t('analysis-results.query-routing.group-table'), operators: ['=', '!=', ':'] },
     { key: 'destination', propertyLabel: t('analysis-results.query-routing.col-destination'), groupValuesLabel: t('analysis-results.query-routing.group-destination'), operators: ['=', '!=', ':'] },
-    { key: 'cached', propertyLabel: t('analysis-results.query-routing.col-cached'), groupValuesLabel: t('analysis-results.query-routing.group-cached'), operators: ['='] },
-    ...(hasLedger ? [{ key: 'routing', propertyLabel: t('analysis-results.query-routing.prop-routing'), groupValuesLabel: t('analysis-results.query-routing.group-routing'), operators: ['='] }] : []),
-  ], [hasLedger, t]);
+    { key: 'cached', propertyLabel: t('analysis-results.query-routing.col-cached'), groupValuesLabel: t('analysis-results.query-routing.group-cached'), operators: [{ operator: '=', format: labelOf('cached') }] },
+    ...(hasLedger ? [{ key: 'routing', propertyLabel: t('analysis-results.query-routing.prop-routing'), groupValuesLabel: t('analysis-results.query-routing.group-routing'), operators: [{ operator: '=', format: labelOf('routing') }] }] : []),
+    ];
+  }, [filterOptions, hasLedger, t]);
   const i18nStrings = useMemo(() => propertyFilterStrings(t, {
     ariaLabel: t('analysis-results.query-routing.filter-label'),
     placeholder: t('analysis-results.query-routing.filter-placeholder'),

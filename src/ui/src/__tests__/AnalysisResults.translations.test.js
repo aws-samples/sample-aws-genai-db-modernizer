@@ -10,8 +10,21 @@ const PAGES = [
   {
     name: 'AnalysisResults.js',
     file: '../pages/AnalysisResults.js',
-    canaryKey: 'analysis-results.explorer.col-description',
-    canaryValue: 'Description',
+    canaryKey: 'analysis-results.breadcrumb.results',
+    canaryValue: 'Results',
+  },
+  {
+    // #2446: the Data model tab's source tables and one access pattern's detail.
+    name: 'SourceTablesSection.js',
+    file: '../components/SourceTablesSection.js',
+    canaryKey: 'analysis-results.source-tables.title',
+    canaryValue: 'Source tables',
+  },
+  {
+    name: 'AccessPatternDetail.js',
+    file: '../components/AccessPatternDetail.js',
+    canaryKey: 'analysis-results.pattern-detail.ttl',
+    canaryValue: 'TTL',
   },
   {
     // #957: the results page's migration roadmap and download panel.

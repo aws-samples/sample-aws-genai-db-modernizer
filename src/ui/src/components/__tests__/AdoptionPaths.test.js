@@ -27,6 +27,7 @@ import en from '../../locales/en.json';
 import fixture from '../../utils/__tests__/fixtures/waveHeadlines.json';
 import MigrationWavePlan from '../MigrationWavePlan';
 import { ResultsSectionNav } from '../../hooks/useResultsTabs';
+import { schemaSectionIdOf } from '../../utils/adoptionPaths';
 
 jest.mock('@cloudscape-design/components/container', () => ({
   __esModule: true,
@@ -625,11 +626,12 @@ describe('the one-step option', () => {
   test('with a completed schema design it points at the target schemas', () => {
     const s = synthesis();
     s.schema_designs = { aurora_mysql: { status: 'skipped' }, dynamodb: { status: 'completed' } };
-    render(s, { schemaSectionId: 'access-patterns-section' });
+    render(s, { schemaSectionId: schemaSectionIdOf(true, false) });
     const link = figure('one-step-adopt').querySelector('a');
-    expect(link.getAttribute('href')).toBe('#access-patterns-section');
+    // #2446: the purpose-built designs' source tables are on the Data model tab.
+    expect(link.getAttribute('href')).toBe('#source-tables-section');
     expect(figure('one-step-adopt').textContent).toBe(
-      'To take the full target in one step, adopt the target schemas on the Queries tab directly.',
+      'To take the full target in one step, adopt the target schemas on the Data model tab directly.',
     );
   });
 
@@ -642,13 +644,13 @@ describe('the one-step option', () => {
     act(() => {
       root.render(
         <ResultsSectionNav.Provider value={goTo}>
-          <MigrationWavePlan synthesis={s} t={t} schemaSectionId="access-patterns-section" />
+          <MigrationWavePlan synthesis={s} t={t} schemaSectionId="source-tables-section" />
         </ResultsSectionNav.Provider>,
       );
     });
     const event = new MouseEvent('click', { bubbles: true, cancelable: true });
     act(() => { figure('one-step-adopt').querySelector('a').dispatchEvent(event); });
-    expect(goTo).toHaveBeenCalledWith('access-patterns-section');
+    expect(goTo).toHaveBeenCalledWith('source-tables-section');
     expect(event.defaultPrevented).toBe(true);
   });
 
@@ -664,7 +666,7 @@ describe('the one-step option', () => {
   });
 
   test('a report with no schema designs at all points at the Target engines', () => {
-    render(synthesis(), { schemaSectionId: 'access-patterns-section' });
+    render(synthesis(), { schemaSectionId: 'source-tables-section' });
     expect(figure('one-step-adopt').querySelector('a').getAttribute('href')).toBe('#target-engines');
   });
 

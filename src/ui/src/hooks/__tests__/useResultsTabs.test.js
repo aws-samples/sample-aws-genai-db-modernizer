@@ -132,12 +132,20 @@ describe('a link to a section lands on its tab and at the section', () => {
     expect(el.getAttribute('tabindex')).toBe('-1');
   });
 
-  test('the ?engine= link (#2300) opens the Queries tab at the explorer', () => {
+  test('the ?engine= link (#2300) opens the Queries tab at the query table (#2446)', () => {
+    mount('/analysis/results/j1?engine=dynamodb#query-routing-section');
+    expect(tab()).toBe('queries');
+    expect(url()).toBe('?engine=dynamodb&tab=queries#query-routing-section');
+    expect(scrolled).toEqual(['query-routing-section']);
+    expect(document.activeElement.id).toBe('query-routing-section');
+  });
+
+  test('an old link to the access pattern explorer lands on the query table that holds its rows (#2446)', () => {
     mount('/analysis/results/j1?engine=dynamodb#access-patterns-section');
     expect(tab()).toBe('queries');
     expect(url()).toBe('?engine=dynamodb&tab=queries#access-patterns-section');
-    expect(scrolled).toEqual(['access-patterns-section']);
-    expect(document.activeElement.id).toBe('access-patterns-section');
+    expect(scrolled).toEqual(['query-routing-section']);
+    expect(document.activeElement.id).toBe('query-routing-section');
   });
 
   test('the section a hash names wins over a stale tab in the query', () => {
@@ -241,10 +249,10 @@ describe('the sections on the page', () => {
   });
 
   test('follow a section that renders later (its data arrives after the page)', async () => {
-    await act(async () => { root.render(<Probe tabId="queries" present={['query-routing-section']} />); });
-    expect(ids()).toBe('query-routing-section');
-    await act(async () => { root.render(<Probe tabId="queries" present={['query-routing-section', 'access-patterns-section']} />); });
-    expect(ids()).toBe('query-routing-section,access-patterns-section');
+    await act(async () => { root.render(<Probe tabId="data-model" present={['table-owners-section']} />); });
+    expect(ids()).toBe('table-owners-section');
+    await act(async () => { root.render(<Probe tabId="data-model" present={['table-owners-section', 'source-tables-section']} />); });
+    expect(ids()).toBe('table-owners-section,source-tables-section');
   });
 
   test('start watching once the content is rendered (it is not while the page loads)', async () => {

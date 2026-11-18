@@ -166,6 +166,11 @@ const GUARDED_UI_FILES = [
   'utils/graphExplorerFlag.js',
   'utils/nodeIcons.js',
   'components/QueryRoutingTable.js',
+  // #2446: the access patterns folded into the query table, and the source tables.
+  'components/QueryDetailPanel.js',
+  'components/AccessPatternDetail.js',
+  'components/SourceTablesSection.js',
+  'utils/accessPatterns.js',
   'components/CloseCallCallout.js',
   'components/TradeOffTopicGroups.js',
   'components/UnservableQueriesCallout.js',
