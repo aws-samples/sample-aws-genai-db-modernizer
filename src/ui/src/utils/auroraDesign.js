@@ -57,12 +57,15 @@ export const AURORA_BLAME_LABELS = [
  * One schema design's `table_definitions` entry, shaped for compact display:
  * column name + resolved Aurora type, primary key, indexes and foreign keys
  * (both the latter are raw DDL strings in the contract, kept as-is -- there is
- * nothing more structured to pull out of them).
+ * nothing more structured to pull out of them). A table of a design of several
+ * schemas (#2455) carries `schema_name`: it shows as `schema.table` and keys on both.
  */
 export function buildAuroraTables(content) {
   const tables = content?.table_definitions || [];
   return tables.map((t) => ({
-    tableName: t.table_name,
+    tableName: t.schema_name ? `${t.schema_name}.${t.table_name}` : t.table_name,
+    bareName: t.table_name,
+    schemaName: t.schema_name || null,
     columns: (t.columns || []).map((c) => ({
       name: c.name,
       auroraType: c.aurora_type,
@@ -163,23 +166,44 @@ export function buildAuroraQueryGroups(engine, queryGroups) {
   });
 }
 
+const cleaned = (name) => String(name || '').replace(/[`"[\]]/g, '').trim().toLowerCase();
+
 // A table name as the facts key it (src/shared/table_keys.py): unquoted, lower case, no schema.
-export const tableKey = (name) => String(name || '').replace(/[`"[\]]/g, '').trim().toLowerCase().split('.').pop().trim();
+export const tableKey = (name) => cleaned(name).split('.').pop().trim();
+
+// A design table's key (table_keys.table_key): `schema.table` when the design names its
+// schema (#2455), else tableKey of the name.
+export const designTableKey = (name, schema) => (schema ? `${cleaned(schema)}.${cleaned(name)}` : tableKey(name));
 
 /**
  * Each table with the queries the facts say the engine serves on it
  * (`facts.query_group_counts.table_queries`: ids and a count) and its own stored statements
  * (`ddl_statements`, null for a design saved before the field). The count is the fact's;
  * `queries` is the same ids joined to the query rows the page already holds. `key` is the
- * row's position, because two schemas can share a table name.
+ * row's position, because a design saved before #2455 can list two tables of one name.
+ * A table with a schema reads its `schema.table` row; with no such row (a report written
+ * before #2455) it reads its bare name's row, but only when no other table of the design
+ * has that name, so two schemas' tables never show each other's queries.
  */
 export function withTableDetails(tables, tableQueryRows, queryGroups, fallbackDdl) {
   const byQueryId = {};
   (queryGroups || []).forEach((g) => g.queries.forEach((q) => { byQueryId[q.queryId] = q; }));
   const byTable = {};
   (tableQueryRows || []).forEach((row) => { byTable[row.table] = row; });
+  const bareCounts = {};
+  tables.forEach((t) => {
+    const bare = tableKey(t.bareName ?? t.tableName);
+    bareCounts[bare] = (bareCounts[bare] || 0) + 1;
+  });
+  const rowOf = (table) => {
+    if (!table.schemaName) return byTable[tableKey(table.tableName)] || null;
+    const own = byTable[designTableKey(table.bareName, table.schemaName)];
+    if (own) return own;
+    const bare = tableKey(table.bareName);
+    return bareCounts[bare] === 1 ? byTable[bare] || null : null;
+  };
   return tables.map((table, i) => {
-    const row = byTable[tableKey(table.tableName)] || null;
+    const row = rowOf(table);
     const queries = row
       ? row.query_ids.map((id) => byQueryId[id]).filter(Boolean)
         .sort((a, b) => b.callsPerSecond - a.callsPerSecond)

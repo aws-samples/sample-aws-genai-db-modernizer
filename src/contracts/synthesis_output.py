@@ -2946,7 +2946,11 @@ class TableQueryRow(BaseModel):
 
     engine: str = Field(..., description="The relational engine (id)")
     table: str = Field(
-        ..., description="The table's canonical key (table_keys): lower case, no schema"
+        ...,
+        description=(
+            "The table's key (table_keys): lower case, no schema; schema.table when the "
+            "engine's design names its tables' schemas (#2455)"
+        ),
     )
     query_count: int = Field(
         0, ge=0, description="The engine's distinct queries that touch the table"

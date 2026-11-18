@@ -21,6 +21,7 @@ from src.agents.prompt_framing import frame_untrusted
 from src.contracts.aurora_design_delta import AuroraDesignDeltaContract
 from src.contracts.schema_design_input import AgentAnalysisInput, AgentCollectorInput
 from src.shared.bedrock_guardrail import GuardrailConfigError, GuardrailIntervened
+from src.shared.table_keys import DesignTableKeys
 from src.tools.schema.aurora_common.delta_merge import AuroraDesignBase, merge_design_delta
 from src.tools.schema.aurora_common.design_view import build_design_view, render_request
 
@@ -57,17 +58,27 @@ def designer_prompt(engine: str, view: dict) -> str:
         "(design_view.analysis.carried_writes) needs it (structured entries "
         "{index_name, columns, unique}; remove_indexes by name), plus optimizations, "
         "app_layer_notes and at least one trade-off. Never repeat unchanged tables, "
-        "columns or DDL."
+        "columns or DDL. Name each table as the view does: a design whose tables come "
+        "from more than one schema names them schema.table (sales.orders)."
     )
 
 
 def _touched_tables(delta: BaseModel, view: dict) -> list[dict]:
-    """View entries for the tables the delta changes (what the reviewer must judge)."""
-    names = {
-        "".join(c for c in t.table_name if c not in '`"').lower().rsplit(".", 1)[-1]
-        for t in getattr(delta, "tables", [])
-    }
-    return [t for t in view.get("tables", []) if t.get("table_name", "").lower() in names]
+    """View entries for the tables the delta changes (what the reviewer must judge).
+
+    The view names a multi-schema design's tables ``schema.table`` (#2455), so each name,
+    the view's and the delta's, is read through one ``DesignTableKeys`` (#2479 review):
+    ``"sales"."orders"`` touches ``sales.orders`` only, and a bare name two schemas share
+    touches none, as the merge refuses it."""
+    entries = [t for t in view.get("tables", []) if isinstance(t.get("table_name"), str)]
+
+    def pair(name: str) -> tuple[str, str | None]:
+        schema, _, table = name.rpartition(".")
+        return table, schema or None
+
+    keys = DesignTableKeys(pair(t["table_name"]) for t in entries)
+    touched = {keys.key_of(t.table_name) for t in getattr(delta, "tables", [])} - {None}
+    return [t for t in entries if keys.key_of(t["table_name"]) in touched]
 
 
 def pe_review_evidence(delta: BaseModel, view: dict) -> dict:

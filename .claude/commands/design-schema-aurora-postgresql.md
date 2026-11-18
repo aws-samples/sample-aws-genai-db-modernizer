@@ -60,6 +60,9 @@ Read files with the Read tool (use `offset`/`limit` for large files). Search fil
 4. **Design the delta**
    Design only the tables and queries assigned to this engine: the tables in
    `design_view.tables`. A table name outside that list fails `--finalize`.
+   When the tables come from more than one source schema, the view names each
+   one `schema.table` (`"table_name": "sales.orders"`): name it the same way in
+   the delta, and search the request for that name. <!-- claim: tests/unit/tools/schema/aurora_common/test_schema_qualified_tables.py::test_the_design_view_names_each_table_with_its_schema, tests/unit/tools/schema/aurora_common/test_schema_qualified_tables.py::test_a_delta_names_one_schemas_table_and_a_bare_shared_name_is_refused -->
 
    Write JSON conforming to `output_schema`. List only what changes: every
    table, column, key, index and foreign key you do not mention carries over

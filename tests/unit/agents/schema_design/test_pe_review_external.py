@@ -543,6 +543,38 @@ class TestEveryEngineIsReviewed:
         assert request["evidence"] == json.loads(json.dumps(expected))
         assert request["evidence"]["touched_tables"] == [{"table_name": "orders"}]
 
+    def test_an_aurora_review_of_a_design_of_several_schemas_gets_its_touched_tables(
+        self, store
+    ) -> None:
+        """The view names a multi-schema design's tables ``schema.table`` (#2455): the
+        evidence holds the tables the delta changes, by schema (#2479 review)."""
+        import hashlib
+
+        delta = {"delta_version": "1.0", "tables": [{"table_name": "sales.orders"},
+                                                    {"table_name": "plain"}]}  # fmt: skip
+        view = {"migration_strategy": "homogeneous", "residual_types": [], "hot_queries": [],
+                "tables": [{"table_name": "sales.orders"}, {"table_name": "archive.orders"},
+                           {"table_name": "plain"}]}  # fmt: skip
+        output_key = f"{PREFIX}/schema-aurora_mysql/v{V}/schema_output.json"
+        response_key = f"{PREFIX}/llm_responses/schema_design_aurora_mysql.json"
+        store.write_json(response_key, delta)
+        store.write_json(
+            f"{PREFIX}/llm_requests/schema_design_aurora_mysql.json", {"design_view": view}
+        )
+
+        def digest(key: str) -> str:
+            return hashlib.sha256(store.read_bytes(key)).hexdigest()
+
+        store.write_json(
+            f"{PREFIX}/schema-aurora_mysql/v{V}/finalize_record.json",
+            {"status": "complete", "response_sha256": digest(response_key),
+             "output_sha256": digest(output_key)},
+        )  # fmt: skip
+        pe.prepare_pe_review_llm_input(store, DB, JOB, V, ["aurora_mysql"])
+        request = store.read_json(f"{PREFIX}/llm_requests/pe_review_aurora_mysql.json")
+        assert request["evidence"]["touched_tables"] == [
+            {"table_name": "sales.orders"}, {"table_name": "plain"}]  # fmt: skip
+
     def test_a_delta_that_is_not_this_designs_falls_back_to_the_full_design(self, store) -> None:
         """A delta written after the design (a redesign round that was put back) is not
         the design under review: the reviewer reads the full design instead."""

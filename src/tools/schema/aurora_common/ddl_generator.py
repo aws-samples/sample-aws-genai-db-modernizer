@@ -8,9 +8,11 @@ confidently becomes a residual marker (surfaced to the LLM), never a silent
 guess. Foreign keys and secondary indexes are emitted after all CREATE TABLE
 statements so table ordering never breaks a reference.
 
-Tables are emitted into a single flat namespace; `AgentTable.schema_name` is
-intentionally not used, so source tables that share a name across schemas
-would collide (out of scope for Phase 1).
+Tables are emitted into a single flat namespace when they all come from one schema. When
+they come from more than one (``qualified``, #2455), each table is created in its source
+schema (``"sales"."orders"``), the script opens with one ``CREATE SCHEMA IF NOT EXISTS``
+per schema, and the draft names the table ``<schema>.<table>`` in its notes and keys
+(``design_table_name``), so two schemas' tables of one name are two tables.
 """
 
 from __future__ import annotations
@@ -22,6 +24,7 @@ from dataclasses import dataclass, field
 from src.contracts.aurora_design_delta import INDEX_METHODS, validate_aurora_type
 from src.contracts.schema_design_input import (
     AgentColumn,
+    AgentForeignKey,
     AgentIndex,
     AgentTable,
     ForeignKeyAction,
@@ -33,6 +36,7 @@ from src.shared.sql_identifiers import (
     has_unprintable,
     quote_identifier,
 )
+from src.shared.table_keys import colliding_keys, table_key
 from src.tools.schema.aurora_common.constraint_translator import (
     DefaultTranslation,
     fk_on_delete_clause,
@@ -130,11 +134,34 @@ class ColumnDDL:
 
 @dataclass
 class TableDDL:
-    table_name: str
+    table_name: str  # the design's name for the table (``design_table_name``)
     columns: list[ColumnDDL]
     create_sql: str
     index_sql: list[str] = field(default_factory=list)
     fk_sql: list[str] = field(default_factory=list)
+    # The schema the table is created in, None in a design of one schema (#2455), and the
+    # CREATE SCHEMA statement the script runs first for it.
+    schema_name: str | None = None
+    schema_sql: str | None = None
+
+
+def design_table_name(table: AgentTable, qualified: bool) -> str:
+    """The design's name for ``table``: ``<schema>.<table>`` in a design whose tables come
+    from more than one schema (#2455), else the table name. Notes, keys and type overrides
+    use it; the SQL quotes the two parts apart (``quote_table``)."""
+    if qualified and table.schema_name:
+        return f"{table.schema_name}.{table.table_name}"
+    return table.table_name
+
+
+def quote_table(dialect: Dialect, table_name: str, schema: str | None = None) -> str:
+    """The table as the SQL names it: ``"schema"."table"`` with a schema, else ``"table"``."""
+    return f"{dialect.q(schema)}.{dialect.q(table_name)}" if schema else dialect.q(table_name)
+
+
+def create_schema_sql(dialect: Dialect, schema: str) -> str:
+    """The statement that creates a qualified design's schema, run before its tables."""
+    return f"CREATE SCHEMA IF NOT EXISTS {dialect.q(schema)};"
 
 
 @dataclass
@@ -409,15 +436,20 @@ def _create_table_sql(
     columns: list[ColumnDDL],
     dialect: Dialect,
     notes: list[dict] | None = None,
+    ref: tuple[str, str | None] | None = None,
 ) -> str:
+    """``ref`` is the (table, schema) the SQL names, when ``table`` carries the design's
+    qualified name (``_generate``); else the table's own name, with no schema."""
     prefixes: dict[str, int] = {}
     if table.primary_key and dialect is MYSQL:
         prefixes = _mysql_primary_key_prefixes(table, columns, notes if notes is not None else [])
+    name, schema = ref or (table.table_name, None)
     return render_create_table(
         dialect,
-        table.table_name,
+        name,
         [c.fragment for c in columns],
         [(c, prefixes.get(c.lower())) for c in table.primary_key or []],
+        schema=schema,
     )
 
 
@@ -426,10 +458,13 @@ def render_create_table(
     table_name: str,
     fragments: list[str],
     primary_key: list[tuple[str, int | None]],
+    *,
+    schema: str | None = None,
 ) -> str:
     """One CREATE TABLE statement: each column fragment on its own line, then the PRIMARY
-    KEY (column, Aurora MySQL key prefix or None) when there is one. A saved design's
-    ``generated_ddl`` is rebuilt through this on every read (#2199)."""
+    KEY (column, Aurora MySQL key prefix or None) when there is one; the table in
+    ``schema`` when given (#2455). A saved design's ``generated_ddl`` is rebuilt through
+    this on every read (#2199)."""
     lines = [f"  {f}" for f in fragments]
     if primary_key:
         pk_cols = ", ".join(
@@ -438,7 +473,7 @@ def render_create_table(
         )
         lines.append(f"  PRIMARY KEY ({pk_cols})")
     body = ",\n".join(lines)
-    return f"CREATE TABLE {dialect.q(table_name)} (\n{body}\n);"
+    return f"CREATE TABLE {quote_table(dialect, table_name, schema)} (\n{body}\n);"
 
 
 def is_primary_key_index(idx: AgentIndex, table: AgentTable) -> bool:
@@ -971,9 +1006,15 @@ def _skipped_index(table_name: str, idx: AgentIndex, plan: KeyPlan) -> str:
 
 
 def _index_sql(
-    table: AgentTable, dialect: Dialect, notes: list[dict], column_ddls: list[ColumnDDL]
+    table: AgentTable,
+    dialect: Dialect,
+    notes: list[dict],
+    column_ddls: list[ColumnDDL],
+    ref: tuple[str, str | None] | None = None,
 ) -> list[str]:
+    """``ref`` as for ``_create_table_sql``."""
     statements: list[str] = []
+    ref_name, ref_schema = ref or (table.table_name, None)
     columns = [c.column_name for c in table.columns]
     for idx in expression_indexes(table):
         # The collector names only the plain keys, so an index built from them
@@ -1106,7 +1147,7 @@ def _index_sql(
         try:
             statement = render_index(
                 dialect,
-                table.table_name,
+                ref_name,
                 idx.index_name,
                 idx.columns,
                 unique=unique,
@@ -1116,6 +1157,7 @@ def _index_sql(
                 include=idx.included_columns if dialect is POSTGRES else None,
                 where_sql=where_sql,
                 prefix_lengths=prefixes,
+                schema=ref_schema,
             )
         except UnsafeIdentifierError:
             # One statement per carried index still (``delta_merge`` zips them by name).
@@ -1158,8 +1200,10 @@ def render_index(
     include: list[str] | None = None,
     where_sql: str | None = None,
     prefix_lengths: list[int | None] | None = None,
+    schema: str | None = None,
 ) -> str:
-    """One CREATE INDEX statement with every identifier quoted by the dialect.
+    """One CREATE INDEX statement with every identifier quoted by the dialect, on the table
+    in ``schema`` when given (#2455).
 
     ``method``, ``include`` and ``where_sql`` are PostgreSQL-only, except that Aurora MySQL
     renders a ``fulltext`` or ``spatial`` method as the kind of a non-unique index (#1596);
@@ -1179,7 +1223,9 @@ def render_index(
     cols = ", ".join(
         dialect.q(c) + _prefix_suffix(prefix_lengths, pos) for pos, c in enumerate(columns)
     )
-    sql = f"CREATE {kind}INDEX {dialect.q(index_name)} ON {dialect.q(table_name)}"
+    sql = (
+        f"CREATE {kind}INDEX {dialect.q(index_name)} ON {quote_table(dialect, table_name, schema)}"
+    )
     if method:
         sql += f" USING {method}"
     sql += f" ({cols})"
@@ -1191,7 +1237,7 @@ def render_index(
 
 
 def recreated_expression_index(
-    table_name: str, idx: AgentIndex, column_ddls: list[ColumnDDL]
+    table_name: str, idx: AgentIndex, column_ddls: list[ColumnDDL], schema: str | None = None
 ) -> tuple[str | None, str | None]:
     """An Aurora PostgreSQL ``CREATE INDEX`` for a PostgreSQL source's expression index
     (#2381), as ``(statement, None)``, or ``(None, why)`` when it cannot be created.
@@ -1241,31 +1287,103 @@ def recreated_expression_index(
         )
     keys_sql = ", ".join(f"({k})" for k in keys)
     try:
-        name, table = POSTGRES.q(idx.index_name), POSTGRES.q(table_name)
+        name, table = POSTGRES.q(idx.index_name), quote_table(POSTGRES, table_name, schema)
     except UnsafeIdentifierError:
         return None, UNSAFE_NAME_REASON
     return f"CREATE {'UNIQUE ' if unique else ''}INDEX {name} ON {table} ({keys_sql}){where};", None
 
 
-def _fk_sql(table: AgentTable, dialect: Dialect, left_out: list[dict] | None = None) -> list[str]:
+def _fk_sql(
+    table: AgentTable,
+    dialect: Dialect,
+    left_out: list[dict] | None = None,
+    ref: tuple[str, str | None] | None = None,
+    schemas_of: dict[str, list[str]] | None = None,
+) -> list[str]:
+    """``ref`` as for ``_create_table_sql``; ``schemas_of`` maps each bare table name of a
+    qualified design (lower case) to the schemas that have it, for ``referenced_table``."""
     statements: list[str] = []
+    name, schema = ref or (table.table_name, None)
     for fk in table.foreign_keys or []:
+        resolved = _referenced(fk.referenced_table, schema, schemas_of or {})
+        if resolved is None:
+            # quotable_tables leaves such a key out of the base; never guess a schema.
+            if left_out is not None:
+                found = (schemas_of or {}).get(fk.referenced_table.lower(), [])
+                left_out.append(_ambiguous_reference(table.table_name, fk, found))
+            continue
+        referenced, referenced_schema = resolved
         try:
             statements.append(
                 render_foreign_key(
                     dialect,
-                    table.table_name,
+                    name,
                     fk.constraint_name,
                     fk.columns,
-                    fk.referenced_table,
+                    referenced,
                     fk.referenced_columns,
                     fk.on_delete,
+                    schema=schema,
+                    referenced_schema=referenced_schema,
                 )
             )
         except UnsafeIdentifierError:
             if left_out is not None:
                 left_out.append(_unsafe(table.table_name, "foreign key", fk.constraint_name))
     return statements
+
+
+def _referenced(
+    referenced: str, schema: str | None, schemas_of: dict[str, list[str]]
+) -> tuple[str, str | None] | None:
+    """The (table, schema) a foreign key of a table in ``schema`` references (#2455). The
+    collectors report the referenced table by its bare name, so it is the table of that
+    name in the key's own schema (as spelled), else the one other schema of the design
+    that has it, else the key's own schema when no schema has it. None when two other
+    schemas have it and the key's own does not: the reference is ambiguous (#2479 review),
+    and the key is left out rather than guessed. With no schema (one-schema design) it is
+    the name as is."""
+    if schema is None:
+        return referenced, None
+    found = schemas_of.get(referenced.lower(), [])
+    if not found or schema in found:
+        return referenced, schema
+    if len(found) == 1:
+        return referenced, found[0]
+    return None
+
+
+def _schemas_of(tables: list[AgentTable]) -> dict[str, list[str]]:
+    """Each bare table name (lower case) of a qualified design to the schemas that have it,
+    as spelled, in table order."""
+    schemas_of: dict[str, list[str]] = {}
+    for t in tables:
+        if t.schema_name:
+            found = schemas_of.setdefault(t.table_name.lower(), [])
+            if t.schema_name not in found:
+                found.append(t.schema_name)
+    return schemas_of
+
+
+def _ambiguous_reference(table: str, fk: AgentForeignKey, schemas: list[str]) -> dict:
+    """A foreign key whose bare referenced table is in two other schemas (#2479 review)."""
+    reason = (
+        f"its referenced table {fk.referenced_table} is in more than one other schema "
+        f"({', '.join(sorted(schemas))}) and not in this table's, so the design cannot tell "
+        "which one it references; add it by hand once you know"
+    )
+    return {"table": table, "kind": "foreign key", "name": fk.constraint_name,
+            "reason": reason, "feature": "ambiguous_reference"}  # fmt: skip
+
+
+def _colliding_table(label: str) -> dict:
+    """A table whose key another table of the design has (#2479 review)."""
+    reason = (
+        "its schema and name match another table of the design once case and quote marks "
+        "are ignored, so neither is designed; rename one, or design them by hand"
+    )
+    return {"table": label, "kind": "table", "name": label, "reason": reason,
+            "feature": "colliding_table_name"}  # fmt: skip
 
 
 def render_foreign_key(
@@ -1276,15 +1394,20 @@ def render_foreign_key(
     referenced_table: str,
     referenced_columns: list[str],
     on_delete: ForeignKeyAction | None,
+    *,
+    schema: str | None = None,
+    referenced_schema: str | None = None,
 ) -> str:
-    """One ALTER TABLE ... ADD CONSTRAINT ... FOREIGN KEY statement, every identifier quoted.
-    A saved design's ``foreign_keys`` are re-rendered through this on every read (#2199)."""
+    """One ALTER TABLE ... ADD CONSTRAINT ... FOREIGN KEY statement, every identifier quoted,
+    each table in its schema when given (#2455). A saved design's ``foreign_keys`` are
+    re-rendered through this on every read (#2199)."""
     local = ", ".join(dialect.q(c) for c in columns)
     ref = ", ".join(dialect.q(c) for c in referenced_columns)
+    target = quote_table(dialect, referenced_table, referenced_schema)
     return (
-        f"ALTER TABLE {dialect.q(table_name)} "
+        f"ALTER TABLE {quote_table(dialect, table_name, schema)} "
         f"ADD CONSTRAINT {dialect.q(constraint_name)} "
-        f"FOREIGN KEY ({local}) REFERENCES {dialect.q(referenced_table)} ({ref})"
+        f"FOREIGN KEY ({local}) REFERENCES {target} ({ref})"
         f"{fk_on_delete_clause(on_delete)};"
     )
 
@@ -1336,16 +1459,26 @@ def _generate(
     dialect: Dialect,
     type_overrides: TypeOverrides | None = None,
     source_engine: str = "",
+    qualified: bool = False,
 ) -> DdlResult:
+    """``qualified``: create each table in its source schema (#2455, see the module
+    docstring); the type overrides are then keyed on ``design_table_name``."""
     residuals: list[dict] = []
     notes: list[dict] = []
     column_notes: list[dict] = []
     table_ddls: list[TableDDL] = []
     overrides = type_overrides or {}
     family = classify_type_family(source_engine)
+    schemas_of = _schemas_of(tables) if qualified else {}
 
     left_out: list[dict] = []
-    for source_table in tables:
+    for unnamed in tables:
+        schema = unnamed.schema_name if qualified else None
+        ref = (unnamed.table_name, schema)
+        # The design's name in every note and key; the SQL quotes ``ref`` instead.
+        source_table = unnamed.model_copy(
+            update={"table_name": design_table_name(unnamed, qualified)}
+        )
         if has_unprintable(source_table.table_name):
             left_out.append(_unsafe(source_table.table_name, "table", source_table.table_name))
             table_ddls.append(_unsafe_table(source_table, dialect))
@@ -1376,9 +1509,11 @@ def _generate(
             TableDDL(
                 table_name=table.table_name,
                 columns=columns,
-                create_sql=_create_table_sql(table, columns, dialect, notes),
-                index_sql=_index_sql(table, dialect, notes, columns),
-                fk_sql=_fk_sql(table, dialect, left_out),
+                create_sql=_create_table_sql(table, columns, dialect, notes, ref),
+                index_sql=_index_sql(table, dialect, notes, columns, ref),
+                fk_sql=_fk_sql(table, dialect, left_out, ref, schemas_of),
+                schema_name=schema,
+                schema_sql=create_schema_sql(dialect, schema) if schema else None,
             )
         )
     left_out += [
@@ -1422,7 +1557,7 @@ def _duplicate_index(table: str, name: str, kept: str) -> dict:
 
 
 def quotable_tables(
-    tables: list[AgentTable], dialect: Dialect
+    tables: list[AgentTable], dialect: Dialect, qualified: bool = False
 ) -> tuple[list[AgentTable], list[dict]]:
     """``tables`` with every object whose name cannot be quoted into SQL taken out (#2381
     review 2, ``sql_identifiers``), and each one taken out as a ``DdlResult.left_out``
@@ -1434,18 +1569,29 @@ def quotable_tables(
     without case; Aurora PostgreSQL, where the draft quotes every name, compares them as
     written, so ``Ix_A`` and ``ix_a`` are two indexes there.
     ``AuroraDesignBase`` applies it once, so the draft, the merge, a saved design's check
-    and step 1 all read the same quotable tables."""
+    and step 1 all read the same quotable tables. With ``qualified`` (#2455) each record
+    names the table ``design_table_name`` writes, and a table whose schema name cannot be
+    quoted is left out too; so is every table whose key (``table_keys.table_key``, case
+    and quote marks folded) another table has, and a foreign key whose bare referenced
+    table two other schemas have and its own does not (#2479 review)."""
     out: list[AgentTable] = []
     left_out: list[dict] = []
+    shared = colliding_keys((t.table_name, t.schema_name) for t in tables) if qualified else set()
+    kept_tables = [t for t in tables if table_key(t.table_name, t.schema_name) not in shared]
+    schemas_of = _schemas_of(kept_tables) if qualified else {}
     for source in tables:
-        if has_unprintable(source.table_name):
-            left_out.append(_unsafe(source.table_name, "table", source.table_name))
+        label = design_table_name(source, qualified)
+        if qualified and table_key(source.table_name, source.schema_name) in shared:
+            left_out.append(_colliding_table(label))
             continue
-        table = _without_unsafe_columns(source, left_out)
+        if has_unprintable(label):
+            left_out.append(_unsafe(label, "table", label))
+            continue
+        table = _without_unsafe_columns(source, left_out, label)
         if source.columns and not table.columns:
             # Every column left out: no CREATE TABLE has anything to declare.
             left_out.append(
-                {**_unsafe(source.table_name, "table", source.table_name),
+                {**_unsafe(label, "table", label),
                  "reason": "no column of it has a name SQL may quote: " + UNSAFE_NAME_REASON}
             )  # fmt: skip
             continue
@@ -1455,9 +1601,9 @@ def quotable_tables(
             names = [idx.index_name, *idx.columns, *(idx.included_columns or [])]
             name = idx.index_name.lower() if dialect is MYSQL else idx.index_name
             if any(has_unprintable(n) for n in names):
-                left_out.append(_unsafe(table.table_name, "index", idx.index_name))
+                left_out.append(_unsafe(label, "index", idx.index_name))
             elif name in kept:
-                left_out.append(_duplicate_index(table.table_name, idx.index_name, kept[name]))
+                left_out.append(_duplicate_index(label, idx.index_name, kept[name]))
             else:
                 kept[name] = idx.index_name
                 indexes.append(idx)
@@ -1465,7 +1611,13 @@ def quotable_tables(
         for fk in table.foreign_keys or []:
             names = [fk.constraint_name, *fk.columns, fk.referenced_table, *fk.referenced_columns]
             if any(has_unprintable(n) for n in names):
-                left_out.append(_unsafe(table.table_name, "foreign key", fk.constraint_name))
+                left_out.append(_unsafe(label, "foreign key", fk.constraint_name))
+            elif (
+                qualified
+                and _referenced(fk.referenced_table, source.schema_name, schemas_of) is None
+            ):
+                found = schemas_of.get(fk.referenced_table.lower(), [])
+                left_out.append(_ambiguous_reference(label, fk, found))
             else:
                 fks.append(fk)
         if len(indexes) != len(table.indexes or []) or len(fks) != len(table.foreign_keys or []):
@@ -1477,25 +1629,31 @@ def quotable_tables(
     return out, left_out
 
 
-def _without_unsafe_columns(table: AgentTable, left_out: list[dict]) -> AgentTable:
-    """``table`` without the columns whose name cannot be quoted, each left out; its
-    primary key too when it names one of them. Its indexes and foreign keys are kept: the
-    one that names such a column is left out where it is rendered."""
+def _without_unsafe_columns(
+    table: AgentTable, left_out: list[dict], label: str | None = None
+) -> AgentTable:
+    """``table`` without the columns whose name cannot be quoted, each left out (under
+    ``label``, the design's name for it, default its name); its primary key too when it
+    names one of them. Its indexes and foreign keys are kept: the one that names such a
+    column is left out where it is rendered."""
     unsafe = [c for c in table.columns if has_unprintable(c.column_name)]
     if not unsafe:
         return table
-    left_out += [_unsafe(table.table_name, "column", c.column_name) for c in unsafe]
+    label = label or table.table_name
+    left_out += [_unsafe(label, "column", c.column_name) for c in unsafe]
     names = {c.column_name for c in unsafe}
     update: dict = {"columns": [c for c in table.columns if c.column_name not in names]}
     if any(c in names for c in table.primary_key or []):
-        left_out.append(_unsafe(table.table_name, "primary key", "PRIMARY KEY"))
+        left_out.append(_unsafe(label, "primary key", "PRIMARY KEY"))
         update["primary_key"] = []
     return table.model_copy(update=update)
 
 
 def assemble_full_ddl(table_ddls: list[TableDDL]) -> str:
-    """All CREATE TABLEs, then all indexes, then all FKs (so ordering never breaks a reference)."""
-    parts: list[str] = [t.create_sql for t in table_ddls]
+    """Each schema's CREATE SCHEMA (a design of several schemas, #2455), then all CREATE
+    TABLEs, then all indexes, then all FKs (so ordering never breaks a reference)."""
+    parts: list[str] = list(dict.fromkeys(t.schema_sql for t in table_ddls if t.schema_sql))
+    parts += [t.create_sql for t in table_ddls]
     for t in table_ddls:
         parts.extend(t.index_sql)
     for t in table_ddls:
@@ -1507,6 +1665,7 @@ def generate_pg_ddl(
     tables: list[AgentTable],
     type_overrides: TypeOverrides | None = None,
     source_engine: str = "",
+    qualified: bool = False,
 ) -> DdlResult:
     """Translate normalized source tables into Aurora PostgreSQL DDL.
 
@@ -1514,15 +1673,18 @@ def generate_pg_ddl(
     type (#273); those columns are emitted with it and are not residuals.
     ``source_engine`` is the collector's source engine: for a PostgreSQL or
     MySQL source each column's native ``data_type`` is mapped first (#274,
-    ``source_types``), and the normalized type is the fallback.
+    ``source_types``), and the normalized type is the fallback. ``qualified`` creates
+    each table in its source schema (#2455).
     """
-    return _generate(tables, POSTGRES, type_overrides, source_engine)
+    return _generate(tables, POSTGRES, type_overrides, source_engine, qualified)
 
 
 def generate_mysql_ddl(
     tables: list[AgentTable],
     type_overrides: TypeOverrides | None = None,
     source_engine: str = "",
+    qualified: bool = False,
 ) -> DdlResult:
-    """Translate normalized source tables into Aurora MySQL DDL (see ``generate_pg_ddl``)."""
-    return _generate(tables, MYSQL, type_overrides, source_engine)
+    """Translate normalized source tables into Aurora MySQL DDL (see ``generate_pg_ddl``):
+    with ``qualified``, the schema of each table is its database."""
+    return _generate(tables, MYSQL, type_overrides, source_engine, qualified)

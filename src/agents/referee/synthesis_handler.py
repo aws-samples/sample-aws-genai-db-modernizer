@@ -2221,6 +2221,8 @@ def _build_aurora_schema_summary(engine, schema):
         "tables": [
             {
                 "table_name": t["table_name"],
+                # #2455: the schema it is created in, in a design of several schemas.
+                **({"schema_name": t["schema_name"]} if t.get("schema_name") else {}),
                 "aggregate_pattern": t["aggregate_pattern"],
                 "source_tables": t["source_tables"],
                 "gsi_count": 0,

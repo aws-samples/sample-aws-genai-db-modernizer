@@ -35,7 +35,10 @@ from src.shared.contract_versioning import ContractVersionError, read_contract_p
 from src.storage.local_store import LocalArtifactStore
 from src.tools.schema.aurora_common.delta_merge import AuroraDesignBase, merge_design_delta
 from tests.hypothesis_examples import scaled
-from tests.unit.tools.schema.aurora_common.test_collector_text_never_reaches_ddl import _tables
+from tests.unit.tools.schema.aurora_common.test_collector_text_never_reaches_ddl import (
+    _hostile,
+    _tables,
+)
 
 REPO = Path(__file__).resolve().parents[2]
 RUNS = REPO / "tests/fixtures/real_runs"
@@ -147,6 +150,41 @@ def test_every_design_the_generator_writes_loads_unchanged(
     if more and tables[0].table_name == more[0].table_name:
         more = []
     design = _merged(engine, tables + more)
+    store, key = _store(tmp_path_factory.mktemp("d"), engine, design)
+    assert store.read_json(key) == json.loads(json.dumps(design))
+
+
+@settings(max_examples=scaled(100), deadline=None, suppress_health_check=[HealthCheck.too_slow])
+@given(
+    tables=_tables(),
+    schemas=st.lists(_hostile, min_size=2, max_size=2, unique=True),
+    engine=st.sampled_from(sorted(MODELS)),
+)
+def test_every_two_schema_design_the_generator_writes_loads_unchanged(
+    tmp_path_factory: pytest.TempPathFactory, tables, schemas, engine: str
+) -> None:
+    """#2455: the same tables in two schemas with hostile names: each table is created in
+    its schema, and the design loads exactly as written. Two schemas whose names fold to
+    one key (case, quote marks) keep neither's tables (#2479 review)."""
+    from src.shared.table_keys import table_key
+    from src.tools.schema.aurora_common.ddl_generator import quote_table
+
+    both = [t.model_copy(update={"schema_name": s}) for s in schemas for t in tables]
+    design = _merged(engine, both)
+    kept = design["table_definitions"]
+    dialect = AuroraDesignBase(engine=engine, job_id="j", source_database="d",
+                               source_engine="mysql", tables=[]).dialect  # fmt: skip
+    keys = [table_key(t["table_name"], t.get("schema_name")) for t in kept]
+    assert len(keys) == len(set(keys))
+    if table_key("t", schemas[0]) == table_key("t", schemas[1]):
+        assert kept == []
+    for t in kept:
+        assert t.get("schema_name") in schemas
+        create = f"CREATE TABLE {quote_table(dialect, t['table_name'], t['schema_name'])} ("
+        assert t["ddl_statements"][0].startswith(create)
+    script = design["generated_ddl"]
+    for schema in {t["schema_name"] for t in kept}:
+        assert script.count(f"CREATE SCHEMA IF NOT EXISTS {dialect.q(schema)};") == 1
     store, key = _store(tmp_path_factory.mktemp("d"), engine, design)
     assert store.read_json(key) == json.loads(json.dumps(design))
 
@@ -1232,19 +1270,18 @@ def test_a_quoted_name_with_a_space_keeps_its_statements(tmp_path: Path, engine:
 
 def test_two_tables_with_the_same_name_each_store_a_cut_and_load(tmp_path: Path) -> None:
     """Two schemas can share a bare table name. The cut is stored on each table definition,
-    by position, so a reader never looks a table up by its name in the script.
-
-    Known bug #2455 (https://github.com/aws-samples/sample-aws-genai-db-modernizer/issues/2455):
-    the merge keys each table's statements on the bare name, so both tables carry the same
-    ``CREATE TABLE "orders"`` and the script creates it twice. This test pins today's
-    behaviour, not the right one; change it when #2455 keeps the schema."""
-    design = _merged(
-        "aurora_postgresql",
-        [_table("orders", "sales.orders"), _table("orders", "archive.orders")],
-    )
+    by position, so a reader never looks a table up by its name in the script; each table is
+    created in its own schema (#2455), so the two cuts differ and the script creates both."""
+    sales, archive = _table("orders", "sales.orders"), _table("orders", "archive.orders")
+    sales.schema_name, archive.schema_name = "sales", "archive"
+    design = _merged("aurora_postgresql", [sales, archive])
     tables = design["table_definitions"]
-    assert [t["table_name"] for t in tables] == ["orders", "orders"]
-    assert all(t["ddl_statements"][0].startswith('CREATE TABLE "orders"') for t in tables)
+    assert [(t["table_name"], t["schema_name"]) for t in tables] == [
+        ("orders", "sales"),
+        ("orders", "archive"),
+    ]
+    assert tables[0]["ddl_statements"][0].startswith('CREATE TABLE "sales"."orders"')
+    assert tables[1]["ddl_statements"][0].startswith('CREATE TABLE "archive"."orders"')
     store, key = _store(tmp_path, "aurora_postgresql", design)
     assert store.read_json(key) == design
 
