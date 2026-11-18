@@ -33,6 +33,7 @@ from src.tools.routines.comparison import (
     frozen_at,
     normalise,
     plan_batches,
+    run_routines,
 )
 from src.tools.routines.proof_inputs import ProofCall, ProofSetup, RoutineProofInput
 from src.tools.routines.proof_screen import (
@@ -42,6 +43,7 @@ from src.tools.routines.proof_screen import (
 )
 from src.tools.routines.proof_targets import (
     CreateRefused,
+    DefinerRefused,
     ProofTargetError,
     ProofTargetUnavailable,
 )
@@ -481,15 +483,17 @@ class FakeTarget:
     """An in-memory target. ``routines`` maps a routine's ``CREATE`` text to its Python
     body; a text not in it does not load (SQLSTATE 42601), and one starting with
     ``CREATE app.`` is refused. A row change appends a row. ``commits`` names routines
-    whose effects survive the rollback."""
+    whose effects survive the rollback. One starting with ``CREATE root.`` names a
+    ``DEFINER`` the engine refuses to make; ``routine_notes`` maps a text to its note."""
 
     def __init__(self, engine="postgresql", version="16", routines=None, commits=(), notes=(),
-                 rollbacks=()):  # fmt: skip
+                 rollbacks=(), routine_notes=None):  # fmt: skip
         self.engine, self.version = engine, version
         self.description = f"a fake {engine} {version}"
         self.namespace = "public"
         self.random_seeded = True
         self.notes = tuple(notes)
+        self.routine_notes = dict(routine_notes or {})
         self.routines: Mapping[str, Routine] = routines or {}
         self.loaded: dict[str, Routine] = {}
         self.commits = set(commits)
@@ -506,6 +510,8 @@ class FakeTarget:
     def create(self, routine: de.SourceRoutine) -> str | None:
         if routine.create_sql.startswith("CREATE app."):
             raise CreateRefused("its name is qualified with a schema other than the target's")
+        if routine.create_sql.startswith("CREATE root."):
+            raise DefinerRefused("its DEFINER names an account the server keeps for itself")
         body = self.routines.get(routine.create_sql)
         if body is None:
             return "42601"
@@ -723,6 +729,43 @@ def test_a_carried_routine_that_does_not_load_is_different():
     assert (r.outcome, r.reason_code, r.status) == ("different", "carried_does_not_load",
                                                     "needs_attention")  # fmt: skip
     assert [(d.aspect, d.target) for d in r.differences] == [("load", "SQLSTATE 42601")]
+
+
+_NOTE = "the original ran as the user its DEFINER names"
+
+
+def test_an_original_that_ran_as_a_made_definer_says_so_in_its_reason():
+    """#2426: the source side's note on the original's text reaches the result's reason,
+    whatever the outcome, and only that routine's."""
+    pairs = [_pair("same", _returns(lambda n: n), _returns(lambda n: n)),
+             _pair("changed", _returns(lambda n: n), _returns(lambda n: n + 1)),
+             _pair("plain", _returns(lambda n: n), _returns(lambda n: n))]  # fmt: skip
+    notes = {"CREATE same source": _NOTE, "CREATE changed source": _NOTE,
+             "CREATE plain target": "a note the carried side keeps"}  # fmt: skip
+    same, changed, plain = _compare(pairs, source={"routine_notes": notes},
+                                    target={"routine_notes": notes})[0].results  # fmt: skip
+    assert same.outcome == "no_differences_found"
+    assert same.reason.startswith("no differences found on ") and same.reason.endswith(
+        "; note: " + _NOTE
+    )
+    assert changed.outcome == "different" and changed.reason.endswith("; note: " + _NOTE)
+    assert "note" not in plain.reason  # the carried side's notes are not the original's
+
+
+def test_a_definer_the_engine_refuses_could_not_be_compared_with_its_own_code():
+    pair = _pair("su", _returns(lambda n: n), _returns(lambda n: n))
+    compared, routines = pair
+    routines["CREATE root.su source"] = routines.pop("CREATE su source")
+    original = (de.SourceRoutine("su", "function", "CREATE root.su source"),)
+    pair = (ComparedRoutine(compared.proof, original, compared.carried), routines)
+    (r,) = _compare([pair])[0].results
+    assert (r.outcome, r.reason_code) == ("could_not_compare", "definer_refused")
+    assert r.reason == ("the original routine was not created on the fake source: its DEFINER "
+                        "names an account the server keeps for itself")  # fmt: skip
+    _, target, _ = _factories([pair])
+    (run,) = run_routines([ComparedRoutine(compared.proof, original, original)], TABLES,
+                          target=target, dialect="postgresql")  # fmt: skip
+    assert (run.outcome, run.reason_code) == ("not_run", "definer_refused")
 
 
 def test_a_create_outside_the_targets_namespace_could_not_be_compared():

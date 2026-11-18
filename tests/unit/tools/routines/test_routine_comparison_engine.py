@@ -1013,8 +1013,53 @@ def test_column_names_user_variables_and_counters_on_mysql():
     assert ai.outcome == "different" and "sequence" in {d.aspect for d in ai.differences}, ai
 
 
+def _my_definer_credit(definer, security=""):
+    return (f"CREATE {definer}PROCEDURE credit(IN acc INT, IN amount DECIMAL(6,2)) {security}"
+            "MODIFIES SQL DATA BEGIN UPDATE accounts SET balance = balance + amount "
+            "WHERE id = acc; END")  # fmt: skip
+
+
+@pytest.mark.integration
+@needs_mysql
+@pytest.mark.parametrize(
+    ("original", "security", "note"),
+    [("DEFINER=`wp_user`@`localhost` ", "", True),
+     ("DEFINER=`wp_user`@`localhost` ", "SQL SECURITY INVOKER ", False),
+     ("DEFINER=CURRENT_USER ", "", False),
+     ("DEFINER=`admin`@`%` ", "", True)],  # the target's user: made on both sides
+    ids=["definer-missing", "invoker", "current-user", "same-definer"],
+)  # fmt: skip
+def test_a_definer_only_rewrite_is_compared_on_behaviour_on_mysql(original, security, note):
+    """#2426: the original names a definer the disposable source engine lacks; it is made
+    for the run, so the rewrite is compared, and the reason says when the original ran as it."""
+    if os.geteuid() == 0:
+        return
+    from src.tools.routines.proof_targets import DEFINER_NOTE
+
+    pair = _pair(MY_CREDIT, _my_definer_credit(original, security),
+                 _my_definer_credit("DEFINER=`admin`@`%` ", security))  # fmt: skip
+    (r,) = _my_compare([pair])
+    assert r.outcome == "no_differences_found", r
+    assert (DEFINER_NOTE in r.reason) is note
+
+
+@pytest.mark.integration
+@needs_mysql
+def test_a_definer_the_engine_must_not_make_is_not_compared_on_mysql():
+    if os.geteuid() == 0:
+        return
+    pair = _pair(MY_CREDIT, _my_definer_credit("DEFINER=`root`@`localhost` "),
+                 _my_definer_credit("DEFINER=`admin`@`%` "))  # fmt: skip
+    (r,) = _my_compare([pair])
+    assert (r.outcome, r.reason_code) == ("could_not_compare", "definer_refused"), r
+    assert "root" not in r.reason
+
+
+@pytest.mark.passes_on_main  # a marker guard: it reads markers, not behaviour
 def test_the_mysql_round_trips_are_deselected_not_skipped_in_a_gated_run():
-    for test in (test_known_equal_and_unequal_pairs_on_mysql,
+    for test in (test_a_definer_only_rewrite_is_compared_on_behaviour_on_mysql,
+                 test_a_definer_the_engine_must_not_make_is_not_compared_on_mysql,
+                 test_known_equal_and_unequal_pairs_on_mysql,
                  test_a_commit_on_one_side_only_is_different_on_mysql,
                  test_session_state_is_reset_between_calls_on_mysql,
                  test_a_table_a_call_creates_commits_and_is_seen_on_mysql,

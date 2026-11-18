@@ -133,6 +133,14 @@ namespace screen reads names as written and as PostgreSQL's parser reads them, a
 ``SECURITY DEFINER`` is not refused (on the test cluster, #1945 runs routines as a role
 or user confined to its scratch database).
 
+A MySQL original whose ``DEFINER`` names another account (#2426) is created on the
+disposable source engine signed in as that account, made for the run with the scratch
+database only (:mod:`src.tools.routines.proof_targets`), so a ``DEFINER``-only rewrite is
+compared on behaviour. When that original runs as its definer, its result's reason says
+that what it may do with the definer's own privileges was not compared. A ``DEFINER`` the
+engine must not make (``root``, a ``mysql.*`` account, one a local sign-in does not reach)
+is *could not compare*, ``definer_refused``.
+
 Input. :class:`ComparedRoutine` is one routine: its proof metadata
 (:class:`~src.tools.routines.proof_inputs.RoutineProofInput`), its original ``CREATE``
 statements and its carried ones (a trigger with its trigger function, in creation
@@ -287,6 +295,7 @@ ReasonCode = Literal[
     "mostly_errors",
     "call_refused",
     "role_changed",
+    "definer_refused",
 ]
 
 
@@ -1028,6 +1037,7 @@ class _Side:
     target: ProofTarget | None = None
     failed: dict[str, str] = field(default_factory=dict)  # routine id -> SQLSTATE
     refused: dict[str, str] = field(default_factory=dict)  # routine id -> why
+    refused_codes: dict[str, str] = field(default_factory=dict)  # routine id -> reason code
     baseline: Mapping[str, list[dict[str, Any]]] = field(default_factory=dict)
     baseline_names: frozenset[str] = frozenset()
 
@@ -1037,7 +1047,7 @@ class _Side:
         self.target = target
         try:
             target.load_setup(self.inputs.setup)
-            self.failed, self.refused = {}, {}
+            self.failed, self.refused, self.refused_codes = {}, {}, {}
             for routine_id, statement in self.statements:
                 if routine_id in self.failed or routine_id in self.refused:
                     continue
@@ -1045,6 +1055,7 @@ class _Side:
                     sqlstate = target.create(statement)
                 except CreateRefused as exc:
                     self.refused[routine_id] = str(exc)
+                    self.refused_codes[routine_id] = exc.reason_code
                     continue
                 if sqlstate is not None:
                     self.failed[routine_id] = sqlstate
@@ -1290,7 +1301,8 @@ def _compare_batch(
         out: dict[str, RoutineComparison] = {}
         for routine in batch:
             try:
-                out[routine.routine_id] = _with_notes(_compare_one(routine, shared), sides)
+                result = _with_notes(_compare_one(routine, shared), sides)
+                out[routine.routine_id] = _with_routine_notes(result, routine, sides["source"])
             except Exception as exc:  # noqa: BLE001 - one routine never stops the others
                 out[routine.routine_id] = RoutineComparison(
                     routine_id=routine.routine_id, outcome="could_not_compare",
@@ -1313,6 +1325,18 @@ def _with_notes(result: RoutineComparison, sides: Mapping[str, _Side]) -> Routin
     return result.model_copy(update={"reason": result.reason + "; note: " + "; ".join(notes)})
 
 
+def _with_routine_notes(
+    result: RoutineComparison, routine: ComparedRoutine, source: _Side
+) -> RoutineComparison:
+    """The notes the source side kept for this routine's original texts (an original that
+    ran as an account made for its ``DEFINER``, #2426), added to the reason."""
+    kept: Mapping[str, str] = getattr(source.target, "routine_notes", None) or {}
+    notes = sorted({kept[s.create_sql] for s in routine.original if s.create_sql in kept})
+    if not notes:
+        return result
+    return result.model_copy(update={"reason": result.reason + "; note: " + "; ".join(notes)})
+
+
 def _load_problem(routine: ComparedRoutine, shared: _Batchwide) -> RoutineComparison | None:
     rid = routine.routine_id
     src, tgt = shared.sides["source"], shared.sides["target"]
@@ -1321,7 +1345,8 @@ def _load_problem(routine: ComparedRoutine, shared: _Batchwide) -> RoutineCompar
     for side, what in ((src, "original"), (tgt, "carried")):
         if rid in side.refused:
             return RoutineComparison(
-                **base, outcome="could_not_compare", reason_code="outside_namespace",
+                **base, outcome="could_not_compare",
+                reason_code=side.refused_codes.get(rid, "outside_namespace"),  # type: ignore[arg-type]
                 reason=f"the {what} routine was not created on {names[side.which]}: "
                 f"{side.refused[rid]}",
             )  # fmt: skip
@@ -1582,6 +1607,7 @@ def compare_routines(
 
 RunReasonCode = Literal[
     "outside_namespace",
+    "definer_refused",
     "does_not_load",
     "dependency_not_loaded",
     "dynamic_sql",
@@ -1638,7 +1664,8 @@ def _run_one(
     if side.target is None:
         side.open()
     if rid in side.refused:
-        return not_run("outside_namespace", f"it was not created on {where}: {side.refused[rid]}")
+        code: Any = side.refused_codes.get(rid, "outside_namespace")
+        return not_run(code, f"it was not created on {where}: {side.refused[rid]}")
     if rid in side.failed:
         state = side.failed[rid]
         return RoutineRun(**base, outcome="does_not_load", reason_code="does_not_load",

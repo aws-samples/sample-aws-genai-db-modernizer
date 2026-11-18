@@ -66,6 +66,24 @@ call and the snapshot). MySQL's ``root`` password is random, taken from
 runner's password is always generated and never equals it. PostgreSQL has no
 superuser password, because its socket is trusted.
 
+A MySQL routine whose ``DEFINER`` names another account (#2426). Creating it as the
+runner needs ``SET_USER_ID``, which the runner never gets, so ``load_as_definer`` makes
+the account the ``DEFINER`` names for the run, as MySQL reads the name (leading and
+trailing spaces trimmed): made by the server's admin with each name part quoted
+(``quote_identifier``), with a one-time generated password (bound, used for one sign-in,
+kept nowhere), granted the scratch database (and each source database the setup made)
+and nothing else. The ``CREATE`` then runs in a session signed in as that account, so it
+is never the admin's, and the account is locked right after that one sign-in. Anything
+that fails after the account is made drops it at once. A name the engine must not hand
+out is refused (``definer_refusal``, ``DefinerRefused``) before any account is made: the
+anonymous account, the server's own accounts (``root``, ``mysql.sys``,
+``mysql.session``, ``mysql.infoschema``, ``rdsadmin``, ``rdsrepladmin``), the runner's
+own name at another host, any account the engine already has, a name with a control
+character or a character outside the Basic Multilingual Plane, or longer than MySQL
+allows; an account a local sign-in does not reach (a host other than ``localhost`` or a
+pattern matching it) is refused once its sign-in fails, and dropped. The runner's own
+account loads as before. Every account still made is dropped when the engine stops.
+
 Not as root. ``start`` refuses when the process runs as root, because the 0700
 guarantee above cannot be kept: ``pgserver`` creates a user and widens the folder
 and its parents to ``o+rx``, and ``initdb`` and ``mysqld`` refuse root outright.
@@ -169,7 +187,7 @@ from pathlib import Path
 from typing import Any, Literal
 
 from src.contracts.aurora_design_delta import validate_aurora_type
-from src.shared.sql_identifiers import quote_identifier
+from src.shared.sql_identifiers import has_unprintable, quote_identifier
 from src.tools.database.mysql_grants import grant_database
 
 logger = logging.getLogger(__name__)
@@ -221,6 +239,15 @@ _MY_GRANT_USER_VARIABLES = (
     f"GRANT SELECT ON performance_schema.user_variables_by_thread TO '{_RUNNER}'@'localhost'"
 )
 _MY_ARG_VAR = "@modernizer_arg_%d"  # the session variable an OUT or INOUT argument uses
+# A DEFINER's account (#2426): looked up with bound values, never a name in the text.
+_MY_ACCOUNT_EXISTS = "SELECT COUNT(*) FROM mysql.user WHERE User = %s AND LOWER(Host) = LOWER(%s)"
+_MY_USER_MAX = 32  # characters in a MySQL 5.7 to 8.4 user name
+_MY_HOST_MAX = 255  # characters in a host name
+#: The accounts a MySQL 5.7 to 8.4 server, or Aurora MySQL, keeps for itself, compared
+#: case-folded after trimming: a DEFINER naming one is never made for a run.
+_MY_SYSTEM_ACCOUNTS = frozenset(
+    {"root", "mysql.sys", "mysql.session", "mysql.infoschema", "rdsadmin", "rdsrepladmin"}
+)
 # A loaded table's identity and serial columns, with their sequences (the table twice:
 # pg_get_serial_sequence takes its name as text, the filter as a regclass).
 _PG_TABLE_SEQUENCES = (
@@ -308,6 +335,12 @@ class EngineStartError(EngineError):
     Never "no engine": the version is installed, so the comparison must report an
     infrastructure failure, not a verdict about the routine.
     """
+
+
+class DefinerRefused(ValueError):
+    """A MySQL routine's ``DEFINER`` names an account this engine does not make for a run
+    (``definer_refusal``), or one a local sign-in does not reach. The message is a fixed
+    reason and quotes no part of the name."""
 
 
 @dataclass(frozen=True)
@@ -998,6 +1031,38 @@ def sweep_stale() -> list[Path]:
 # --------------------------------------------------------------------------- backends
 
 
+def account_name(user: str, host: str | None) -> tuple[str, str]:
+    """``(user, host)`` as MySQL reads an account name: leading and trailing spaces
+    trimmed from each part, and no host meaning ``%``."""
+    return user.strip(" "), ("%" if host is None else host).strip(" ")
+
+
+def definer_refusal(user: str, host: str | None) -> str | None:
+    """Why a disposable MySQL engine must not make the account ``user@host`` a routine's
+    ``DEFINER`` names, or None. The name is read as MySQL reads it first
+    (:func:`account_name`), so ``root `` is ``root``. Fixed reasons, no name quoted."""
+    user, host = account_name(user, host)
+    if not user:
+        return "its DEFINER names the anonymous account"
+    if (
+        has_unprintable(user) or has_unprintable(host) or any(ord(c) > 0xFFFF for c in user + host)
+    ):  # account names are utf8mb3: no character outside the Basic Multilingual Plane
+        return "its DEFINER holds a character no account name may hold"
+    if len(user) > _MY_USER_MAX or len(host) > _MY_HOST_MAX:
+        return "its DEFINER is longer than a MySQL account name may be"
+    folded = user.casefold()
+    if folded in _MY_SYSTEM_ACCOUNTS:
+        return "its DEFINER names an account the server keeps for itself"
+    if folded == _RUNNER and host.casefold() != "localhost":
+        return "its DEFINER names the runner's own user at another host"
+    return None
+
+
+def _account(user: str, host: str) -> str:
+    """``user@host`` for an account statement, each part through ``quote_identifier``."""
+    return quote_identifier(user, "`") + "@" + quote_identifier(host, "`")
+
+
 class _Backend:
     #: Schemas (PostgreSQL) or databases (MySQL) made by :func:`create_namespaces` (#1970).
     _namespaces: tuple[str, ...] = ()
@@ -1667,13 +1732,18 @@ class _MySQLBackend(_Backend):
         self.pid: int | None = server.pid
         self.socket_path = server.socket_path
         self.port = server.port
+        #: Accounts made for a routine's DEFINER (#2426), each its quoted name, and the
+        #: one session signed in as each, by ``(user, host lower case)``.
+        self._made: list[str] = []
+        self._definers: dict[tuple[str, str], Any] = {}
         self._conn = self._mc.connect(
             **server.connect_args(_RUNNER, server.runner_password, _DATABASE)
         )
 
     def create_namespaces(self, names):  # type: ignore[no-untyped-def]
         """Each source database, made by the server's admin (the runner may create none) and
-        granted to the runner alone, as ``src`` is: nothing wider than that database."""
+        granted to the runner alone (and to each account made for a ``DEFINER``), as ``src``
+        is: nothing wider than that database."""
         made = list(self._namespaces)
         fresh = [n for n in names if n != _DATABASE and n not in made]
         if not fresh:
@@ -1690,6 +1760,8 @@ class _MySQLBackend(_Backend):
                     f"GRANT ALL PRIVILEGES ON {grant_database(name)}.* TO '{_RUNNER}'@'localhost'"
                 )
                 _execute(cur, grant)
+                for account in self._made:
+                    _execute(cur, f"GRANT ALL PRIVILEGES ON {grant_database(name)}.* TO {account}")
                 made.append(name)
             cur.close()
         except self._mc.Error as exc:
@@ -1709,14 +1781,119 @@ class _MySQLBackend(_Backend):
                     cols = list(row)
                     _execute(cur, _insert_sql(table, cols, "`"), [row[c] for c in cols])
             for routine in routines:
-                self._kinds[routine.name] = routine.kind
-                cur.execute(routine.create_sql)
-                if routine.kind == "event":
-                    self._make_event_runner(cur, routine.name)
+                self._create_routine(cur, routine)
         except self._mc.Error as exc:
             raise EngineError(f"{type(exc).__name__}: {exc}".strip(), _sqlstate(exc)) from exc
         finally:
             cur.close()
+
+    def _create_routine(self, cur, routine: SourceRoutine) -> None:  # type: ignore[no-untyped-def]
+        self._kinds[routine.name] = routine.kind
+        cur.execute(routine.create_sql)
+        if routine.kind == "event":
+            self._make_event_runner(cur, routine.name)
+
+    def load_as_definer(self, routine: SourceRoutine, user: str, host: str | None) -> bool:
+        """Create ``routine`` signed in as the account its ``DEFINER`` names, made for the
+        run when the engine does not have it (module docstring). True when the routine was
+        created as such an account, False when that account is the runner's own (it loads
+        as the runner). ``DefinerRefused`` for an account the engine must not make or
+        cannot sign in as, ``EngineError`` when the ``CREATE`` fails."""
+        user, host = account_name(user, host)
+        if user == _RUNNER and host.casefold() == "localhost":
+            self.load((), {}, [routine])
+            return False
+        why = definer_refusal(user, host)
+        if why is not None:
+            raise DefinerRefused(why)
+        key = (user, host.casefold())
+        conn = self._definers.get(key)
+        if conn is None:
+            conn = self._make_definer(user, host)
+            self._definers[key] = conn
+        cur = conn.cursor()
+        try:
+            self._create_routine(cur, routine)
+        except self._mc.Error as exc:
+            raise EngineError(f"{type(exc).__name__}: {exc}".strip(), _sqlstate(exc)) from exc
+        finally:
+            cur.close()
+        return True
+
+    def _make_definer(self, user: str, host: str) -> Any:
+        """Make ``user@host`` with a one-time password (bound, generated here, used for one
+        sign-in over the engine's own socket and kept nowhere) and the scratch databases
+        only, sign in as it, then lock it; the signed-in session is returned. Anything that
+        fails after ``CREATE USER`` drops the account there and then, so no account is ever
+        left unlocked."""
+        account = _account(user, host)
+        server = self._server
+        admin = self._mc.connect(**server.connect_args("root", server.password))
+        conn = None
+        made = False
+        try:
+            cur = admin.cursor()
+            _execute(cur, _MY_ACCOUNT_EXISTS, [user, host])
+            if cur.fetchall()[0][0]:
+                raise DefinerRefused("its DEFINER names an account the engine already has")
+            password = secrets.token_urlsafe(24)
+            _execute(cur, f"CREATE USER {account} IDENTIFIED BY %s", [password])
+            made = True
+            for name in (_DATABASE, *self._namespaces):
+                _execute(cur, f"GRANT ALL PRIVILEGES ON {grant_database(name)}.* TO {account}")
+            unreachable = DefinerRefused(
+                "a local sign-in does not reach the account its DEFINER names, so it cannot "
+                "be created as that account here"
+            )
+            try:
+                conn = self._mc.connect(**server.connect_args(user, password, _DATABASE))
+            except self._mc.Error:
+                raise unreachable from None
+            mine = conn.cursor()
+            _execute(mine, "SELECT CURRENT_USER()")
+            signed_in = str(mine.fetchall()[0][0])
+            mine.close()
+            if signed_in.casefold() != f"{user}@{host}".casefold():
+                raise unreachable  # another account of that user matched the sign-in
+            _execute(cur, f"ALTER USER {account} ACCOUNT LOCK")
+            self._made.append(account)
+            cur.close()
+            return conn
+        except BaseException as exc:
+            if conn is not None:
+                with contextlib.suppress(Exception):
+                    conn.close()
+            if made:
+                try:
+                    _execute(admin.cursor(), f"DROP USER IF EXISTS {account}")
+                except Exception:  # noqa: BLE001 - the engine's stop tries again
+                    self._made.append(account)
+            if isinstance(exc, self._mc.Error):
+                raise EngineError(f"{type(exc).__name__}: {exc}".strip(), _sqlstate(exc)) from exc
+            raise
+        finally:
+            admin.close()
+
+    def _drop_definers(self) -> None:
+        """Close each DEFINER session and drop every account made for one."""
+        for conn in self._definers.values():
+            with contextlib.suppress(Exception):
+                conn.close()
+        self._definers = {}
+        if not self._made:
+            return
+        server = self._server
+        with contextlib.suppress(Exception):
+            admin = self._mc.connect(**server.connect_args("root", server.password))
+            try:
+                cur = admin.cursor()
+                for account in self._made:
+                    with contextlib.suppress(self._mc.Error):
+                        _execute(cur, f"DROP USER IF EXISTS {account}")
+                cur.close()
+                self._made = []
+            finally:
+                admin.close()
 
     def _make_event_runner(self, cur, event: str) -> None:  # type: ignore[no-untyped-def]
         """Make a procedure with the event's own statement as its body, read back from the
@@ -1968,6 +2145,7 @@ class _MySQLBackend(_Backend):
     def close(self) -> None:
         with contextlib.suppress(Exception):
             self._conn.close()
+        self._drop_definers()
         self._server.stop()
 
 
@@ -2260,6 +2438,29 @@ def load(
     """
     _check_live(handle)
     handle._backend.load(ddl, rows or {}, routines)
+
+
+def makes_definers(handle: EngineHandle) -> bool:
+    """Whether ``handle`` is a disposable MySQL engine of this module, the only kind
+    :func:`load_as_definer` makes accounts on; a target that only borrows the handle type
+    (the RDS Data API test cluster) never does."""
+    return isinstance(handle._backend, _MySQLBackend)
+
+
+def load_as_definer(
+    handle: EngineHandle, routine: SourceRoutine, user: str, host: str | None = None
+) -> bool:
+    """Create one MySQL ``routine`` whose ``DEFINER`` names ``user@host`` (``host`` None is
+    ``%``), signed in as that account, made for the run when the engine lacks it (#2426;
+    module docstring). True when it was created as such an account, False when the account
+    is the runner's own. ``DefinerRefused`` for a name the engine must not make
+    (:func:`definer_refusal`) or cannot sign in as; ``EngineError`` when the ``CREATE``
+    fails; ``ValueError`` on PostgreSQL, which has no ``DEFINER``."""
+    _check_live(handle)
+    if handle.engine != "mysql":
+        raise ValueError("a DEFINER is a MySQL routine's")
+    backend: Any = handle._backend
+    return bool(backend.load_as_definer(routine, user, host))
 
 
 def call(

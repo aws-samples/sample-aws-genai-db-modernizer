@@ -188,6 +188,8 @@ def test_the_script_lists_the_step_1_routine_script_tests() -> None:
         "tests/integration/test_routine_scripts_mysql.py",
         "tests/integration/test_triggers_scripts_mysql.py",
         "tests/integration/test_view_scripts_mysql.py",
+        # a routine's DEFINER account on the disposable source engine (#2426)
+        "tests/unit/tools/database/test_disposable_engine_definer.py",
     ]
 
 
