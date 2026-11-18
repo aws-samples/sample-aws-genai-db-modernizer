@@ -1010,9 +1010,12 @@ def test_the_fake_signs_in_as_a_scram_role_only_with_its_password():
     )
     with pytest.raises(Exception, match="28P01"):
         client.execute_statement(sql="SELECT 1", secretArn=no_login["ARN"])
-    # A verifier whose colons are left as they are reads as a parameter mark: refused.
+    # A verifier whose colons are left as they are reads as a parameter mark: refused. The
+    # salt is fixed so its base64 starts with a letter ("QUFB..."), which is what makes the
+    # colon before it a parameter mark; a random salt made this pass by chance (#2449).
+    fixed = scram_verifier("right", salt=b"A" * 16)
     with pytest.raises(Exception, match="missing parameter"):
-        client.execute_statement(sql=f"CREATE ROLE \"x\" LOGIN PASSWORD '{scram_verifier('right')}'",
+        client.execute_statement(sql=f"CREATE ROLE \"x\" LOGIN PASSWORD '{fixed}'",
                                  secretArn=ARNS["secret_arn"])  # fmt: skip
 
 
