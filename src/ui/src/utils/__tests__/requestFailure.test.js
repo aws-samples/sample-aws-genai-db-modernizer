@@ -221,6 +221,18 @@ describe('failureReason: the API own sentence, for the four opt-in call sites', 
     expect(reasonOf('Value \uFF11 is too small')).toBe('Value 1 is too small');
   });
 
+  test('a host and port with spaces, and decimal or hex IPv4, fall back', () => {
+    ['Cannot reach db : 5432', 'Cannot reach db :5432', 'Cannot reach 167772165', 'Cannot reach 0x0a000005'].forEach((text) => {
+      expect(reasonOf(text, 400)).toBeNull();
+    });
+    expect(reasonOf('growth must be between 0 and 100, got 500', 400)).toBe('growth must be between 0 and 100, got 500');
+  });
+
+  test.each(['evil.ai', 'evil.sh', 'evil.zip', 'evil.ly', 'evil.page', 'evil.link', 'evil.gg', 'evil.to', 'evil\uFF0Eai'])(
+    'the dotted domain %s falls back, also with a fullwidth dot', (host) => {
+      expect(reasonOf(`Sign in at ${host} now`, 400)).toBeNull();
+    });
+
   describe('FastAPI 422 shapes', () => {
     test('a list names the fields from each loc, through the same allowlist', () => {
       const list = [
@@ -235,6 +247,13 @@ describe('failureReason: the API own sentence, for the four opt-in call sites', 
       expect(reasonOf([{ loc: ['body', 'ht\u200Btps://x'], msg: 'x' }])).toBeNull();
       expect(reasonOf([{ loc: ['body'], msg: 'x' }])).toBeNull();
       expect(reasonOf([])).toBeNull();
+    });
+
+    test('the field-name sentence has a total length cap', () => {
+      const names = ['a', 'b', 'c', 'd', 'e'].map((c) => c.repeat(80));
+      const reason = reasonOf(names.map((n) => ({ loc: ['body', n], msg: 'x' })));
+      expect(reason).toBe(`The service did not accept these fields: ${names[0]}.`);
+      expect(reasonOf([{ loc: ['body', 'x'.repeat(299)], msg: 'x' }])).toBeNull();
     });
 
     test('the {message, errors} object adds each safe error to a fixed sentence', () => {
@@ -311,6 +330,12 @@ describe('the pages that retry or poll replace their own flash', () => {
   test('the job summary gives each failure its own id', () => {
     const ids = [...page('JobMonitoringSummary.js').matchAll(/id: '([a-z-]+-failed)'/g)].map((m) => m[1]);
     expect(ids).toEqual(['job-details-failed', 'agent-details-failed', 'job-summary-failed']);
+  });
+
+  test('the gate own load failure reads as a read, not a form', () => {
+    const line = page('AssignmentGate.js').split('\n').find((l) => l.includes("id: 'gate-load-failed'"));
+    expect(line).toContain('variant: undefined');
+    expect(failureFlash(t, { success: false, status: 400 }, { header: 'h', variant: undefined }).content).toBe('The service did not accept the request.');
   });
 
   test('cancel and delete use the action wording', () => {
