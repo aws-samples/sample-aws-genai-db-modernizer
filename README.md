@@ -10,9 +10,9 @@ Database Modernizer Assessment reads the schema and query statistics of a relati
 
 > **Disclaimer:** This is a sample project intended for educational and evaluation purposes. It requires proper review, testing, and modification before use in production environments. Use at your own risk.
 
-![A time-lapsed /modernize run on the WordPress sample in a terminal, with the approval gate and the final summary held on screen, then the job's results and summary pages in the local UI and four pages of the executive report PDF](docs/assets/modernizer-demo.gif)
+![Animated demo of one /modernize run in Claude Code on the synthetic WordPress sample: the approval gate places 108 queries on Aurora MySQL and 55 on DynamoDB with an ElastiCache cache layer, schema design and reviews play as a time-lapse, the run ends with three waves at $1,300.45 per month and 9 medium risks, then the results UI and four pages of the executive report.](docs/assets/modernizer-demo.gif)
 
-*A full `/modernize` run on the WordPress sample (about 7.5 minutes, time-lapsed to 78 seconds) with its one approval gate and final summary, then the job's results and summary pages in the local UI and four pages of the executive report PDF.*
+*A full `/modernize` run on the WordPress sample (about 21 minutes, time-lapsed to 76 seconds) with its one approval gate and final summary, then the job's results and summary pages in the local UI and four pages of the executive report PDF.*
 
 The [help site's front page](https://aws-samples.github.io/sample-aws-genai-db-modernizer/) walks through a recorded run, and its [overview](https://aws-samples.github.io/sample-aws-genai-db-modernizer/overview/) says what the tool answers.
 
@@ -37,7 +37,7 @@ The repository ships a WordPress + WooCommerce sample (50 tables, 163 queries). 
 /modernize docs/examples/wordpress/wordpress-collection.json
 ```
 
-The recorded run in the demo above took about 7.5 minutes (the first run also builds the local UI). It stops once, after the engine assignment, for your approval. After you approve, it finishes on its own. Add `--mode chat` for a terminal-only run with no UI.
+The recorded run in the demo above took about 21 minutes, including the first build of the local UI and the wait at the approval gate. It stops once, after the engine assignment, for your approval. After you approve, it finishes on its own. Add `--mode chat` for a terminal-only run with no UI.
 
 The samples are synthetic: their data is generated test data, not customer data. The WordPress collection was taken after a seeded load of "16,071 HTTP requests in 1,643 seconds", and "each statement's call rate is its execution count over its own first-to-last-seen window, about 27 minutes of the workload" ([its README](https://github.com/aws-samples/sample-aws-genai-db-modernizer/blob/main/docs/examples/wordpress/README.md)). A larger PostgreSQL sample, Discourse (311 tables and 1,654 queries), is in `docs/examples/discourse/`.
 
