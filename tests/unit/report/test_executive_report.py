@@ -27,6 +27,7 @@ from src.report.executive_report import table_names, without_table_names
 from src.report.facts import report_facts
 from src.report.formatting import _cost_baseline_text, _fmt_usd
 from src.report.risks import NO_OPEN_RISKS_CAVEAT
+from src.shared.severity_labels import severity_label
 from tests.executive_pdf import (
     body_text,
     outline,
@@ -561,7 +562,7 @@ def test_open_risks_print_how_the_level_is_derived(e2e09: dict[str, Any]) -> Non
     text = _body(e2e09)
     assert executive_report.RISK_RULE_NOTE in text
     level = e2e09["risk_assessment"]["overall_risk_level"]
-    assert f"{level} Overall risk" in text
+    assert f"{severity_label(level)} Overall risk" in text
 
 
 def test_the_pending_engine_choices(e2e09: dict[str, Any]) -> None:

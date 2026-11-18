@@ -32,6 +32,7 @@ from dataclasses import dataclass, field
 from typing import Any
 
 from src.shared.engine_names import ENGINE_DISPLAY_NAMES
+from src.shared.severity_labels import severity_label
 
 SEVERITIES = ("CRITICAL", "HIGH", "MEDIUM", "LOW")
 
@@ -941,7 +942,10 @@ def engineering_figures(md_text: str) -> Figures:
         m = re.match(r"^Risk register \(([\d,]+)\)$", heading)
         if m:
             f.add("risks:total", _int(m.group(1)), "Risk register heading")
-            sev = Counter(re.findall(r"^- \*\*RISK-\d+\*\* · (\w+) ·", body, re.M))
+            by_word = {severity_label(k): k for k in SEVERITIES}
+            sev = Counter(
+                by_word.get(w, w) for w in re.findall(r"^- \*\*RISK-\d+\*\* · (\w+) ·", body, re.M)
+            )
             for s in SEVERITIES:
                 f.add(f"risks:{s}", sev.get(s, 0), "Risk register entries")
             for eng_heading, _ in _md_sections(body, 3):

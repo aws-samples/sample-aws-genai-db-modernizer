@@ -627,7 +627,7 @@ def test_a_report_from_before_the_rule_renders_the_same_risks(
     assert md_text(sentence) in md and "overall: MEDIUM" not in md
     for r in backfilled:
         assert f"**{r['risk_id']}**" in md
-    assert "Overall risk: HIGH" in md
+    assert "Overall risk: high" in md
     pdf = " ".join(pdf_page_texts(str(again.deliverable("executive-report.pdf"))))
     fresh_pdf = " ".join(pdf_page_texts(str(flagged.deliverable("executive-report.pdf"))))
     for risk in backfilled:

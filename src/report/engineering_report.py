@@ -24,6 +24,7 @@ from src.shared.report_facts import (
     query_group_at,
     same_label_places,
 )
+from src.shared.severity_labels import severity_label, severity_word
 from src.shared.shared_sentences import GROUPS_KEY, shared_layout
 from src.shared.target_databases import engine_scope_statement
 from src.shared.trade_off_topics import DEFAULT_TOPIC, REVIEW_NOTE_TOPIC
@@ -262,7 +263,7 @@ def _risk_posture_md(report: dict[str, Any]) -> list[str]:
     out = [
         "## Risk posture",
         "",
-        f"- Overall risk: {escaping.md_text(risk.get('overall_risk_level', 'not assessed'))}",
+        f"- Overall risk: {_overall_risk_word(risk.get('overall_risk_level'))}",
     ]
     # #1991: the rate-driven risks rest on a window that is not representative (the full
     # label stands with the costs, once).
@@ -286,6 +287,11 @@ def _risk_posture_md(report: dict[str, Any]) -> list[str]:
         )
         out += ["", f"*{escaping.md_text(NO_OPEN_RISKS_CAVEAT)}*", ""]
     return out
+
+
+def _overall_risk_word(level: Any) -> str:
+    """The overall level as the results page words it ("high"), or "not assessed"."""
+    return severity_word(level) if level else "not assessed"
 
 
 def _resolved_by_severity(facts: dict[str, Any]) -> str:
@@ -1199,7 +1205,7 @@ def _risk_register_md(report: dict[str, Any], said: _SaidOnce | None = None) -> 
             for r in items:
                 _, body = _risk_engine_and_body(r.get("description"))
                 body = _close_call_body(body, r, close_calls)
-                sev = r.get("severity", "-")
+                sev = severity_label(r.get("severity"))
                 rtype = str(r.get("risk_type", "")).replace("_", " ").lower()
                 rid = r.get("risk_id", "-")
                 where = f"under {escaping.md_text(rid)}"
@@ -1250,7 +1256,7 @@ def _risk_register_md(report: dict[str, Any], said: _SaidOnce | None = None) -> 
                 out.append(
                     "- "
                     + said.line(
-                        f"{escaping.md_text(r.get('severity', '-'))} \u00b7 "
+                        f"{escaping.md_text(severity_label(r.get('severity')))} \u00b7 "
                         f"{escaping.md_text(where)} \u00b7 {escaping.md_text(body)}",
                         "above",
                     )

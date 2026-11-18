@@ -29,6 +29,7 @@ from src.report.formatting import fmt_num
 from src.report.printed_summary import ordered_risks, prose
 from src.shared.engine_names import display_engine
 from src.shared.risk_severity import severity_of
+from src.shared.severity_labels import severity_label, severity_word
 from tests.e2e.pipeline import REPO, PipelineResult
 
 pytestmark = pytest.mark.deterministic
@@ -145,7 +146,7 @@ def test_every_figure_is_a_report_fact(job: PipelineResult) -> None:
     )
     level = report["risk_assessment"].get("overall_risk_level")
     if level:
-        assert f"Overall risk: {level}" in risks
+        assert f"Overall risk: {severity_word(level)}" in risks
 
 
 def test_every_critical_and_high_risk_is_listed_with_its_id(job: PipelineResult) -> None:
@@ -158,7 +159,7 @@ def test_every_critical_and_high_risk_is_listed_with_its_id(job: PipelineResult)
         line for line in _section(final, "Risks", "###").splitlines() if line.startswith("- ")
     ]
     assert [line.split(",")[0].removeprefix("- ") for line in listed[:1]] in (
-        [severity_of(risks[0])],
+        [severity_label(severity_of(risks[0]))],
         [],
     )
 

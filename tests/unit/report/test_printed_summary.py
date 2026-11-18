@@ -274,7 +274,7 @@ def test_the_final_summary_follows_the_results_page() -> None:
         "- Cache layer note: 15 cache candidates, 12 designed; 3 stay on their owner engine."
         in text
     )
-    assert "Overall risk: HIGH" in text
+    assert "Overall risk: high" in text
     assert "Open risks: 7 (2 high, 5 medium)" in text
     assert "Resolved by the assignment: 2 (2 medium)" in text
 
@@ -345,8 +345,8 @@ def test_risks_are_sorted_by_severity_and_every_critical_and_high_is_listed_in_f
     risks[0]["mitigation"] = "a long mitigation " * 40
     text = _final(report)
     listed = [line for line in text.splitlines() if line.startswith("- ") and ", " in line[:20]]
-    assert listed[0].startswith("- CRITICAL, DynamoDB (RISK-006): Risk number 6")
-    assert [line.split(",")[0] for line in listed] == ["- CRITICAL"] + ["- HIGH"] * 5
+    assert listed[0].startswith("- Critical, DynamoDB (RISK-006): Risk number 6")
+    assert [line.split(",")[0] for line in listed] == ["- Critical"] + ["- High"] * 5
     assert len(listed) == 6 > MIN_LISTED_RISKS  # all serious ones, past the minimum
     assert ("long text " * 80).strip().replace("(", "") in text  # not cut
     assert "a long mitigation " * 39 in text
@@ -383,9 +383,9 @@ def test_an_unrated_risk_sorts_after_low() -> None:
     lines = [
         line
         for line in _final(report).splitlines()
-        if line.startswith("- UNRATED") or line.startswith("- LOW")
+        if line.startswith("- Unrated") or line.startswith("- Low")
     ]
-    assert "low one" in lines[0] and lines[1].startswith("- UNRATED")
+    assert "low one" in lines[0] and lines[1].startswith("- Unrated")
 
 
 def test_a_mitigation_that_repeats_the_description_is_not_stated_twice() -> None:

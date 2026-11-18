@@ -42,6 +42,7 @@ from src.report.roadmap import _wave_headline_stats, resolve_migration_waves
 from src.shared.engine_names import display_engine
 from src.shared.migration_wave_engines import CACHE_FRONT_REFERENCE
 from src.shared.report_facts import build_commit_line
+from src.shared.severity_labels import severity_label
 from src.tools.validation.customer_text_guard import scan_text
 from tests.branding import hits as found
 from tests.e2e.pipeline import REPO, PipelineResult
@@ -322,7 +323,7 @@ def test_every_open_risk_and_the_risk_counts(run: PipelineResult) -> None:
     facts = report["facts"]
     text = _text(run)
     level = report["risk_assessment"]["overall_risk_level"]
-    assert f"{level} Overall risk" in text
+    assert f"{severity_label(level)} Overall risk" in text
     assert f"{facts['open_risk_count']} Open risks" in text
     assert f"{facts['resolved_risk_count']} Resolved by the assignment" in text
     sev = _severity_counts_text(facts["resolved_risks_by_severity"])
@@ -331,7 +332,7 @@ def test_every_open_risk_and_the_risk_counts(run: PipelineResult) -> None:
         md = run.deliverable("engineering-report.md").read_text()
         assert f"({sev})" in md
     for r in filtered_risks(report):
-        assert f"{r['risk_id']} · {r['severity']}" in text, r["risk_id"]
+        assert f"{r['risk_id']} · {severity_label(r['severity'])}" in text, r["risk_id"]
 
 
 def test_the_pending_engine_choices(run: PipelineResult) -> None:

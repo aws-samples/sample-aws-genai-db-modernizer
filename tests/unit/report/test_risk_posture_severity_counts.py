@@ -49,7 +49,7 @@ def _posture_paren(text: str) -> str:
 def test_a_single_critical_risk_is_counted_as_critical_not_folded_into_high() -> None:
     report = _report([_risk("RISK-001", "CRITICAL")], "CRITICAL")
     text = engineering_text(report)
-    assert "Overall risk: CRITICAL" in text
+    assert "Overall risk: critical" in text
     paren = _posture_paren(text)
     assert paren == "1 critical"
     assert "high" not in paren
