@@ -1,40 +1,74 @@
 // Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
 // SPDX-License-Identifier: MIT-0
 
-import { memo } from 'react';
+import { memo, useMemo, useState } from 'react';
 import Box from "@cloudscape-design/components/box";
 import ExpandableSection from "@cloudscape-design/components/expandable-section";
+import Link from "@cloudscape-design/components/link";
 import SpaceBetween from "@cloudscape-design/components/space-between";
 import Table from "@cloudscape-design/components/table";
+import TextFilter from "@cloudscape-design/components/text-filter";
 import { displayEngine } from "../utils/engineNames";
-import { tableOwnershipOf } from "../utils/reportFacts";
+import { tableOwnershipOf, tableSourcesOf } from "../utils/reportFacts";
+import { tableOwnerRows } from "../utils/tableOwnerRows";
+import EngineBadge from "./EngineBadge";
 
 /**
- * "Table owners" (#212, ADR-031 Amendment 9): one line per mapped source table
- * from report.json's facts.table_owner_lines -- the same lines the engineering
- * report's Migration map states: its owner (the engine that takes its writes;
- * a table no query writes, the plan's relational engine (#2166); never a
- * cache), the other engines that also read it through CDC replicas, and the
- * cache in front of its reads. The counts are the facts layer's (ADR-032); this
- * only formats them. Collapsed when the page opens, like Sources of truth.
+ * "Table owners" (#212, ADR-031 Amendment 9; #2321 folded in "Sources of truth and
+ * replicas", #992): one row per mapped source table from report.json's
+ * facts.table_owner_lines and facts.table_sources, the same rows the engineering
+ * report's Migration map and Sources of truth section state. A row has the table's
+ * owner (the engine that takes its writes, its source of truth; a table no query
+ * writes, the plan's relational engine (#2166); never a cache), the engines that read
+ * a CDC copy of it, the reads a replica serves and the cache in front of its reads.
+ * The columns sort and a text filter narrows the rows. The eventual-consistency risk
+ * is stated once behind an Info link, in the engineering report's words (#1170,
+ * #1232). The counts are the facts layer's (ADR-032); this only formats them.
+ * Collapsed when the page opens.
  *
  * Callers pass `t` (the page's own `useTranslation` function).
  */
 
 const DASH = '—';
 
-function names(engines) {
+function engineList(engines) {
   const shown = (engines || []).map(displayEngine);
   return shown.length > 0 ? shown.join(', ') : DASH;
 }
 
-// The owner, and "no single writer" for a table whose writes still sit on
+function badges(engines) {
+  if (!engines || engines.length === 0) return DASH;
+  return (
+    <span style={{ whiteSpace: 'nowrap' }}>
+      {engines.map((engine, i) => (
+        <span key={engine}>{i > 0 && ' '}<EngineBadge engine={engine} /></span>
+      ))}
+    </span>
+  );
+}
+
+// The owner's name, and "no single writer" for a table whose writes still sit on
 // several engines (the engineering report's owner_cell).
-function ownerText(row, t) {
-  const name = row.owner ? displayEngine(row.owner) : DASH;
-  if (row.owner_basis !== 'split_writes') return name;
-  const split = t('analysis-results.table-owners.split-writes');
-  return row.owner ? `${name} (${split})` : split;
+function ownerSplitText(row, t) {
+  return row.owner ? `(${t('analysis-results.table-owners.split-writes')})` : t('analysis-results.table-owners.split-writes');
+}
+
+// The text a row sorts and filters on, one lower-cased string per column.
+function searchable(row) {
+  return [row.table, row.owner && displayEngine(row.owner), engineList(row.cdcTo), row.cachedBy && displayEngine(row.cachedBy)]
+    .filter(Boolean).join(' ').toLowerCase();
+}
+
+function compareText(a, b) {
+  return String(a).localeCompare(String(b));
+}
+
+// A table with no replica read count sorts below every count when the most reads
+// come first.
+function compareReads(a, b) {
+  const x = a.replicaReads === null ? -1 : a.replicaReads;
+  const y = b.replicaReads === null ? -1 : b.replicaReads;
+  return x - y;
 }
 
 // #2166 review: the rule the report's own lines follow (facts.table_owner_lines.
@@ -46,71 +80,204 @@ export function ruleKey(ownership) {
     : 'analysis-results.table-owners.rule';
 }
 
+function sharedRiskSources(sources) {
+  const replicated = (sources && sources.replicated_tables) || [];
+  return {
+    shared: replicated.filter(row => row.shares_replica_risk === true),
+    all: replicated,
+  };
+}
+
+// The risk once for every table that shares it, naming their sources of truth in the
+// order the rows list them (the engineering report's shared_replica_risk_text).
+function sharedRiskText(rows, t) {
+  const names = [...new Set(rows.map(row => row.source_of_truth))].map(displayEngine);
+  if (names.length === 1) {
+    return t('analysis-results.sources-of-truth.risk-one-source', { source: names[0] });
+  }
+  return t('analysis-results.sources-of-truth.risk-many-sources', {
+    sources: names.slice(0, -1).join(', '),
+    last: names.slice(-1)[0],
+  });
+}
+
+function ConsistencyNote({ sources, t }) {
+  const [open, setOpen] = useState(false);
+  const { shared, all } = sharedRiskSources(sources);
+  if (all.length === 0) return null;
+  const own = all.filter(row => row.shares_replica_risk !== true);
+  return (
+    <SpaceBetween size="xs">
+      <span data-figure="consistency-info">
+        <Link
+          variant="info"
+          ariaLabel={t('analysis-results.table-owners.info-label')}
+          onFollow={(e) => { e.preventDefault(); setOpen(value => !value); }}
+        >
+          {t('analysis-results.table-owners.info')}
+        </Link>
+      </span>
+      {open && (
+        <Box data-figure="consistency">
+          <SpaceBetween size="xs">
+            <div>{t('analysis-results.sources-of-truth.intro')}</div>
+            {shared.length > 0 && (
+              <div data-figure="shared-risk">
+                {t(own.length === 0
+                  ? 'analysis-results.sources-of-truth.risk-lead'
+                  : 'analysis-results.sources-of-truth.risk-lead-other')}
+                {' '}
+                {sharedRiskText(shared, t)}
+              </div>
+            )}
+            {own.map(row => (
+              <div key={row.table} data-own-risk={row.table}>
+                <span style={{ fontFamily: 'monospace' }}>{row.table}</span>
+                {' '}
+                {row.risk}
+              </div>
+            ))}
+          </SpaceBetween>
+        </Box>
+      )}
+    </SpaceBetween>
+  );
+}
+
 const TableOwnersCallout = memo(({ synthesis, t }) => {
   const ownership = tableOwnershipOf(synthesis);
-  if (!ownership) return null;
-  const owned = Object.entries(ownership.owned_table_counts || {});
+  const sources = tableSourcesOf(synthesis);
+  const rows = useMemo(() => tableOwnerRows(synthesis), [synthesis]);
+  const [filteringText, setFilteringText] = useState('');
+  const [sorting, setSorting] = useState(null);
+  if (!ownership && !sources) return null;
+
+  const owned = Object.entries((ownership && ownership.owned_table_counts) || {});
+  const withCache = Boolean(ownership);
+  const hasReplicas = Boolean(sources && (sources.replicated_tables || []).length > 0);
   const columns = [
     {
       id: 'table',
       header: t('analysis-results.table-owners.col-table'),
       cell: row => <span data-table={row.table} style={{ fontFamily: 'monospace' }}>{row.table}</span>,
+      sortingComparator: (a, b) => compareText(a.table, b.table),
     },
     {
       id: 'owner',
       header: t('analysis-results.table-owners.col-owner'),
-      cell: row => <span data-cell="owner">{ownerText(row, t)}</span>,
+      cell: row => (
+        <span data-cell="owner">
+          {row.owner ? <EngineBadge engine={row.owner} /> : null}
+          {row.split ? <>{row.owner ? ' ' : ''}{ownerSplitText(row, t)}</> : null}
+          {!row.owner && !row.split ? DASH : null}
+        </span>
+      ),
+      sortingComparator: (a, b) => compareText(a.owner ? displayEngine(a.owner) : '', b.owner ? displayEngine(b.owner) : ''),
     },
     {
-      id: 'also-read-by',
-      header: t('analysis-results.table-owners.col-also-read-by'),
-      cell: row => <span data-cell="also-read-by">{names(row.also_read_by)}</span>,
+      id: 'cdc-to',
+      header: t('analysis-results.table-owners.col-cdc-to'),
+      cell: row => <span data-cell="cdc-to">{badges(row.cdcTo)}</span>,
+      sortingComparator: (a, b) => compareText(engineList(a.cdcTo), engineList(b.cdcTo)),
     },
     {
+      id: 'replica-reads',
+      header: t('analysis-results.table-owners.col-replica-reads'),
+      cell: row => <span data-cell="replica-reads">{row.replicaReads === null ? DASH : String(row.replicaReads)}</span>,
+      sortingComparator: compareReads,
+    },
+    ...(withCache ? [{
       id: 'cached-by',
       header: t('analysis-results.table-owners.col-cached-by'),
-      cell: row => <span data-cell="cached-by">{row.cached_by ? displayEngine(row.cached_by) : DASH}</span>,
-    },
+      cell: row => <span data-cell="cached-by">{row.cachedBy ? <EngineBadge engine={row.cachedBy} /> : DASH}</span>,
+      sortingComparator: (a, b) => compareText(a.cachedBy ? displayEngine(a.cachedBy) : '', b.cachedBy ? displayEngine(b.cachedBy) : ''),
+    }] : []),
   ];
+
+  const needle = filteringText.trim().toLowerCase();
+  const filtered = needle ? rows.filter(row => searchable(row).includes(needle)) : rows;
+  let shown = filtered;
+  if (sorting) {
+    const column = columns.find(c => c.id === sorting.id);
+    const sign = sorting.descending ? -1 : 1;
+    shown = [...filtered].sort((a, b) => sign * column.sortingComparator(a, b));
+  }
+  const headerText = ownership
+    ? t('analysis-results.table-owners.header', { count: ownership.table_count })
+    : t('analysis-results.table-owners.header-written', { count: sources.written_table_count });
+
   return (
     <div id="table-owners-section">
-      <ExpandableSection
-        variant="container"
-        defaultExpanded={false}
-        headerText={t('analysis-results.table-owners.header', { count: ownership.table_count })}
-      >
+      <ExpandableSection variant="container" defaultExpanded={false} headerText={headerText}>
         <SpaceBetween size="s">
-          <Box data-figure="owner-rule">{t(ruleKey(ownership))}</Box>
-          <Box data-figure="owned-tables">
-            {owned.map(([engine, count]) => (
-              <div key={engine} data-engine={engine}>
-                {t('analysis-results.table-owners.owns', { engine: displayEngine(engine), count })}
-              </div>
-            ))}
-            {ownership.no_owner_table_count > 0 && (
-              <div data-figure="no-owner-tables">
-                {t('analysis-results.table-owners.no-owner', { count: ownership.no_owner_table_count })}
-              </div>
-            )}
-          </Box>
-          <Box data-figure="also-read-tables">
-            {t('analysis-results.table-owners.also-read', { count: ownership.also_read_table_count })}
-          </Box>
-          {ownership.cached_table_count > 0 && (
+          {ownership && <Box data-figure="owner-rule">{t(ruleKey(ownership))}</Box>}
+          {ownership && (
+            <Box data-figure="owned-tables">
+              {owned.map(([engine, count]) => (
+                <div key={engine} data-engine={engine}>
+                  {t('analysis-results.table-owners.owns', { engine: displayEngine(engine), count })}
+                </div>
+              ))}
+              {ownership.no_owner_table_count > 0 && (
+                <div data-figure="no-owner-tables">
+                  {t('analysis-results.table-owners.no-owner', { count: ownership.no_owner_table_count })}
+                </div>
+              )}
+            </Box>
+          )}
+          {ownership && (
+            <Box data-figure="also-read-tables">
+              {t('analysis-results.table-owners.also-read', { count: ownership.also_read_table_count })}
+            </Box>
+          )}
+          {ownership && ownership.cached_table_count > 0 && (
             <Box data-figure="cached-tables">
               {t('analysis-results.table-owners.cached', {
                 count: ownership.cached_table_count,
-                engines: names(ownership.cache_engines),
+                engines: engineList(ownership.cache_engines),
               })}
             </Box>
           )}
+          <TextFilter
+            filteringText={filteringText}
+            filteringPlaceholder={t('analysis-results.table-owners.filter-placeholder')}
+            filteringAriaLabel={t('analysis-results.table-owners.filter-label')}
+            countText={needle ? t('analysis-results.table-owners.matches', { count: filtered.length }) : undefined}
+            onChange={({ detail }) => setFilteringText(detail.filteringText)}
+          />
           <Table
             columnDefinitions={columns}
-            items={ownership.table_lines || []}
+            items={shown}
             trackBy="table"
             variant="embedded"
+            sortingColumn={sorting ? columns.find(c => c.id === sorting.id) : undefined}
+            sortingDescending={sorting ? sorting.descending : false}
+            onSortingChange={({ detail }) => setSorting({ id: detail.sortingColumn.id, descending: detail.isDescending })}
+            empty={<Box textAlign="center" padding="s">{t('analysis-results.table-owners.no-match')}</Box>}
             ariaLabels={{ tableLabel: t('analysis-results.table-owners.table-label') }}
+            footer={hasReplicas ? <ConsistencyNote sources={sources} t={t} /> : undefined}
           />
+          {sources && sources.more_replicated_count > 0 && (
+            <Box>{t('analysis-results.sources-of-truth.more', { count: sources.more_replicated_count })}</Box>
+          )}
+          {sources && !ownership && sources.single_engine_table_count > 0 && (
+            <Box data-figure="single-engine-tables">
+              {t('analysis-results.sources-of-truth.single', {
+                count: sources.single_engine_table_count,
+                tables: (sources.single_engine_tables || []).join(', '),
+              })}
+            </Box>
+          )}
+          {sources && sources.source_database_table_count > 0 && (
+            <Box data-figure="source-database-tables">
+              {t('analysis-results.sources-of-truth.source-database', { count: sources.source_database_table_count })}
+            </Box>
+          )}
+          {sources && sources.split_write_table_count > 0 && (
+            <Box data-figure="split-write-tables">
+              {t('analysis-results.sources-of-truth.split', { count: sources.split_write_table_count })}
+            </Box>
+          )}
         </SpaceBetween>
       </ExpandableSection>
     </div>

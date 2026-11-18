@@ -123,11 +123,11 @@ describe('changing tab writes the URL', () => {
 
 describe('a link to a section lands on its tab and at the section', () => {
   test('an old anchor redirects to its tab, then scrolls to the section and focuses it', () => {
-    mount('/analysis/results/j1#sources-of-truth-section');
+    mount('/analysis/results/j1#table-owners-section');
     expect(tab()).toBe('data-model');
-    expect(url()).toBe('?tab=data-model#sources-of-truth-section');
-    expect(scrolled).toEqual(['sources-of-truth-section']);
-    const el = container.querySelector('#sources-of-truth-section');
+    expect(url()).toBe('?tab=data-model#table-owners-section');
+    expect(scrolled).toEqual(['table-owners-section']);
+    const el = container.querySelector('#table-owners-section');
     expect(document.activeElement).toBe(el);
     expect(el.getAttribute('tabindex')).toBe('-1');
   });

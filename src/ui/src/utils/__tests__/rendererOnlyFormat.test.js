@@ -163,7 +163,8 @@ const GUARDED_UI_FILES = [
   'components/RoutineMigrationSection.js',
   'components/ExecutiveSummaryStats.js',
   'components/DeliverablesPanel.js',
-  'components/SourcesOfTruthCallout.js',
+  'components/TableOwnersCallout.js',
+  'utils/tableOwnerRows.js',
   'components/DynamoDBMergeConflictsCallout.js',
   'components/DynamoDBMergeReviewsCallout.js',
 ];

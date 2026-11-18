@@ -1,5 +1,5 @@
 {
-  "_comment": "A facts.table_sources block stored by a report written between a5c40e70 and ca763a01 (replica_read_count, older risk wording, no shares_replica_risk), and the block the /results API serves after src/report/facts.py fills it in. tests/unit/report/test_sources_of_truth_section.py checks the engineering report prints the expected text; components/__tests__/SourcesOfTruthCallout.test.js checks the results page prints the same.",
+  "_comment": "A facts.table_sources block stored by a report written between a5c40e70 and ca763a01 (replica_read_count, older risk wording, no shares_replica_risk), and the block the /results API serves after src/report/facts.py fills it in. tests/unit/report/test_sources_of_truth_section.py checks the engineering report prints the expected text; components/__tests__/TableOwnersCallout.test.js checks the results page prints the same.",
   "stored": {
     "written_table_count": 3,
     "replicated_table_count": 2,

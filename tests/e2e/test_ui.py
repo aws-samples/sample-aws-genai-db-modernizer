@@ -112,7 +112,7 @@ TAB_SECTIONS = {
         "unreviewed-moves-note",
     ],
     "queries": ["query-routing-section", "access-patterns-section"],
-    "data-model": ["table-owners-section", "sources-of-truth-section", "table-design-section"],
+    "data-model": ["table-owners-section", "table-design-section"],
     "risks": [
         "risk-assessment-section",
         "dynamodb-merge-conflicts",
@@ -126,7 +126,7 @@ TAB_READY = {
     "summary": "#executive-summary-section",
     "plan": "#migration-roadmap-section",
     "queries": "#query-routing-section",
-    "data-model": "#sources-of-truth-section",
+    "data-model": "#table-owners-section",
     "risks": "#risk-assessment-section",
 }
 # The notes on the Plan tab that are on the tab but not in its On this page navigation.
@@ -1482,11 +1482,12 @@ def test_back_after_the_one_step_link_returns_to_the_plan_tab(
 def test_results_page_states_each_tables_source_of_truth_and_replicas(
     page: Page, ui: str, all_runs: list[PipelineResult]
 ) -> None:
-    """#992: the results page lists the replicated tables report.json's
-    facts.table_sources lists (the rows the engineering report
-    states), each with its CDC direction from the source of truth and its
-    replica read count. #1232: the section opens collapsed, and the
-    eventual-consistency risk is stated once, in the engineering report's words."""
+    """#992, #2321: the Table owners table states the replicated tables report.json's
+    facts.table_sources lists (the rows the engineering report states): each row's owner
+    is its source of truth, its CDC to cell the replicas the CDC runs to and its Replica
+    reads cell the reads a replica serves. #1232: the eventual-consistency risk is stated
+    once, in the engineering report's words, behind the Info link. There is no section of
+    its own."""
     from src.shared.engine_names import display_engine
     from src.shared.report_facts import shared_replica_risk_text
 
@@ -1497,10 +1498,10 @@ def test_results_page_states_each_tables_source_of_truth_and_replicas(
         assert rows, r.db
         ev = _watch(page)
         _goto_results(page, ui, r, "data-model")
-        section = page.locator("#sources-of-truth-section")
+        section = page.locator("#table-owners-section")
         section.wait_for(timeout=READY_MS)
-        n = facts["written_table_count"]
-        assert f"Sources of truth and replicas ({n} written tables)" in section.inner_text(), r.db
+        assert page.locator("#sources-of-truth-section").count() == 0, r.db
+        assert "Sources of truth and replicas" not in page.locator("body").inner_text(), r.db
         first = rows[0]["table"]
         assert not section.locator(f'[data-table="{first}"]').is_visible(), r.db
         # Opened from the keyboard, as a reader without a mouse would.
@@ -1508,32 +1509,43 @@ def test_results_page_states_each_tables_source_of_truth_and_replicas(
         page.keyboard.press("Enter")
         section.locator('[aria-expanded="true"]').first.wait_for(timeout=READY_MS)
         text = section.inner_text()
-        if facts["single_engine_table_count"]:
+        if facts["single_engine_table_count"] and "table_owner_lines" not in report["facts"]:
             assert ", ".join(facts["single_engine_tables"]) in text, r.db
         for row in rows:
-            replicas = ", ".join(display_engine(e) for e in row["replica_engines"])
-            cdc = f"CDC: {display_engine(row['source_of_truth'])} → {replicas}"
-            cell = section.locator(f'[data-table="{row["table"]}"]')
-            line = cell.inner_text()
-            assert " ".join(line.split()) == f"{row['table']} {cdc}", (r.db, line)
-            reads = cell.locator("xpath=..").locator('[data-figure="replica-reads"]').inner_text()
-            noun = "read" if row["replica_read_count"] == 1 else "reads"
-            assert reads == f"{row['replica_read_count']} {noun} on a replica", (r.db, reads)
+            tr = section.locator(f'[data-table="{row["table"]}"]').locator("xpath=ancestor::tr")
+            replicas = [display_engine(e) for e in row["replica_engines"]]
+            assert tr.locator('[data-cell="owner"]').inner_text() == display_engine(
+                row["source_of_truth"]
+            ), (r.db, row["table"])
+            assert (
+                tr.locator('[data-cell="cdc-to"] [data-engine-badge]').all_inner_texts() == replicas
+            ), (
+                r.db,
+                row["table"],
+            )
+            assert tr.locator('[data-cell="replica-reads"]').inner_text() == str(
+                row["replica_read_count"]
+            ), (r.db, row["table"])
             assert row["shares_replica_risk"], (r.db, row["table"])  # a fresh report's rows
             assert row["risk"] not in text, (r.db, row["table"])
+        # The consistency note is behind the Info link, stated once.
+        assert "Eventually consistent: " not in text, r.db
+        section.get_by_role("button", name="Info about the consistency of replica reads").click()
+        text = section.inner_text()
         sources = list(dict.fromkeys(row["source_of_truth"] for row in rows))
         assert text.count(shared_replica_risk_text(sources)) == 1, r.db
         assert text.count("Eventually consistent: ") == 1, r.db
         assert ev == {"console": [], "pageerror": [], "failed": []}, (r.db, ev)
 
 
-def test_results_page_states_each_tables_owner_also_read_by_and_cache(
+def test_results_page_states_each_tables_owner_cdc_replicas_and_cache(
     page: Page, ui: str, all_runs: list[PipelineResult]
 ) -> None:
     """#212: the results page states one line per mapped table, as report.json's
     facts.table_owner_lines and the engineering report's Migration map do: its owner,
-    the engines that also read it and its cache, with the same counts. Collapsed when
-    the page opens; a job with no table_mappings has no such section. On the designed
+    the engines that read a CDC copy of it and its cache, with the same counts. Collapsed
+    when the page opens; a job with no table_mappings has no owner lines, so its table
+    (#2321) lists the replicated tables only, with no cache column. On the designed
     wordpress job, wp_postmeta is owned by DynamoDB and also read by Aurora MySQL, and
     wp_wc_tax_rate_classes, which no query writes and only DynamoDB reads, stays with the
     relational step, Aurora MySQL, and is also read by DynamoDB (#2166, ADR-033 Amendment
@@ -1562,7 +1574,9 @@ def test_results_page_states_each_tables_owner_also_read_by_and_cache(
         _goto_results(page, ui, r, "data-model")
         section = page.locator("#table-owners-section")
         if r not in designed:
-            assert facts is None and section.count() == 0, r.job_id
+            assert facts is None, r.job_id
+            assert section.locator('[data-figure="owned-tables"]').count() == 0, r.job_id
+            assert section.get_by_role("columnheader", name="Cached by").count() == 0, r.job_id
             continue
         n = facts["table_count"]
         assert f"Table owners ({n} mapped tables)" in section.inner_text(), r.job_id
@@ -1585,33 +1599,54 @@ def test_results_page_states_each_tables_owner_also_read_by_and_cache(
             assert text.startswith(f"{k} {'table is' if k == 1 else 'tables are'} cached by"), text
         else:
             assert cached.count() == 0, r.job_id
+        replica_reads = {
+            x["table"]: x["replica_read_count"]
+            for x in (report["facts"].get("table_sources") or {}).get("replicated_tables") or []
+        }
         for line in facts["table_lines"]:
             row = section.locator(f'[data-table="{line["table"]}"]').locator("xpath=ancestor::tr")
             owner = display_engine(line["owner"]) if line["owner"] else "—"
-            readers = ", ".join(display_engine(e) for e in line["also_read_by"]) or "—"
+            readers = [display_engine(e) for e in line["also_read_by"]]
             cache = display_engine(line["cached_by"]) if line["cached_by"] else "—"
             assert row.locator('[data-cell="owner"]').inner_text() == owner, line
-            assert row.locator('[data-cell="also-read-by"]').inner_text() == readers, line
+            cdc = row.locator('[data-cell="cdc-to"]')
+            assert (cdc.locator("[data-engine-badge]").all_inner_texts() or ["—"]) == (
+                readers or ["—"]
+            ), line
             assert row.locator('[data-cell="cached-by"]').inner_text() == cache, line
+            # #2321: the reads a replica serves, from facts.table_sources (a dash for a
+            # table with none listed).
+            reads = replica_reads.get(line["table"])
+            assert row.locator('[data-cell="replica-reads"]').inner_text() == (
+                "—" if reads is None else str(reads)
+            ), line
+        # #2321: the filter narrows the rows to the tables whose name or engines match.
+        wanted = facts["table_lines"][0]["table"]
+        section.get_by_placeholder("Find a table").fill(wanted)
+        shown = section.locator("tbody [data-table]").all_inner_texts()
+        assert wanted in shown and set(shown) <= {
+            x["table"] for x in facts["table_lines"] if wanted.lower() in x["table"].lower()
+        }, (r.job_id, shown)
+        section.get_by_placeholder("Find a table").fill("")
         if not r.external:
             postmeta = section.locator('[data-table="wordpress.wp_postmeta"]').locator(
                 "xpath=ancestor::tr"
             )
             assert postmeta.locator('[data-cell="owner"]').inner_text() == "DynamoDB"
-            assert postmeta.locator('[data-cell="also-read-by"]').inner_text() == "Aurora MySQL"
+            assert postmeta.locator('[data-cell="cdc-to"]').inner_text() == "Aurora MySQL"
             if r is pre_1955:
                 users = section.locator('[data-table="wordpress.wp_users"]').locator(
                     "xpath=ancestor::tr"
                 )
                 assert users.locator('[data-cell="owner"]').inner_text() == "Aurora MySQL"
-                assert users.locator('[data-cell="also-read-by"]').inner_text() == "DynamoDB"
+                assert users.locator('[data-cell="cdc-to"]').inner_text() == "DynamoDB"
             else:
                 unwritten = section.locator(
                     '[data-table="wordpress.wp_wc_tax_rate_classes"]'
                 ).locator("xpath=ancestor::tr")
                 # #2166: no query writes it, so the relational step keeps it.
                 assert unwritten.locator('[data-cell="owner"]').inner_text() == "Aurora MySQL"
-                assert unwritten.locator('[data-cell="also-read-by"]').inner_text() == "DynamoDB"
+                assert unwritten.locator('[data-cell="cdc-to"]').inner_text() == "DynamoDB"
         assert ev == {"console": [], "pageerror": [], "failed": []}, (r.job_id, ev)
 
 
@@ -1654,7 +1689,7 @@ def test_results_page_downloads_the_deliverables_folder(
 # #1028, #2313: the deliverables sit above the tabs; each tab lists its sections in
 # TAB_SECTIONS' order. These are on every job's page; the others are banners a report
 # without fallback-engine queries, close calls, routines or merge decisions leaves out,
-# the explorer (a job with no access patterns), the table owners and the Table design (a
+# the explorer (a job with no access patterns), the Table design (a
 # job with no schema design), the assumptions panel (no assumption to change), the step
 # gate (no step 1 evidence) and the two Plan notes.
 REQUIRED_SECTIONS = {
@@ -1663,7 +1698,7 @@ REQUIRED_SECTIONS = {
     "query-flow-section",
     "migration-roadmap-section",
     "query-routing-section",
-    "sources-of-truth-section",
+    "table-owners-section",
     "risk-assessment-section",
 }
 
@@ -1725,7 +1760,7 @@ def test_results_page_shows_the_headline_first(
     executive summary, the cost breakdown, the query flow, the assumptions; Plan: the
     roadmap, then the fallback-engine warning and close-call banners when the report has
     them, ...; Queries: the open query table, then the explorer; Data model: the
-    table owners and Sources of truth, collapsed, then the Table design; Risks and
+    table owners, collapsed, then the Table design; Risks and
     decisions), and no other tab's. The close-call banner names its first 3 queries by a
     5-character id, then "+N more"."""
     in_order = (
@@ -1778,9 +1813,11 @@ def test_results_page_shows_the_headline_first(
         routing.get_by_role("table", name="Query routing").wait_for(timeout=READY_MS)
         assert routing.get_by_role("table", name="Query routing").is_visible(), r.db
         _show_tab(page, "data-model")
-        sources = page.locator("#sources-of-truth-section")
-        assert sources.locator('[aria-expanded="false"]').count() == 1, r.db
-        assert sources.locator('[aria-expanded="true"]').count() == 0, r.db
+        owners = page.locator("#table-owners-section")
+        assert owners.locator('[aria-expanded="false"]').count() == 1, r.db
+        assert owners.locator('[aria-expanded="true"]').count() == 0, r.db
+        # #2321: its replicas are columns of that table; no second section lists them.
+        assert page.locator("#sources-of-truth-section").count() == 0, r.db
         report = json.loads((r.artifact_root / r.report["report"]).read_text())
         close_calls = (report.get("facts") or {}).get("close_calls") or {}
         pairs = close_calls.get("engine_pairs") or []

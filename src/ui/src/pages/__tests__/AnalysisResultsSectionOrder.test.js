@@ -35,7 +35,6 @@ const BY_COMPONENT = {
   'unreviewed-moves-note': 'UnreviewedMovesNote',
   'query-routing-section': 'QueryRoutingTable',
   'table-owners-section': 'TableOwnersCallout',
-  'sources-of-truth-section': 'SourcesOfTruthCallout',
   'dynamodb-merge-conflicts': 'DynamoDBMergeConflictsCallout',
   'dynamodb-merge-reviews': 'DynamoDBMergeReviewsCallout',
 };

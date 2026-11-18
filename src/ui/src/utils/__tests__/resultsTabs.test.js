@@ -43,7 +43,7 @@ test('each tab holds its sections, in the order of the decision', () => {
   ]);
   expect(tabSections('queries')).toEqual(['query-routing-section', 'access-patterns-section']);
   expect(tabSections('data-model')).toEqual([
-    'table-owners-section', 'sources-of-truth-section', 'table-design-section',
+    'table-owners-section', 'table-design-section',
   ]);
   expect(tabSections('risks')).toEqual([
     'risk-assessment-section', 'dynamodb-merge-conflicts', 'tradeoffs-section', 'dynamodb-merge-reviews',

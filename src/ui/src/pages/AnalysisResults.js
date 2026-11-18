@@ -67,7 +67,6 @@ import { designBodyState, explorerAvailability } from "../utils/sectionStates";
 import { failureError, failureFlash, failureKind, failureReason, reportFailure, upsertFlash } from "../utils/requestFailure";
 import { schemaDesignsRefused } from "../utils/schemaDesignsLoad";
 import ExecutiveSummaryStats from "../components/ExecutiveSummaryStats";
-import SourcesOfTruthCallout from "../components/SourcesOfTruthCallout";
 import TableOwnersCallout from "../components/TableOwnersCallout";
 import DeliverablesPanel from "../components/DeliverablesPanel";
 import AssumptionsPanel from "../components/AssumptionsPanel";
@@ -2366,16 +2365,12 @@ const AnalysisResultsPage = memo(() => {
     ),
     'data-model': (
       <SpaceBetween size="l">
-        {/* Sources of truth and replicas (#992): each table read on a
-            replica, its CDC direction and its replica reads, with the
-            eventual-consistency risk stated once. #1232: collapsed, after
-            the access pattern explorer. */}
-        {/* Table owners (#212): each mapped table's owner, the engines that
-            also read it through CDC replicas and its cache, as the
-            engineering report's Migration map states them. Collapsed. */}
+        {/* Table owners (#212, #2321): each mapped table's owner (its source
+            of truth), the engines that read a CDC copy of it, the reads a
+            replica serves and its cache, as the engineering report's
+            Migration map and Sources of truth state them, with the
+            eventual-consistency risk once behind an Info link. Collapsed. */}
         <TableOwnersCallout synthesis={synthesis} t={t} />
-
-        <SourcesOfTruthCallout synthesis={synthesis} t={t} />
 
         {/* Table design (#478; "Aurora design" until #1232, every section
             collapsed when the page opens): Aurora's schema design has no
