@@ -18,6 +18,7 @@ import en from '../../locales/en.json';
 import TableOwnersCallout from '../TableOwnersCallout';
 import { ENGINE_LABELS } from '../../utils/engineNames';
 import oldWording from './fixtures/oldWordingTableSources.json';
+import unwrittenCdc from './fixtures/unwrittenCdcTableSources.json';
 
 global.IS_REACT_ACT_ENVIRONMENT = true;
 global.ResizeObserver = global.ResizeObserver || class { observe() {} unobserve() {} disconnect() {} };
@@ -277,6 +278,16 @@ test("an older report's block states its own risk and the shared one, as the eng
   const own = container.querySelector(`[data-own-risk="${ownRisk.table}"]`);
   expect(own.textContent).toContain(ownRisk.risk);
   expect(container.textContent.split('Eventually consistent: ').length - 1).toBe(2);
+});
+
+test('shows the Info link and the shared sentence when only a table nothing writes has a CDC copy (#2459)', () => {
+  // The block is the one synthesis writes (checked in test_sources_of_truth_section.py).
+  const sentence = unwrittenCdc.table_sources.shared_risk_sentence;
+  expect(sentence).toContain('Every table another engine reads through CDC has this risk.');
+  renderOpen(unwrittenCdc);
+  expect(infoLink()).not.toBeNull();
+  act(() => infoLink().click());
+  expect(container.querySelector('[data-figure="shared-risk"]').textContent).toBe(sentence);
 });
 
 test('no Info link when no table has a replica', () => {

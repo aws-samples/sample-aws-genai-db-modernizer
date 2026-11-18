@@ -44,7 +44,6 @@ from src.shared.report_facts import (
     read_step_gate_facts,
     resolved_risk_severity_facts,
     retired_in_use_engine_facts,
-    shared_risk_sentence,
     shares_replica_risk,
     step_gate_key,
     table_ownership_facts,
@@ -54,6 +53,7 @@ from src.shared.report_facts import (
     unwritten_owner_rule,
     wave_one_moved_by_later_waves,
     wave_readiness_rows,
+    with_owner_line_risk,
 )
 from src.shared.routine_facts import needs_routine_words, with_routine_words
 from src.shared.step_explanations import needs_step_explanations, with_step_explanations
@@ -309,15 +309,13 @@ def report_facts(report: dict[str, Any]) -> dict[str, Any]:
                 ],
             }
         sources = missing.get("table_sources", sources)
+        owner_block = missing.get("table_owner_lines", facts.get("table_owner_lines"))
         if isinstance(sources, dict) and not sources.get("shared_risk_sentence"):
-            # A block written before #2321: the one sentence both renderers print for the
-            # rows that share the risk, from the same function (None when none does).
-            missing["table_sources"] = {
-                **sources,
-                "shared_risk_sentence": shared_risk_sentence(
-                    r for r in sources.get("replicated_tables") or [] if isinstance(r, dict)
-                ),
-            }
+            # A block written before #2321, or before #2459 (no sentence for a CDC copy of a
+            # table nothing writes): the one sentence both renderers print, from the same
+            # function over the stored rows and owner lines. The value decides, not the
+            # key, so a block re-dumped through the contract (None) is filled in too.
+            missing["table_sources"] = with_owner_line_risk(sources, owner_block)
         unservable = facts.get("unservable")
         if isinstance(unservable, dict) and "no_fit_query_count" not in unservable:
             # A block written before 1.38 (#888): its kinds, from the same function.

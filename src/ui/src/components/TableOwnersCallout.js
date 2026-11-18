@@ -90,9 +90,11 @@ export function ruleKey(ownership) {
 function ConsistencyNote({ sources, t }) {
   const [open, setOpen] = useState(false);
   const all = (sources && sources.replicated_tables) || [];
-  if (all.length === 0) return null;
+  const shared = sources && sources.shared_risk_sentence;
+  // The sentence also covers a table nothing writes that has a CDC copy (#2459), so it
+  // decides whether there is a note, with or without a listed written replicated table.
+  if (all.length === 0 && !shared) return null;
   const own = all.filter(row => row.shares_replica_risk !== true);
-  const shared = sources.shared_risk_sentence;
   return (
     <SpaceBetween size="xs">
       <span data-figure="consistency-info">
@@ -136,7 +138,9 @@ const TableOwnersCallout = memo(({ synthesis, t }) => {
 
   const owned = Object.entries((ownership && ownership.owned_table_counts) || {});
   const withCache = Boolean(ownership);
-  const hasReplicas = Boolean(sources && (sources.replicated_tables || []).length > 0);
+  const hasReplicas = Boolean(
+    sources && ((sources.replicated_tables || []).length > 0 || sources.shared_risk_sentence)
+  );
   const columns = [
     {
       id: 'table',

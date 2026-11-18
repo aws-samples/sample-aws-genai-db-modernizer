@@ -8,7 +8,7 @@ from __future__ import annotations
 from typing import Any
 
 from src.shared.cache_role import cache_role_sentence
-from src.shared.report_facts import shared_risk_sentence
+from src.shared.report_facts import with_owner_line_risk
 
 
 def with_cache_role_sentence(facts: dict[str, Any]) -> dict[str, Any]:
@@ -32,11 +32,7 @@ def as_read_back(facts: dict[str, Any]) -> dict[str, Any]:
     sources = out.get("table_sources")
     if isinstance(sources, dict) and not sources.get("shared_risk_sentence"):
         # A table_sources block written before #2321 gains its shared risk sentence.
-        rows = [r for r in sources.get("replicated_tables") or [] if isinstance(r, dict)]
-        out = {
-            **out,
-            "table_sources": {**sources, "shared_risk_sentence": shared_risk_sentence(rows)},
-        }
+        out = {**out, "table_sources": with_owner_line_risk(sources, out.get("table_owner_lines"))}
     engines = out.get("engines")
     if not isinstance(engines, list):
         return out

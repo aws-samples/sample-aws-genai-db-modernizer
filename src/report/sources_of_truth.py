@@ -30,7 +30,9 @@ SOURCES_OF_TRUTH_INTRO = (
 
 def _facts(report: dict[str, Any]) -> dict[str, Any] | None:
     facts = report_facts(report).get("table_sources")
-    if not isinstance(facts, dict) or not facts.get("written_table_count"):
+    if not isinstance(facts, dict):
+        return None
+    if not facts.get("written_table_count") and not facts.get("shared_risk_sentence"):
         return None
     return facts
 
@@ -71,13 +73,21 @@ def sources_of_truth_md(report: dict[str, Any]) -> list[str]:
     if facts is None:
         return []
     n = facts.get("written_table_count", 0)
+    # #2459: with no written table, the section holds only the risk note for tables
+    # nothing writes, so a count of 0 would read as an empty section.
+    count = f"{n} written {plural_noun(n, 'table')}" if n else "copies of tables nothing writes"
     out = [
-        f"## Sources of truth and replicas ({n} written {plural_noun(n, 'table')})",
+        f"## Sources of truth and replicas ({count})",
         "",
         SOURCES_OF_TRUTH_INTRO,
         "",
     ]
     rows = facts.get("replicated_tables") or []
+    if not rows and facts.get("shared_risk_sentence"):
+        # #2459: no written table has a CDC copy, but a table nothing writes does (the
+        # results page's Table owners table lists it). The sentence names no engine and
+        # leads with "Every table another engine reads through CDC", so it holds without a table here.
+        out += [*_risks_md(facts, rows), ""]
     if rows:
         out += [
             "| Table | Source of truth | CDC to replicas | Reads on a replica |",
