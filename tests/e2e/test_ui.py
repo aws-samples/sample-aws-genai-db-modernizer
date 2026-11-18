@@ -1489,7 +1489,9 @@ def test_results_page_states_each_tables_source_of_truth_and_replicas(
     once, in the sentence the engineering report prints (facts.table_sources.
     shared_risk_sentence), behind the Info link. There is no section of its own; an old
     #sources-of-truth-section link lands inside Table owners."""
-    from src.shared.engine_names import display_engine
+    from src.shared.engine_names import ENGINE_DISPLAY_NAMES, SOURCE_DATABASE_NAME, display_engine
+
+    sources = [*ENGINE_DISPLAY_NAMES.values(), SOURCE_DATABASE_NAME]
 
     for r in all_runs:
         report = json.loads((r.artifact_root / r.report["report"]).read_text())
@@ -1536,6 +1538,21 @@ def test_results_page_states_each_tables_source_of_truth_and_replicas(
         assert facts["shared_risk_sentence"].startswith("Every replicated table above"), r.db
         assert text.count(facts["shared_risk_sentence"]) == 1, r.db
         assert text.count("Eventually consistent: ") == 1, r.db
+        # #2321 review: the sentence sits under every row with a CDC to engine, also a
+        # table nothing writes (owned by the relational step, CDC to DynamoDB), so it
+        # names no source that disagrees with any such row's owner.
+        shared = section.locator('[data-figure="shared-risk"]').inner_text()
+        assert shared == facts["shared_risk_sentence"], r.db
+        named = {n for n in sources if n.casefold() in shared.casefold()}
+        replicated = 0
+        for tr in section.locator("tbody tr").all():
+            if tr.locator('[data-cell="cdc-to"] [data-engine-badge]').count() == 0:
+                continue
+            replicated += 1
+            owner = tr.locator('[data-cell="owner"]').inner_text()
+            table = tr.locator("[data-table]").inner_text()
+            assert named <= {n for n in sources if n in owner}, (r.db, table, owner, named)
+        assert replicated >= len(rows), (r.db, replicated)
         assert ev == {"console": [], "pageerror": [], "failed": []}, (r.db, ev)
 
 

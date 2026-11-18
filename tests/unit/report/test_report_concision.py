@@ -122,7 +122,7 @@ def test_the_guards_find_what_they_look_for() -> None:
 
 def test_the_risk_is_stated_once_for_every_table(md: str, saved) -> None:
     body = section(md, "Sources of truth and replicas")
-    risk = md_text(shared_replica_risk_text(["dynamodb"]))
+    risk = md_text(shared_replica_risk_text())
     assert f"Every replicated table above has this risk. {risk}" in body.splitlines()
     assert body.count("Eventually consistent") == 1
     # No "Tables:" line repeating the rows of the table above.
@@ -136,16 +136,15 @@ def test_the_risk_is_stated_once_for_every_table(md: str, saved) -> None:
         assert f"| `{row['table']}` |" in body
 
 
-def test_two_sources_share_one_sentence_naming_both(report) -> None:
+def test_two_sources_share_one_sentence_naming_neither(report) -> None:
+    """#2321 review: the sentence names no source, so it holds for every row."""
     row = report["facts"]["table_sources"]["replicated_tables"][0]
     row["source_of_truth"], row["replica_engines"] = "aurora_mysql", ["dynamodb"]
     row["risk"] = replica_risk_text("aurora_mysql", ["dynamodb"], row["replica_read_count"])
     body = section(render_engineering_report_md(report), "Sources of truth and replicas")
     assert body.count("Eventually consistent") == 1
-    assert (
-        "its source of truth \\(Aurora MySQL or DynamoDB\\) via CDC" in body
-        and "should read from the source of truth." in body
-    )
+    assert md_text(shared_replica_risk_text()) in body
+    assert "via CDC" in body and "Aurora MySQL or DynamoDB" not in body
     assert repeated_sentences(body) == []
 
 

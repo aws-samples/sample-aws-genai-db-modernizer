@@ -128,11 +128,10 @@ def test_every_deliverable_states_the_replicas(run: PipelineResult) -> None:
         cdc = f"{display_engine(row['source_of_truth'])} → {replicas}"
         assert f"| `{row['table']}` | {display_engine(row['source_of_truth'])} | {cdc} |" in md
         # #1170: each row's risk is the standard sentence, so the report states it
-        # once for every row, naming the sources of truth. A replay's saved report stores
+        # once for every row, naming no source (#2321). A replay's saved report stores
         # it as worded before #2167, which ``shares_replica_risk`` recognises too.
         assert shares_replica_risk(row), row["risk"]
-    sources = list(dict.fromkeys(row["source_of_truth"] for row in rows))
-    assert md.count(md_text(shared_replica_risk_text(sources))) == 1
+    assert md.count(md_text(shared_replica_risk_text())) == 1
     pdf = " ".join(pdf_page_texts(str(run.deliverable("executive-report.pdf"))))
     assert "Sources of truth and replicas" not in pdf
     assert "Eventually consistent: " not in pdf

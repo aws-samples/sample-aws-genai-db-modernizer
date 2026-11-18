@@ -9,7 +9,7 @@
  * the to-do with the routines to migrate yourself and its wave, and each
  * routine behind a routine risk by id, kind and status with why in plain
  * words. A report without facts.routines shows nothing. Cloudscape components
- * are plain DOM stand-ins (see SourcesOfTruthCallout.test.js); the component
+ * are plain DOM stand-ins (see the jest.mock calls below); the component
  * and the English strings are real.
  */
 import { act } from 'react';

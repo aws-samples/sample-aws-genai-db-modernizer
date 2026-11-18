@@ -16,6 +16,7 @@ import createWrapper from '@cloudscape-design/components/test-utils/dom';
 import i18n from '../../i18n';
 import en from '../../locales/en.json';
 import TableOwnersCallout from '../TableOwnersCallout';
+import { ENGINE_LABELS } from '../../utils/engineNames';
 import oldWording from './fixtures/oldWordingTableSources.json';
 
 global.IS_REACT_ACT_ENVIRONMENT = true;
@@ -38,9 +39,9 @@ afterEach(() => {
 });
 
 const RISK = 'Eventually consistent: 2 reads on Aurora MySQL read a copy kept current from DynamoDB via CDC, so each sees a write only after CDC applies it, behind by the replication lag; a read that must see its own write should read from DynamoDB.';
-const SHARED_DYNAMODB = 'Eventually consistent: a read on a replica reads a copy kept current from DynamoDB via CDC, so it sees a write only after CDC applies it, behind by the replication lag; a read that must see its own write should read from DynamoDB.';
+const SHARED_RISK = "Eventually consistent: a read on a replica reads a copy kept current from the table's owner (its source of truth) via CDC, so it sees a write only after CDC applies it, behind by the replication lag; a read that must see its own write should read from the owner.";
 // What src/shared/report_facts.py shared_risk_sentence writes for these rows.
-const SHARED_SENTENCE = `Every replicated table above has this risk. ${SHARED_DYNAMODB}`;
+const SHARED_SENTENCE = `Every replicated table above has this risk. ${SHARED_RISK}`;
 
 const ownership = {
   table_count: 4,
@@ -227,6 +228,22 @@ test('the consistency note sits behind an Info link, stating the risk once', () 
   expect(shared).not.toContain('Every table above');
   expect(container.textContent.split('Eventually consistent: ').length - 1).toBe(1);
   expect(container.textContent).not.toContain(RISK);
+});
+
+// #2321 review: the note sits under every row with a CDC to engine, also wp_usermeta,
+// which nothing writes and Aurora MySQL owns with CDC to DynamoDB, so the shared
+// sentence names no engine that disagrees with such a row's owner.
+test('the shared risk names no source that disagrees with a replicated row\'s owner', () => {
+  renderOpen(both);
+  act(() => infoLink().click());
+  const shared = container.querySelector('[data-figure="shared-risk"]').textContent;
+  const named = Object.values(ENGINE_LABELS).filter(name => shared.includes(name));
+  const replicated = ownership.table_lines.filter(line => line.also_read_by.length > 0);
+  expect(replicated.map(line => line.table)).toContain('wordpress.wp_usermeta');
+  replicated.forEach(line => {
+    const owner = cell(line.table, 'owner');
+    expect([line.table, named.filter(name => !owner.includes(name))]).toEqual([line.table, []]);
+  });
 });
 
 test('the Info link says whether the note is open and which element it controls', () => {
