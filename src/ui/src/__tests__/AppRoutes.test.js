@@ -129,7 +129,7 @@ test('old /analysis/patterns/:jobId?target=<engine> links redirect to that engin
     page: 'AnalysisResults', jobId: 'job-42', pathname: '/analysis/results/job-42',
   });
   expect(location.search).toBe('?engine=dynamodb');
-  expect(location.hash).toBe('#access-patterns-section');
+  expect(location.hash).toBe('#query-routing-section');
 });
 
 test('an old /analysis/patterns/:jobId link without a target redirects to the results page (#2300)', async () => {
@@ -137,7 +137,7 @@ test('an old /analysis/patterns/:jobId link without a target redirects to the re
     page: 'AnalysisResults', jobId: 'job-42', pathname: '/analysis/results/job-42',
   });
   expect(location.search).toBe('');
-  expect(location.hash).toBe('#access-patterns-section');
+  expect(location.hash).toBe('#query-routing-section');
 });
 
 test('the removed pattern-analysis page module is gone (#2300)', () => {
@@ -251,8 +251,8 @@ test.each([
   ['/analysis/results-v2/job-42', '/analysis/results/job-42', '', ''],
   ['/analysis/report/job-42', '/analysis/results/job-42', '', ''],
   ['/analysis/results-v2/job-42?tab=plan#close-calls-section', '/analysis/results/job-42', '?tab=plan', '#close-calls-section'],
-  ['/analysis/patterns/job-42?target=dynamodb', '/analysis/results/job-42', '?engine=dynamodb', '#access-patterns-section'],
-  ['/analysis/patterns/job-42', '/analysis/results/job-42', '', '#access-patterns-section'],
+  ['/analysis/patterns/job-42?target=dynamodb', '/analysis/results/job-42', '?engine=dynamodb', '#query-routing-section'],
+  ['/analysis/patterns/job-42', '/analysis/results/job-42', '', '#query-routing-section'],
 ])('kept redirect %s still redirects to %s (#2393)', async (from, pathname, search, hash) => {
   const result = await renderAt(from);
   expect(result.pathname).toBe(pathname);

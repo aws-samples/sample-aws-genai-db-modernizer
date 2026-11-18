@@ -85,21 +85,22 @@ const PAGES = {
   'AnalysisResults.js': fs.readFileSync(path.join(__dirname, '../../pages/AnalysisResults.js'), 'utf8'),
   'RiskCard.js': fs.readFileSync(path.join(__dirname, '../RiskCard.js'), 'utf8'),
   'AssignmentGate.js': fs.readFileSync(path.join(__dirname, '../../pages/AssignmentGate.js'), 'utf8'),
+  // #2446: the access pattern explorer's detail and source tables moved out of the page.
+  'AccessPatternDetail.js': fs.readFileSync(path.join(__dirname, '../AccessPatternDetail.js'), 'utf8'),
+  'SourceTablesSection.js': fs.readFileSync(path.join(__dirname, '../SourceTablesSection.js'), 'utf8'),
 };
 const PROSE = {
   'AnalysisResults.js': [
     'synthesis.summary',
-    'ap.description',
-    'ap.patternDescription',
     'body',
     'tradeOff.description',
     'tradeOff.impact',
     'opt.recommendation',
     'opt.rationale',
     'q.reason',
-    'item.description',
-    'ap.outOfScopeReason',
   ],
+  'AccessPatternDetail.js': ['ap.description', 'ap.patternDescription', 'ap.outOfScopeReason'],
+  'SourceTablesSection.js': ['item.description'],
   // #2322: the risk card renders the description, mitigation, design notes and copy-sync lines.
   'RiskCard.js': ['body', 'risk.mitigation', 'detail', 'line', 'copySync.basis'],
   'AssignmentGate.js': ['executiveSummary', 'c.reason'],

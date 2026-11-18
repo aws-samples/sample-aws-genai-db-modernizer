@@ -12,17 +12,17 @@ import {
   RESULTS_ENGINE_SECTION_ID,
 } from '../resultsLinks';
 
-test('the link names the job, the engine and the access pattern section', () => {
-  expect(RESULTS_ENGINE_SECTION_ID).toBe('access-patterns-section');
-  expect(resultsEngineHref('job-1', 'dynamodb')).toBe('/analysis/results/job-1?engine=dynamodb#access-patterns-section');
+test('the link names the job, the engine and the query table (#2446)', () => {
+  expect(RESULTS_ENGINE_SECTION_ID).toBe('query-routing-section');
+  expect(resultsEngineHref('job-1', 'dynamodb')).toBe('/analysis/results/job-1?engine=dynamodb#query-routing-section');
 });
 
 test('an engine id with odd characters is encoded', () => {
-  expect(resultsEngineHref('job-1', 'a b&c')).toBe('/analysis/results/job-1?engine=a%20b%26c#access-patterns-section');
+  expect(resultsEngineHref('job-1', 'a b&c')).toBe('/analysis/results/job-1?engine=a%20b%26c#query-routing-section');
 });
 
 test('without an engine the link is the results page section only', () => {
-  expect(resultsEngineHref('job-1', '')).toBe('/analysis/results/job-1#access-patterns-section');
+  expect(resultsEngineHref('job-1', '')).toBe('/analysis/results/job-1#query-routing-section');
 });
 
 test('the engine is read back from the search string', () => {
@@ -43,7 +43,8 @@ test('no engine, or an empty one, reads back as null', () => {
 describe('the results page', () => {
   const fs = require('fs');
   const path = require('path');
-  const source = fs.readFileSync(path.join(__dirname, '..', '..', 'pages', 'AnalysisResults.js'), 'utf8');
+  // #2446: the query table renders the section the link points at.
+  const source = fs.readFileSync(path.join(__dirname, '..', '..', 'components', 'QueryRoutingTable.js'), 'utf8');
 
   test('has the section the link points at', () => {
     expect(source).toContain(`id="${RESULTS_ENGINE_SECTION_ID}"`);
@@ -51,11 +52,12 @@ describe('the results page', () => {
 });
 
 describe('where a linked engine lands on the results page', () => {
+  // The engines whose schema design lists access patterns.
   const explorer = ['dynamodb', 'documentdb'];
   const designs = ['aurora_mysql', 'aurora_postgresql'];
 
-  test('an engine with explorer rows is the explorer', () => {
-    expect(linkedEngineTarget('dynamodb', explorer, designs)).toBe('explorer');
+  test('an engine with access patterns is its queries', () => {
+    expect(linkedEngineTarget('dynamodb', explorer, designs)).toBe('queries');
   });
 
   test('a relational engine with a design is the Table design', () => {
@@ -71,8 +73,8 @@ describe('where a linked engine lands on the results page', () => {
     expect(linkedEngineTarget('dynamodb', [], designs, ['dynamodb'])).toBe('not-designed');
   });
 
-  test('an engine in the plan with rows or a design stays the explorer or the design, routed or not', () => {
-    expect(linkedEngineTarget('dynamodb', explorer, designs, ['dynamodb'])).toBe('explorer');
+  test('an engine in the plan with patterns or a design stays its queries or the design, routed or not', () => {
+    expect(linkedEngineTarget('dynamodb', explorer, designs, ['dynamodb'])).toBe('queries');
     expect(linkedEngineTarget('aurora_mysql', explorer, designs, ['aurora_mysql'])).toBe('design');
   });
 

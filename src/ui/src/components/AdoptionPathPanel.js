@@ -90,7 +90,7 @@ function OneStepOption({ adoption, pointer, schemaSectionId, t }) {
   const streams = one.staged_temporary_stream_count || 0;
   // The report's pointer (oneStepPointerOf); the schemas' section is only where it lands.
   const toSchemas = pointer === 'schemas';
-  const targetId = toSchemas ? (schemaSectionId || 'access-patterns-section') : TARGET_ENGINES_ID;
+  const targetId = toSchemas ? (schemaSectionId || 'source-tables-section') : TARGET_ENGINES_ID;
   // #2362: the results page says which tab the target is on; the report's own words
   // ("above", "below") stay in the locale for a target no tab holds.
   const tab = RESULTS_TABS.find(x => x.id === tabOfAnchor(targetId));

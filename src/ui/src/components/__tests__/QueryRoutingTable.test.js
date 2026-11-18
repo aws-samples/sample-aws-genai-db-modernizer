@@ -247,3 +247,69 @@ test('a report written before the figure shows no query patterns line', () => {
     expect(container.querySelector('[data-figure="query-patterns"]')).toBeNull();
   });
 });
+
+// #2446: the access pattern explorer's operation type filter is the table's
+// "Operation type" property, and a ?engine= link opens the table filtered.
+test('the filter offers the operation types the rows hold, by name', () => {
+  render();
+  const filter = wrapper().findPropertyFilter();
+  act(() => filter.focus());
+  const properties = filter.findDropdown({ expandToViewport: true }).findOptions().map(o => o.getElement().textContent);
+  expect(properties).toContain('Operation type');
+  act(() => filter.setInputValue('Operation type = '));
+  const values = filter.findDropdown({ expandToViewport: true }).findOptions().map(o => o.getElement().textContent);
+  expect(values.some(v => v.includes('Read'))).toBe(true);
+  expect(values.some(v => v.includes('Update'))).toBe(true);
+  expect(values.some(v => v.includes('Search'))).toBe(false);
+});
+
+// #2480 review: a statement no type covers (SHOW, SET SESSION) is "Other", never Read.
+test('a statement of no known type is listed and filtered as Other', () => {
+  const show = journey(3, { source: { query_text: 'SHOW VARIABLES', query_type: 'OTHER', tables_accessed: [] } });
+  render({ rows: rowsOf([journey(1), show]) });
+  const filter = wrapper().findPropertyFilter();
+  act(() => filter.focus());
+  act(() => filter.setInputValue('Operation type = '));
+  const values = filter.findDropdown({ expandToViewport: true }).findOptions().map(o => o.getElement().textContent);
+  expect(values.some(v => v.includes('Other'))).toBe(true);
+  act(() => filter.setInputValue('Operation type = Other'));
+  act(() => {
+    filter.findNativeInput().keydown({ keyCode: 13, key: 'Enter' });
+  });
+  expect(wrapper().findTable().findRows()).toHaveLength(1);
+  expect(cellText(1, 3)).toContain('OTHER');
+  expect(filter.findTokens()[0].getElement().textContent).toContain('Other');
+});
+
+test('an operation type token keeps the queries of that type', () => {
+  render();
+  act(() => wrapper().findPropertyFilter().setInputValue('Operation type = Update'));
+  act(() => {
+    wrapper().findPropertyFilter().findNativeInput().keydown({ keyCode: 13, key: 'Enter' });
+  });
+  expect(wrapper().findTable().findRows()).toHaveLength(1);
+  expect(cellText(1, 3)).toContain('UPDATE');
+  expect(wrapper().findPropertyFilter().findTokens()[0].getElement().textContent).toContain('Update');
+});
+
+// #2480 review: the cache layer's Sankey link sets "Cached = yes"; its token reads as
+// the option the reader would pick ("Yes"), like the engine and operation type tokens.
+test('a cached token reads Yes, as its option does', () => {
+  const cachedRows = rowsOf([journey(1), moved], { cacheEngineById: new Map([[journey(1).query_id, 'elasticache']]) });
+  render({ rows: cachedRows, linkedFilter: { propertyKey: 'cached', value: 'yes' } });
+  expect(wrapper().findTable().findRows()).toHaveLength(1);
+  const token = wrapper().findPropertyFilter().findTokens()[0].getElement().textContent;
+  expect(token).toContain('Yes');
+  expect(token).not.toContain('yes');
+});
+
+test('a linked engine opens the table filtered to it, and the reader can clear it', () => {
+  render({ linkedFilter: { propertyKey: 'engine', value: 'aurora_mysql' } });
+  expect(wrapper().findTable().findRows()).toHaveLength(1);
+  expect(cellText(1, 4)).toContain('Aurora MySQL');
+  expect(wrapper().findPropertyFilter().findTokens()[0].getElement().textContent).not.toContain('aurora_mysql');
+  expect(wrapper().findHeader().findCounter().getElement().textContent.trim()).toBe('(1 of 2)');
+  expect(wrapper().findPropertyFilter().findTokens()[0].getElement().textContent).toContain('Aurora MySQL');
+  act(() => wrapper().findPropertyFilter().findTokens()[0].findRemoveButton().click());
+  expect(wrapper().findTable().findRows()).toHaveLength(2);
+});

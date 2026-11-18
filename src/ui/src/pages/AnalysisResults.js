@@ -10,7 +10,7 @@ import { useTranslation } from 'react-i18next';
 import AppLayoutToolbar from "@cloudscape-design/components/app-layout";
 import useLayoutAriaLabels from "../hooks/useLayoutAriaLabels";
 import ProseText from '../components/ProseText';
-import { CardBox, CodeBlock } from '../components/StyledBlocks';
+import { CardBox } from '../components/StyledBlocks';
 import BreadcrumbGroup from "@cloudscape-design/components/breadcrumb-group";
 import SpaceBetween from "@cloudscape-design/components/space-between";
 import Header from "@cloudscape-design/components/header";
@@ -18,22 +18,12 @@ import Button from "@cloudscape-design/components/button";
 import Container from "@cloudscape-design/components/container";
 import Box from "@cloudscape-design/components/box";
 import Badge from "@cloudscape-design/components/badge";
-import ColumnLayout from "@cloudscape-design/components/column-layout";
 import SideNavigation from "@cloudscape-design/components/side-navigation";
 import Flashbar from "@cloudscape-design/components/flashbar";
 import ExpandableSection from "@cloudscape-design/components/expandable-section";
 import Alert from "@cloudscape-design/components/alert";
 import Spinner from "@cloudscape-design/components/spinner";
-import SegmentedControl from "@cloudscape-design/components/segmented-control";
-import Pagination from "@cloudscape-design/components/pagination";
-import PropertyFilter from "@cloudscape-design/components/property-filter";
-import PieChart from "@cloudscape-design/components/pie-chart";
 import Table from "@cloudscape-design/components/table";
-import Modal from "@cloudscape-design/components/modal";
-import TextFilter from "@cloudscape-design/components/text-filter";
-import Link from "@cloudscape-design/components/link";
-import Multiselect from "@cloudscape-design/components/multiselect";
-import KeyValuePairs from "@cloudscape-design/components/key-value-pairs";
 import Tabs from "@cloudscape-design/components/tabs";
 import CodeEditor from "@cloudscape-design/components/code-editor";
 import StatusIndicator from "@cloudscape-design/components/status-indicator";
@@ -75,12 +65,14 @@ import TradeOffDecisions from "../components/TradeOffDecisions";
 import TradeOffsEmptyNote from "../components/TradeOffsEmptyNote";
 import { buildQueryRoutingRows, queryPatternLinks } from "../utils/queryRouting";
 import QueryDetailPanel from "../components/QueryDetailPanel";
+import SourceTablesSection from "../components/SourceTablesSection";
+import { cacheLayerPatterns, ownerAccessPatterns, patternsByQueryId, shortTable, sourceNameMapper, sourceTableRows } from "../utils/accessPatterns";
 import AuroraDesignTables from "../components/AuroraDesignTables";
 import AuroraTableDetailPanel from "../components/AuroraTableDetailPanel";
-import { getCacheOverlay, ownerDistribution, formatCacheLayerLine, cacheChangeSentence, targetEngineEntries, resolveCostBreakdown, ownerSchemaDesigns, cacheAccessPatternCount, addCacheOverlayNode, cacheLayerAccessPatterns } from "../utils/cacheLayer";
+import { getCacheOverlay, ownerDistribution, formatCacheLayerLine, cacheChangeSentence, targetEngineEntries, resolveCostBreakdown, cacheAccessPatternCount, addCacheOverlayNode } from "../utils/cacheLayer";
 import { summaryFallbackInfo } from "../utils/summaryFallback";
 import { fallbackWithheldReason } from "../utils/fallbackWithheldReason";
-import { PROCEDURE_INTERNAL_GROUP, buildAuroraDesigns, isAuroraEngine, reasonTextFor } from "../utils/auroraDesign";
+import { PROCEDURE_INTERNAL_GROUP, buildAuroraDesigns, designTableKey, isAuroraEngine, reasonTextFor } from "../utils/auroraDesign";
 import { codeEditorI18nStrings } from "../utils/codeEditorI18n";
 import { RISK_SEVERITIES, UNRATED, filterRisksWithContent, groupRisksBySeverity, riskKey, riskSeverityLabel, riskSeverityStatus, sharedMitigationRef, splitRiskDescription } from "../utils/riskAssessment";
 import { costBaselineStats } from "../utils/tcoAnalysis";
@@ -89,13 +81,9 @@ import { costBaselineStats } from "../utils/tcoAnalysis";
 // rather than this page's own hand-kept copy.
 import { ENGINE_LABELS } from "../utils/engineNames";
 import { formatRate } from "../utils/format";
-import { engineHex } from "../utils/engineColors";
 import EngineBadge from "../components/EngineBadge";
 import RiskCard from "../components/RiskCard";
-import DestinationTables from "../components/DestinationTables";
-import { destinationOf, destinationKey } from "../utils/destinations";
 import { optimizationLabel } from "../utils/optimizationLabels";
-import { displayTables } from "../utils/tableNames";
 import { accessPatternTotals, assumptionItemsOf, cacheLayerFactsOf, costScopeLabelOf, defaultRiskSeverity, derivedCopySyncOf, finalEngineCounts, noEngineInScopeOf, openRiskCountAt, overallRiskLevelOf, placedQueryCountOf, procedureInternalQueryCountOf, procedureInternalRoutineCountOn, procedureInternalRoutineCountsOf, queryPatternCountsOf, rateWindowRiskNoteOf, resolvedRiskCountOf, resolvedRisksBySeverityText, routingHistoryRecorded, routingKindsById, tableQueryRowsOf, targetEngineEntriesOf, tradeOffsByTab, tradeOffTabLabel, tradeOffTabsShown, tradeOffTopicGroupsOf } from "../utils/reportFacts";
 
 // ============================================
@@ -106,121 +94,6 @@ import { accessPatternTotals, assumptionItemsOf, cacheLayerFactsOf, costScopeLab
 const JOURNEY_PAGE_SIZE = 200;
 const JOURNEY_MAX_PAGES = 50;
 
-const OP_CATEGORY = {
-  GetItem: 'read', Query: 'read', Scan: 'read', BatchGetItem: 'read',
-  get_by_id: 'read', search: 'search', aggregate: 'search',
-  find: 'read', findOne: 'read', lookup: 'read',
-  GET: 'read', SEARCH: 'search', MGET: 'read', HGETALL: 'read',
-  PutItem: 'write', BatchWriteItem: 'write',
-  insertOne: 'write', insertMany: 'write', bulkWrite: 'write',
-  SET: 'write', HSET: 'write', SADD: 'write', ZADD: 'write',
-  UpdateItem: 'update', updateOne: 'update', updateMany: 'update',
-  DeleteItem: 'delete', deleteOne: 'delete', deleteMany: 'delete',
-  DEL: 'delete', HDEL: 'delete',
-};
-
-const OP_COLORS = {
-  read: '#2ea597',
-  write: '#ec7211',
-  search: '#9b59b6',
-  update: '#3184e8',
-  delete: '#d13212',
-};
-
-const PAGE_SIZE = 10;
-
-
-// ============================================
-// Helpers
-// ============================================
-
-const getOpCategory = (op) => OP_CATEGORY[op] || (
-  /get|read|find|scan|query|select|fetch|lookup/i.test(op || '') ? 'read' :
-  /put|insert|create|write|set|add/i.test(op || '') ? 'write' :
-  /search|agg|match|wildcard/i.test(op || '') ? 'search' :
-  /update|modify|patch/i.test(op || '') ? 'update' :
-  /delete|remove/i.test(op || '') ? 'delete' : 'read'
-);
-
-const shortTable = (t) => t?.split('.').pop() || t;
-
-// Aurora's '__seq_scan__' sentinel (#157 review, S1) is a script-internal
-// value, never a reader-facing one. Three facts collapse onto it, and only
-// one is a claim worth showing:
-// - the predicate itself is unknown (needs_judgment) -- nothing can be
-//   shown either way, hidden;
-// - the query's table could not be identified at all (load_testable=false
-//   with that reason, #157 review round 2) -- there was nothing to resolve
-//   an index against in the first place, so "sequential scan" would claim
-//   more than is known; hidden, same as the unknown-predicate case;
-// - the predicate is confirmed empty -- a sequential scan really is the
-//   resolved answer, shown as "None (sequential scan)".
-const auroraIndexUsedDisplay = (ap) => {
-  if (ap?.index_used !== '__seq_scan__') return ap?.index_used || null;
-  if (ap?.needs_judgment) return null;
-  if (ap?.load_testable === false && (ap?.load_testable_reason || '').includes('could be identified')) {
-    return null;
-  }
-  return 'None (sequential scan)';
-};
-
-// #429 part 2: shared by the owner rows and the cache-layer rows -- each is
-// grouped by source table separately so the cache layer renders as its own
-// section "By source table" too, instead of mixing its key designs into the
-// owner groups' convergence counts.
-const groupPatternsBySourceTable = (patterns) => {
-  const groups = {};
-
-  patterns.forEach(ap => {
-    ap.sourceTables.forEach(table => {
-      if (!groups[table]) {
-        groups[table] = {
-          table,
-          engines: new Set(),
-          destinations: new Map(),
-          destKeys: new Set(),
-          patterns: [],
-          convergesFrom: new Set(),
-        };
-      }
-      groups[table].engines.add(ap.engine);
-      // #2320: one entry per destination of one engine, in first-seen order. The cell lists
-      // them and the convergence check below reads the same keys.
-      if (ap.destNamed) groups[table].destKeys.add(destinationKey(ap.engine, ap.destTable));
-      (ap.destNames || []).forEach(name => {
-        const key = destinationKey(ap.engine, name);
-        if (!groups[table].destinations.has(key)) groups[table].destinations.set(key, { engine: ap.engine, name });
-      });
-      groups[table].patterns.push(ap);
-    });
-  });
-
-  // Detect convergence: if a dest table has multiple source tables
-  const destToSources = {};
-  patterns.forEach(ap => {
-    // A destination is an engine and a name: the same name on two engines does not converge.
-    // A pattern that names no destination table (Aurora carries each source table over 1:1)
-    // is left out: a join that reads two tables does not merge them into one destination.
-    if (ap.destNamed) {
-      const key = destinationKey(ap.engine, ap.destTable);
-      if (!destToSources[key]) destToSources[key] = new Set();
-      ap.sourceTables.forEach(t => destToSources[key].add(t));
-    }
-  });
-
-  Object.values(groups).forEach(g => {
-    g.destKeys.forEach(key => {
-      const sources = destToSources[key];
-      if (sources && sources.size > 1) {
-        sources.forEach(s => {
-          if (s !== g.table) g.convergesFrom.add(s);
-        });
-      }
-    });
-  });
-
-  return Object.values(groups).sort((a, b) => b.patterns.length - a.patterns.length);
-};
 
 
 // ============================================
@@ -245,7 +118,6 @@ const AnalysisResultsPage = memo(() => {
   const [schemaDesigns, setSchemaDesigns] = useState([]);
   // #2308: the design files could not be read, so an empty design is "not available", not "none".
   const [designsLoadFailed, setDesignsLoadFailed] = useState(false);
-  const [collectorData, setCollectorData] = useState(null);
   const [loading, setLoading] = useState(true);
   const [flashbarItems, setFlashbarItems] = useState([]);
   // #2313: the tabs follow the URL (?tab=, or the tab of the section a hash names).
@@ -264,16 +136,8 @@ const AnalysisResultsPage = memo(() => {
       && window.matchMedia('(min-width: 1400px)').matches,
   );
 
-  // Explorer state
-  const [browseMode, setBrowseMode] = useState('pattern'); // 'pattern' | 'source'
-  const [engineFilter, setEngineFilter] = useState([]); // Array for multi-select
-  const [opFilter, setOpFilter] = useState([]); // Array for multi-select
-  const [selectedPattern, setSelectedPattern] = useState(null); // For modal
-  const [selectedSourceTable, setSelectedSourceTable] = useState(null); // For source table modal
-  const [showPatternModal, setShowPatternModal] = useState(false);
-  const [selectedItems, setSelectedItems] = useState([]); // For table selection
-  const [currentPage, setCurrentPage] = useState(1);
-  const [filterQuery, setFilterQuery] = useState({ tokens: [], operation: 'and' });
+  // #2446: the property filter token a ?engine= link opens the query table with.
+  const [linkedQueryFilter, setLinkedQueryFilter] = useState(null);
 
   // Query detail split panel state (#2319)
   const [splitPanelOpen, setSplitPanelOpen] = useState(false);
@@ -282,6 +146,8 @@ const AnalysisResultsPage = memo(() => {
   // #339: the journey's "Why this engine" section (graph/queries/{id}/trace)
   const [queryTrace, setQueryTrace] = useState({ data: null, error: null });
   const [selectedQueryId, setSelectedQueryId] = useState(null);
+  // #2480 review: raised when a query opens from the source table dialog, so the panel takes focus.
+  const [panelFocusRequest, setPanelFocusRequest] = useState(0);
   // #2325: the Table design row shown in the split panel ({ engine, tableName }), or null.
   const [designSelection, setDesignSelection] = useState(null);
   // #822: every query's journey (the query-journeys list), for the query
@@ -314,7 +180,6 @@ const AnalysisResultsPage = memo(() => {
       const results = await apiManager.execute([
         { id: 'results', path: `assessments/${jobId}/results`, method: 'GET', params: {} },
         { id: 'schemas', path: `assessments/${jobId}/schema-designs`, method: 'GET', params: {} },
-        { id: 'collector', path: `assessments/${jobId}/collector`, method: 'GET', params: {} },
       ]);
 
       if (results['results']?.success) {
@@ -333,9 +198,6 @@ const AnalysisResultsPage = memo(() => {
         addFlashbarMessage({ type: 'error', header: t('analysis-results.error.schema-designs-refused'), content: failureReason(results['schemas'], t) || t('analysis-results.error.schema-designs-refused-detail'), dismissible: true, id: `error-schemas-${Date.now()}` });
       }
 
-      if (results['collector']?.success) {
-        setCollectorData(results['collector']);
-      }
     } catch (error) {
       addFlashbarMessage(failureFlash(t, error, { header: t('analysis-results.error.failed-to-load'), context: 'results', id: 'results-load-failed', onRetry: () => fetchData() }));
     } finally {
@@ -546,24 +408,6 @@ const AnalysisResultsPage = memo(() => {
 
   // Names for the layout's navigation landmark and its toggle buttons, so
   // assistive tech can tell them apart (axe: button-name, landmark-unique).
-  // Accessible names for the explorer's pagers and single-select tables (axe:
-  // button-name on the arrow buttons, label on the selection radios).
-  const explorerPaginationLabels = useMemo(() => ({
-    nextPageLabel: t('analysis-results.query-routing.next-page'),
-    previousPageLabel: t('analysis-results.query-routing.previous-page'),
-    pageLabel: n => t('analysis-results.query-routing.page', { page: n }),
-    paginationLabel: t('analysis-results.explorer.pagination'),
-  }), [t]);
-  // Each table also gets its own name: a horizontally scrollable Cloudscape table
-  // is a region landmark, and two unnamed ones collide (axe: landmark-unique).
-  const explorerSelectionLabels = useCallback(tableLabel => ({
-    tableLabel,
-    selectionGroupLabel: t('analysis-results.explorer.selection-group'),
-    itemSelectionLabel: (data, item) => t('analysis-results.explorer.select-item', {
-      name: item.table || item.id || '',
-    }),
-  }), [t]);
-
   const layoutAriaLabels = useLayoutAriaLabels();
 
 
@@ -593,91 +437,18 @@ const AnalysisResultsPage = memo(() => {
     return map;
   }, [synthesis]);
 
-  const allAccessPatterns = useMemo(() => {
-    const patterns = [];
+  // #361: the owner engines' patterns; the cache layer's are cacheLayerPatterns below.
+  const allAccessPatterns = useMemo(
+    () => ownerAccessPatterns(activeDesigns, cacheOverlay, auroraReasonByPatternId),
+    [activeDesigns, cacheOverlay, auroraReasonByPatternId],
+  );
 
-    // #361: the cache layer gets its own schema design (and its own
-    // access_patterns) too, but those patterns were never queries it owns --
-    // counting them here double-counted ElastiCache as if it were an owner
-    // engine in the explorer's total and its engine pie. ownerSchemaDesigns
-    // drops it (cacheAccessPatternCount below tracks it separately so the
-    // page can still say how many there are, just not as owned patterns).
-    // #405: both are no-ops without a cache_overlay -- a legacy report has
-    // ElastiCache as a real owner, so its design stays in the owner total.
-    ownerSchemaDesigns(activeDesigns, !!cacheOverlay).forEach(design => {
-      const engine = design.target_type;
-      const content = design.content || {};
-
-      // Build table/index lookup for detail rendering
-      const tableLookup = {};
-      (content.table_definitions || []).forEach(t => { tableLookup[t.table_name] = t; });
-      (content.index_designs || []).forEach(idx => { tableLookup[idx.index_name] = idx; });
-      (content.collection_designs || []).forEach(col => { tableLookup[col.collection_name || col.name] = col; });
-
-      (content.access_patterns || []).forEach(ap => {
-        // Aurora (#157/#429 part 1) has no table_name/key_pattern/etc. of its
-        // own -- its destination IS its source table(s), carried over 1:1 --
-        // so the fallback chain ends on source_tables rather than '—'.
-        const { destName, destNames, named } = destinationOf(ap, shortTable);
-        const destDef = tableLookup[destName] || null;
-
-        patterns.push({
-          id: ap.pattern_id || ap.name || `${engine}-${patterns.length}`,
-          engine,
-          operation: ap.operation || ap.http_method || '—',
-          opCategory: getOpCategory(ap.operation || ap.http_method),
-          sourceTables: (ap.source_tables || []).map(shortTable),
-          sourceTablesRaw: ap.source_tables || [],
-          destTable: destName,
-          destNames,
-          destNamed: named,
-          destDef,
-          gsiName: ap.gsi_name || null,
-          keyCondition: ap.key_condition || null,
-          // Aurora's one judgment field (#157): which index serves this
-          // pattern's predicate, by leftmost-prefix. '__seq_scan__' never
-          // reaches the reader as-is (S1) -- see auroraIndexUsedDisplay.
-          indexUsed: auroraIndexUsedDisplay(ap),
-          // #157 review round 2: for a designed Aurora row, the explorer's
-          // Description column shows why the query is on Aurora at all
-          // (the assignment's own reason) -- the structural text stays
-          // available in patternDescription (rendered as a secondary line
-          // in the detail panel) rather than being replaced outright.
-          description: (isAuroraEngine(engine) && auroraReasonByPatternId[ap.pattern_id])
-            || ap.description || ap.name || '',
-          patternDescription: ap.description || ap.name || '',
-          queryIds: ap.source_query_ids || ap.query_ids || [],
-          patternGroup: ap.pattern_group || null,
-          designRps: ap.design_rps || null,
-          itemSize: ap.item_size_bytes || null,
-          avgItems: ap.avg_items_returned || null,
-          inScope: ap.in_scope !== false,
-          outOfScopeReason: ap.out_of_scope_reason || null,
-          // OpenSearch specific
-          opensearchDsl: ap.opensearch_dsl || null,
-          // Aurora's sql_text runs as-is on a carry_over target (#157), same
-          // role as OpenSearch's own source_query below: the raw statement a
-          // pattern-detail panel shows when no per-query table already has it.
-          sourceQuery: ap.source_query || ap.sql_text || null,
-        });
-      });
-    });
-
-    return patterns;
-  }, [activeDesigns, cacheOverlay, auroraReasonByPatternId]);
-
-  // #429 part 2: the cache layer's own access patterns, tagged isCacheLayer so
-  // the explorer can render them as their own "<Name> (cache layer)" group
-  // after the owner rows above, instead of leaving them out of the explorer
-  // entirely the way #361/#405 did (correct for the owner total/pie, wrong
-  // for browsability). No-op without a cache_overlay -- see
-  // cacheLayerAccessPatterns's hasOverlay guard.
-  const cacheLayerPatterns = useMemo(() => {
-    return cacheLayerAccessPatterns(activeDesigns, cacheOverlay).map(ap => ({
-      ...ap,
-      opCategory: getOpCategory(ap.operation),
-    }));
-  }, [activeDesigns, cacheOverlay]);
+  // #429 part 2: the cache layer's own access patterns and key designs, tagged
+  // isCacheLayer. No-op without a cache_overlay.
+  const cacheLayerPatternList = useMemo(
+    () => cacheLayerPatterns(activeDesigns, cacheOverlay),
+    [activeDesigns, cacheOverlay],
+  );
 
   // #2319: the query table's rows, with each query's destination tables and its
   // cache engine from the schema design's patterns (a dash when none was designed).
@@ -686,9 +457,14 @@ const AnalysisResultsPage = memo(() => {
       queryJourneyList.items,
       routingKindsById(resultsData?.synthesis),
       ENGINE_LABELS,
-      queryPatternLinks(allAccessPatterns, cacheLayerPatterns),
+      queryPatternLinks(allAccessPatterns, cacheLayerPatternList),
     ),
-    [queryJourneyList.items, resultsData, allAccessPatterns, cacheLayerPatterns],
+    [queryJourneyList.items, resultsData, allAccessPatterns, cacheLayerPatternList],
+  );
+  // #2446: each query's access patterns and cache key designs, for its detail panel.
+  const patternsOfQuery = useMemo(
+    () => patternsByQueryId(allAccessPatterns, cacheLayerPatternList),
+    [allAccessPatterns, cacheLayerPatternList],
   );
 
   // Owner rows followed by the cache-layer rows -- the explorer's combined
@@ -696,8 +472,13 @@ const AnalysisResultsPage = memo(() => {
   // patterns" stat, the engine pie) keeps reading allAccessPatterns/
   // totalAccessPatterns directly instead of this.
   const explorerPatterns = useMemo(
-    () => [...allAccessPatterns, ...cacheLayerPatterns],
-    [allAccessPatterns, cacheLayerPatterns]
+    () => [...allAccessPatterns, ...cacheLayerPatternList],
+    [allAccessPatterns, cacheLayerPatternList]
+  );
+  // #2446: the Data model tab's source tables (the explorer's "By source table" view).
+  const sourceTables = useMemo(
+    () => sourceTableRows(allAccessPatterns, cacheLayerPatternList),
+    [allAccessPatterns, cacheLayerPatternList],
   );
 
   // Engine trade-offs lookup
@@ -731,26 +512,20 @@ const AnalysisResultsPage = memo(() => {
     return table ? { table, engineName: design.displayName } : null;
   }, [designSelection, auroraDesigns]);
 
-  // Query details lookup: query_id → { query_text, query_type, tables_accessed, calls_per_second }
-  const queryLookup = useMemo(() => {
-    const map = {};
-    const patterns = collectorData?.queries?.query_patterns || [];
-    patterns.forEach(q => { map[q.query_id] = q; });
-    return map;
-  }, [collectorData]);
-
   // Destination table definitions lookup: destName → { engine, def, allSourceTables }
   const destTableLookup = useMemo(() => {
     const lookup = {};
+    const shorten = sourceNameMapper(activeDesigns);
     activeDesigns.forEach(design => {
       const engine = design.target_type;
       const content = design.content || {};
       (content.table_definitions || []).forEach(t => {
-        lookup[`${engine}::${t.table_name}`] = {
+        const name = t.schema_name ? designTableKey(t.table_name, t.schema_name) : t.table_name;
+        lookup[`${engine}::${name}`] = {
           engine,
-          name: t.table_name,
+          name,
           def: t,
-          allSourceTables: (t.source_tables || []).map(shortTable),
+          allSourceTables: (t.source_tables || []).map(shorten),
         };
       });
       (content.index_designs || []).forEach(idx => {
@@ -803,344 +578,13 @@ const AnalysisResultsPage = memo(() => {
 
 
   // ============================================
-  // Filtering
-  // ============================================
-
-  // Property filter config
-  const filterProperties = useMemo(() => [
-    { key: 'engine', propertyLabel: 'Engine', groupValuesLabel: 'Engines', operators: ['=', '!='] },
-    { key: 'source_table', propertyLabel: 'Source table', groupValuesLabel: 'Source tables', operators: ['=', '!=', ':'] },
-    { key: 'dest_table', propertyLabel: 'Destination', groupValuesLabel: 'Destinations', operators: ['=', '!=', ':'] },
-    { key: 'operation', propertyLabel: 'Operation', groupValuesLabel: 'Operations', operators: ['=', '!='] },
-    { key: 'op_type', propertyLabel: 'Operation type', groupValuesLabel: 'Types', operators: ['='] },
-    { key: 'pattern_group', propertyLabel: 'Pattern group', groupValuesLabel: 'Groups', operators: ['=', ':'] },
-    { key: 'gsi', propertyLabel: 'Uses GSI', groupValuesLabel: 'GSI', operators: ['='] },
-    { key: 'query_id', propertyLabel: 'Query ID', groupValuesLabel: 'Query IDs', operators: ['=', ':'] },
-  ], []);
-
-  const filterOptions = useMemo(() => {
-    const engines = new Set();
-    const sources = new Set();
-    const dests = new Set();
-    const ops = new Set();
-    const opTypes = new Set();
-    const groups = new Set();
-    const queryIds = new Set();
-
-    // #429 part 2: explorerPatterns (owner rows + cache-layer rows) so the
-    // cache layer's engine/source tables/operations are filterable facets
-    // too, not just the owner rows'.
-    explorerPatterns.forEach(ap => {
-      engines.add(ap.engine);
-      ap.sourceTables.forEach(t => sources.add(t));
-      if (ap.destTable !== '—') dests.add(ap.destTable);
-      ops.add(ap.operation);
-      opTypes.add(ap.opCategory);
-      if (ap.patternGroup) groups.add(ap.patternGroup);
-      (ap.queryIds || []).forEach(qid => queryIds.add(qid));
-    });
-
-    return [
-      ...[...engines].sort().map(v => ({ propertyKey: 'engine', value: v })),
-      ...[...sources].sort().map(v => ({ propertyKey: 'source_table', value: v })),
-      ...[...dests].sort().map(v => ({ propertyKey: 'dest_table', value: v })),
-      ...[...ops].sort().map(v => ({ propertyKey: 'operation', value: v })),
-      ...[...opTypes].sort().map(v => ({ propertyKey: 'op_type', value: v })),
-      ...[...groups].sort().map(v => ({ propertyKey: 'pattern_group', value: v })),
-      { propertyKey: 'gsi', value: 'yes' },
-      { propertyKey: 'gsi', value: 'no' },
-      ...[...queryIds].sort().map(v => ({ propertyKey: 'query_id', value: v })),
-    ];
-  }, [explorerPatterns]);
-
-  // Apply all filters (engine bar, op donut, property filter) over the
-  // combined owner + cache-layer set (#429 part 2); filteredOwnerPatterns/
-  // filteredCacheLayerPatterns below split it back out for rendering.
-  const filteredPatterns = useMemo(() => {
-    let items = [...explorerPatterns];
-
-    // Engine filter (multi-select)
-    if (engineFilter.length > 0) {
-      const selectedEngines = engineFilter.map(e => e.value);
-      items = items.filter(ap => selectedEngines.includes(ap.engine));
-    }
-
-    // Operation filter (multi-select)
-    if (opFilter.length > 0) {
-      const selectedOps = opFilter.map(o => o.value);
-      items = items.filter(ap => selectedOps.includes(ap.opCategory));
-    }
-
-    // Property filter tokens
-    const { tokens, operation } = filterQuery;
-    if (tokens.length > 0) {
-      const matchToken = (ap, token) => {
-        if (!token.propertyKey) {
-          const text = token.value?.toLowerCase() || '';
-          return (
-            ap.id?.toLowerCase().includes(text) ||
-            ap.engine?.toLowerCase().includes(text) ||
-            ap.description?.toLowerCase().includes(text) ||
-            ap.sourceTables.some(t => t.toLowerCase().includes(text)) ||
-            ap.destTable?.toLowerCase().includes(text)
-          );
-        }
-        const val = token.value?.toLowerCase() || '';
-        const op = token.operator || '=';
-
-        if (token.propertyKey === 'engine') {
-          const v = ap.engine?.toLowerCase() || '';
-          return op === '=' ? v === val : op === '!=' ? v !== val : false;
-        }
-        if (token.propertyKey === 'source_table') {
-          const tables = ap.sourceTables.map(t => t.toLowerCase());
-          if (op === '=') {
-            // Include consolidated tables: if the filtered table shares a destination, include siblings
-            if (tables.includes(val)) return true;
-            const destKey = `${ap.engine}::${ap.destTable}`;
-            const destEntry = destTableLookup[destKey];
-            if (destEntry) {
-              const siblings = destEntry.allSourceTables.map(t => t.toLowerCase());
-              if (siblings.includes(val)) return true;
-            }
-            return false;
-          }
-          if (op === '!=') return !tables.includes(val);
-          if (op === ':') {
-            if (tables.some(t => t.includes(val))) return true;
-            const destKey = `${ap.engine}::${ap.destTable}`;
-            const destEntry = destTableLookup[destKey];
-            if (destEntry) {
-              const siblings = destEntry.allSourceTables.map(t => t.toLowerCase());
-              if (siblings.some(t => t.includes(val))) return true;
-            }
-            return false;
-          }
-          return false;
-        }
-        if (token.propertyKey === 'dest_table') {
-          const d = ap.destTable?.toLowerCase() || '';
-          if (op === '=') return d === val;
-          if (op === '!=') return d !== val;
-          if (op === ':') return d.includes(val);
-          return false;
-        }
-        if (token.propertyKey === 'operation') {
-          const o = ap.operation?.toLowerCase() || '';
-          return op === '=' ? o === val : op === '!=' ? o !== val : false;
-        }
-        if (token.propertyKey === 'op_type') {
-          return ap.opCategory === val;
-        }
-        if (token.propertyKey === 'pattern_group') {
-          const g = ap.patternGroup?.toLowerCase() || '';
-          if (op === '=') return g === val;
-          if (op === ':') return g.includes(val);
-          return false;
-        }
-        if (token.propertyKey === 'gsi') {
-          const hasGsi = !!ap.gsiName;
-          return val === 'yes' ? hasGsi : !hasGsi;
-        }
-        if (token.propertyKey === 'query_id') {
-          const qids = (ap.queryIds || []).map(q => q.toLowerCase());
-          if (op === '=') return qids.includes(val);
-          if (op === ':') return qids.some(q => q.includes(val));
-          return false;
-        }
-        return true;
-      };
-
-      items = items.filter(ap => {
-        if (operation === 'and') return tokens.every(t => matchToken(ap, t));
-        return tokens.some(t => matchToken(ap, t));
-      });
-    }
-
-    return items;
-  }, [explorerPatterns, engineFilter, opFilter, filterQuery]);
-
-  // #429 part 2: split the combined filtered set back into owner rows and
-  // the cache layer's rows, so each renders as its own group/section (the
-  // cache layer always after the owners) instead of mixed together.
-  const filteredOwnerPatterns = useMemo(
-    () => filteredPatterns.filter(ap => !ap.isCacheLayer),
-    [filteredPatterns]
-  );
-  const filteredCacheLayerPatterns = useMemo(
-    () => filteredPatterns.filter(ap => ap.isCacheLayer),
-    [filteredPatterns]
-  );
-
-
-  // ============================================
-  // Source table view grouping
-  // ============================================
-
-  // #429 part 2: grouped separately so the cache layer is its own section in
-  // the "By source table" view too, after the owner groups.
-  const sourceTableGroups = useMemo(
-    () => groupPatternsBySourceTable(filteredOwnerPatterns),
-    [filteredOwnerPatterns]
-  );
-  const cacheSourceTableGroups = useMemo(
-    () => groupPatternsBySourceTable(filteredCacheLayerPatterns),
-    [filteredCacheLayerPatterns]
-  );
-
-  // ============================================
-  // Chart Data (based on filtered patterns)
-  // ============================================
-
-  // Operation distribution for donut
-  const opDistribution = useMemo(() => {
-    const counts = {};
-    filteredPatterns.forEach(ap => {
-      const cat = ap.opCategory;
-      counts[cat] = (counts[cat] || 0) + 1;
-    });
-    return Object.entries(counts)
-      .map(([op, count]) => ({ op, count, color: OP_COLORS[op] || '#5f6b7a' }))
-      .sort((a, b) => b.count - a.count);
-  }, [filteredPatterns]);
-
-  // Donut chart data
-  const donutData = useMemo(() => {
-    return opDistribution.map(d => ({
-      id: d.op,
-      title: d.op.charAt(0).toUpperCase() + d.op.slice(1),
-      value: d.count,
-      color: d.color,
-    }));
-  }, [opDistribution]);
-
-  const operationOptions = useMemo(() => {
-    return opDistribution.map(d => ({
-      label: `${d.op.charAt(0).toUpperCase() + d.op.slice(1)} (${d.count})`,
-      value: d.op
-    }));
-  }, [opDistribution]);
-
-  // Engine distribution for pie chart (#429 part 2: owner rows only -- the
-  // cache layer never owned a query, so it must stay out of the pie's share
-  // the same way it stays out of the "Access patterns" stat; it gets its own
-  // legend-style entry next to the pie instead, see renderEngineBar below).
-  const filteredEngineDist = useMemo(() => {
-    const counts = {};
-    filteredOwnerPatterns.forEach(ap => {
-      counts[ap.engine] = (counts[ap.engine] || 0) + 1;
-    });
-    return counts;
-  }, [filteredOwnerPatterns]);
-
-
-  // ============================================
-  // Pagination
-  // ============================================
-
-  // #429 part 2: pagination still covers the owner rows only -- the cache
-  // layer's own section (always small -- one group of key designs) renders
-  // in full underneath, unpaginated.
-  const displayItems = browseMode === 'pattern' ? filteredOwnerPatterns : sourceTableGroups;
-  const paginatedItems = useMemo(() => {
-    const start = (currentPage - 1) * PAGE_SIZE;
-    return displayItems.slice(start, start + PAGE_SIZE);
-  }, [displayItems, currentPage]);
-
-
-  // ============================================
   // Handlers
   // ============================================
 
-  const handlePatternClick = useCallback((pattern) => {
-    setSelectedPattern(pattern);
-    setSelectedSourceTable(null);
-    setShowPatternModal(true);
-  }, []);
-
-  const handleSourceTableClick = useCallback((sourceTable) => {
-    setSelectedSourceTable(sourceTable);
-    setSelectedPattern(null);
-    setShowPatternModal(true);
-  }, []);
-
-  const handleCloseModal = useCallback(() => {
-    setShowPatternModal(false);
-    setSelectedPattern(null);
-    setSelectedSourceTable(null);
-  }, []);
-
-  const handleEngineBarClick = useCallback((engine) => {
-    setEngineFilter(prev => prev === engine ? null : engine);
-    setCurrentPage(1);
-  }, []);
-
-  const handleOpClick = useCallback((op) => {
-    setOpFilter(prev => prev === op ? null : op);
-    setCurrentPage(1);
-  }, []);
-
-  const handleOpChartClick = useCallback((event) => {
-    console.log('Operation chart clicked - full event:', event);
-
-    // Try different possible event structures
-    let clickedOp = null;
-
-    if (event.detail?.id) {
-      clickedOp = event.detail.id;
-    } else if (event.detail?.datum?.id) {
-      clickedOp = event.detail.datum.id;
-    } else if (event.detail?.data?.id) {
-      clickedOp = event.detail.data.id;
-    } else if (event.id) {
-      clickedOp = event.id;
-    } else if (event.detail?.title) {
-      // Extract from title (e.g., "Read" -> "read")
-      clickedOp = event.detail.title.toLowerCase();
-    }
-
-    console.log('Extracted operation:', clickedOp);
-
-    if (clickedOp) {
-      // Add to PropertyFilter
-      const newToken = {
-        propertyKey: 'op_type',
-        operator: '=',
-        value: clickedOp
-      };
-
-      // Check if this filter already exists
-      const existingTokens = filterQuery.tokens || [];
-      const alreadyExists = existingTokens.some(
-        t => t.propertyKey === 'op_type' && t.value === clickedOp
-      );
-
-      if (!alreadyExists) {
-        console.log('Adding operation filter token:', newToken);
-        setFilterQuery({
-          tokens: [...existingTokens, newToken],
-          operation: filterQuery.operation || 'and'
-        });
-        setCurrentPage(1);
-      } else {
-        console.log('Operation filter already exists');
-      }
-    } else {
-      console.error('Could not extract operation from event');
-    }
-  }, [filterQuery]);
-
-  const filterByQueryId = useCallback((queryId) => {
-    setFilterQuery({ tokens: [{ propertyKey: 'query_id', operator: '=', value: queryId }], operation: 'and' });
-    setEngineFilter([]);
-    setOpFilter([]);
-    setCurrentPage(1);
-    goToSection('access-patterns-section');
-  }, [goToSection]);
-
-  const fetchQueryJourney = useCallback(async (queryId) => {
+  const fetchQueryJourney = useCallback(async (queryId, options) => {
     setDesignSelection(null);
     setSelectedQueryId(queryId);
+    if (options && options.focusPanel) setPanelFocusRequest(n => n + 1);
     setSplitPanelOpen(true);
     setQueryJourneyLoading(true);
     setQueryJourneyData(null);
@@ -1198,508 +642,14 @@ const AnalysisResultsPage = memo(() => {
     setSelectedQueryId(null);
   }, []);
 
-  const clearAllFilters = useCallback(() => {
-    setEngineFilter([]);
-    setOpFilter([]);
-    setFilterQuery({ tokens: [], operation: 'and' });
-    setCurrentPage(1);
-  }, []);
 
-  const hasActiveFilters = engineFilter.length > 0 || opFilter.length > 0 || filterQuery.tokens.length > 0;
-
-
-  // ============================================
-  // Table Column Definitions
-  // ============================================
-
-  const patternColumnDefinitions = useMemo(() => [
-    {
-      id: 'pattern_id',
-      header: t('analysis-results.explorer.col-pattern'),
-      cell: item => (
-        <Link onFollow={() => handlePatternClick(item)}>
-          {item.id?.slice(0, 8) || '—'}
-        </Link>
-      ),
-      sortingField: 'id',
-      width: 120
-    },
-    {
-      id: 'operation',
-      header: t('analysis-results.explorer.col-operation'),
-      cell: item => item.operation,
-      sortingField: 'operation',
-      width: 150
-    },
-    {
-      id: 'engine',
-      header: t('analysis-results.explorer.col-engine'),
-      cell: item => (
-        <EngineBadge engine={item.engine}>
-          {ENGINE_LABELS[item.engine] || item.engine}
-          {/* #429 part 2: every cache-layer row carries this suffix, even
-              inside its own section, so the role is unambiguous wherever the
-              row is seen (e.g. a copied/zoomed screenshot of just the row). */}
-          {item.isCacheLayer ? t('cache-layer.engine-badge-suffix') : ''}
-        </EngineBadge>
-      ),
-      sortingField: 'engine',
-      width: 140
-    },
-    {
-      id: 'source_tables',
-      header: t('analysis-results.explorer.col-source-tables'),
-      cell: item => item.sourceTables.join(', '),
-      width: 250
-    },
-    {
-      id: 'destination',
-      header: t('analysis-results.explorer.col-destination'),
-      cell: item => {
-        const base = item.gsiName ? `${item.destTable} (GSI: ${item.gsiName})` : item.destTable;
-        // #429 part 2: the cache layer's "destination" is its key design
-        // (key_pattern) -- show the TTL alongside it, when the pattern's key
-        // design has one, instead of leaving the key design's eviction
-        // policy entirely unbrowsable.
-        return item.isCacheLayer && item.ttlSeconds != null
-          ? `${base} · ${t('analysis-results.explorer.ttl-suffix', { seconds: item.ttlSeconds })}`
-          : base;
-      },
-      sortingField: 'destTable',
-      width: 220
-    },
-    {
-      id: 'description',
-      header: t('analysis-results.explorer.col-description'),
-      cell: item => (item.description ? <ProseText text={item.description} /> : '—'),
-      width: 300
-    }
-  ], [t, handlePatternClick]);
-
-  const sourceTableColumnDefinitions = useMemo(() => [
-    {
-      id: 'table_name',
-      header: t('analysis-results.explorer.col-source-table'),
-      cell: item => (
-        <Link onFollow={() => handleSourceTableClick(item)}>
-          {item.table}
-        </Link>
-      ),
-      sortingField: 'table',
-      width: 200
-    },
-    {
-      id: 'engines',
-      header: t('analysis-results.explorer.col-engines'),
-      cell: item => (
-        <SpaceBetween direction="horizontal" size="xxs">
-          {[...item.engines].map(e => (
-            <EngineBadge key={e} engine={e}>
-              {ENGINE_LABELS[e] || e}
-              {/* #429 part 2: a source-table group's engines can include the
-                  cache layer -- tag it the same way the pattern rows are. */}
-              {e === cacheOverlay?.engine ? t('cache-layer.engine-badge-suffix') : ''}
-            </EngineBadge>
-          ))}
-        </SpaceBetween>
-      ),
-      width: 200
-    },
-    {
-      id: 'dest_tables',
-      header: t('analysis-results.explorer.col-destination-tables'),
-      cell: item => (
-        <DestinationTables destinations={[...item.destinations.values()]} />
-      ),
-      width: 250
-    },
-    {
-      id: 'patterns',
-      header: t('analysis-results.explorer.col-patterns'),
-      cell: item => (
-        <Badge>{item.patterns.length}</Badge>
-      ),
-      sortingField: 'patterns.length',
-      width: 100
-    },
-    {
-      id: 'convergence',
-      header: t('analysis-results.explorer.col-convergence'),
-      cell: item => (
-        item.convergesFrom.size > 0 ? (
-          <Badge color="blue">{t('analysis-results.explorer.merged-badge', { count: item.convergesFrom.size })}</Badge>
-        ) : '—'
-      ),
-      width: 150
-    },
-    {
-      id: 'operations',
-      header: t('analysis-results.explorer.col-operations'),
-      cell: item => {
-        const opSummary = {};
-        item.patterns.forEach(p => { opSummary[p.operation] = (opSummary[p.operation] || 0) + 1; });
-        return (
-          <Box fontSize="body-s">
-            {Object.entries(opSummary).map(([op, cnt]) => `${op}(${cnt})`).join(', ')}
-          </Box>
-        );
-      },
-      width: 250
-    }
-  ], [t, handleSourceTableClick, cacheOverlay]);
-
-
-  // ============================================
-  // Render: Detail panel for a pattern
-  // ============================================
-
-  const renderPatternDetail = (ap) => {
-    // Resolve source queries from collector
-    const sourceQueries = ap.queryIds
-      .map(qid => queryLookup[qid])
-      .filter(Boolean);
-
-    // Build metrics items dynamically
-    const metricsItems = [];
-    if (ap.engine) metricsItems.push({ label: t('analysis-results.pattern-detail.engine'), value: <EngineBadge engine={ap.engine}>{ENGINE_LABELS[ap.engine] || ap.engine}{ap.isCacheLayer ? t('cache-layer.engine-badge-suffix') : ''}</EngineBadge> });
-    if (ap.operation) metricsItems.push({ label: t('analysis-results.pattern-detail.operation'), value: ap.operation });
-    if (ap.destTable) metricsItems.push({ label: t('analysis-results.pattern-detail.destination-table'), value: ap.destTable });
-    if (ap.gsiName) metricsItems.push({ label: t('analysis-results.pattern-detail.gsi'), value: ap.gsiName });
-    if (ap.indexUsed) metricsItems.push({ label: t('analysis-results.pattern-detail.index-used'), value: ap.indexUsed });
-    if (ap.sourceTables?.length > 0) metricsItems.push({ label: t('analysis-results.pattern-detail.source-tables'), value: ap.sourceTables.join(', ') });
-    if (ap.designRps != null) metricsItems.push({ label: t('analysis-results.pattern-detail.design-rps'), value: ap.designRps });
-    if (ap.itemSize != null) metricsItems.push({ label: t('analysis-results.pattern-detail.item-size'), value: `${ap.itemSize} bytes` });
-    if (ap.avgItems != null) metricsItems.push({ label: t('analysis-results.pattern-detail.avg-items-returned'), value: ap.avgItems });
-    if (ap.patternGroup) metricsItems.push({ label: t('analysis-results.pattern-detail.pattern-group'), value: ap.patternGroup });
-    // #429 part 2: the cache layer's key design (TTL, data type) -- the only
-    // place that information exists is the cache design's key_designs[],
-    // joined in by cacheLayerAccessPatterns.
-    if (ap.ttlSeconds != null) metricsItems.push({ label: t('analysis-results.pattern-detail.ttl'), value: t('analysis-results.explorer.ttl-suffix', { seconds: ap.ttlSeconds }) });
-    if (ap.keyDataType) metricsItems.push({ label: t('analysis-results.pattern-detail.key-data-type'), value: ap.keyDataType });
-
-    return (
-      <SpaceBetween size="l">
-        {/* Description -- for a designed Aurora row this is the assignment's
-            routing reason (#157 review round 2); patternDescription keeps the
-            pattern's own structural text visible underneath when it differs
-            (every other engine's row: the two are the same string, so the
-            second line never renders). */}
-        {ap.description && (
-          <Container>
-            <Box fontSize="body-m"><ProseText text={ap.description} /></Box>
-            {ap.patternDescription && ap.patternDescription !== ap.description && (
-              <Box fontSize="body-s" color="text-body-secondary" padding={{ top: 's' }}>
-                <ProseText text={ap.patternDescription} />
-              </Box>
-            )}
-          </Container>
-        )}
-
-        {/* Pattern Metrics */}
-        <Container header={<Header variant="h3">{t('analysis-results.pattern-detail.title')}</Header>}>
-          <KeyValuePairs
-            columns={3}
-            items={metricsItems}
-          />
-        </Container>
-
-        {/* Source queries */}
-        {sourceQueries.length > 0 && (
-          <Container header={<Header variant="h3">{t('analysis-results.pattern-detail.source-queries', { count: sourceQueries.length })}</Header>}>
-            <Table
-              ariaLabels={{ tableLabel: t('analysis-results.pattern-detail.source-queries', { count: sourceQueries.length }) }}
-              columnDefinitions={[
-                {
-                  id: 'query_id',
-                  header: t('analysis-results.pattern-detail.query-id'),
-                  cell: (item) => (
-                    <Link
-                      fontSize="body-s"
-                      onFollow={(e) => {
-                        e.preventDefault();
-                        fetchQueryJourney(item.query_id);
-                      }}
-                    >
-                      {item.query_id}
-                    </Link>
-                  ),
-                  width: 280
-                },
-                {
-                  id: 'type',
-                  header: t('analysis-results.pattern-detail.type'),
-                  cell: (item) => <Badge>{item.query_type || t('common.labels.sql')}</Badge>,
-                  width: 80
-                },
-                {
-                  id: 'calls_per_second',
-                  header: t('analysis-results.pattern-detail.calls-per-sec'),
-                  cell: (item) => formatRate(item.calls_per_second),
-                  width: 100
-                },
-                {
-                  id: 'tables',
-                  header: t('analysis-results.pattern-detail.tables'),
-                  cell: (item) => displayTables(item.tables_accessed).join(', ') || '—',
-                  width: 200
-                },
-                {
-                  id: 'query_text',
-                  header: t('analysis-results.pattern-detail.query-text'),
-                  cell: (item) => {
-                    if (!item.query_text) return '—';
-                    return (
-                      <CodeBlock capped label={t('analysis-results.pattern-detail.query-text')}>
-                        {item.query_text}
-                      </CodeBlock>
-                    );
-                  },
-                  minWidth: 400
-                }
-              ]}
-              items={sourceQueries}
-              loadingText={t('common.labels.loading')}
-              empty={
-                <Box textAlign="center" color="inherit">
-                  <Box variant="p" color="inherit">
-                    {t('common.labels.no-data')}
-                  </Box>
-                </Box>
-              }
-              variant="embedded"
-              wrapLines={false}
-            />
-          </Container>
-        )}
-
-        {/* OpenSearch source query */}
-        {sourceQueries.length === 0 && ap.sourceQuery && (
-          <Container header={<Header variant="h3">{t('analysis-results.pattern-detail.source-sql')}</Header>}>
-            <CodeBlock>
-              {ap.sourceQuery}
-            </CodeBlock>
-          </Container>
-        )}
-
-        {/* Target design: key condition or DSL */}
-        {(ap.keyCondition || ap.opensearchDsl) && (
-          <Container header={<Header variant="h3">{t('analysis-results.pattern-detail.target-access-pattern')}</Header>}>
-            <CodeBlock>
-              {ap.keyCondition && ap.keyCondition}
-              {ap.opensearchDsl && (typeof ap.opensearchDsl === 'string' ? ap.opensearchDsl : JSON.stringify(ap.opensearchDsl, null, 2))}
-            </CodeBlock>
-          </Container>
-        )}
-
-        {/* GSI detail if present */}
-        {ap.gsiName && ap.destDef && (
-          <Container header={<Header variant="h3">{t('analysis-results.source-table.gsi-prefix')}{ap.gsiName}</Header>}>
-            {(ap.destDef.gsis || ap.destDef.gsi_indexes || [])
-              .filter(g => (g.gsi_name || g.index_name) === ap.gsiName)
-              .map((gsi, i) => {
-                const pk = Array.isArray(gsi.partition_key) ? gsi.partition_key[0] : gsi.partition_key;
-                const sk = Array.isArray(gsi.sort_key) ? gsi.sort_key[0] : gsi.sort_key;
-
-                const gsiItems = [
-                  { label: t('analysis-results.pattern-detail.partition-key'), value: pk ? `${pk.attribute_name} (${pk.attribute_type})` : '—' },
-                  { label: t('analysis-results.pattern-detail.projection'), value: gsi.projection || t('common.labels.all') }
-                ];
-
-                if (sk) {
-                  gsiItems.splice(1, 0, { label: t('analysis-results.pattern-detail.sort-key'), value: `${sk.attribute_name} (${sk.attribute_type})` });
-                }
-
-                return (
-                  <KeyValuePairs
-                    key={i}
-                    columns={3}
-                    items={gsiItems}
-                  />
-                );
-              })}
-          </Container>
-        )}
-
-        {/* Out of scope warning */}
-        {!ap.inScope && ap.outOfScopeReason && (
-          <Container>
-            <Box color="text-status-error" fontSize="body-m">
-              <strong>{t('analysis-results.pattern-detail.out-of-scope-reason')}:</strong> <ProseText text={ap.outOfScopeReason} />
-            </Box>
-          </Container>
-        )}
-      </SpaceBetween>
-    );
-  };
-
-
-  // ============================================
-  // Render: Detail panel for a source table group
-  // ============================================
-
-  const renderSourceTableDetail = (group) => {
-    // Group patterns by engine first, then by destination table
-    const byEngine = {};
-    group.patterns.forEach(ap => {
-      if (!byEngine[ap.engine]) byEngine[ap.engine] = [];
-      byEngine[ap.engine].push(ap);
-    });
-
-    // Create tabs for each engine
-    const tabs = Object.entries(byEngine).map(([engine, patterns]) => {
-      // Group patterns by destination table within this engine
-      const byDest = {};
-      patterns.forEach(ap => {
-        const key = ap.destTable;
-        if (!byDest[key]) byDest[key] = { engine: ap.engine, destTable: ap.destTable, patterns: [] };
-        byDest[key].patterns.push(ap);
-      });
-      const destGroups = Object.values(byDest);
-
-      return {
-        id: engine,
-        label: `${ENGINE_LABELS[engine] || engine}${engine === cacheOverlay?.engine ? t('cache-layer.engine-badge-suffix') : ''}`,
-        content: (
-          <SpaceBetween size="l">
-            {destGroups.map((dg, idx) => {
-              const destInfo = destTableLookup[`${dg.engine}::${dg.destTable}`];
-              const def = destInfo?.def;
-              const allSources = destInfo?.allSourceTables || [];
-              const otherSources = allSources.filter(t => t !== group.table);
-              const pk = def?.partition_key;
-              const sk = def?.sort_key;
-              const gsis = def?.gsis || def?.gsi_indexes || [];
-              const fields = def?.field_mappings || def?.mappings?.properties;
-              const fieldCount = Array.isArray(fields) ? fields.length : (fields ? Object.keys(fields).length : 0);
-              const shards = def?.settings?.number_of_shards;
-
-              return (
-                <Container key={idx}>
-                  <SpaceBetween size="m">
-                    {/* Table design summary */}
-                    <KeyValuePairs
-                      columns={4}
-                      items={[
-                        {
-                          label: t('analysis-results.source-table.table'),
-                          value: dg.destTable
-                        },
-                        {
-                          label: t('analysis-results.source-table.patterns'),
-                          value: dg.patterns.length
-                        },
-                        ...(pk ? [{
-                          label: t('analysis-results.pattern-detail.partition-key'),
-                          value: <><code>{pk.attribute_name}</code> ({pk.attribute_type})</>
-                        }] : []),
-                        ...(sk ? [{
-                          label: t('analysis-results.pattern-detail.sort-key'),
-                          value: <><code>{sk.attribute_name}</code> ({sk.attribute_type})</>
-                        }] : []),
-                        ...(gsis.length > 0 ? [{
-                          label: 'GSI Indexes',
-                          value: `${gsis.length} GSI${gsis.length !== 1 ? 's' : ''}: ${gsis.map(g => g.gsi_name || g.index_name).join(', ')}`
-                        }] : []),
-                        ...(shards != null ? [{
-                          label: 'Shards & Fields',
-                          value: `${shards} shard${shards !== 1 ? 's' : ''} · ${fieldCount} fields`
-                        }] : [])
-                      ]}
-                    />
-
-                    {/* Consolidation: other source tables merging here */}
-                    {otherSources.length > 0 && (
-                      <KeyValuePairs
-                        columns={4}
-                        items={[
-                          {
-                            label: 'Consolidates with',
-                            value: otherSources.join(', ')
-                          }
-                        ]}
-                      />
-                    )}
-
-                    {/* Access patterns */}
-                    <Table
-                      ariaLabels={{ tableLabel: t('analysis-results.explorer.table-patterns') }}
-                      columnDefinitions={[
-                        {
-                          id: 'pattern_id',
-                          header: 'Pattern',
-                          cell: item => (
-                            <Link onFollow={() => handlePatternClick(item)}>{item.id}</Link>
-                          ),
-                          width: 120
-                        },
-                        {
-                          id: 'operation',
-                          header: 'Operation',
-                          cell: item => item.operation,
-                          width: 150
-                        },
-                        ...(dg.engine === 'dynamodb' ? [{
-                          id: 'gsi',
-                          header: 'GSI',
-                          cell: item => item.gsiName || '—',
-                          width: 150
-                        }] : []),
-                        {
-                          id: 'description',
-                          header: 'Description',
-                          cell: item => <ProseText text={item.description} />
-                        }
-                      ]}
-                      items={dg.patterns}
-                      variant="embedded"
-                      empty={
-                        <Box textAlign="center" color="inherit">
-                          {t('analysis-results.source-table.no-patterns')}
-                        </Box>
-                      }
-                    />
-                  </SpaceBetween>
-                </Container>
-              );
-            })}
-          </SpaceBetween>
-        )
-      };
-    });
-
-    return <Tabs tabs={tabs} />;
-  };
-
-
-  // ============================================
-  // Render: Engine filter bar
-  // ============================================
-
-  const engineOptions = useMemo(() => {
-    const engines = Object.entries(filteredEngineDist);
-    const options = engines.map(([engine, count]) => ({
-      label: `${ENGINE_LABELS[engine] || engine} (${count})`,
-      value: engine
-    }));
-    // #429 part 2: "ElastiCache (cache layer)" gets its own filter option --
-    // without this, there's no way to filter the explorer down to just the
-    // cache layer's rows (or exclude them) the way every owner engine can be.
-    if (cacheOverlay?.engine) {
-      const cacheEngine = cacheOverlay.engine;
-      options.push({
-        label: `${ENGINE_LABELS[cacheEngine] || cacheEngine}${t('cache-layer.engine-badge-suffix')} (${filteredCacheLayerPatterns.length})`,
-        value: cacheEngine
-      });
-    }
-    return options;
-  }, [filteredEngineDist, cacheOverlay, filteredCacheLayerPatterns, t]);
 
   // #2300: a link from the Sankey (or an old pattern-analysis link) names an
   // engine (?engine=) and a section (#hash). Once the page has its data, filter
-  // the explorer to that engine (its Table design tab for a relational one), say so
-  // when the plan has no part for it, then open the section's tab (#2313), scroll to
-  // the section and move focus there. Done once per page load, so the user's own
-  // filter changes stand.
+  // the query table to that engine (#2446; its Table design tab for a relational one
+  // with a design), say so when the plan has no part for it or its design has not
+  // run, then open the section's tab (#2313), scroll to the section and move focus
+  // there. Done once per page load, so the user's own filter changes stand.
   const linkedEngineHandled = useRef(false);
   useEffect(() => {
     if (loading || linkedEngineHandled.current) return;
@@ -1713,11 +663,13 @@ const AnalysisResultsPage = memo(() => {
     );
     // #2313: the section's tab opens first (a section on a closed tab is not in the DOM).
     const sectionId = linkedSectionId(target, locationHash);
-    if (target === 'explorer') {
-      // The same label a user-picked token carries ("DynamoDB (55)").
-      const option = engineOptions.find(o => o.value === engine);
-      setEngineFilter([{ label: option?.label || ENGINE_LABELS[engine] || engine, value: engine }]);
-    } else if (target === 'absent' || target === 'not-designed') {
+    if (target === 'queries' || target === 'not-designed') {
+      // The cache layer owns no query: its link lists the queries it caches.
+      setLinkedQueryFilter(engine === cacheOverlay?.engine
+        ? { propertyKey: 'cached', value: 'yes' }
+        : { propertyKey: 'engine', value: engine });
+    }
+    if (target === 'absent' || target === 'not-designed') {
       addFlashbarMessage({
         type: 'info',
         header: t(`analysis-results.engine-link.${target}`, { engine: ENGINE_LABELS[engine] || engine }),
@@ -1728,94 +680,8 @@ const AnalysisResultsPage = memo(() => {
     // useResultsTabs lands on the hash's section already; a linked engine's section can
     // differ from it (its Table design).
     if (sectionId && sectionId !== hashId(locationHash)) goToSection(sectionId);
-  }, [loading, locationSearch, locationHash, explorerPatterns, auroraDesigns, afterDist, engineOptions, addFlashbarMessage, goToSection, t]);
+  }, [loading, locationSearch, locationHash, explorerPatterns, auroraDesigns, afterDist, cacheOverlay, addFlashbarMessage, goToSection, t]);
 
-  const handleEngineChartClick = useCallback((event) => {
-    console.log('Engine chart clicked - full event:', event);
-
-    // Try different possible event structures
-    let clickedEngine = null;
-
-    if (event.detail?.id) {
-      clickedEngine = event.detail.id;
-    } else if (event.detail?.datum?.id) {
-      clickedEngine = event.detail.datum.id;
-    } else if (event.detail?.data?.id) {
-      clickedEngine = event.detail.data.id;
-    } else if (event.id) {
-      clickedEngine = event.id;
-    }
-
-    console.log('Extracted engine:', clickedEngine);
-
-    if (clickedEngine) {
-      // Add to PropertyFilter instead of Multiselect
-      const newToken = {
-        propertyKey: 'engine',
-        operator: '=',
-        value: clickedEngine
-      };
-
-      // Check if this filter already exists
-      const existingTokens = filterQuery.tokens || [];
-      const alreadyExists = existingTokens.some(
-        t => t.propertyKey === 'engine' && t.value === clickedEngine
-      );
-
-      if (!alreadyExists) {
-        console.log('Adding filter token:', newToken);
-        setFilterQuery({
-          tokens: [...existingTokens, newToken],
-          operation: filterQuery.operation || 'and'
-        });
-        setCurrentPage(1);
-      } else {
-        console.log('Filter already exists');
-      }
-    } else {
-      console.error('Could not extract engine from event');
-    }
-  }, [filterQuery]);
-
-  const renderEngineBar = () => {
-    if (Object.keys(filteredEngineDist).length === 0) return null;
-
-    return (
-      <>
-        <Multiselect
-          selectedOptions={engineFilter}
-          onChange={({ detail }) => {
-            setEngineFilter(detail.selectedOptions);
-            setCurrentPage(1);
-          }}
-          options={engineOptions}
-          placeholder="Select engines"
-          filteringType="auto"
-          tokenLimit={3}
-        />
-        {/* #429 part 2: the cache layer never owned a query, so it gets its
-            own legend-style entry with its count under the engine filter.
-            #2319: the engine pie is gone; the summary shows the split. */}
-        {cacheOverlay?.engine && (
-          <Box margin={{ top: 'xs' }} fontSize="body-s" color="text-body-secondary">
-            <span
-              aria-hidden="true"
-              style={{
-                display: 'inline-block',
-                width: '10px',
-                height: '10px',
-                borderRadius: '2px',
-                backgroundColor: engineHex(cacheOverlay.engine),
-                marginRight: '6px',
-                verticalAlign: 'middle',
-              }}
-            />
-            {`${ENGINE_LABELS[cacheOverlay.engine] || cacheOverlay.engine}${t('cache-layer.engine-badge-suffix')}: ${filteredCacheLayerPatterns.length}`}
-          </Box>
-        )}
-      </>
-    );
-  };
 
 
   // ============================================
@@ -2004,7 +870,10 @@ const AnalysisResultsPage = memo(() => {
     queries: (
       <SpaceBetween size="l">
         {/* Query table (#822, #2319): every query, open, with a property
-            filter; the selected query's detail opens in the split panel. */}
+            filter; the selected query's detail opens in the split panel.
+            #2446: the tab's one list. The access pattern explorer's pattern and
+            cache tables folded into it: a query's patterns open in its panel, and
+            the by-source-table view is on the Data model tab. */}
         <QueryRoutingTable
           rows={queryRoutingRows}
           queryPatterns={queryPatternCountsOf(synthesis)}
@@ -2014,337 +883,9 @@ const AnalysisResultsPage = memo(() => {
           truncated={queryJourneyList.truncated}
           selectedId={selectedQueryId}
           onSelect={fetchQueryJourney}
+          linkedFilter={linkedQueryFilter}
           t={t}
         />
-
-        {/* ============================================ */}
-        {/* Access Pattern Explorer                      */}
-        {/* ============================================ */}
-        {(totalAccessPatterns > 0 || cachePatternCount > 0) && (
-          <Container
-            id="access-patterns-section"
-            header={
-              <Header
-                variant="h2"
-                // #429 part 2: once there's a cache layer, the header
-                // breaks the combined total down into owned vs. cache
-                // layer ("64 (54 owned + 10 cache layer)") instead of
-                // just a bare count -- filtering still falls back to the
-                // simpler "(N of M)" form, same as before #429.
-                counter={
-                  hasActiveFilters
-                    ? `(${filteredOwnerPatterns.length + filteredCacheLayerPatterns.length} of ${explorerTotal})`
-                    : cachePatternCount > 0
-                      ? `(${t('analysis-results.explorer.header-count', {
-                          count: explorerTotal,
-                          total: explorerTotal,
-                          owned: totalAccessPatterns,
-                          cache: cachePatternCount,
-                        })})`
-                      : `(${totalAccessPatterns})`
-                }
-                description={t('analysis-results.explorer.description')}
-                actions={
-                  <SpaceBetween direction="horizontal" size="xs">
-                    <SegmentedControl
-                      selectedId={browseMode}
-                      onChange={({ detail }) => { setBrowseMode(detail.selectedId); setCurrentPage(1); setSelectedItems([]); }}
-                      options={[
-                        { id: 'pattern', text: t('analysis-results.explorer.by-access-pattern') },
-                        { id: 'source', text: t('analysis-results.explorer.by-source-table') },
-                      ]}
-                    />
-                  </SpaceBetween>
-                }
-              >
-                {t('analysis-results.explorer.title')}
-              </Header>
-            }
-          >
-            {explorerState === 'unavailable' ? (
-              <Alert type="warning" header={t('analysis-results.explorer.unavailable-title')}>
-                {t('analysis-results.explorer.unavailable-body', { count: explorerTotal })}
-              </Alert>
-            ) : (
-            <SpaceBetween size="m">
-              {explorerState === 'partial' && (
-                <Alert type="info" header={t('analysis-results.explorer.partial-title')}>
-                  {t('analysis-results.explorer.partial-body', { count: explorerTotal, shown: explorerPatterns.length })}
-                </Alert>
-              )}
-
-              {/* Visual navigators: engine bar + operation donut */}
-              <ColumnLayout columns={2}>
-                <Box>
-                  <Box variant="awsui-key-label" margin={{ bottom: 'xs' }}>{t('analysis-results.explorer.filter-by-engine')}</Box>
-                  {renderEngineBar()}
-                </Box>
-                <Box>
-                  <Box variant="awsui-key-label" margin={{ bottom: 'xs' }}>{t('analysis-results.explorer.filter-by-operation-type')}</Box>
-                  <Multiselect
-                    selectedOptions={opFilter}
-                    onChange={({ detail }) => {
-                      setOpFilter(detail.selectedOptions);
-                      setCurrentPage(1);
-                    }}
-                    options={operationOptions}
-                    placeholder="Select operations"
-                    filteringType="auto"
-                    tokenLimit={3}
-                  />
-                  <Box margin={{ top: 's' }}>
-                    <div style={{ cursor: 'pointer' }} onClick={(e) => {
-                      // Get the clicked element
-                      const target = e.target;
-
-                      // Try to find if we clicked on a legend item or segment
-                      let legendText = null;
-
-                      // Check if clicked on legend text
-                      if (target.tagName === 'text' || target.closest('text')) {
-                        const textElement = target.tagName === 'text' ? target : target.closest('text');
-                        legendText = textElement.textContent;
-                      }
-
-                      // Check if clicked on a path (segment)
-                      if (target.tagName === 'path' || target.closest('path')) {
-                        // Try to find associated legend text from the chart data
-                        const pathElement = target.tagName === 'path' ? target : target.closest('path');
-                        const fill = pathElement.getAttribute('fill');
-
-                        // Find the operation by color
-                        const operation = donutData.find(o => o.color === fill);
-                        if (operation) {
-                          legendText = operation.title;
-                        }
-                      }
-
-                      if (legendText) {
-                        // Find the operation from the legend text
-                        const operation = donutData.find(o => o.title === legendText);
-                        if (operation) {
-                          console.log('Clicked operation:', operation.id);
-
-                          // Add to PropertyFilter
-                          const newToken = {
-                            propertyKey: 'op_type',
-                            operator: '=',
-                            value: operation.id
-                          };
-
-                          // Check if this filter already exists
-                          const existingTokens = filterQuery.tokens || [];
-                          const alreadyExists = existingTokens.some(
-                            t => t.propertyKey === 'op_type' && t.value === operation.id
-                          );
-
-                          if (!alreadyExists) {
-                            console.log('Adding operation filter token:', newToken);
-                            setFilterQuery({
-                              tokens: [...existingTokens, newToken],
-                              operation: filterQuery.operation || 'and'
-                            });
-                            setCurrentPage(1);
-                          }
-                        }
-                      }
-                    }}>
-                      <PieChart
-                        data={donutData}
-                        variant="donut"
-                        size="medium"
-                        innerMetricValue={filteredPatterns.length.toString()}
-                        innerMetricDescription="patterns"
-                        hideFilter
-                        hideLegend={false}
-                        segmentDescription={(datum, sum) => `${datum.value} patterns, ${((datum.value / sum) * 100).toFixed(0)}%`}
-                        detailPopoverContent={(datum, sum) => [
-                          { key: 'Operation', value: datum.title },
-                          { key: 'Patterns', value: datum.value },
-                          { key: 'Percentage', value: `${((datum.value / sum) * 100).toFixed(1)}%` }
-                        ]}
-                        empty={<Box textAlign="center" color="inherit">{t('common.labels.no-data')}</Box>}
-                        noMatch={<Box textAlign="center" color="inherit">{t('common.labels.no-data')}</Box>}
-                        ariaLabel="Operation type distribution"
-                      />
-                    </div>
-                  </Box>
-                </Box>
-              </ColumnLayout>
-
-              {/* Property filter + active filter chips */}
-              <PropertyFilter
-                query={filterQuery}
-                onChange={({ detail }) => { setFilterQuery(detail); setCurrentPage(1); }}
-                filteringProperties={filterProperties}
-                filteringOptions={filterOptions}
-                filteringPlaceholder={t('analysis-results.explorer.filter-placeholder')}
-                countText={t('analysis-results.explorer.count-text', { count: filteredPatterns.length })}
-                expandToViewport
-                i18nStrings={{
-                  filteringAriaLabel: t('analysis-results.explorer.filtering-aria-label'),
-                  dismissAriaLabel: t('analysis-results.explorer.dismiss-aria-label'),
-                  filteringPlaceholder: t('analysis-results.explorer.filter-placeholder'),
-                  groupValuesText: t('analysis-results.explorer.group-values-text'),
-                  groupPropertiesText: t('analysis-results.explorer.group-properties-text'),
-                  operatorsText: t('analysis-results.explorer.operators-text'),
-                  operationAndText: t('analysis-results.explorer.operation-and-text'),
-                  operationOrText: t('analysis-results.explorer.operation-or-text'),
-                  operatorLessText: t('analysis-results.explorer.operator-less-text'),
-                  operatorLessOrEqualText: t('analysis-results.explorer.operator-less-or-equal-text'),
-                  operatorGreaterText: t('analysis-results.explorer.operator-greater-text'),
-                  operatorGreaterOrEqualText: t('analysis-results.explorer.operator-greater-or-equal-text'),
-                  operatorContainsText: t('analysis-results.explorer.operator-contains-text'),
-                  operatorDoesNotContainText: t('analysis-results.explorer.operator-does-not-contain-text'),
-                  operatorEqualsText: t('analysis-results.explorer.operator-equals-text'),
-                  operatorDoesNotEqualText: t('analysis-results.explorer.operator-does-not-equal-text'),
-                  editTokenHeader: t('analysis-results.explorer.edit-token-header'),
-                  propertyText: t('analysis-results.explorer.property-text'),
-                  operatorText: t('analysis-results.explorer.operator-text'),
-                  valueText: t('analysis-results.explorer.value-text'),
-                  cancelActionText: t('common.actions.cancel'),
-                  applyActionText: t('analysis-results.explorer.apply-action-text'),
-                  allPropertiesLabel: t('analysis-results.explorer.all-properties-label'),
-                  tokenLimitShowMore: t('analysis-results.explorer.token-limit-show-more'),
-                  tokenLimitShowFewer: t('analysis-results.explorer.token-limit-show-fewer'),
-                  clearFiltersText: t('analysis-results.explorer.clear-filters-text'),
-                  removeTokenButtonAriaLabel: (token) => t('analysis-results.explorer.remove-token-aria-label', { propertyLabel: token.propertyLabel, operator: token.operator, value: token.value }),
-                  enteredTextLabel: (text) => t('analysis-results.explorer.entered-text-label', { text }),
-                }}
-              />
-
-              {hasActiveFilters && (
-                <div className="active-filters">
-                  <Button variant="link" onClick={clearAllFilters}>{t('analysis-results.explorer.clear-all-filters')}</Button>
-                </div>
-              )}
-
-              {/* Pagination at top */}
-              {displayItems.length > PAGE_SIZE && (
-                <Box float="right">
-                  <Pagination
-                    currentPageIndex={currentPage}
-                    pagesCount={Math.ceil(displayItems.length / PAGE_SIZE)}
-                    onChange={({ detail }) => setCurrentPage(detail.currentPageIndex)}
-                    ariaLabels={explorerPaginationLabels}
-                  />
-                </Box>
-              )}
-
-
-              {/* ---- Access Pattern view ---- */}
-              {browseMode === 'pattern' && (
-                <Table
-                  columnDefinitions={patternColumnDefinitions}
-                  items={paginatedItems}
-                  loading={loading}
-                  variant="embedded"
-                  selectionType="single"
-                  ariaLabels={explorerSelectionLabels(t('analysis-results.explorer.table-patterns'))}
-                  selectedItems={selectedItems}
-                  onSelectionChange={({ detail }) => setSelectedItems(detail.selectedItems)}
-                  empty={
-                    <Box textAlign="center" padding="l">
-                      <Box variant="strong">{t('analysis-results.explorer.no-matching-patterns')}</Box>
-                      <Box variant="p" color="text-body-secondary">{t('analysis-results.explorer.try-adjusting-filters')}</Box>
-                    </Box>
-                  }
-                />
-              )}
-
-
-              {/* ---- Source Table view ---- */}
-              {browseMode === 'source' && (
-                <Table
-                  columnDefinitions={sourceTableColumnDefinitions}
-                  wrapLines
-                  items={paginatedItems}
-                  loading={loading}
-                  variant="embedded"
-                  selectionType="single"
-                  ariaLabels={explorerSelectionLabels(t('analysis-results.explorer.table-sources'))}
-                  selectedItems={selectedItems}
-                  onSelectionChange={({ detail }) => setSelectedItems(detail.selectedItems)}
-                  empty={
-                    <Box textAlign="center" padding="l">
-                      <Box variant="strong">{t('analysis-results.explorer.no-matching-source-tables')}</Box>
-                      <Box variant="p" color="text-body-secondary">{t('analysis-results.explorer.try-adjusting-filters')}</Box>
-                    </Box>
-                  }
-                />
-              )}
-
-              {/* Bottom pagination */}
-              {displayItems.length > PAGE_SIZE && (
-                <Box float="right">
-                  <Pagination
-                    currentPageIndex={currentPage}
-                    pagesCount={Math.ceil(displayItems.length / PAGE_SIZE)}
-                    onChange={({ detail }) => setCurrentPage(detail.currentPageIndex)}
-                    ariaLabels={explorerPaginationLabels}
-                  />
-                </Box>
-              )}
-
-              {/* ============================================ */}
-              {/* Cache layer section (#429 part 2)             */}
-              {/* ============================================ */}
-              {/* The cache layer's own access patterns/key designs, as a
-                  distinct group after the owner rows above -- in both
-                  browse modes -- instead of mixed into the owner table
-                  or left out of the explorer entirely (#361/#405 only
-                  excluded them from the owner total/pie). Hidden
-                  whenever the current filters leave no cache-layer rows
-                  (e.g. the engine filter is set to an owner engine only),
-                  same as the owner table's own empty state. */}
-              {browseMode === 'pattern' && filteredCacheLayerPatterns.length > 0 && (
-                <Box margin={{ top: 'l' }}>
-                  <Header
-                    variant="h3"
-                    counter={`(${filteredCacheLayerPatterns.length})`}
-                  >
-                    {t('analysis-results.explorer.cache-layer-section-title', {
-                      engine: ENGINE_LABELS[cacheOverlay?.engine] || cacheOverlay?.engine,
-                    })}
-                  </Header>
-                  <Table
-                    columnDefinitions={patternColumnDefinitions}
-                    items={filteredCacheLayerPatterns}
-                    variant="embedded"
-                    selectionType="single"
-                    ariaLabels={explorerSelectionLabels(t('analysis-results.explorer.table-cache-patterns'))}
-                    selectedItems={selectedItems}
-                    onSelectionChange={({ detail }) => setSelectedItems(detail.selectedItems)}
-                  />
-                </Box>
-              )}
-
-              {browseMode === 'source' && cacheSourceTableGroups.length > 0 && (
-                <Box margin={{ top: 'l' }}>
-                  <Header
-                    variant="h3"
-                    counter={`(${cacheSourceTableGroups.length})`}
-                  >
-                    {t('analysis-results.explorer.cache-layer-section-title', {
-                      engine: ENGINE_LABELS[cacheOverlay?.engine] || cacheOverlay?.engine,
-                    })}
-                  </Header>
-                  <Table
-                    columnDefinitions={sourceTableColumnDefinitions}
-                    wrapLines
-                    items={cacheSourceTableGroups}
-                    variant="embedded"
-                    selectionType="single"
-                    ariaLabels={explorerSelectionLabels(t('analysis-results.explorer.table-cache-sources'))}
-                    selectedItems={selectedItems}
-                    onSelectionChange={({ detail }) => setSelectedItems(detail.selectedItems)}
-                  />
-                </Box>
-              )}
-            </SpaceBetween>
-            )}
-          </Container>
-        )}
       </SpaceBetween>
     ),
     'data-model': (
@@ -2586,6 +1127,22 @@ const AnalysisResultsPage = memo(() => {
               })}
             />
           </Container>
+        )}
+
+        {/* Source tables (#2446): the access pattern explorer's "By source
+            table" view, each source table's destination designs with their keys
+            and indexes; a pattern's queries open in the query detail panel. */}
+        {(totalAccessPatterns > 0 || cachePatternCount > 0) && (
+          <SourceTablesSection
+            rows={sourceTables}
+            availability={explorerState}
+            expectedCount={explorerTotal}
+            shownCount={explorerPatterns.length}
+            cacheEngine={cacheOverlay?.engine}
+            destTableLookup={destTableLookup}
+            onSelectQuery={fetchQueryJourney}
+            t={t}
+          />
         )}
       </SpaceBetween>
     ),
@@ -2858,7 +1415,7 @@ const AnalysisResultsPage = memo(() => {
               <div ref={setTabsRoot}>
                 <Tabs
                   ariaLabel={t('analysis-results.tabs.aria-label')}
-                  // A narrow screen scrolls the tab list with two icon buttons (#2458).
+                  // A narrow screen scrolls the tab list with two icon buttons (#2458, #2446).
                   i18nStrings={{
                     scrollLeftAriaLabel: t('analysis-results.tabs.scroll-left'),
                     scrollRightAriaLabel: t('analysis-results.tabs.scroll-right'),
@@ -2891,6 +1448,10 @@ const AnalysisResultsPage = memo(() => {
             journey={queryJourneyData}
             loading={queryJourneyLoading}
             trace={queryTrace}
+            patterns={patternsOfQuery.get(selectedQueryId) || []}
+            schemaDesigns={synthesis.schema_designs}
+            availability={explorerState}
+            focusRequest={panelFocusRequest}
             t={t}
           />
         ) : undefined}
@@ -2902,22 +1463,6 @@ const AnalysisResultsPage = memo(() => {
         }}
       />
 
-      {/* Pattern Detail Modal */}
-      <Modal
-        visible={showPatternModal}
-        onDismiss={handleCloseModal}
-        header={
-          selectedPattern
-            ? `Pattern: ${selectedPattern.id?.slice(0, 12)}`
-            : selectedSourceTable
-            ? `Source Table: ${selectedSourceTable.table}`
-            : 'Details'
-        }
-        size="max"
-      >
-        {selectedPattern && renderPatternDetail(selectedPattern)}
-        {selectedSourceTable && renderSourceTableDetail(selectedSourceTable)}
-      </Modal>
 
     </>
   );

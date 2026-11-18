@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: MIT-0
 
 import { displayTables } from './tableNames';
+import { OPERATION_TYPES, statementType } from './accessPatterns';
 // #822: the rows of the results page's query routing table, one per query of
 // the assessment (GET /assessments/{job_id}/query-journeys), so every query's
 // journey and "Why this engine" trace opens without schema design. Rows only
@@ -30,7 +31,18 @@ export function queryExcerpt(text) {
 // it, read from the schema design's access patterns (each lists the query ids it
 // serves). Pure membership: nothing is counted or scored. A run without schema
 // design has no patterns, so both maps are empty and the columns read as a dash.
+// #2446: also each query's operation types, from the operations of the patterns
+// that serve it (an OpenSearch search, a DynamoDB GetItem, a cache GET).
 export function queryPatternLinks(ownerPatterns, cachePatterns) {
+  const opTypesById = new Map();
+  [...(ownerPatterns || []), ...(cachePatterns || [])].forEach((p) => {
+    if (!p.opCategory) return;
+    (p.queryIds || []).forEach((qid) => {
+      const set = opTypesById.get(qid) || new Set();
+      set.add(p.opCategory);
+      opTypesById.set(qid, set);
+    });
+  });
   const destinationsById = new Map();
   (ownerPatterns || []).forEach((p) => {
     (p.queryIds || []).forEach((qid) => {
@@ -43,12 +55,22 @@ export function queryPatternLinks(ownerPatterns, cachePatterns) {
   (cachePatterns || []).forEach((p) => {
     (p.queryIds || []).forEach((qid) => cacheEngineById.set(qid, p.engine));
   });
-  return { destinationsById, cacheEngineById };
+  return { destinationsById, cacheEngineById, opTypesById };
+}
+
+// A query's operation types (#2446): those of the access patterns that serve it,
+// else its own statement's type (SELECT reads, MERGE writes, OTHER is other), in the
+// filter's order. A query with no statement type and no pattern has none.
+function queryOperationTypes(designed, queryType) {
+  const own = statementType(queryType);
+  const types = designed && designed.size > 0 ? designed : new Set(own ? [own] : []);
+  return OPERATION_TYPES.filter(type => types.has(type));
 }
 
 export function buildQueryRoutingRows(journeys, kindsById, engineLabels, links = {}) {
   const destinationsById = links.destinationsById || new Map();
   const cacheEngineById = links.cacheEngineById || new Map();
+  const opTypesById = links.opTypesById || new Map();
   return (journeys || []).filter(j => j && j.query_id).map((j) => {
     const engine = (j.assignment && j.assignment.assigned_engine) || null;
     const statement = flattenSql(j.source && j.source.query_text);
@@ -64,6 +86,7 @@ export function buildQueryRoutingRows(journeys, kindsById, engineLabels, links =
       tables,
       destinations,
       queryType,
+      opTypes: queryOperationTypes(opTypesById.get(j.query_id), queryType),
       engine,
       engineName,
       cacheEngine: cacheEngineById.get(j.query_id) || null,
@@ -81,6 +104,7 @@ function propertyValues(row, key) {
   switch (key) {
     case 'engine': return row.engine ? [row.engine] : [];
     case 'operation': return row.queryType ? [row.queryType] : [];
+    case 'opType': return row.opTypes || [];
     case 'table': return row.tables;
     case 'destination': return row.destinations.map(d => d.name);
     case 'cached': return [row.cacheEngine ? 'yes' : 'no'];

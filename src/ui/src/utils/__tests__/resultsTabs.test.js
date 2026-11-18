@@ -41,9 +41,10 @@ test('each tab holds its sections, in the order of the decision', () => {
     'migration-roadmap-section', 'step-gate-section', 'unservable-section', 'close-calls-section',
     'unreviewed-moves-note',
   ]);
-  expect(tabSections('queries')).toEqual(['query-routing-section', 'access-patterns-section']);
+  // #2446: the explorer folded into the query table; its source tables are on Data model.
+  expect(tabSections('queries')).toEqual(['query-routing-section']);
   expect(tabSections('data-model')).toEqual([
-    'table-owners-section', 'table-design-section',
+    'table-owners-section', 'table-design-section', 'source-tables-section',
   ]);
   expect(tabSections('risks')).toEqual([
     'risk-assessment-section', 'dynamodb-merge-conflicts', 'tradeoffs-section', 'dynamodb-merge-reviews',
@@ -107,6 +108,12 @@ describe('the tab a URL names', () => {
     expect(tabOfAnchor('')).toBeNull();
   });
 
+  test('an old link to the access pattern explorer names the query table that holds its rows (#2446)', () => {
+    expect(hashId('#access-patterns-section')).toBe('query-routing-section');
+    expect(tabOfAnchor(hashId('#access-patterns-section'))).toBe('queries');
+    expect(resultsTabFromLocation('?tab=data-model', '#access-patterns-section')).toBe('queries');
+  });
+
   test('the hash is read without its # and decoded', () => {
     expect(hashId('#table-design-section')).toBe('table-design-section');
     expect(hashId('#a%20b')).toBe('a b');
@@ -125,9 +132,9 @@ describe('the URL of a tab', () => {
 });
 
 describe('where an ?engine= link lands (#2300)', () => {
-  test('an engine with explorer rows: the explorer, on the Queries tab', () => {
-    const section = linkedSectionId('explorer', `#${RESULTS_ENGINE_SECTION_ID}`);
-    expect(section).toBe('access-patterns-section');
+  test('an engine with queries: the query table, on the Queries tab', () => {
+    const section = linkedSectionId('queries', `#${RESULTS_ENGINE_SECTION_ID}`);
+    expect(section).toBe('query-routing-section');
     expect(tabOfAnchor(section)).toBe('queries');
   });
 
@@ -138,8 +145,8 @@ describe('where an ?engine= link lands (#2300)', () => {
   });
 
   test('an engine the plan has no part for stays on the section the link names', () => {
-    expect(linkedSectionId('absent', '#access-patterns-section')).toBe('access-patterns-section');
-    expect(linkedSectionId('not-designed', '#access-patterns-section')).toBe('access-patterns-section');
+    expect(linkedSectionId('absent', '#query-routing-section')).toBe('query-routing-section');
+    expect(linkedSectionId('not-designed', '#access-patterns-section')).toBe('query-routing-section');
     expect(linkedSectionId('none', '')).toBeNull();
   });
 });

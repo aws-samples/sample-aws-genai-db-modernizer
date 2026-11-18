@@ -223,7 +223,7 @@ describe('the job monitoring summary', () => {
     await clickNode(JobMonitoringSummary, 'dynamodb');
     expect(container.textContent).not.toContain('job-summary.query-flow.details-after-completion');
     expect(mockNavigate).toHaveBeenCalledTimes(1);
-    expect(mockNavigate).toHaveBeenCalledWith('/analysis/results/job-1?engine=dynamodb#access-patterns-section');
+    expect(mockNavigate).toHaveBeenCalledWith('/analysis/results/job-1?engine=dynamodb#query-routing-section');
     expect(openSpy).not.toHaveBeenCalled();
   });
 
@@ -245,7 +245,7 @@ describe('the assignment gate', () => {
     await clickNode(AssignmentGate, 'dynamodb');
     expect(openSpy).toHaveBeenCalledTimes(1);
     expect(openSpy).toHaveBeenCalledWith(
-      '/analysis/results/job-1?engine=dynamodb#access-patterns-section', '_blank', 'noopener',
+      '/analysis/results/job-1?engine=dynamodb#query-routing-section', '_blank', 'noopener',
     );
     expect(mockNavigate).not.toHaveBeenCalled();
     expect(container.textContent).not.toContain('assignment-gate.query-flow.older-version-note');

@@ -173,7 +173,7 @@ test('a server error on the query list reads differently from not found', async 
 test('an explorer the design files cannot fill is an alert, not an empty table', async () => {
   await renderWith({ results: report({ facts: FACTS_20 }) });
   expect(alerts().some((a) => a.includes('analysis-results.explorer.unavailable-title'))).toBe(true);
-  expect(has('analysis-results.explorer.no-matching-patterns')).toBe(false);
+  expect(has('analysis-results.explorer.no-matching-source-tables')).toBe(false);
 });
 
 test('a design the report counts but the page cannot read is "not available", never "0 tables"', async () => {
