@@ -117,7 +117,9 @@ ROW_KEYS = frozenset(
 # from the facts block itself they are still owned (``_is_facts``): counting
 # ``facts["engines"]`` is the ``engine_count`` fact, ``facts["waves"]`` the
 # ``migration_wave_count`` fact.
-NOT_A_FIGURE = frozenset({"engines", "waves", "wave"})
+# `count` and `step` are generic names facts sub-records use (results_tab_counts[].count, the
+# slice plan's step); their figures stay owned through their parents (#2461).
+NOT_A_FIGURE = frozenset({"engines", "waves", "wave", "count", "step"})
 
 
 def _figure_fields(model: type[BaseModel], seen: set[type[BaseModel]] | None = None) -> set[str]:

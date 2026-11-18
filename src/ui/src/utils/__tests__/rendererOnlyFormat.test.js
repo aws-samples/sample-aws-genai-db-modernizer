@@ -79,7 +79,10 @@ const ANALYSIS_INPUT_KEYS = new Set(['table_recommendations', 'patterns_detected
 // Facts fields whose name the UI also uses for an unrelated value (a wave's
 // engine ids, a wave object, its number, a list position). Read off the facts block itself they
 // are still owned.
-const NOT_A_FIGURE = new Set(['engines', 'waves', 'wave', 'index']);
+// `count` and `step` are generic names a facts sub-record uses (facts.results_tab_counts[].count,
+// the slice plan's step): owning them by name flags every local `count` or `step` in the UI.
+// Their figures stay owned through their parents and helpers (resultsTabCountOf, stepGateOf).
+const NOT_A_FIGURE = new Set(['engines', 'waves', 'wave', 'index', 'count', 'step']);
 // Helpers that return a facts-owned list or record.
 const LIST_HELPERS = new Set([
   'waveFacts', 'realityCheckDecisions', 'currentTradeOffs', 'filterRisksWithContent',
