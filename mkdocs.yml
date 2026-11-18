@@ -29,7 +29,8 @@ site_dir: site
 # the files/directories this site serves.
 exclude_docs: |
   /*
-  !/index.md
+  !/index.html
+  !/overview.md
   !/get-started.md
   !/use-claude-code.md
   !/other-ways-to-run-it.md
@@ -42,7 +43,8 @@ exclude_docs: |
   !/assets/**
 
 nav:
-  - Home: index.md
+  - Overview: overview.md
+  - Watch a run: index.html
   - Get started: get-started.md
   - Use Claude Code: use-claude-code.md
   - Other ways to run it: other-ways-to-run-it.md
