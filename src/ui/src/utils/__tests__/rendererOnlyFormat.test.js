@@ -126,6 +126,8 @@ const GUARDED_UI_FILES = [
   // #2323: the trade-off decisions list and one decision.
   'components/TradeOffDecisions.js',
   'components/TradeOffDecision.js',
+  // #2322: one open risk.
+  'components/RiskCard.js',
   // #308: every experimental graph explorer file (EXPLORER_UI_FILES below).
   'pages/GraphExplorer.js',
   'components/ExploreGraphButton.js',
@@ -650,6 +652,12 @@ const TEXT_ALLOWLIST = new Map([
     'the same retiredReason() helper: trims and strips closing periods the way the Python rows do (strip, then rstrip(".")), so the two agree on "x. " and on a blank reason'],
   ['src/ui/src/pages/AnalysisResults.js|tradeOff.description.replace(/^\\[PE note\\]\\s*/, \'\')',
     'drops the "[PE note]" tag the schema agents prepend to a note\'s description (src/tools/schema/base_schema_agent.py); the tab already splits notes from decisions on that tag. Python\'s counterpart (design_text_item, src/shared/design_text.py) strips any [tag] or "PE note:" marker and the trailing period, so the UI and the engineering report still differ on those forms; a stored kind would need a contract change, out of scope for #1164'],
+  ['src/ui/src/utils/riskAssessment.js|whole.replace(/^\\[[^\\]]*\\]\\s*/, \'\').replace(/\\s+/g, \' \').trim()',
+    'the risk card header title (#2322): riskTitle shortens a risk\'s description to its first sentence, at most 140 characters with an ellipsis at a word boundary, so the header reads at a glance. The full description stays in the card body, so no text is lost or reworded; Python has no counterpart because the reports print the whole description. A stored title would be a facts-layer change'],
+  ['src/ui/src/utils/riskAssessment.js|first.slice(0, TITLE_MAX)',
+    'the same riskTitle() helper: the 140-character cut of the first sentence (see the entry above)'],
+  ['src/ui/src/utils/riskAssessment.js|`${(space > 40 ? cut.slice(0, space) : cut).replace(/[\\s,;:.]+$/, \'\')}\\u2026`',
+    'the same riskTitle() helper: the word-boundary cut and its closing ellipsis (see the entry above)'],
 ]);
 
 // Reads that are not report text: an event's or caught error's own `reason` / `detail`

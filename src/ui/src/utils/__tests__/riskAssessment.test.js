@@ -132,3 +132,34 @@ describe('sharedMitigationRef (reads the payload\'s mitigation_refs, #1510)', ()
     expect(sharedMitigationRef(refs, {})).toBeNull();
   });
 });
+
+describe('severity labels and risk titles (#2322)', () => {
+  const { riskKey, riskSeverityLabel, riskSeverityLabelKey, riskTitle } = require('../riskAssessment');
+  const en = require('../../locales/en.json');
+  const t = (key) => en[key];
+
+  it('labels each known severity in sentence case and anything else Unrated', () => {
+    expect(RISK_SEVERITIES.map((s) => riskSeverityLabel(s, t))).toEqual(['Critical', 'High', 'Medium', 'Low']);
+    expect(riskSeverityLabel('high', t)).toBe('High');
+    expect(riskSeverityLabel(UNRATED, t)).toBe('Unrated');
+    expect(riskSeverityLabel(undefined, t)).toBe('Unrated');
+    expect(riskSeverityLabelKey('x')).toBe('analysis-results.risk-assessment.severity.unrated');
+  });
+
+  it('titles a risk with its first sentence, cut at a word when it is long', () => {
+    expect(riskTitle({ description: '[dynamodb] First one. Second one.' })).toBe('First one.');
+    expect(riskTitle({ description: 'No full stop here' })).toBe('No full stop here');
+    expect(riskTitle({ description: '' })).toBe('');
+    expect(riskTitle({ description: '1.5x more writes. More.' })).toBe('1.5x more writes.');
+    const long = `${'word '.repeat(60)}end.`;
+    const title = riskTitle({ description: long });
+    expect(title.length).toBeLessThanOrEqual(141);
+    expect(title.endsWith('…')).toBe(true);
+    expect(title).not.toMatch(/wor…$/);
+  });
+
+  it('keys a risk by its id, else by severity and place', () => {
+    expect(riskKey('HIGH', { risk_id: 'R-1' }, 3)).toBe('risk-R-1');
+    expect(riskKey('HIGH', {}, 3)).toBe('risk-HIGH-3');
+  });
+});
