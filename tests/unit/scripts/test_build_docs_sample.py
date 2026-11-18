@@ -477,11 +477,25 @@ def test_the_committed_secrets_baseline_is_current_for_the_sample_run(tmp_path: 
     assert build_docs_sample.private_markers(committed) == []  # no absolute path in it
 
 
+def test_updating_the_scan_baseline_leaves_the_scanner_settings_as_they_were(
+    tmp_path: Path,
+) -> None:
+    """detect-secrets keeps its plugins and filters process-wide (#2422): a refresh
+    must put them back, or a later scan in the same process runs on the baseline's."""
+    from detect_secrets.settings import get_settings
+
+    before = get_settings().json()
+    copy_ = tmp_path / ".secrets.baseline"
+    copy_.write_text(build_docs_sample.SCAN_BASELINE.read_text(encoding="utf-8"), encoding="utf-8")
+    build_docs_sample.update_scan_baseline(RUN_DIR, copy_, build_docs_sample.REPO)
+    assert get_settings().json() == before
+
+
 def test_a_planted_key_in_the_sample_is_flagged_by_the_secret_scanner(tmp_path: Path) -> None:
     import secrets as _secrets
 
     from detect_secrets import SecretsCollection
-    from detect_secrets.core import baseline as ds_baseline
+    from detect_secrets.settings import transient_settings
 
     root = tmp_path / "repo"
     run_dir = root / "sample-run"
@@ -496,10 +510,12 @@ def test_a_planted_key_in_the_sample_is_flagged_by_the_secret_scanner(tmp_path: 
     report_path.write_text(json.dumps(report, indent=2) + "\n", encoding="utf-8")
 
     data = json.loads(baseline_file.read_text(encoding="utf-8"))
-    ds_baseline.load(data, str(baseline_file))
-    scanned = SecretsCollection(root=str(root))
-    rel = report_path.relative_to(root).as_posix()
-    scanned.scan_file(rel)
+    # detect-secrets' settings are process-wide: a transient scope puts them back, so
+    # later tests that scan text (ci/llm/private_scan) see the plugins they expect (#2422).
+    with transient_settings(data):
+        scanned = SecretsCollection(root=str(root))
+        rel = report_path.relative_to(root).as_posix()
+        scanned.scan_file(rel)
     known = {
         e["hashed_secret"]
         for k, v in data["results"].items()
