@@ -449,3 +449,70 @@ def test_a_bad_mark_is_refused(monkeypatch, capsys, tmp_path, extra):
     code, lines = _run(monkeypatch, capsys, tmp_path, *extra)
     assert code != 0 and json.loads(lines[-1])["status"] == "error"
     assert not (job / dispatch_ledger.LEDGER).exists()
+
+
+# ---------------------------------------------------------------------------
+# #2435: the wait read the ledger only before it slept. A wordpress e2e-llm run waited the
+# whole 110 s three times after the subagent it waited on had finished (an ElastiCache
+# review, a routine repair round, synthesis): none of them adds a design or review mark,
+# and the SubagentStop hook's report in the ledger was never read again. The wait now
+# re-reads the ledger at every poll and returns as soon as an outstanding entry reports.
+# ---------------------------------------------------------------------------
+
+
+def _report_on_poll(job: Path, poll: int, agent: str):
+    def on_sleep(polls: int) -> None:
+        if polls == poll:  # what record_report.py writes when the subagent stops
+            dispatch_ledger.mark_reported(job, [agent], NOW, session=SESSION, by="hook")
+
+    return on_sleep
+
+
+@pytest.mark.parametrize("agent", ["synth", "routine-repair-1", "ec-review"])
+def test_the_last_report_during_the_wait_returns_at_once(monkeypatch, capsys, tmp_path, agent):
+    job = _job(tmp_path)
+    _ledger(job, dispatched=["part1", agent], reported=["part1"])
+    clock = _fake_time(monkeypatch, _report_on_poll(job, 2, agent))
+    line = _wait(monkeypatch, capsys, tmp_path)
+    assert line["status"] == "nothing_pending" and line["outstanding"] == []
+    assert line["waited_s"] == 4.0 and sum(clock.sleeps) == 4.0
+    assert "not this wait" in line["next"] and not _says_wait_again(line)
+
+
+def test_one_report_of_two_returns_with_the_other_still_outstanding(monkeypatch, capsys, tmp_path):
+    job = _job(tmp_path)
+    _ledger(job, dispatched=["ec-review", "pg-review"])
+    clock = _fake_time(monkeypatch, _report_on_poll(job, 1, "ec-review"))
+    line = _wait(monkeypatch, capsys, tmp_path)
+    assert line["status"] == "reported" and line["reported"] == ["ec-review"]
+    assert line["outstanding"] == ["pg-review"] and line["waited_s"] == 2.0
+    assert sum(clock.sleeps) == 2.0
+    assert "--mark-reported" in line["next"] and _says_wait_again(line)
+
+
+@pytest.mark.passes_on_main  # main never re-read the ledger, so it always waited its bound
+@pytest.mark.parametrize(
+    "change",
+    ["a new dispatch", "another session's report", "a report of one already reported"],
+)
+def test_a_ledger_change_that_is_no_report_keeps_the_whole_wait(
+    monkeypatch, capsys, tmp_path, change
+):
+    job = _job(tmp_path)
+    _ledger(job, dispatched=["part1", "docdb"], reported=["part1"])
+    _ledger(job, dispatched=["old1"], session="session-other")
+
+    def on_sleep(polls: int) -> None:
+        if polls != 3:
+            return
+        if change == "a new dispatch":
+            dispatch_ledger.mark_dispatched(job, ["pg"], NOW, session=SESSION)
+        elif change == "another session's report":
+            dispatch_ledger.mark_reported(job, ["old1"], NOW, session="session-other")
+        else:
+            dispatch_ledger.mark_reported(job, ["part1"], NOW, session=SESSION)
+
+    clock = _fake_time(monkeypatch, on_sleep)
+    line = _wait(monkeypatch, capsys, tmp_path)
+    assert line["status"] == "no_change" and line["waited_s"] == 110.0, change
+    assert sum(clock.sleeps) == 110.0 and "docdb" in line["outstanding"]

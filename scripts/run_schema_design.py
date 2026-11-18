@@ -486,7 +486,9 @@ def run_status(
 # this keeps it going for a bounded time and returns as soon as a design or review lands.
 # Each mark appears once and never goes away, so an edit of a draft never wakes it again.
 # It also reads the dispatch ledger (#2215): with no outstanding dispatch it returns at once
-# (nothing_pending) instead of blocking its whole bound after the last report.
+# (nothing_pending) instead of blocking its whole bound after the last report. It re-reads
+# the ledger at every poll (#2435), so a report recorded while it waits (a synthesis, a
+# routine repair round or a review adds no mark of its own) ends the wait within a poll.
 def _report_marks(job_dir: Path) -> set[str]:
     """What the job's design and review subagents have finished so far: every DynamoDB
     group draft and finalized design output, and every design trace with a recorded
@@ -544,6 +546,22 @@ def run_mark(job_dir: Path, dispatched: list[str], reported: list[str]) -> dict:
     return out
 
 
+def _nothing_pending(job_id: str, db: str, waited: float) -> dict:
+    """The wait's line when the ledger lists no outstanding subagent of this session."""
+    return {
+        "status": "nothing_pending",
+        "waited_s": waited,
+        "outstanding": [],
+        "next": (
+            "every subagent the ledger lists has reported: run the Done signal check "
+            "of the step you are in, not this wait (6b/6c: `uv run python "
+            f"scripts/run_pe_review.py --job-id {job_id} --db {db}`; 6d after a merge "
+            "fix: --merge; Phase 7 and 7b after synthesis: run_wave_redesign.py). Any "
+            "subagent you dispatch next: record it with --mark-dispatched first"
+        ),
+    }
+
+
 def run_wait_for_report(
     job_dir: Path, wait: float, *, sleep=None, clock=None, marks=_report_marks, session=None
 ) -> None:
@@ -554,7 +572,10 @@ def run_wait_for_report(
     The dispatch ledger says what is still out (#2215, ``scripts/hooks/dispatch_ledger.py``):
     with no outstanding dispatch of this session it prints ``"status": "nothing_pending"``
     at once, and its ``next`` names the Done signal check of the step the run is in;
-    otherwise every line lists the ``outstanding`` ids. With no readable ledger, or no
+    otherwise every line lists the ``outstanding`` ids. The ledger is read again at every
+    poll (#2435): when an outstanding entry reports meanwhile, the wait ends at that poll,
+    with ``"status": "reported"`` and the ``reported`` ids, or ``nothing_pending`` when it
+    was the last one. With no readable ledger, or no
     known session, it keeps the bounded wait. Another session's entries never count, and
     the wait never calls an entry hung: only the Stop hook does, from the running tasks."""
     import time
@@ -568,33 +589,32 @@ def run_wait_for_report(
     entries = ledger.read(job_dir) if session else None
     out = ledger.outstanding(entries, session) if entries is not None else None
     if out is not None and not out:
-        _output(
-            {
-                "status": "nothing_pending",
-                "waited_s": 0.0,
-                "outstanding": [],
-                "next": (
-                    "every subagent the ledger lists has reported: run the Done signal check "
-                    "of the step you are in, not this wait (6b/6c: `uv run python "
-                    f"scripts/run_pe_review.py --job-id {job_id} --db {db}`; 6d after a merge "
-                    "fix: --merge; Phase 7 and 7b after synthesis: run_wave_redesign.py). Any "
-                    "subagent you dispatch next: record it with --mark-dispatched first"
-                ),
-            }
-        )
+        _output(_nothing_pending(job_id, db, 0.0))
         return
     deadline = start + min(wait, _MAX_WAIT_SECONDS)
     before = marks(job_dir)
     new: set[str] = set()
-    while not new and clock() < deadline:
+    reported: set[str] = set()
+    while not new and not reported and clock() < deadline:
         sleep(min(_WAIT_POLL_SECONDS, max(deadline - clock(), 0)))
         new = marks(job_dir) - before
-    line: dict = {
-        "status": "landed" if new else "no_change",
-        "waited_s": round(clock() - start, 1),
-    }
+        if out is not None:
+            # #2435: a report the SubagentStop hook (or a --mark-reported) records while
+            # this waits ends it at the next poll, not at the bound.
+            now_out = ledger.outstanding(ledger.read(job_dir) or {}, session)
+            reported = set(out) - set(now_out)
+            if reported:
+                out = now_out
+    waited = round(clock() - start, 1)
+    if out is not None and not out:
+        _output(_nothing_pending(job_id, db, waited))
+        return
+    status = "landed" if new else "reported" if reported else "no_change"
+    line: dict = {"status": status, "waited_s": waited}
     if new:
         line["landed"] = sorted(new)[:10]
+    if reported:
+        line["reported"] = sorted(reported)[:20]
     if out is None:
         line["next"] = (
             "read the reports that came in; while a subagent you dispatched has not reported, "
@@ -1186,8 +1206,10 @@ def main() -> None:
             "finalized output or a recorded review appears), for at most SECONDS (capped at "
             f"{_MAX_WAIT_SECONDS}), then print one line. With a dispatch ledger (#2215, "
             "--mark-dispatched / --mark-reported) that lists no outstanding subagent, it prints "
-            "nothing_pending at once; with no ledger it always waits. A synthesis or merge-fix "
-            "subagent adds no mark, so a wait for one runs its whole bound. Takes no --engine"
+            "nothing_pending at once; while it waits, a report recorded there (by the "
+            "SubagentStop hook or --mark-reported) ends the wait at the next poll (#2435: "
+            "reported, or nothing_pending after the last one); with no ledger it always waits "
+            "for a mark. Takes no --engine"
         ),
     )
     parser.add_argument(
