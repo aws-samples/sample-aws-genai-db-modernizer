@@ -64,3 +64,19 @@ export function formatHours(value) {
   const n = numberOrNull(value);
   return n === null ? NO_FIGURE : `${new Intl.NumberFormat('en-US', { minimumFractionDigits: 1, maximumFractionDigits: 1 }).format(n)}h`;
 }
+
+const REPORT_DATE = new Intl.DateTimeFormat('en-US', { dateStyle: 'medium', timeZone: 'UTC' });
+
+/**
+ * "Nov 18, 2026": the day a report was written, from its timestamp's own date part,
+ * the day the executive report's cover prints (#2314). Null when there is none.
+ */
+export function formatReportDate(timestamp) {
+  if (typeof timestamp !== 'string') return null;
+  const m = /^(\d{4})-(\d{2})-(\d{2})/.exec(timestamp);
+  if (!m) return null;
+  const [year, month, day] = [Number(m[1]), Number(m[2]), Number(m[3])];
+  const date = new Date(Date.UTC(year, month - 1, day));
+  if (date.getUTCFullYear() !== year || date.getUTCMonth() !== month - 1 || date.getUTCDate() !== day) return null;
+  return REPORT_DATE.format(date);
+}

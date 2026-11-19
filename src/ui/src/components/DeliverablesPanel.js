@@ -3,9 +3,8 @@
 
 import { memo } from 'react';
 import Box from "@cloudscape-design/components/box";
+import ButtonDropdown from "@cloudscape-design/components/button-dropdown";
 import SpaceBetween from "@cloudscape-design/components/space-between";
-import StatusIndicator from "@cloudscape-design/components/status-indicator";
-import Button from "@cloudscape-design/components/button";
 import RequestError from "./RequestError";
 
 // A file size for display: "512 B", "20 KB", "1.2 MB".
@@ -23,69 +22,60 @@ export function formatBytes(n) {
   return `${shown} ${units[unit]}`;
 }
 
+// The folder's own index (index.md) stays in the folder, without a menu item.
+const FOLDER_INDEX = 'index.md';
+
 /**
- * The deliverable buttons at the top of the results page (#957, #1028):
- * Executive Summary, Engineering Report and Assessment Detail, each the
- * download of one file of the job's deliverables/ folder (#955), as GET
- * /assessments/{job_id}/deliverables lists it (the folder's own definition,
- * FOLDER_ENTRIES in src/report/deliverables.py). A file the folder does not
- * hold has no button; index.md stays in the folder, without a button.
+ * The files the Download menu offers: every file the deliverables listing names except
+ * the folder index, in the listing's order. The listing is GET
+ * /assessments/{job_id}/deliverables, which follows FOLDER_ENTRIES in
+ * src/report/deliverables.py, the one list of the folder's files; the UI keeps no list
+ * of its own, so a file the folder gains or an old job's folder lacks needs no change here.
+ */
+export function menuFiles(files) {
+  return (files || []).filter(f => f && f.filename && f.path && f.filename !== FOLDER_INDEX);
+}
+
+/**
+ * The results page's one Download menu (#2314, after #957 and #1028), in the page
+ * header's actions. Each item is the download of one file of the job's deliverables/
+ * folder (#955), named by its FOLDER_ENTRIES title, which states the file type
+ * ("Executive report (PDF)"), with the file name and size under it.
  *
  * Callers pass the listing (`files`, `loading`, `error`), the API base URL
  * and `t` (the page's own `useTranslation` function), like QueryRoutingTable.
  */
-
-// One entry per button, by FOLDER_ENTRIES filename (#1020: the executive report PDF).
-export const DELIVERABLE_BUTTONS = [
-  { id: 'executive-summary', filename: 'executive-report.pdf', variant: 'primary' },
-  { id: 'engineering-report', filename: 'engineering-report.md', variant: 'normal' },
-  { id: 'assessment-detail', filename: 'assessment-data.json', variant: 'normal' },
-];
-
-// Literal keys, so the translation test sees each one.
-function buttonLabel(id, t) {
-  if (id === 'executive-summary') return t('analysis-results.deliverables.button.executive-summary');
-  if (id === 'engineering-report') return t('analysis-results.deliverables.button.engineering-report');
-  return t('analysis-results.deliverables.button.assessment-detail');
-}
-
 const DeliverablesPanel = memo(({ files, loading, error, onRetry, baseUrl, t }) => {
-  const byName = new Map((files || []).map(f => [f.filename, f]));
-  const buttons = DELIVERABLE_BUTTONS.filter(b => byName.has(b.filename));
-  let body;
-  if (loading) {
-    body = <StatusIndicator type="loading">{t('analysis-results.deliverables.loading')}</StatusIndicator>;
-  } else if (error) {
-    body = <RequestError inline failure={error} lead={t('analysis-results.deliverables.error')} onRetry={onRetry} t={t} />;
-  } else if (buttons.length === 0) {
-    body = <Box color="text-body-secondary">{t('analysis-results.deliverables.empty')}</Box>;
-  } else {
-    body = (
-      <SpaceBetween direction="horizontal" size="xs">
-        {buttons.map(({ id, filename, variant }) => {
-          const file = byName.get(filename);
-          return (
-            <span
-              key={filename}
-              data-deliverable={filename}
-              title={`${file.title} · ${filename} · ${formatBytes(file.size_bytes)}`}
-            >
-              <Button
-                variant={variant}
-                iconName="download"
-                href={`${baseUrl}${file.path}`}
-                download={filename}
-                ariaLabel={t('analysis-results.deliverables.download-label', { filename })}
-              >
-                {buttonLabel(id, t)}
-              </Button>
-            </span>
-          );
-        })}
+  const listed = menuFiles(files);
+  const items = listed.map(file => ({
+    id: file.filename,
+    text: file.title || file.filename,
+    secondaryText: [file.filename, formatBytes(file.size_bytes)].filter(Boolean).join(' · '),
+    href: `${baseUrl}${file.path}`,
+    download: file.filename,
+    ariaLabel: t('analysis-results.deliverables.download-label', { filename: file.filename, title: file.title || file.filename }),
+    dataAttributes: { deliverable: file.filename },
+  }));
+  const unavailable = !loading && !error && items.length === 0;
+  return (
+    <div id="deliverables-section">
+      <SpaceBetween direction="horizontal" size="xs" alignItems="center">
+        {error && !loading && (
+          <RequestError inline failure={error} lead={t('analysis-results.deliverables.error')} onRetry={onRetry} t={t} />
+        )}
+        <ButtonDropdown
+          variant="primary"
+          items={items}
+          loading={loading}
+          loadingText={t('analysis-results.deliverables.loading')}
+          disabled={items.length === 0 && !loading}
+        >
+          {t('analysis-results.deliverables.menu')}
+        </ButtonDropdown>
+        {unavailable && <Box color="text-body-secondary" fontSize="body-s">{t('analysis-results.deliverables.empty')}</Box>}
       </SpaceBetween>
-    );
-  }
-  return <div id="deliverables-section">{body}</div>;
+    </div>
+  );
 });
 
 export default DeliverablesPanel;

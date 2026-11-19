@@ -4,7 +4,7 @@
 import fs from 'fs';
 import path from 'path';
 import { formatFigure } from '../reportFacts';
-import { formatCount, formatHours, formatMoney, formatMonthlyMoney, formatPercent, formatRate, formatShortId } from '../format';
+import { formatCount, formatHours, formatMoney, formatMonthlyMoney, formatPercent, formatRate, formatReportDate, formatShortId } from '../format';
 
 describe('formatMoney (#2309)', () => {
   it('prints dollars with a thousands separator and two decimals', () => {
@@ -152,5 +152,29 @@ describe('the dashboard prints its figures through the shared formatter (#2306)'
     expect(page).toMatch(/formatPercent\(s\.success_rate_percent\)/);
     expect(page).toMatch(/formatHours\(s\.average_duration_hours\)/);
     expect(page).not.toMatch(/\.toFixed\(/);
+  });
+});
+
+describe('formatReportDate (#2314)', () => {
+  // The results page header states the date the report was written, the same
+  // calendar day the executive report's cover prints ("Generated 2026-11-18"):
+  // the timestamp's own date, never shifted by the reader's time zone.
+  it('prints the date part of the report timestamp', () => {
+    expect(formatReportDate('2026-11-18T15:10:47.174567Z')).toBe('Nov 18, 2026');
+    expect(formatReportDate('2026-11-14')).toBe('Nov 14, 2026');
+  });
+
+  it('keeps the stated day late in the UTC evening', () => {
+    expect(formatReportDate('2026-11-18T23:59:59Z')).toBe('Nov 18, 2026');
+    expect(formatReportDate('2026-01-01T00:00:00Z')).toBe('Jan 1, 2026');
+  });
+
+  it('prints nothing for a missing or unreadable timestamp, as the cover does', () => {
+    expect(formatReportDate(undefined)).toBeNull();
+    expect(formatReportDate(null)).toBeNull();
+    expect(formatReportDate('')).toBeNull();
+    expect(formatReportDate('yesterday')).toBeNull();
+    expect(formatReportDate('2026-13-45T00:00:00Z')).toBeNull();
+    expect(formatReportDate(1763478647)).toBeNull();
   });
 });

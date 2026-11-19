@@ -6,8 +6,10 @@ import { useTranslation } from 'react-i18next';
 import TopNavigation from '@cloudscape-design/components/top-navigation';
 import { applyMode, Mode } from '@cloudscape-design/global-styles';
 import { LayoutConfigurations } from '../config/GlobalConfigurations';
+import { HELP_SITE_URL } from '../utils/helpSite';
 
-function AppHeader() {
+// `helpHref`: the help page the Help link opens (#2314); the help site's home by default.
+function AppHeader({ helpHref = HELP_SITE_URL } = {}) {
   const { t } = useTranslation();
   const [isDark, setIsDark] = useState(
     (localStorage.getItem('dbm-theme') || 'dark') === 'dark'
@@ -36,6 +38,14 @@ function AppHeader() {
         overflowMenuDismissIconAriaLabel: t('common.header.menu-close'),
       }}
       utilities={[
+        {
+          // #2314: a text link to the help site, opened in a new tab.
+          type: 'button',
+          text: t('common.header.help'),
+          href: helpHref,
+          external: true,
+          externalIconAriaLabel: t('common.header.opens-new-tab'),
+        },
         {
           type: 'button',
           iconName: isDark ? 'star' : 'star-filled',
