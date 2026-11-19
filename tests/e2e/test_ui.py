@@ -1905,6 +1905,107 @@ def test_an_old_job_without_source_date_or_detailed_report_still_names_itself(
     assert ev == {"console": [], "pageerror": [], "failed": []}, ev
 
 
+_HOSTILE = "<script>window.__pwned=1</script> GET http://10.0.0.5:8123/api/v1/x failed (500)"
+
+
+@pytest.mark.parametrize("failure", ["500", "abort"])
+def test_a_failed_assessment_request_leaves_the_header_on_the_database_name(
+    page: Page, ui: str, all_runs: list[PipelineResult], failure: str
+) -> None:
+    """#2493: the header's own call, GET /assessments/{id}, answers 500 or never arrives.
+    The h1 still names the database, the description holds the id and no source, no flash
+    appears, and the page prints no request address, port or server text."""
+    r = all_runs[0]
+    route_url = re.compile(rf"/api/v1/assessments/{re.escape(r.job_id)}$")
+    if failure == "500":
+        page.route(
+            route_url,
+            lambda route: route.fulfill(status=500, content_type="text/html", body=_HOSTILE),
+        )
+    else:
+        page.route(route_url, lambda route: route.abort())
+    page.goto(f"{ui}/analysis/results/{r.job_id}")
+    _loaded(page, r)
+    expect(page.get_by_role("heading", level=1)).to_have_text(f"{r.db} assessment")
+    header = " ".join(page.locator("#results-header").inner_text().split())
+    assert f"Assessment {r.job_id}" in header, header
+    assert " source" not in header, header
+    assert page.locator('[class*="awsui_flashbar"]').count() == 0
+    assert page.get_by_role("button", name="Retry").count() == 0
+    text = page.inner_text("body")
+    for leak in ("10.0.0.5", "8123", "/api/v1", "localhost", "127.0.0.1", "failed (500)", "pwned"):
+        assert leak not in text, (leak, failure)
+    assert page.evaluate("window.__pwned") is None
+
+
+def test_the_download_menu_works_from_the_keyboard(
+    page: Page, ui: str, all_runs: list[PipelineResult]
+) -> None:
+    """#2493: Enter and Space open the Download menu, the arrow keys move through its
+    items, Escape closes it and puts focus back on the button, and Enter on an item
+    downloads that file."""
+    r = all_runs[0]
+    folder = r.job_dir() / DELIVERABLES_DIR
+    entries = [e for e in FOLDER_ENTRIES if (folder / e.filename).is_file()]
+    page.goto(f"{ui}/analysis/results/{r.job_id}")
+    _loaded(page, r)
+    header = page.locator("#deliverables-section")
+    trigger = header.get_by_role("button", name="Download", exact=True)
+    expect(trigger).to_be_enabled(timeout=READY_MS)
+    menu = header.get_by_role("menu")
+    items = header.get_by_role("menuitem")
+    for key in ("Enter", "Space"):
+        trigger.focus()
+        page.keyboard.press(key)
+        expect(menu).to_be_visible(timeout=READY_MS)
+        assert items.count() == len(entries), key
+        page.keyboard.press("Escape")
+        expect(menu).to_be_hidden(timeout=READY_MS)
+        expect(trigger).to_be_focused(timeout=READY_MS)
+    trigger.focus()
+    page.keyboard.press("Enter")
+    expect(menu).to_be_visible(timeout=READY_MS)
+    expect(items).to_have_count(len(entries), timeout=READY_MS)
+    # The menu puts focus on its first item as it opens. Wait for that before any arrow
+    # key, so a key press never races the focus move.
+    expect(items.first).to_be_focused(timeout=READY_MS)
+    for i, entry in enumerate(entries):
+        item = items.nth(i)
+        owner = item.locator("xpath=ancestor-or-self::*[@data-deliverable][1]")
+        expect(owner).to_have_attribute("data-deliverable", entry.filename, timeout=READY_MS)
+        if i:
+            page.keyboard.press("ArrowDown")
+        expect(item).to_be_focused(timeout=READY_MS)
+    page.keyboard.press("ArrowUp")
+    expect(items.nth(len(entries) - 2)).to_be_focused(timeout=READY_MS)
+    with page.expect_download() as info:
+        page.keyboard.press("Enter")
+    assert info.value.suggested_filename == entries[-2].filename
+
+
+def test_results_header_error_state_has_no_accessibility_violations_at_390(
+    page: Page, ui: str, all_runs: list[PipelineResult]
+) -> None:
+    """#2493: when the deliverables listing fails, the header shows the inline error and
+    its Retry on a phone, with nothing blocking under axe and no sideways scroll."""
+    page.set_viewport_size({"width": 390, "height": 900})
+    page.emulate_media(reduced_motion="reduce")
+    r = all_runs[0]
+    page.route(
+        re.compile(rf"/api/v1/assessments/{re.escape(r.job_id)}/deliverables$"),
+        lambda route: route.fulfill(status=500, content_type="text/html", body=_HOSTILE),
+    )
+    page.goto(f"{ui}/analysis/results/{r.job_id}")
+    _loaded(page, r)
+    header = page.locator("#deliverables-section")
+    expect(header.get_by_role("button", name="Retry")).to_be_visible(timeout=READY_MS)
+    assert "10.0.0.5" not in header.inner_text()
+    assert _page_fits_viewport(page), "the error state scrolls the page sideways"
+    page.evaluate("Promise.all(document.getAnimations().map((a) => a.finished))")
+    blocking, where, _ = _axe_blocking(page)
+    assert blocking == [], (blocking, where)
+
+
 @pytest.mark.parametrize("width", [1440, 390])
 def test_results_page_header_and_download_menu_have_no_accessibility_violations(
     page: Page, ui: str, all_runs: list[PipelineResult], width: int
