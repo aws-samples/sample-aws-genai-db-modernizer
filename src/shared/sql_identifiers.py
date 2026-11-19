@@ -41,6 +41,14 @@ def is_unprintable(character: str) -> bool:
     return unicodedata.category(character) in UNPRINTABLE_CATEGORIES
 
 
+def comment_text(text: str) -> str:
+    """``text`` made safe for one ``--`` comment line (#2381 review): each control, format
+    or line separator character (:func:`is_unprintable`) replaced by a space, then the
+    whitespace collapsed. The one cleaner the generated script's comments and the
+    deliverables that name the same objects share (#2484)."""
+    return " ".join("".join(" " if is_unprintable(ch) else ch for ch in text).split())
+
+
 def has_unprintable(text: str) -> bool:
     return any(is_unprintable(ch) for ch in text)
 

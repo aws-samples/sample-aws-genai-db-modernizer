@@ -236,10 +236,13 @@ export function filterAuroraTables(tables, text) {
  * the design-dependent fields below -- tables, DDL, optimizations,
  * migration strategy -- are empty in that case, not the whole section).
  */
-export function buildAuroraDesign(engine, design, queryGroups, tableQueryRows = []) {
+export function buildAuroraDesign(engine, design, queryGroups, tableQueryRows = [], leftOut = []) {
   const content = design?.content || {};
   const groupsOnEngine = buildAuroraQueryGroups(engine, queryGroups);
   return {
+    // #2484: the objects the design leaves out, as facts.design_left_out states them; null
+    // when it leaves none out, so the section shows no alert.
+    leftOut: (leftOut || []).find((r) => r.engine === engine && (r.objects || []).length > 0) || null,
     engine,
     displayName: displayEngine(engine),
     // #2308: whether the design files for this engine were loaded at all.
@@ -267,7 +270,7 @@ export function buildAuroraDesign(engine, design, queryGroups, tableQueryRows = 
  * schema design must not gate visibility -- the UI and export disagreed
  * with the engineering report here before this fix).
  */
-export function buildAuroraDesigns(schemaDesigns, queryGroups, tableQueryRows = []) {
+export function buildAuroraDesigns(schemaDesigns, queryGroups, tableQueryRows = [], leftOut = []) {
   const designsByEngine = {};
   (schemaDesigns || []).forEach((d) => {
     if (isAuroraEngine(d?.target_type) && d?.content) {
@@ -285,5 +288,5 @@ export function buildAuroraDesigns(schemaDesigns, queryGroups, tableQueryRows = 
   const engines = new Set([...Object.keys(designsByEngine), ...enginesWithQueries]);
   return [...engines]
     .sort()
-    .map((engine) => buildAuroraDesign(engine, designsByEngine[engine] || null, queryGroups, tableQueryRows));
+    .map((engine) => buildAuroraDesign(engine, designsByEngine[engine] || null, queryGroups, tableQueryRows, leftOut));
 }

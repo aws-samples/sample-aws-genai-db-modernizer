@@ -122,6 +122,7 @@ from src.shared.executive_brief import (
     executive_brief_text,
     strip_decision_wording,
 )
+from src.shared.left_out_objects import script_has_not_created_comments
 from src.shared.partition_load import busiest_key, hot_partition_rows, over_key_limit
 from src.shared.placeholder_tables import is_placeholder_table
 from src.shared.progress import say
@@ -2242,6 +2243,11 @@ def _build_aurora_schema_summary(engine, schema):
         "optimizations": field_list(schema, "optimizations"),
         "app_layer_notes": field_list(schema, "app_layer_notes"),
         "ddl_available": bool(schema.get("generated_ddl")),
+        # #2484: whether the script ends with a comment per left-out object; a design saved
+        # before it has none, and the reports must not say it does.
+        "ddl_names_left_out": script_has_not_created_comments(
+            str(schema.get("generated_ddl") or ""), schema.get("app_layer_notes")
+        ),
         "trade_offs": field_list(schema, "trade_offs"),
         "unsupported_patterns": field_list(schema, "unsupported_patterns"),
         "migration_notes": field_list(schema, "migration_notes"),

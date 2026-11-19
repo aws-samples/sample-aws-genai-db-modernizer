@@ -23,6 +23,10 @@ shows them and the assess() result hands them on, so none is trusted as stored:
   comment that stands in for an index the key limit rules out, but only exactly as
   ``skipped_index_comment`` writes it for an ``index_key_prefix`` note the merge wrote
   for that table, and at most once per note;
+- ``generated_ddl`` may close with one ``-- Not created: <name>: <reason>`` comment per
+  object the design leaves out (#2484), but only exactly as
+  ``left_out_objects.with_not_created_comments`` writes them from the design's own
+  app-layer notes; a design saved before that has none;
 - SQL text with nothing to rebuild it from is refused: a design that carries
   ``generated_ddl``, ``indexes`` or ``foreign_keys`` without a list of table definitions,
   and a skipped design (``check_skipped_design``) that carries any of them or tables.
@@ -48,6 +52,7 @@ from typing import Any
 
 from src.contracts.aurora_design_delta import SavedDesignError
 from src.contracts.schema_design_input import ForeignKeyAction
+from src.shared.left_out_objects import without_not_created_comments
 from src.tools.schema.aurora_common.ddl_generator import (
     MYSQL,
     NOT_CREATED_REASON,
@@ -668,7 +673,12 @@ def check_design_ddl(payload: Mapping[str, Any], engine: str) -> Mapping[str, An
         legacy: list[dict[str, str]] = [{} for _ in shaped]
         comments = skipped_comments(payload, shaped, indexes, legacy)
         per_table: list[list[str]] = [[] for _ in shaped]
-        rebuild_ddl(dialect, shaped, indexes, fks, text, comments, legacy, per_table, fk_owners)
+        # #2484: the comments for the objects the design leaves out close the script,
+        # exactly as the merge writes them from the design's own notes (each one line).
+        statements = without_not_created_comments(text, payload.get("app_layer_notes"))
+        rebuild_ddl(
+            dialect, shaped, indexes, fks, statements, comments, legacy, per_table, fk_owners
+        )
     except _Refused as exc:
         raise SavedDesignError("generated_ddl", None, str(exc), kind=DDL_KIND) from None
     # A table's stored statements (``ddl_statements``) are the script's own cut of it: a

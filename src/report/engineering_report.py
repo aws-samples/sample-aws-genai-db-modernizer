@@ -18,6 +18,7 @@ from src.shared.design_text import (
 )
 from src.shared.engine_names import canonical_engine_id, display_engine
 from src.shared.executive_brief import compose_summary, executive_brief_text
+from src.shared.left_out_objects import is_left_out_note
 from src.shared.ranking import PIN_RULE_PREDATES_NOTE, report_predates_pin_rule
 from src.shared.report_facts import (
     CACHE_LAYER,
@@ -664,7 +665,8 @@ def _app_layer_notes_md(design: dict[str, Any], query_ids: Collection[str] = ())
     notes = design.get("app_layer_notes") or []
     if not isinstance(notes, list):
         return []
-    notes = [n for n in notes if isinstance(n, dict)]
+    # #2484: a left-out object is listed from the facts (_left_out_md), not here.
+    notes = [n for n in notes if isinstance(n, dict) and not is_left_out_note(n)]
     defaults = [n for n in notes if n.get("feature") == "column_default"]
     others = [n for n in notes if n.get("feature") != "column_default"]
     out: list[str] = []
@@ -702,6 +704,36 @@ def _app_layer_notes_md(design: dict[str, Any], query_ids: Collection[str] = ())
     return out
 
 
+def _left_out_md(facts: dict[str, Any], engine: str) -> list[str]:
+    """The objects the engine's design leaves out (#2484), from ``facts.design_left_out``:
+    each one's name, kind of note and reason. Nothing when it leaves none out."""
+    entry = next(
+        (
+            e
+            for e in facts.get("design_left_out") or []
+            if isinstance(e, dict) and e.get("engine") == engine
+        ),
+        None,
+    )
+    if not entry or not entry.get("objects"):
+        return []
+    # Only a script that carries the comments says so (#2484): an older design has none.
+    ddl = (
+        ", and the generated DDL names each one in a comment" if entry.get("ddl_names_each") else ""
+    )
+    out = [
+        f"**Not created ({entry.get('object_count', 0)}):** the design leaves these out{ddl}.",
+        "",
+    ]
+    for o in entry["objects"]:
+        out.append(
+            f"- {escaping.md_text(o.get('label') or '')} on {escaping.md_text(o.get('object') or '')} "
+            f"`{escaping.md_code(o.get('name') or '?')}`: {escaping.md_text(o.get('reason') or '')}"
+        )
+    out.append("")
+    return out
+
+
 def _note_blocks(
     design: dict[str, Any], defaults: bool
 ) -> list[tuple[list[str], list[dict[str, Any]]]]:
@@ -715,7 +747,9 @@ def _note_blocks(
         kept = [
             m
             for m in members
-            if isinstance(m, dict) and (m.get("feature") == "column_default") == defaults
+            if isinstance(m, dict)
+            and not is_left_out_note(m)
+            and (m.get("feature") == "column_default") == defaults
         ]
         if kept and sentences:
             out.append((sentences, kept))
@@ -1647,6 +1681,7 @@ def render_engineering_report_md(
                     query_ids,
                 )
                 out.append("")
+            out += _left_out_md(facts, eng)
             out += _app_layer_notes_md(dz, query_ids)
             er = _mermaid_er(eng, dz)
             if er:

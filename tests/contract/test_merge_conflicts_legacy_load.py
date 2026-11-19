@@ -130,7 +130,10 @@ def test_a_report_written_before_1_72_validates_and_reads_back_unchanged() -> No
         "engine_query_counts",
         "target_engines",
         "executive_brief",
+        # #2484: the objects each Aurora design leaves out (none here), from its notes.
+        "design_left_out",
     )
+    assert facts["design_left_out"] == []
     assert {k: v for k, v in facts.items() if k not in filled} == {
         k: v for k, v in as_read_back(stored).items() if k not in filled
     }

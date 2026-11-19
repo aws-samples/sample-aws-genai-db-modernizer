@@ -307,7 +307,10 @@ def test_backfill_gives_an_older_report_the_figures_this_run_stored(figure: str)
 
 # Facts added after the recorded run's release, which the reader fills in for it until
 # the next release re-records the sample (CONTRIBUTING's Releases, step 1).
-_NEWER_THAN_THE_RECORDING: tuple[str, ...] = ()
+_NEWER_THAN_THE_RECORDING: tuple[str, ...] = (
+    # #2484: the objects each Aurora design leaves out, from its notes.
+    "design_left_out",
+)
 # Fields added inside a recorded fact, filled in the same way (#399).
 _NEWER_FIELDS_THAN_THE_RECORDING = {
     # #2321: the one shared risk sentence, from the recorded rows.

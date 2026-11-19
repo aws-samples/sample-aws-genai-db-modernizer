@@ -67,7 +67,7 @@ import { buildQueryRoutingRows, queryPatternLinks } from "../utils/queryRouting"
 import QueryDetailPanel from "../components/QueryDetailPanel";
 import SourceTablesSection from "../components/SourceTablesSection";
 import { cacheLayerPatterns, ownerAccessPatterns, patternsByQueryId, shortTable, sourceNameMapper, sourceTableRows } from "../utils/accessPatterns";
-import AuroraDesignTables from "../components/AuroraDesignTables";
+import AuroraDesignTables, { AuroraLeftOutAlert } from "../components/AuroraDesignTables";
 import AuroraTableDetailPanel from "../components/AuroraTableDetailPanel";
 import { getCacheOverlay, ownerDistribution, formatCacheLayerLine, cacheChangeSentence, targetEngineEntries, resolveCostBreakdown, cacheAccessPatternCount, addCacheOverlayNode } from "../utils/cacheLayer";
 import { summaryFallbackInfo } from "../utils/summaryFallback";
@@ -84,7 +84,7 @@ import { formatRate } from "../utils/format";
 import EngineBadge from "../components/EngineBadge";
 import RiskCard from "../components/RiskCard";
 import { optimizationLabel } from "../utils/optimizationLabels";
-import { accessPatternTotals, assumptionItemsOf, cacheLayerFactsOf, costScopeLabelOf, defaultRiskSeverity, derivedCopySyncOf, finalEngineCounts, noEngineInScopeOf, openRiskCountAt, overallRiskLevelOf, placedQueryCountOf, procedureInternalQueryCountOf, procedureInternalRoutineCountOn, procedureInternalRoutineCountsOf, queryPatternCountsOf, rateWindowRiskNoteOf, resolvedRiskCountOf, resolvedRisksBySeverityText, routingHistoryRecorded, routingKindsById, tableQueryRowsOf, targetEngineEntriesOf, tradeOffsByTab, tradeOffTabLabel, tradeOffTabsShown, tradeOffTopicGroupsOf } from "../utils/reportFacts";
+import { accessPatternTotals, assumptionItemsOf, cacheLayerFactsOf, costScopeLabelOf, defaultRiskSeverity, derivedCopySyncOf, designLeftOutOf, finalEngineCounts, noEngineInScopeOf, openRiskCountAt, overallRiskLevelOf, placedQueryCountOf, procedureInternalQueryCountOf, procedureInternalRoutineCountOn, procedureInternalRoutineCountsOf, queryPatternCountsOf, rateWindowRiskNoteOf, resolvedRiskCountOf, resolvedRisksBySeverityText, routingHistoryRecorded, routingKindsById, tableQueryRowsOf, targetEngineEntriesOf, tradeOffsByTab, tradeOffTabLabel, tradeOffTabsShown, tradeOffTopicGroupsOf } from "../utils/reportFacts";
 
 // ============================================
 // Constants
@@ -502,7 +502,7 @@ const AnalysisResultsPage = memo(() => {
   // list -- and keeps showing the full design (DDL, indexes, optimizations)
   // the generic explorer above does not.
   const auroraDesigns = useMemo(
-    () => buildAuroraDesigns(activeDesigns, synthesis?.query_groups, tableQueryRowsOf(synthesis)),
+    () => buildAuroraDesigns(activeDesigns, synthesis?.query_groups, tableQueryRowsOf(synthesis), designLeftOutOf(synthesis)),
     [activeDesigns, synthesis]
   );
   // #2325: the design table the split panel shows, with its engine's display name.
@@ -978,6 +978,10 @@ const AnalysisResultsPage = memo(() => {
                             { count: designState.count },
                           )}
                         </Alert>
+                      )}
+
+                      {designState.state !== 'none' && designState.state !== 'unavailable' && (
+                        <AuroraLeftOutAlert leftOut={design.leftOut} t={t} />
                       )}
 
                       {designState.state !== 'none' && designState.state !== 'unavailable' && (

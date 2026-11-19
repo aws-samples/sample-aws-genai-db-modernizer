@@ -370,8 +370,8 @@ def test_two_tables_whose_keys_fold_to_one_are_left_out_with_a_note(schemas) -> 
     ]
     assert design["generated_ddl"].count("CREATE TABLE ") == 1
     notes = [n for n in design["app_layer_notes"] if n["feature"] == "colliding_table_name"]
-    assert [n["source_object"] for n in notes] == [
-        f"{schemas[0]}.orders.{schemas[0]}.orders", f"{schemas[1]}.orders.{schemas[1]}.orders"]  # fmt: skip
+    # #2484: a left-out table's note names it once.
+    assert [n["source_object"] for n in notes] == [f"{schemas[0]}.orders", f"{schemas[1]}.orders"]
     assert all("another table of the design" in n["recommendation"] for n in notes)
     delta = {"delta_version": "1.0", "tables": [{"table_name": f"{schemas[0]}.orders",
              "add_indexes": [{"index_name": "ix_x", "columns": ["id", "note"]}]}]}  # fmt: skip

@@ -184,6 +184,7 @@ ID_FIELD_PATHS = frozenset(
         ("eliminated_engine_costs", "database"),  # same CostBreakdown shape, TCO's own list
         ("retired_engine_savings", "database"),  # same CostBreakdown shape (#949)
         ("considered_not_recommended", "engine"),  # ConsideredEngine.engine (#949)
+        ("design_left_out", "engine"),  # DesignLeftOutFacts.engine (#2484): the Aurora engine id
         ("considered_not_recommended", "absorbed_by"),  # ConsideredEngine.absorbed_by (#949)
         ("databases", "service"),  # recommended_architecture.databases[].service
         ("access_patterns", "engine"),  # QueryGroup.access_patterns[].engine (extra field)

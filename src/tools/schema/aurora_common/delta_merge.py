@@ -45,6 +45,7 @@ from src.contracts.schema_design_input import (
     AgentQueryPattern,
     AgentTable,
 )
+from src.shared.left_out_objects import with_not_created_comments
 from src.shared.table_keys import DesignTableKeys, spans_schemas, table_key
 from src.tools.schema.aurora_common.access_patterns import derive_access_patterns
 from src.tools.schema.aurora_common.ddl_generator import (
@@ -595,11 +596,15 @@ def _drop_index_notes(notes: list[dict], table: str, index: str) -> None:
 def _left_out_notes(base: AuroraDesignBase) -> list[dict]:
     """One app-layer note per source object the draft does not create because its name
     cannot be quoted into SQL (#2381 review 2) or another index of its table has it
-    (#2402, feature ``duplicate_index_name``); the names cleaned like a comment's."""
+    (#2402, feature ``duplicate_index_name``); the names cleaned like a comment's. A table
+    is named once (#2484: ``Sales.orders``, not ``Sales.orders.Sales.orders``), any other
+    object ``table.object``."""
     return [
         {
             "feature": o.get("feature", "unsafe_name"),
-            "source_object": comment_text(f"{o['table']}.{o['name']}"),
+            "source_object": comment_text(
+                o["table"] if o["kind"] == "table" else f"{o['table']}.{o['name']}"
+            ),
             "recommendation": f"{o['kind'].capitalize()} not created: {o['reason']}.",
         }
         for o in base.left_out
@@ -854,6 +859,7 @@ def merge_design_delta(
         source_database=base.source_database,
     )
     warnings.extend(_access_pattern_residual_warnings(derived.residuals))
+    left_out = _left_out_notes(base)
     output = {
         "contract_version": _OUTPUT_CONTRACTS[base.engine].model_fields["contract_version"].default,
         "job_id": base.job_id,
@@ -885,13 +891,14 @@ def merge_design_delta(
             }
             for t, t_ddl in ((t, table_ddls[base.name_of(t)]) for t in base.tables)
         ],
-        "generated_ddl": assemble_full_ddl(ddl.tables),
+        # #2484: one comment per object the design leaves out, after the last statement.
+        "generated_ddl": with_not_created_comments(assemble_full_ddl(ddl.tables), left_out),
         "access_patterns": derived.patterns,
         "app_layer_notes": [n.model_dump(mode="json") for n in contract.app_layer_notes]
         + _time_zone_notes(ddl)
         + _default_notes(ddl)
         + _index_notes(ddl)
-        + _left_out_notes(base),
+        + left_out,
         "optimizations": [o.model_dump(mode="json") for o in contract.optimizations],
         "trade_offs": trade_offs,
         "validation_passed": not errors,

@@ -49,8 +49,8 @@ from src.tools.schema.aurora_common.source_family import classify_type_family
 from src.tools.schema.aurora_common.source_types import resolve_source_type
 from src.tools.schema.aurora_common.sql_safety import (
     SqlFragmentError,
+    comment_text,
     index_definition_is_only,
-    is_unprintable,
     render_index_expressions,
     render_source_predicate,
 )
@@ -985,13 +985,6 @@ def comment_name(table_name: str, index_name: str) -> str:
     line and nothing after it is part of it. A saved design's comment is checked against
     this (#2199)."""
     return comment_text(_COMMENT_UNSAFE.sub(" ", f"{table_name}.{index_name}"))
-
-
-def comment_text(text: str) -> str:
-    """``text`` made safe for one ``--`` comment line (#2381 review): each control, format
-    or line separator character (``sql_safety.is_unprintable``) replaced by a space, then
-    the whitespace collapsed."""
-    return " ".join("".join(" " if is_unprintable(ch) else ch for ch in text).split())
 
 
 def skipped_index_comment(table_name: str, index_name: str) -> str:

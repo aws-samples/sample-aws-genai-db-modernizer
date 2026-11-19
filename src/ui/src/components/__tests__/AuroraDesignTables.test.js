@@ -11,7 +11,7 @@ import { act } from 'react';
 import { createRoot } from 'react-dom/client';
 import createWrapper from '@cloudscape-design/components/test-utils/dom';
 import i18n from '../../i18n';
-import AuroraDesignTables from '../AuroraDesignTables';
+import AuroraDesignTables, { AuroraLeftOutAlert } from '../AuroraDesignTables';
 import { AuroraTableDetailBody } from '../AuroraTableDetailPanel';
 import { withTableDetails } from '../../utils/auroraDesign';
 
@@ -149,4 +149,39 @@ test('the filter box has a named clear button once text is typed', () => {
   act(() => wrapper().findTextFilter().findInput().setInputValue('wp'));
   const clear = container.querySelector('button[aria-label="Clear filter"]');
   expect(clear).not.toBeNull();
+});
+
+// #2484: a table the design leaves out is named above the list, never just missing.
+const LEFT_OUT = {
+  engine: 'aurora_postgresql',
+  object_count: 2,
+  objects: [
+    { name: 'Sales.orders', feature: 'colliding_table_name', label: 'Colliding table name', object: 'table', reason: 'its schema and name match another table of the design.' },
+    { name: '<img src=x onerror=alert(1)>', feature: 'unsafe_name', label: 'Unsafe name', object: 'table', reason: 'its name holds a control character.' },
+  ],
+};
+
+test('the left-out alert names each object, its kind of note and its reason, as text', () => {
+  act(() => root.render(<AuroraLeftOutAlert leftOut={LEFT_OUT} t={t} />));
+  const alert = wrapper().findAlert();
+  expect(alert).not.toBeNull();
+  expect(alert.findHeader().getElement().textContent).toBe('2 objects are not created');
+  const items = [...container.querySelectorAll('#aurora-design-left-out li')].map(li => li.textContent);
+  expect(items).toEqual([
+    'Colliding table name on table Sales.orders: its schema and name match another table of the design.',
+    'Unsafe name on table <img src=x onerror=alert(1)>: its name holds a control character.',
+  ]);
+  expect(container.querySelector('img')).toBeNull();
+});
+
+test('the header counts as the fact does, one object included', () => {
+  act(() => root.render(<AuroraLeftOutAlert leftOut={{ ...LEFT_OUT, object_count: 1, objects: [LEFT_OUT.objects[0]] }} t={t} />));
+  expect(wrapper().findAlert().findHeader().getElement().textContent).toBe('1 object is not created');
+});
+
+test('no alert when the design leaves nothing out', () => {
+  act(() => root.render(<AuroraLeftOutAlert leftOut={null} t={t} />));
+  expect(wrapper().findAlert()).toBeNull();
+  act(() => root.render(<AuroraLeftOutAlert leftOut={{ ...LEFT_OUT, object_count: 0, objects: [] }} t={t} />));
+  expect(wrapper().findAlert()).toBeNull();
 });

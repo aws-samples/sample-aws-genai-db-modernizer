@@ -29,6 +29,7 @@ from src.shared.report_facts import (
     cache_layer_facts,
     compute_report_facts,
     cost_assumptions,
+    design_left_out_facts,
     dynamodb_merge_conflict_facts,
     dynamodb_merge_review_facts,
     engine_query_count_facts,
@@ -147,7 +148,7 @@ def report_facts(report: dict[str, Any]) -> dict[str, Any]:
     ``table_sources.shared_risk_sentence``, one written before #1329 no
     ``unservable.no_engine_in_scope_query_count``, one written before #1410 no
     ``query_group_counts``, one written before #2325 no ``query_group_counts.table_queries``,
-    and one written before
+    one written before #2484 no ``design_left_out``, and one written before
     #1146 no ``query_pattern_counts`` (filled in from ``query_pattern_groups``: None for a
     report with no grouping, whose deliverables leave the query patterns out); those
     figures are filled in from ``query_groups``, ``ranking``, the resolved risks, the
@@ -192,6 +193,11 @@ def report_facts(report: dict[str, Any]) -> dict[str, Any]:
             missing["target_engines"] = target_engine_facts(
                 report, missing.get("engine_query_counts") or facts.get("engine_query_counts") or {}
             )
+        if facts.get("design_left_out") is None:
+            # A block written before #2484: the objects each Aurora design leaves out,
+            # from the design summaries' notes. The value decides, not the key: a block
+            # re-dumped through the contract reads the field back as None.
+            missing["design_left_out"] = design_left_out_facts(report)
         if "cost_assumptions" not in facts:
             # A block written before #1195: the TCO's own assumption lines.
             missing["cost_assumptions"] = cost_assumptions(report)
