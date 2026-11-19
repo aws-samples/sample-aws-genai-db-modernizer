@@ -3119,6 +3119,66 @@ def test_a_querys_access_patterns_open_in_its_panel_and_source_tables_on_data_mo
     assert checked or any(r.external for r in all_runs), "no job with a NoSQL design"
 
 
+def _design_filter_cases(r: PipelineResult) -> list[tuple[str, str, str]]:
+    """Property tokens the query table's target design properties take (#2483), each
+    with a query an access pattern of the job's NoSQL designs serves for it: its target
+    operation, its pattern group, and Uses GSI = Yes when a pattern reads a GSI."""
+    cases: dict[str, tuple[str, str, str]] = {}
+    for path in real_designs(r.job_dir()):
+        if path.parent.parent.name.startswith("schema-aurora_"):
+            continue
+        for ap in json.loads(path.read_text()).get("access_patterns") or []:
+            ids = ap.get("source_query_ids") or ap.get("query_ids") or []
+            if not ids:
+                continue
+            if ap.get("operation"):
+                cases.setdefault("op", ("Target operation", ap["operation"], ids[0]))
+            if ap.get("pattern_group"):
+                cases.setdefault("group", ("Pattern group", ap["pattern_group"], ids[0]))
+            if ap.get("gsi_name"):
+                cases.setdefault("gsi", ("Uses GSI", "Yes", ids[0]))
+    return list(cases.values())
+
+
+def test_the_query_table_filters_by_the_target_design(
+    page: Page, ui: str, all_runs: list[PipelineResult]
+) -> None:
+    """#2483: the explorer's target operation, pattern group and Uses GSI filters are
+    properties of the query table, grouped under Target design. Each token keeps a query
+    the design's own pattern serves, reads as the value picked, and axe finds nothing
+    blocking with a token applied."""
+    page.set_viewport_size({"width": 1440, "height": 900})
+    checked = 0
+    for r in _designed_runs(all_runs):
+        cases = _design_filter_cases(r)
+        if not cases:
+            continue
+        ev = _watch(page)
+        _goto_results(page, ui, r, "queries")
+        section = page.locator("#query-routing-section")
+        _wait_for_query_routing_rows(section, r, ev)
+        box = section.get_by_label("Filter queries")
+        box.focus()
+        expect(
+            page.get_by_text(re.compile(r"^Target design \(a query matches when any"))
+        ).to_be_visible(timeout=READY_MS)
+        for prop, value, qid in cases:
+            _filter_queries(section, f"{prop} = {value}")
+            expect(section).to_contain_text(
+                re.compile(rf"{re.escape(prop)}\s*=\s*{re.escape(value)}"), timeout=READY_MS
+            )
+            _filter_queries(section, qid)
+            opener = section.get_by_role("button", name=f"{OPEN_TRACE}{qid}")
+            expect(opener).to_be_visible(timeout=READY_MS)
+            page.keyboard.press("Escape")
+            blocking, where, _ = _axe_blocking(page)
+            assert blocking == [], (r.db, prop, blocking, where)
+            section.get_by_role("button", name="Clear filters").click()
+        assert ev == {"console": [], "pageerror": [], "failed": []}, (r.job_id, ev)
+        checked += 1
+    assert checked or any(r.external for r in all_runs), "no job with a NoSQL design"
+
+
 def _aurora_design_tables(r: PipelineResult, engine: str | None = None) -> list[str]:
     """The table names of the job's Aurora design (of one engine when given), as its
     schema_output.json lists them."""

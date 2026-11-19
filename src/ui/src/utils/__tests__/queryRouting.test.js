@@ -229,3 +229,75 @@ describe('operation types', () => {
     expect(typeIds('read', '!=')).toEqual(['t1', 't3', 't4']);
   });
 });
+
+// #2483: the explorer's pattern group, Uses GSI, target operation and source table
+// (through merged tables) filters are properties of the query table. A query takes the
+// values of every pattern that serves it, so it matches when any of them matches; a query
+// no pattern serves has none. Values are listed, never counted.
+describe('target design properties', () => {
+  const q = (id, tables) => ({ query_id: id, source: { query_text: 'x', query_type: 'SELECT', tables_accessed: tables }, assignment: { assigned_engine: 'dynamodb' } });
+  const journeysOf = [q('g1', ['shop.orders']), q('g2', ['shop.order_items']), q('g3', ['shop.users']), q('g4', ['shop.misc'])];
+  const owner = [
+    { engine: 'dynamodb', operation: 'GetItem', patternGroup: 'orders', gsiName: null, sourceTables: ['orders'], mergedSourceTables: ['order_items', 'orders'], queryIds: ['g1'], destNames: ['orders'] },
+    { engine: 'dynamodb', operation: 'Query', patternGroup: 'orders', gsiName: 'by_user', sourceTables: ['order_items'], mergedSourceTables: ['order_items', 'orders'], queryIds: ['g2'], destNames: ['orders'] },
+    { engine: 'documentdb', operation: 'find', patternGroup: 'users', gsiName: null, sourceTables: ['sales.users'], mergedSourceTables: [], queryIds: ['g3'], destNames: ['users'] },
+    { engine: 'documentdb', operation: '—', patternGroup: null, gsiName: null, sourceTables: ['archive.users'], mergedSourceTables: [], queryIds: ['g3'], destNames: ['users'] },
+  ];
+  const cache = [{ engine: 'elasticache', operation: 'HGETALL', patternGroup: null, gsiName: null, sourceTables: ['orders'], queryIds: ['g1'] }];
+  const rows = buildQueryRoutingRows(journeysOf, new Map(), labels, queryPatternLinks(owner, cache));
+  const idsOf = (propertyKey, value, operator = '=') => filterQueryRows(rows, { operation: 'and', tokens: [{ propertyKey, operator, value }] }).map(r => r.queryId);
+
+  test('a query lists every serving pattern\'s values, sorted, and an unserved one none', () => {
+    expect(rows.map(r => r.patternGroups)).toEqual([['orders'], ['orders'], ['users'], []]);
+    expect(rows.map(r => r.usesGsi)).toEqual([['no'], ['yes'], ['no'], []]);
+    expect(rows.map(r => r.targetOperations)).toEqual([['GetItem', 'HGETALL'], ['Query'], ['find'], []]);
+    expect(rows.map(r => r.sourceTables)).toEqual([['order_items', 'orders'], ['order_items', 'orders'], ['archive.users', 'sales.users'], []]);
+  });
+
+  test('pattern group filters by name, part of a name, and its negation', () => {
+    expect(idsOf('patternGroup', 'orders')).toEqual(['g1', 'g2']);
+    expect(idsOf('patternGroup', 'use', ':')).toEqual(['g3']);
+    expect(idsOf('patternGroup', 'orders', '!=')).toEqual(['g3', 'g4']);
+  });
+
+  test('uses GSI is yes or no, and a query no pattern serves is neither', () => {
+    expect(idsOf('usesGsi', 'yes')).toEqual(['g2']);
+    expect(idsOf('usesGsi', 'no')).toEqual(['g1', 'g3']);
+  });
+
+  test('the target operation is the design\'s own name, the cache layer\'s included', () => {
+    expect(idsOf('targetOperation', 'GetItem')).toEqual(['g1']);
+    expect(idsOf('targetOperation', 'HGETALL')).toEqual(['g1']);
+    expect(idsOf('targetOperation', 'find')).toEqual(['g3']);
+    expect(idsOf('targetOperation', '—')).toEqual([]);
+  });
+
+  test('a source table matches the queries that read the tables merged with it', () => {
+    expect(idsOf('sourceTable', 'order_items')).toEqual(['g1', 'g2']);
+    expect(idsOf('sourceTable', 'orders')).toEqual(['g1', 'g2']);
+    expect(idsOf('sourceTable', 'misc')).toEqual([]);
+  });
+
+  test('two schemas\' tables of one name stay apart', () => {
+    expect(idsOf('sourceTable', 'sales.users')).toEqual(['g3']);
+    expect(idsOf('sourceTable', 'users')).toEqual([]);
+    expect(idsOf('sourceTable', 'users', ':')).toEqual(['g3']);
+  });
+
+  test('the options are the distinct values the rows hold, sorted', () => {
+    const opts = queryFilterOptions(rows);
+    const of = key => opts.filter(o => o.propertyKey === key).map(o => o.value);
+    expect(of('patternGroup')).toEqual(['orders', 'users']);
+    expect(of('targetOperation')).toEqual(['GetItem', 'HGETALL', 'Query', 'find']);
+    expect(of('sourceTable')).toEqual(['archive.users', 'order_items', 'orders', 'sales.users']);
+  });
+
+  test('a run with no schema design has every row and no values', () => {
+    const bare = buildQueryRoutingRows(journeysOf, new Map(), labels);
+    expect(bare).toHaveLength(4);
+    expect(bare.every(r => [r.patternGroups, r.usesGsi, r.targetOperations, r.sourceTables].every(v => v.length === 0))).toBe(true);
+    const opts = queryFilterOptions(bare).map(o => o.propertyKey);
+    ['patternGroup', 'usesGsi', 'targetOperation', 'sourceTable'].forEach(key => expect(opts).not.toContain(key));
+    expect(filterQueryRows(bare, { operation: 'and', tokens: [{ propertyKey: 'usesGsi', operator: '=', value: 'no' }] })).toEqual([]);
+  });
+});

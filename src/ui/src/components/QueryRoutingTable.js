@@ -40,7 +40,9 @@ import DestinationTables from './DestinationTables';
  * #2446: the table is the tab's one list of queries. The access pattern explorer's
  * pattern and cache tables are folded in: a query's access patterns and cache key
  * designs open in its detail panel, and the explorer's operation type filter is the
- * "Operation type" property here. A link that names an engine (`linkedFilter`, a
+ * "Operation type" property here. #2483: its pattern group, Uses GSI, target operation and
+ * source table (through merged tables) filters are properties too, grouped under the
+ * target design. A link that names an engine (`linkedFilter`, a
  * property filter token) opens the table filtered to it.
  *
  * Callers pass `t` (the page's own `useTranslation` function), like
@@ -51,6 +53,8 @@ import DestinationTables from './DestinationTables';
  */
 
 const PAGE_SIZE = 25;
+// #2483: the group the target design's properties are listed under (customGroupsText).
+const TARGET_DESIGN_GROUP = 'target-design';
 
 // A table name that can wrap at its underscores, never in the middle of a word.
 function WrappableName({ name }) {
@@ -105,6 +109,8 @@ const QueryRoutingTable = memo(({
     return [
       ...queryFilterOptions(rows || []),
       ...OPERATION_TYPES.filter(type => (rows || []).some(r => (r.opTypes || []).includes(type))).map(type => ({ propertyKey: 'opType', value: type, label: t(`analysis-results.query-routing.op-type-${type}`) })),
+      // #2483: only the Uses GSI values a row holds, so a run with no design offers none.
+      ...['yes', 'no'].filter(value => (rows || []).some(r => (r.usesGsi || []).includes(value))).map(value => ({ propertyKey: 'usesGsi', value, label: value === 'yes' ? yes : no })),
       { propertyKey: 'cached', value: 'yes', label: yes },
       { propertyKey: 'cached', value: 'no', label: no },
       ...(hasLedger ? [
@@ -127,12 +133,27 @@ const QueryRoutingTable = memo(({
     { key: 'destination', propertyLabel: t('analysis-results.query-routing.col-destination'), groupValuesLabel: t('analysis-results.query-routing.group-destination'), operators: ['=', '!=', ':'] },
     { key: 'cached', propertyLabel: t('analysis-results.query-routing.col-cached'), groupValuesLabel: t('analysis-results.query-routing.group-cached'), operators: [{ operator: '=', format: labelOf('cached') }] },
     ...(hasLedger ? [{ key: 'routing', propertyLabel: t('analysis-results.query-routing.prop-routing'), groupValuesLabel: t('analysis-results.query-routing.group-routing'), operators: [{ operator: '=', format: labelOf('routing') }] }] : []),
+    // #2483: the access pattern explorer's design filters, read from the patterns that
+    // serve each query. Their group heading is their description: a query matches when
+    // any access pattern that serves it matches.
+    ...[
+      { key: 'patternGroup', propertyLabel: t('analysis-results.query-routing.prop-pattern-group'), groupValuesLabel: t('analysis-results.query-routing.group-pattern-group'), operators: ['=', '!=', ':'] },
+      { key: 'usesGsi', propertyLabel: t('analysis-results.query-routing.prop-uses-gsi'), groupValuesLabel: t('analysis-results.query-routing.group-uses-gsi'), operators: [{ operator: '=', format: labelOf('usesGsi') }] },
+      { key: 'targetOperation', propertyLabel: t('analysis-results.query-routing.prop-target-operation'), groupValuesLabel: t('analysis-results.query-routing.group-target-operation'), operators: ['=', '!='] },
+      { key: 'sourceTable', propertyLabel: t('analysis-results.query-routing.prop-source-table'), groupValuesLabel: t('analysis-results.query-routing.group-source-table'), operators: ['=', '!=', ':'] },
+    ].map(property => ({ ...property, group: TARGET_DESIGN_GROUP })),
     ];
   }, [filterOptions, hasLedger, t]);
   const i18nStrings = useMemo(() => propertyFilterStrings(t, {
     ariaLabel: t('analysis-results.query-routing.filter-label'),
     placeholder: t('analysis-results.query-routing.filter-placeholder'),
   }), [t]);
+
+  const customGroupsText = useMemo(() => [{
+    group: TARGET_DESIGN_GROUP,
+    properties: t('analysis-results.query-routing.group-target-design'),
+    values: t('analysis-results.query-routing.group-target-design-values'),
+  }], [t]);
 
   const filtered = useMemo(() => filterQueryRows(rows || [], query), [rows, query]);
   const pagesCount = Math.max(1, Math.ceil(filtered.length / PAGE_SIZE));
@@ -251,6 +272,7 @@ const QueryRoutingTable = memo(({
               filteringProperties={filteringProperties}
               filteringOptions={filterOptions}
               i18nStrings={i18nStrings}
+              customGroupsText={customGroupsText}
               filteringPlaceholder={t('analysis-results.query-routing.filter-placeholder')}
               countText={t('analysis-results.query-routing.count-text', { count: filtered.length, shown: formatCount(filtered.length) })}
               expandToViewport
