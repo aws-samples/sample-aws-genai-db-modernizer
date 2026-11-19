@@ -229,3 +229,107 @@ describe('the tables merged into a pattern\'s destination', () => {
     expect(d1.mergedSourceTables).toEqual(['sales.orders', 'sales.users']);
   });
 });
+
+// #2478: a source table name finds its design table as the facts key it
+// (table_keys.DesignTableKeys): a bare name one schema has, or a name the source database
+// prefixes, reads as that schema's table; a bare name two schemas share, or a schema the
+// design lacks, reads as no design table.
+describe('source table names in a design of two schemas', () => {
+  const sales = { table_name: 'orders', schema_name: 'sales' };
+  const archive = { table_name: 'orders', schema_name: 'archive' };
+  const customers = { table_name: 'customers', schema_name: 'sales' };
+  const twoSchemas = design('aurora_postgresql', {
+    source_database: 'shop',
+    table_definitions: [sales, archive, customers],
+    access_patterns: [
+      { pattern_id: 'P1', operation: 'SELECT', source_tables: ['customers'], query_ids: ['q1'] },
+      { pattern_id: 'P2', operation: 'SELECT', source_tables: ['shop.customers'], query_ids: ['q2'] },
+      { pattern_id: 'P3', operation: 'SELECT', source_tables: ['orders'], query_ids: ['q3'] },
+      { pattern_id: 'P4', operation: 'SELECT', source_tables: ['crm.customers'], query_ids: ['q4'] },
+      { pattern_id: 'P5', operation: 'SELECT', source_tables: ['Sales.Orders'], query_ids: ['q5'] },
+    ],
+  });
+  const byId = Object.fromEntries(ownerAccessPatterns([twoSchemas], null).map(p => [p.id, p]));
+
+  test('a bare or source-database name one schema has reads as that schema table', () => {
+    expect(byId.P1.sourceTables).toEqual(['sales.customers']);
+    expect(byId.P1.destDef).toBe(customers);
+    expect(byId.P2.sourceTables).toEqual(['sales.customers']);
+    expect(byId.P2.destDef).toBe(customers);
+    expect(byId.P5.destDef).toBe(sales);
+  });
+
+  test('a bare name two schemas share, or another schema, finds no design table', () => {
+    expect(byId.P3.sourceTables).toEqual(['orders']);
+    expect(byId.P3.destDef).toBeNull();
+    expect(byId.P4.sourceTables).toEqual(['crm.customers']);
+    expect(byId.P4.destDef).toBeNull();
+  });
+
+  test('the source tables keep one row per design table', () => {
+    const rows = sourceTableRows(ownerAccessPatterns([twoSchemas], null), []);
+    expect(rows.map(r => r.table)).toEqual(['crm.customers', 'orders', 'sales.customers', 'sales.orders']);
+    expect(rows.find(r => r.table === 'sales.customers').patterns.map(p => p.id)).toEqual(['P1', 'P2']);
+  });
+
+  test('a design saved before #2455 (no schema names) keeps the bare names', () => {
+    const legacy = design('aurora_postgresql', {
+      table_definitions: [{ table_name: 'orders' }, { table_name: 'orders' }],
+      access_patterns: [{ pattern_id: 'L1', operation: 'SELECT', source_tables: ['sales.orders'], query_ids: ['q1'] }],
+    });
+    const [p] = ownerAccessPatterns([legacy], null);
+    expect(p.sourceTables).toEqual(['orders']);
+    expect(p.destDef).toBe(legacy.content.table_definitions[1]);
+  });
+});
+
+// #2478 review: a design of `public` plus `pg_catalog` is one of one schema, so `audit` is
+// keyed bare. A name of the system schema it left out (its `system_schema` note) keeps its
+// schema, as DesignTableKeys.row_key does, so it never finds the user table `audit`.
+describe('source table names of a left-out system schema', () => {
+  const audit = { table_name: 'audit' };
+  const oneSchema = design('aurora_postgresql', {
+    source_database: 'shop',
+    table_definitions: [audit, { table_name: 'users' }],
+    app_layer_notes: [{ feature: 'system_schema', source_object: 'pg_catalog.audit', recommendation: 'x' }],
+    access_patterns: [
+      { pattern_id: 'P1', operation: 'SELECT', source_tables: ['public.audit'], query_ids: ['q1'] },
+      { pattern_id: 'P2', operation: 'SELECT', source_tables: ['pg_catalog.audit'], query_ids: ['q2'] },
+      { pattern_id: 'P3', operation: 'SELECT', source_tables: ['"PG_CATALOG"."audit"'], query_ids: ['q3'] },
+    ],
+  });
+  const byId = Object.fromEntries(ownerAccessPatterns([oneSchema], null).map(p => [p.id, p]));
+
+  test('a system schema table keeps its own key and finds no design table', () => {
+    expect(byId.P2.sourceTables).toEqual(['pg_catalog.audit']);
+    expect(byId.P2.destDef).toBeNull();
+    expect(byId.P3.sourceTables).toEqual(['pg_catalog.audit']);
+    expect(byId.P3.destDef).toBeNull();
+  });
+
+  test('the user table still reads as its bare name', () => {
+    expect(byId.P1.sourceTables).toEqual(['audit']);
+    expect(byId.P1.destDef).toBe(audit);
+  });
+
+  test('a design with no system_schema note keeps shortTable', () => {
+    const plain = design('aurora_postgresql', {
+      table_definitions: [audit],
+      access_patterns: [{ pattern_id: 'L1', operation: 'SELECT', source_tables: ['pg_catalog.audit'], query_ids: ['q1'] }],
+    });
+    expect(ownerAccessPatterns([plain], null)[0].sourceTables).toEqual(['audit']);
+  });
+});
+
+// #2478 review: a three-part name whose middle part is the source database names that
+// schema, as DesignTableKeys.row_key reads it: `shop.shop.orders` is `shop.orders`.
+test('a three-part name keeps its schema even when it is the source database name', () => {
+  const twoSchemas = design('aurora_postgresql', {
+    source_database: 'shop',
+    table_definitions: [{ table_name: 'orders', schema_name: 'sales' }, { table_name: 'orders', schema_name: 'archive' }],
+    access_patterns: [{ pattern_id: 'P1', operation: 'SELECT', source_tables: ['shop.shop.orders'], query_ids: ['q1'] }],
+  });
+  const [p] = ownerAccessPatterns([twoSchemas], null);
+  expect(p.sourceTables).toEqual(['shop.orders']);
+  expect(p.destDef).toBeNull();
+});

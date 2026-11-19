@@ -76,7 +76,11 @@ def _touched_tables(delta: BaseModel, view: dict) -> list[dict]:
         schema, _, table = name.rpartition(".")
         return table, schema or None
 
-    keys = DesignTableKeys(pair(t["table_name"]) for t in entries)
+    engine = view.get("source_engine")
+    keys = DesignTableKeys(
+        (pair(t["table_name"]) for t in entries),
+        source_engine=engine if isinstance(engine, str) else None,
+    )
     touched = {keys.key_of(t.table_name) for t in getattr(delta, "tables", [])} - {None}
     return [t for t in entries if keys.key_of(t["table_name"]) in touched]
 

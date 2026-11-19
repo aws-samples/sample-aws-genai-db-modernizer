@@ -1710,6 +1710,15 @@ def test_a_duplicate_index_name_note_raises_no_application_code_risk() -> None:
     assert "1 source object needs application code" in risk["description"]
 
 
+def test_a_system_schema_note_raises_no_application_code_risk() -> None:
+    """A table of a system schema left out of the design (#2478) is the database's own,
+    not source logic: it raises no design.app_layer risk."""
+    note = {"feature": "system_schema", "source_object": "pg_catalog.audit",
+            "recommendation": "Table not created: it is in the system schema pg_catalog."}  # fmt: skip
+    risks = _build(migration_waves=WAVES, schema_designs={AURORA: {"app_layer_notes": [note]}})
+    assert [r for r in risks if r["rule"] == "design.app_layer"] == []
+
+
 def test_a_choice_in_no_wave_names_no_cutover_timing() -> None:
     """#2434: a close call or open tie no wave holds names no time to settle it (it read
     "before cutover"); one in a wave names the wave's start."""

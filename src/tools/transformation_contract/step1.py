@@ -29,6 +29,8 @@ from src.contracts.transformation_contract import (
 )
 from src.shared.contract_versioning import load_contract
 from src.shared.sql_identifiers import UNSAFE_NAME_REASON, has_unprintable
+from src.shared.table_keys import is_system_schema
+from src.shared.table_keys import table_key as table_key_of
 from src.tools.data_movement.plan import JobInputs, _aurora_wave, _Schema
 from src.tools.data_movement.validation_key import table_key
 from src.tools.schema.aurora_common.delta_merge import AuroraDesignBase, source_data_types
@@ -253,7 +255,19 @@ def build_step1(inputs: JobInputs) -> StepContract:
     collector = _load_collector(inputs)
     tables = {t.table_id: t for t in collector.database_schema.tables}
     view_ids = {v.view_id for v in collector.database_schema.views or []}
-    names = Counter(t.table_name for t in collector.database_schema.tables)
+    # The design base leaves out every table of a system schema of the source engine
+    # (#2478): such a rule has no target, so it is blocked, and it never makes a user
+    # table's name ambiguous. Of the others, it leaves out a table whose name another table
+    # of its own schema has once case is folded. Two schemas' tables whose names differ
+    # only by case are both designed, so their rules keep their fields, as before #2478
+    # (the multi-schema step 1 is #2494).
+    user_tables = [
+        t
+        for t in collector.database_schema.tables
+        if not is_system_schema(t.schema_name, source_engine)
+    ]
+    names = Counter(t.table_name for t in user_tables)
+    folded = Counter(table_key_of(t.table_name, t.schema_name) for t in user_tables)
     targets = target_tables(inputs, engine, collector)
     enums = enum_columns(collector, engine).types
     rules: list[Rule] = []
@@ -306,14 +320,28 @@ def build_step1(inputs: JobInputs) -> StepContract:
                 )
             )
             continue
-        if names[t.table_name] > 1:
-            # Targets are matched by table name; two schemas sharing one would share a target.
-            finding = Finding(
-                code="ambiguous_target",
-                severity="error",
-                message=f"{t.table_name} exists in more than one source schema, so its target is ambiguous",
-                table_id=table_id,
+        why: tuple[str, str] | None = None
+        if is_system_schema(t.schema_name, source_engine):
+            why = (
+                "system_schema",
+                f"{table_id} is in the system schema {t.schema_name}, which the database "
+                "creates and owns, so it has no target",
             )
+        elif names[t.table_name] > 1:
+            # Targets are matched by table name; two schemas sharing one would share a target.
+            why = (
+                "ambiguous_target",
+                f"{t.table_name} exists in more than one source schema, so its target is ambiguous",
+            )
+        elif folded[table_key_of(t.table_name, t.schema_name)] > 1:
+            why = (
+                "colliding_table_name",
+                f"{t.table_name} matches the name of another table in schema "
+                f"{t.schema_name} once case and quote marks are ignored, so the design "
+                "leaves both out and the rule has no target",
+            )
+        if why is not None:
+            finding = Finding(code=why[0], severity="error", message=why[1], table_id=table_id)
             fields: list[FieldRule] = []
             findings, status = [finding], "blocked"
         else:

@@ -76,22 +76,50 @@ export function targetDesignGap(engine, schemaDesigns, availability) {
 export const shortTable = (name) => (name ? String(name).split('.').pop() : name);
 
 // A design of several schemas keys each table `schema.table` (#2455, table_keys.py). The
-// mapper a design's source table names go through: in such a design a name that spells a
-// schema the design has (`sales.orders`, `db.sales.orders`) reads as `schema.table`, so two
-// schemas' `orders` stay two source tables; any other name is shortTable's, as before.
+// mapper a design's source table names go through reads a name as the facts key it
+// (`DesignTableKeys.row_key`, #2478): a name that spells a schema the design has
+// (`sales.orders`, `db.sales.orders`) reads as `schema.table`, so two schemas' `orders` stay
+// two source tables; a name of another schema keeps its schema (`crm.orders`), unless the
+// prefix of a two-part name is the source database; a bare name reads as the one design
+// table of that name, and stays shortTable's when two schemas have it. A name of a system
+// schema the design left out (its `system_schema` notes, `left_out_system_schemas`) keeps
+// its schema in a design of one schema too, so `pg_catalog.audit` is never the user table
+// `audit`. Any other name in a design of one schema is shortTable's.
+const folded = (name) => String(name).replace(/[`"[\]]/g, '').trim().toLowerCase();
+
 export function sourceNameMapper(designs) {
   const schemas = new Set();
-  (designs || []).forEach(d => (d?.content?.table_definitions || []).forEach((t) => {
-    if (t.schema_name) schemas.add(String(t.schema_name).replace(/[`"[\]]/g, '').trim().toLowerCase());
-  }));
-  if (schemas.size === 0) return shortTable;
+  const databases = new Set();
+  const system = new Set();
+  const byBare = new Map();
+  (designs || []).forEach((d) => {
+    if (d?.content?.source_database) databases.add(folded(d.content.source_database));
+    (d?.content?.app_layer_notes || []).forEach((n) => {
+      const obj = n?.feature === 'system_schema' ? n.source_object : null;
+      if (typeof obj === 'string' && obj.includes('.')) system.add(folded(obj.split('.')[0]));
+    });
+    (d?.content?.table_definitions || []).forEach((t) => {
+      if (!t.schema_name) return;
+      schemas.add(folded(t.schema_name));
+      const keys = byBare.get(folded(t.table_name)) || new Set();
+      keys.add(designTableKey(t.table_name, t.schema_name));
+      byBare.set(folded(t.table_name), keys);
+    });
+  });
+  if (schemas.size === 0 && system.size === 0) return shortTable;
   return (name) => {
     if (!name) return name;
     const parts = String(name).replace(/[`"[\]]/g, '').split('.').map(p => p.trim());
-    if (parts.length >= 2 && schemas.has(parts[parts.length - 2].toLowerCase())) {
-      return designTableKey(parts[parts.length - 1], parts[parts.length - 2]);
+    const bare = parts[parts.length - 1];
+    if (parts.length >= 2) {
+      const schema = parts[parts.length - 2].toLowerCase();
+      const database = parts.length === 2 && databases.has(schema);
+      if (!schemas.has(schema) && !database && system.has(schema)) return designTableKey(bare, schema);
+      if (schemas.size > 0 && (schemas.has(schema) || !database)) return designTableKey(bare, schema);
     }
-    return shortTable(name);
+    if (schemas.size === 0) return shortTable(name);
+    const hits = byBare.get(bare.toLowerCase());
+    return hits && hits.size === 1 ? [...hits][0] : shortTable(name);
   };
 }
 

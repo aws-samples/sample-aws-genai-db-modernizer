@@ -176,3 +176,45 @@ def test_a_saved_report_from_before_2455_reads_its_rows_as_before() -> None:
         assert facts is not None
         assert facts["table_queries"]
         assert all("." not in row["table"] for row in facts["table_queries"])
+
+
+def test_a_query_on_a_left_out_system_table_keeps_its_own_row() -> None:
+    """#2478 review: ``public`` plus ``pg_catalog`` is a design of one schema, so ``audit``
+    is keyed bare. A query on ``pg_catalog.audit``, which the design left out with a
+    ``system_schema`` note, counts under its own ``pg_catalog.audit`` row, never in the
+    user table's; ``public.audit`` and ``shop.audit`` still count as ``audit``."""
+    report = _designed(
+        "aurora_postgresql",
+        [("audit", None), ("users", None)],
+        [_group("g", "aurora_postgresql",
+                {"q1": ["public.audit"], "q2": ["pg_catalog.audit"], "q3": ["shop.audit"]})],
+    )  # fmt: skip
+    report["database_name"] = "shop"
+    report["schema_designs"]["aurora_postgresql"]["app_layer_notes"] = [
+        {"feature": "system_schema", "source_object": "pg_catalog.audit", "recommendation": "x"}
+    ]
+    assert _rows(report) == {
+        ("aurora_postgresql", "audit"): (2, ["q1", "q3"]),
+        ("aurora_postgresql", "pg_catalog.audit"): (1, ["q2"]),
+    }
+
+
+def test_a_three_part_name_of_a_schema_the_design_lacks_keeps_its_schema() -> None:
+    """#2478 review: ``shop.shop.orders`` names the schema ``shop`` of the database
+    ``shop``. The design has no such schema, so the row keeps ``shop.orders``, as the
+    results page reads it (``sourceNameMapper``); only a two-part name's prefix can be the
+    source database."""
+    report = _designed(
+        "aurora_postgresql",
+        [("orders", "sales"), ("orders", "archive")],
+        [
+            _group(
+                "g", "aurora_postgresql", {"q1": ["shop.shop.orders"], "q2": ["shop.sales.orders"]}
+            )
+        ],
+    )
+    report["database_name"] = "shop"
+    assert _rows(report) == {
+        ("aurora_postgresql", "shop.orders"): (1, ["q1"]),
+        ("aurora_postgresql", "sales.orders"): (1, ["q2"]),
+    }

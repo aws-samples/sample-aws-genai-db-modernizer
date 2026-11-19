@@ -36,7 +36,7 @@ from src.shared.sql_identifiers import (
     has_unprintable,
     quote_identifier,
 )
-from src.shared.table_keys import colliding_keys, table_key
+from src.shared.table_keys import colliding_keys, is_system_schema, table_key
 from src.tools.schema.aurora_common.constraint_translator import (
     DefaultTranslation,
     fk_on_delete_clause,
@@ -1369,14 +1369,27 @@ def _ambiguous_reference(table: str, fk: AgentForeignKey, schemas: list[str]) ->
             "reason": reason, "feature": "ambiguous_reference"}  # fmt: skip
 
 
-def _colliding_table(label: str) -> dict:
-    """A table whose key another table of the design has (#2479 review)."""
+def _colliding_table(label: str, qualified: bool = True) -> dict:
+    """A table whose key another table of the design has (#2479 review): in a design of one
+    schema, its bare name folded (#2478, ``Orders`` and ``orders``)."""
+    what = "its schema and name match" if qualified else "its name matches"
     reason = (
-        "its schema and name match another table of the design once case and quote marks "
+        f"{what} another table of the design once case and quote marks "
         "are ignored, so neither is designed; rename one, or design them by hand"
     )
     return {"table": label, "kind": "table", "name": label, "reason": reason,
             "feature": "colliding_table_name"}  # fmt: skip
+
+
+def _system_table(table: AgentTable) -> dict:
+    """A table of a system schema (#2478): the database creates and owns it."""
+    label = f"{table.schema_name}.{table.table_name}"
+    reason = (
+        f"it is in the system schema {table.schema_name}, which the database creates and "
+        "owns, so the design does not create it"
+    )
+    return {"table": label, "kind": "table", "name": label, "reason": reason,
+            "feature": "system_schema"}  # fmt: skip
 
 
 def render_foreign_key(
@@ -1550,7 +1563,7 @@ def _duplicate_index(table: str, name: str, kept: str) -> dict:
 
 
 def quotable_tables(
-    tables: list[AgentTable], dialect: Dialect, qualified: bool = False
+    tables: list[AgentTable], dialect: Dialect, source_engine: str | None, qualified: bool = False
 ) -> tuple[list[AgentTable], list[dict]]:
     """``tables`` with every object whose name cannot be quoted into SQL taken out (#2381
     review 2, ``sql_identifiers``), and each one taken out as a ``DdlResult.left_out``
@@ -1564,18 +1577,31 @@ def quotable_tables(
     ``AuroraDesignBase`` applies it once, so the draft, the merge, a saved design's check
     and step 1 all read the same quotable tables. With ``qualified`` (#2455) each record
     names the table ``design_table_name`` writes, and a table whose schema name cannot be
-    quoted is left out too; so is every table whose key (``table_keys.table_key``, case
-    and quote marks folded) another table has, and a foreign key whose bare referenced
-    table two other schemas have and its own does not (#2479 review)."""
+    quoted is left out too; so is a foreign key whose bare referenced table two other
+    schemas have and its own does not (#2479 review). Every table whose schema and
+    name (``table_keys.table_key``, case and quote marks folded) another table has is left
+    out, in a design of one schema too (#2478, ``Orders`` and ``orders``); two schemas'
+    tables whose names differ only by case are both kept, also in step 1's base, which
+    keys tables by their bare names. So is every table of a system
+    schema of ``source_engine`` (``table_keys.is_system_schema``, #2478: ``sys`` is one on
+    MySQL, a user schema on PostgreSQL)."""
     out: list[AgentTable] = []
     left_out: list[dict] = []
-    shared = colliding_keys((t.table_name, t.schema_name) for t in tables) if qualified else set()
-    kept_tables = [t for t in tables if table_key(t.table_name, t.schema_name) not in shared]
+
+    def key(t: AgentTable) -> str:
+        return table_key(t.table_name, t.schema_name)
+
+    designable = [t for t in tables if not is_system_schema(t.schema_name, source_engine)]
+    shared = colliding_keys((t.table_name, t.schema_name) for t in designable)
+    kept_tables = [t for t in designable if key(t) not in shared]
     schemas_of = _schemas_of(kept_tables) if qualified else {}
     for source in tables:
         label = design_table_name(source, qualified)
-        if qualified and table_key(source.table_name, source.schema_name) in shared:
-            left_out.append(_colliding_table(label))
+        if is_system_schema(source.schema_name, source_engine):
+            left_out.append(_system_table(source))
+            continue
+        if key(source) in shared:
+            left_out.append(_colliding_table(label, qualified))
             continue
         if has_unprintable(label):
             left_out.append(_unsafe(label, "table", label))

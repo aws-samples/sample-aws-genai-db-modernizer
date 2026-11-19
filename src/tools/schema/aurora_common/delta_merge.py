@@ -127,8 +127,12 @@ class AuroraDesignBase:
 
     def __post_init__(self) -> None:
         if self.schema_qualified is None:
-            self.schema_qualified = spans_schemas(t.schema_name for t in self.tables)
-        self.tables, left_out = quotable_tables(self.tables, self.dialect, self.qualified)
+            self.schema_qualified = spans_schemas(
+                (t.schema_name for t in self.tables), self.source_engine
+            )
+        self.tables, left_out = quotable_tables(
+            self.tables, self.dialect, self.source_engine, self.qualified
+        )
         self.left_out = [*self.left_out, *left_out]
 
     @property
@@ -149,7 +153,9 @@ class AuroraDesignBase:
 
     def table_keys(self) -> DesignTableKeys:
         return DesignTableKeys(
-            ((t.table_name, self.schema_of(t)) for t in self.tables), self.source_database
+            ((t.table_name, self.schema_of(t)) for t in self.tables),
+            self.source_database,
+            source_engine=self.source_engine,
         )
 
     @property
@@ -168,7 +174,9 @@ class AuroraDesignBase:
         raw_collector: dict | None = None,
     ) -> AuroraDesignBase:
         """``agent_collector`` is the projected input; ``raw_collector`` supplies ``data_type``."""
-        qualified = spans_schemas(t.schema_name for t in agent_collector.tables)
+        qualified = spans_schemas(
+            (t.schema_name for t in agent_collector.tables), agent_collector.source_database_engine
+        )
         return cls(
             engine=engine,
             job_id=agent_collector.job_id,

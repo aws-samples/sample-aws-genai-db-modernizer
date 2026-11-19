@@ -67,8 +67,8 @@ rule                       severity  raised when
                            LOW       every noted object is a trigger or routine on wave 1's
                                      engine for a homogeneous source: it carries over with
                                      the schema and is tested on the target (#1642)
-                                     (a ``duplicate_index_name`` note is no source logic and
-                                     raises no risk, #2402)
+                                     (a ``duplicate_index_name`` or ``system_schema`` note is
+                                     no source logic and raises no risk, #2402, #2478)
 ``design.hot_partition``   HIGH      a partition key value's estimated load is above its
                                      throughput limit at the collected traffic (#1989,
                                      ``partition_load``: every request on one key value, or the
@@ -879,7 +879,8 @@ def _cache_risks(
 _CARRIED_FEATURES = frozenset({"trigger", "function", "procedure", "stored procedure", "routine"})
 # Notes about no source logic, so no application code (#2402): an index left out because an
 # earlier index of its table has its name. The design's note and step 1's DDL file name it.
-_NO_LOGIC_FEATURES = frozenset({"duplicate_index_name"})
+# A table of a system schema (#2478) is the database's own, not the application's.
+_NO_LOGIC_FEATURES = frozenset({"duplicate_index_name", "system_schema"})
 
 
 def _homogeneous_engines(ctx: _Context) -> set[str]:

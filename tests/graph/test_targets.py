@@ -283,6 +283,122 @@ def test_an_aurora_pattern_on_an_undesigned_table_is_not_guessed(tmp_path, sampl
     store.close()
 
 
+TWO_SCHEMAS = {
+    "source_database": "shop",
+    "table_definitions": [
+        {"table_name": "orders", "schema_name": "sales"},
+        {"table_name": "orders", "schema_name": "archive"},
+        {"table_name": "customers", "schema_name": "sales"},
+    ],
+    "access_patterns": [
+        {"pattern_id": "P1", "source_tables": ["sales.orders"], "source_query_ids": ["q1"]},
+        {"pattern_id": "P2", "source_tables": ["shop.archive.orders"], "source_query_ids": ["q2"]},
+        {"pattern_id": "P3", "source_tables": ["orders"], "source_query_ids": ["q3"]},
+        {"pattern_id": "P4", "source_tables": ["customers"], "source_query_ids": ["q4"]},
+        {"pattern_id": "P5", "source_tables": ["crm.customers"], "source_query_ids": ["q5"]},
+    ],
+}
+
+
+def _aurora_targets(tmp_path, collector, design, qids):
+    v1 = {**V1, "query_assignments": [_qa(q, "aurora_postgresql") for q in qids]}
+    store = _build(
+        tmp_path,
+        {
+            "collector/output.json": collector,
+            "assignment/v1/assignment.json": v1,
+            "schema-aurora_postgresql/v1/schema_output.json": design,
+        },
+    )
+    rows = {r["q"]: (r["kind"], r["name"], r["id"]) for r in _targets(store)}
+    store.close()
+    return rows
+
+
+def test_two_schemas_tables_of_one_name_are_two_aurora_targets(tmp_path, sample_collector_output):
+    """#2478: a design of several schemas keys its tables ``schema.table`` (#2455), so each
+    schema's ``orders`` is its own target object. A bare name two schemas share, and a
+    schema the design lacks, target no table; a bare name one schema has finds it."""
+    collector = json.loads(json.dumps(sample_collector_output))
+    patterns = collector["queries"]["query_patterns"]
+    patterns += [{**patterns[0], "query_id": q} for q in ("q4", "q5")]
+    rows = _aurora_targets(tmp_path, collector, TWO_SCHEMAS, ["q1", "q2", "q3", "q4", "q5"])
+    assert rows == {
+        "q1": ("table", "sales.orders", "aurora_postgresql:table:sales.orders@v1"),
+        "q2": ("table", "archive.orders", "aurora_postgresql:table:archive.orders@v1"),
+        "q3": ("not_in_design", "no target in the design", "aurora_postgresql:not_in_design"),
+        "q4": ("table", "sales.customers", "aurora_postgresql:table:sales.customers@v1"),
+        "q5": ("not_in_design", "no target in the design", "aurora_postgresql:not_in_design"),
+    }
+
+
+@pytest.mark.passes_on_main
+def test_a_design_saved_before_2455_still_targets_its_bare_table(tmp_path, sample_collector_output):
+    """A design saved before #2455 lists two schemas' ``orders`` with no schema, both
+    named ``orders``: it still loads, and a query on either targets the one bare table."""
+    legacy = json.loads(
+        (
+            Path(__file__).parents[1] / "fixtures/aurora_postgresql_two_schemas_pre_2455.json"
+        ).read_text()
+    )
+    legacy = {
+        **legacy,
+        "access_patterns": [
+            {"pattern_id": "P1", "source_tables": ["sales.orders"], "source_query_ids": ["q1"]}
+        ],
+    }
+    rows = _aurora_targets(tmp_path, sample_collector_output, legacy, ["q1"])
+    assert rows == {"q1": ("table", "orders", "aurora_postgresql:table:orders@v1")}
+
+
+def test_a_query_on_a_left_out_system_table_targets_no_user_table(
+    tmp_path, sample_collector_output
+):
+    """#2478 review: ``public`` plus ``pg_catalog`` is a design of one schema, so ``audit``
+    is keyed bare. A pattern on ``pg_catalog.audit``, which the design left out with a
+    ``system_schema`` note, targets no table, never the user table ``audit``."""
+    design = {
+        "source_database": "shop",
+        "table_definitions": [{"table_name": "audit"}, {"table_name": "users"}],
+        "app_layer_notes": [
+            {"feature": "system_schema", "source_object": "pg_catalog.audit",
+             "recommendation": "Table not created: it is in the system schema pg_catalog."}
+        ],  # fmt: skip
+        "access_patterns": [
+            {"pattern_id": "P1", "source_tables": ["public.audit"], "source_query_ids": ["q1"]},
+            {"pattern_id": "P2", "source_tables": ["pg_catalog.audit"], "source_query_ids": ["q2"]},
+        ],
+    }
+    rows = _aurora_targets(tmp_path, sample_collector_output, design, ["q1", "q2"])
+    assert rows == {
+        "q1": ("table", "audit", "aurora_postgresql:table:audit@v1"),
+        "q2": ("not_in_design", "no target in the design", "aurora_postgresql:not_in_design"),
+    }
+
+
+def test_a_design_saved_before_2478_with_case_only_names_targets_neither(
+    tmp_path, sample_collector_output
+):
+    """A design saved before #2478 created ``Orders`` and ``orders`` in one schema. Their
+    keys fold to one (``table_keys.colliding_keys``), so a pattern on either name targets
+    no table and reads "no target in the design", never a guess at one of the two."""
+    legacy = json.loads(
+        (
+            Path(__file__).parents[1] / "fixtures/aurora_postgresql_case_only_names_pre_2478.json"
+        ).read_text()
+    )
+    legacy = {
+        **legacy,
+        "access_patterns": [
+            {"pattern_id": "P1", "source_tables": ["Orders"], "source_query_ids": ["q1"]},
+            {"pattern_id": "P2", "source_tables": ["public.orders"], "source_query_ids": ["q2"]},
+        ],
+    }
+    rows = _aurora_targets(tmp_path, sample_collector_output, legacy, ["q1", "q2"])
+    gap = ("not_in_design", "no target in the design", "aurora_postgresql:not_in_design")
+    assert rows == {"q1": gap, "q2": gap}
+
+
 def test_without_any_design_every_query_has_the_labelled_fallback(
     tmp_path, sample_collector_output
 ):

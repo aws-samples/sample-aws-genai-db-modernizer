@@ -47,28 +47,31 @@ def _index(name: str, columns: list[str]) -> AgentIndex:
     return AgentIndex(index_name=name, columns=columns, is_unique=False)
 
 
+@pytest.mark.passes_on_main
 @pytest.mark.parametrize("dialect", [MYSQL, POSTGRES], ids=["mysql", "postgres"])
 def test_a_second_index_of_one_name_is_left_out_and_the_first_kept(dialect) -> None:
     """Both engines: the merge keys a table's indexes by name, so an exact copy goes."""
     first, second = _index("ix", ["a", "b"]), _index("ix", ["a"])
-    [table], left_out = quotable_tables([_table("t", [first, second])], dialect)
+    [table], left_out = quotable_tables([_table("t", [first, second])], dialect, "mysql")
     assert table.indexes == [first]
     assert left_out == [{"table": "t", "kind": "index", "name": "ix", "reason": _reason("ix"),
                          "feature": "duplicate_index_name"}]  # fmt: skip
 
 
+@pytest.mark.passes_on_main
 def test_on_aurora_mysql_names_that_differ_only_in_case_are_one_name() -> None:
     first, second = _index("Ix_A", ["a"]), _index("ix_a", ["b"])
-    [table], left_out = quotable_tables([_table("t", [first, second])], MYSQL)
+    [table], left_out = quotable_tables([_table("t", [first, second])], MYSQL, "mysql")
     assert table.indexes == [first]
     assert [(o["name"], o["reason"]) for o in left_out] == [("ix_a", _reason("Ix_A"))]
 
 
+@pytest.mark.passes_on_main
 def test_on_aurora_postgresql_names_that_differ_only_in_case_are_two_indexes() -> None:
     """The draft quotes every name on Aurora PostgreSQL: "Ix_A" and "ix_a" are two
     relations, and both are created."""
     first, second = _index("Ix_A", ["a"]), _index("ix_a", ["b"])
-    [table], left_out = quotable_tables([_table("t", [first, second])], POSTGRES)
+    [table], left_out = quotable_tables([_table("t", [first, second])], POSTGRES, "postgresql")
     assert table.indexes == [first, second] and left_out == []
 
 
@@ -93,6 +96,7 @@ def test_the_merged_aurora_postgresql_design_keeps_both_case_variants() -> None:
     ]
 
 
+@pytest.mark.passes_on_main
 @pytest.mark.parametrize("dialect", [MYSQL, POSTGRES], ids=["mysql", "postgres"])
 def test_every_later_copy_is_left_out(dialect) -> None:
     indexes = [
@@ -101,7 +105,7 @@ def test_every_later_copy_is_left_out(dialect) -> None:
         _index("IX", ["b"]),
         _index("ix", ["a", "b"]),
     ]
-    [table], left_out = quotable_tables([_table("t", indexes)], dialect)
+    [table], left_out = quotable_tables([_table("t", indexes)], dialect, "mysql")
     if dialect is MYSQL:
         assert [i.index_name for i in table.indexes or []] == ["ix", "other"]
         assert [o["name"] for o in left_out] == ["IX", "ix"]
@@ -110,11 +114,12 @@ def test_every_later_copy_is_left_out(dialect) -> None:
         assert [o["name"] for o in left_out] == ["ix"]
 
 
+@pytest.mark.passes_on_main
 def test_distinct_names_and_one_name_on_two_tables_are_kept() -> None:
     """Only a name repeated within one table is left out."""
     one = _table("t1", [_index("ix", ["a"]), _index("ix2", ["b"])])
     two = _table("t2", [_index("ix", ["a"])])
-    tables, left_out = quotable_tables([one, two], MYSQL)
+    tables, left_out = quotable_tables([one, two], MYSQL, "mysql")
     assert tables == [one, two] and left_out == []
 
 
