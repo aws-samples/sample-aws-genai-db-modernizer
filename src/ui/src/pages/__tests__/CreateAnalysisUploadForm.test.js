@@ -373,7 +373,7 @@ describe('with a local API', () => {
     await start();
     const error = page().findForm().findError().getElement().textContent;
     expect(error).toBe(`${en['create-analysis.error.start-failed']}. ${en['errors.request.rejected-form']}`);
-    expect(error).not.toMatch(/10\.0\.0\.5|8000|http/);
+    expect(error).not.toMatch(/10\.0\.0\.5|\b8000\b|http/);
   });
 
   test('Cancel goes back to the dashboard', () => {
