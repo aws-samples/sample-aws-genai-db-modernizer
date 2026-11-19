@@ -10,8 +10,8 @@ const PAGES = [
   {
     name: 'AnalysisResults.js',
     file: '../pages/AnalysisResults.js',
-    canaryKey: 'analysis-results.breadcrumb.results',
-    canaryValue: 'Results',
+    canaryKey: 'analysis-results.actions.back-to-assessment',
+    canaryValue: 'Back to assessment',
   },
   {
     // #2446: the Data model tab's source tables and one access pattern's detail.
@@ -36,8 +36,15 @@ const PAGES = [
   {
     name: 'DeliverablesPanel.js',
     file: '../components/DeliverablesPanel.js',
-    canaryKey: 'analysis-results.deliverables.button.executive-summary',
-    canaryValue: 'Executive Summary',
+    canaryKey: 'analysis-results.deliverables.menu',
+    canaryValue: 'Download',
+  },
+  {
+    // #2314: the results page header that names the assessment.
+    name: 'ResultsPageHeader.js',
+    file: '../components/ResultsPageHeader.js',
+    canaryKey: 'analysis-results.header.title-unnamed',
+    canaryValue: 'Assessment results',
   },
   {
     // #269 round-1 review: extended to also cover the Assignment review page,

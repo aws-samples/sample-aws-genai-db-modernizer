@@ -27,7 +27,7 @@ import pytest
 from playwright.sync_api import Browser, Locator, Page, expect
 
 from src.report import escaping
-from src.report.deliverables import DELIVERABLES_DIR, FOLDER_FILENAMES
+from src.report.deliverables import DELIVERABLES_DIR, FOLDER_ENTRIES
 from src.report.risks import shared_mitigation_refs
 from src.shared.migration_risk_rules import backfill_report_risks
 from tests.branding import hits as product_name_hits
@@ -1735,40 +1735,193 @@ def test_results_page_states_each_tables_owner_cdc_replicas_and_cache(
         assert ev == {"console": [], "pageerror": [], "failed": []}, (r.job_id, ev)
 
 
+def _download_menu(page: Page) -> Locator:
+    """The results page header's one Download menu (#2314), opened."""
+    header = page.locator("#deliverables-section")
+    trigger = header.get_by_role("button", name="Download", exact=True)
+    expect(trigger).to_be_enabled(timeout=READY_MS)
+    trigger.click()
+    menu = header.get_by_role("menu")
+    expect(menu).to_be_visible(timeout=READY_MS)
+    return header
+
+
 def test_results_page_downloads_the_deliverables_folder(
     page: Page, ui: str, all_runs: list[PipelineResult]
 ) -> None:
-    """#957, #1028: the results page opens with three deliverable buttons,
-    Executive Summary, Engineering Report and Assessment Detail, each the
-    download of one file of the job's deliverables/ folder, as it is on disk."""
-    buttons = {
-        "executive-report.pdf": "Executive Summary",
-        "engineering-report.md": "Engineering Report",
-        "assessment-data.json": "Assessment Detail",
-    }
-    assert set(buttons) <= set(FOLDER_FILENAMES)
+    """#957, #1028, #2314: the results page header has one Download menu. It lists every
+    deliverable the job's deliverables/ folder holds, in FOLDER_ENTRIES' order, by the
+    entry's title (which names the file type, the detailed engineering report included),
+    and each item downloads its file as it is on disk. The folder index has no item."""
     for r in all_runs:
         folder = r.job_dir() / DELIVERABLES_DIR
-        expected = [name for name in buttons if (folder / name).is_file()]
-        assert expected == list(buttons), (r.db, expected)
+        entries = [e for e in FOLDER_ENTRIES if (folder / e.filename).is_file()]
+        assert [e.filename for e in entries] == [e.filename for e in FOLDER_ENTRIES], r.db
         ev = _watch(page)
         page.goto(f"{ui}/analysis/results/{r.job_id}")
-        section = page.locator("#deliverables-section")
+        _loaded(page, r)
+        # The old three buttons are gone; the menu is the one download control.
+        for old in ("Executive Summary", "Engineering Report", "Assessment Detail"):
+            assert page.get_by_role("link", name=old, exact=True).count() == 0, (r.db, old)
+        section = _download_menu(page)
         rows = section.locator("[data-deliverable]")
-        rows.first.wait_for(timeout=READY_MS)
-        assert [x.get_attribute("data-deliverable") for x in rows.all()] == expected, r.db
-        assert [x.inner_text().strip() for x in rows.all()] == list(buttons.values()), r.db
-        for name in expected:
+        assert [x.get_attribute("data-deliverable") for x in rows.all()] == [
+            e.filename for e in entries
+        ], r.db
+        assert "Detailed engineering report (Markdown)" in [e.title for e in entries]
+        for row, entry in zip(rows.all(), entries, strict=True):
+            text = row.inner_text()
+            assert entry.title in text and entry.filename in text, (r.db, text)
+        assert "index.md" not in section.inner_text(), r.db
+        for i, entry in enumerate(entries):
+            if i:
+                _download_menu(page)
             with page.expect_download() as info:
-                section.get_by_role("link", name=f"Download {name}").click()
+                section.get_by_role(
+                    "menuitem", name=re.compile(rf"^Download {re.escape(entry.filename)},")
+                ).click()
             download = info.value
-            assert download.suggested_filename == name, (r.db, name)
-            assert Path(download.path()).read_bytes() == (folder / name).read_bytes(), (r.db, name)
+            assert download.suggested_filename == entry.filename, (r.db, entry.filename)
+            assert Path(download.path()).read_bytes() == (folder / entry.filename).read_bytes(), (
+                r.db,
+                entry.filename,
+            )
         # A download ends its navigation, which the browser reports as a failed
         # request for exactly that file; anything else failing is a real error.
-        downloads = {f"{r.job_id}/deliverables/{n}" for n in expected}
+        downloads = {f"{r.job_id}/deliverables/{e.filename}" for e in entries}
         ev["failed"] = [u for u in ev["failed"] if u.split("/assessments/", 1)[-1] not in downloads]
         assert ev == {"console": [], "pageerror": [], "failed": []}, (r.db, ev)
+
+
+def _source_label(r: PipelineResult) -> str | None:
+    from src.shared.engine_names import source_engine_label
+
+    collector = json.loads((r.job_dir() / "collector" / "output.json").read_text())
+    return source_engine_label(collector["metadata"]["source_database"]["engine"])
+
+
+def _report_date(r: PipelineResult) -> str:
+    """The report's timestamp date as the header prints it ("Nov 18, 2026")."""
+    import datetime as dt
+
+    day = dt.date.fromisoformat(str(json.loads(r.report_json().read_text())["timestamp"])[:10])
+    return f"{day.strftime('%b')} {day.day}, {day.year}"
+
+
+def test_results_page_header_names_the_assessment(
+    loaded_results: OpenResults, all_runs: list[PipelineResult]
+) -> None:
+    """#2314: the h1 names the assessment ("wordpress assessment"); its description states
+    the source engine, the assessment id with a copy button and the report's date (the
+    executive report cover's); the breadcrumb reads Assessments > the database; the top
+    navigation's Help link opens the help site's results page in a new tab."""
+    for r in all_runs:
+        page, ev = loaded_results(r)
+        h1 = page.get_by_role("heading", level=1)
+        expect(h1).to_have_count(1)
+        expect(h1).to_have_text(f"{r.db} assessment")
+        header = page.locator("#results-header")
+        text = " ".join(header.inner_text().split())
+        source = _source_label(r)
+        assert source, r.db
+        assert f"{source} source" in text, (r.db, text)
+        assert f"Assessment {r.job_id}" in text, (r.db, text)
+        assert _report_date(r) in text, (r.db, text)
+        # The same day the executive report's cover prints.
+        from tests.e2e.deliverable_figures import pdf_page_texts
+
+        iso = str(json.loads(r.report_json().read_text())["timestamp"])[:10]
+        cover = pdf_page_texts(str(r.deliverable("executive-report.pdf")))[0]
+        assert f"Generated {iso}" in " ".join(cover.split()), (r.db, iso)
+        assert (
+            header.get_by_role(
+                "button", name=re.compile(r"^Copy assessment id .*" + re.escape(r.job_id))
+            ).count()
+            == 1
+        )
+        crumbs = page.get_by_role("navigation", name=re.compile("Breadcrumb", re.I))
+        expect(crumbs.get_by_role("link", name="Assessments")).to_have_attribute(
+            "href", "/dashboard"
+        )
+        assert crumbs.inner_text().split("\n")[-1].strip() == r.db, crumbs.inner_text()
+        assert "Home" not in crumbs.inner_text() and "Results" not in crumbs.inner_text()
+        help_link = page.locator("header").get_by_role("link", name=re.compile("^Help")).first
+        expect(help_link).to_have_attribute(
+            "href",
+            "https://aws-samples.github.io/sample-aws-genai-db-modernizer/understand-the-results/#the-results-page",
+        )
+        expect(help_link).to_have_attribute("target", "_blank")
+        assert ev == {"console": [], "pageerror": [], "failed": []}, (r.db, ev)
+
+
+def test_an_old_job_without_source_date_or_detailed_report_still_names_itself(
+    page: Page, ui: str, all_runs: list[PipelineResult]
+) -> None:
+    """#2314: a job saved before the source engine was on record, whose report has no
+    timestamp and whose folder has no detailed report, still names itself in the h1 and
+    offers what its folder holds; the parts it has no record of are left out."""
+    r = all_runs[0]
+    job = re.escape(r.job_id)
+
+    def no_source(route: playwright.sync_api.Route) -> None:
+        response = route.fetch()
+        body = response.json()
+        body["source_database_type"] = None
+        body["source_database_label"] = None
+        route.fulfill(response=response, json=body)
+
+    def no_timestamp(route: playwright.sync_api.Route) -> None:
+        response = route.fetch()
+        body = response.json()
+        body["synthesis"].pop("timestamp", None)
+        route.fulfill(response=response, json=body)
+
+    def no_detailed(route: playwright.sync_api.Route) -> None:
+        response = route.fetch()
+        body = response.json()
+        body["files"] = [
+            f for f in body["files"] if f["filename"] != "engineering-report-detailed.md"
+        ]
+        route.fulfill(response=response, json=body)
+
+    page.route(re.compile(rf"/api/v1/assessments/{job}$"), no_source)
+    page.route(re.compile(rf"/api/v1/assessments/{job}/results$"), no_timestamp)
+    page.route(re.compile(rf"/api/v1/assessments/{job}/deliverables$"), no_detailed)
+    ev = _watch(page)
+    page.goto(f"{ui}/analysis/results/{r.job_id}")
+    _loaded(page, r)
+    h1 = page.get_by_role("heading", level=1)
+    expect(h1).to_have_text(f"{r.db} assessment")
+    header = page.locator("#results-header")
+    text = " ".join(header.inner_text().split())
+    assert f"Assessment {r.job_id}" in text, text
+    assert " source" not in text and _report_date(r) not in text, text
+    rows = _download_menu(page).locator("[data-deliverable]")
+    assert [x.get_attribute("data-deliverable") for x in rows.all()] == [
+        "executive-report.pdf",
+        "engineering-report.md",
+        "assessment-data.json",
+    ]
+    assert ev == {"console": [], "pageerror": [], "failed": []}, ev
+
+
+@pytest.mark.parametrize("width", [1440, 390])
+def test_results_page_header_and_download_menu_have_no_accessibility_violations(
+    page: Page, ui: str, all_runs: list[PipelineResult], width: int
+) -> None:
+    """#2314: with the Download menu open, axe finds nothing blocking on the results page
+    at a desktop and a phone width, and the header never makes the page scroll sideways."""
+    page.set_viewport_size({"width": width, "height": 900})
+    page.emulate_media(reduced_motion="reduce")
+    r = all_runs[0]
+    page.goto(f"{ui}/analysis/results/{r.job_id}")
+    _loaded(page, r)
+    assert _page_fits_viewport(page), (width, "the header scrolls the page sideways")
+    _download_menu(page)
+    page.evaluate("Promise.all(document.getAnimations().map((a) => a.finished))")
+    blocking, where, _ = _axe_blocking(page)
+    assert blocking == [], (width, blocking, where)
+    assert _page_fits_viewport(page), (width, "the open menu scrolls the page sideways")
 
 
 # #1028, #2313: the deliverables sit above the tabs; each tab lists its sections in
@@ -1840,8 +1993,8 @@ def test_results_page_states_what_each_engine_was_sized_for(
 def test_results_page_shows_the_headline_first(
     loaded_results: OpenResults, all_runs: list[PipelineResult]
 ) -> None:
-    """#1028, #2313: the results page opens on its Summary tab, under the deliverable
-    buttons. Each tab holds its own sections, in the order of the decision (Summary: the
+    """#1028, #2313: the results page opens on its Summary tab, under the header and its
+    Download menu (#2314). Each tab holds its own sections, in the order of the decision (Summary: the
     executive summary, the cost breakdown, the query flow, the assumptions; Plan: the
     roadmap, then the fallback-engine warning and close-call banners when the report has
     them, ...; Queries: the open query table, then the explorer; Data model: the
@@ -1857,7 +2010,7 @@ def test_results_page_shows_the_headline_first(
     for r in all_runs:
         page, ev = loaded_results(r)
         _show_tab(page, "summary")
-        # The deliverables first, above the tabs.
+        # The Download menu first, above the tabs.
         assert page.evaluate(
             "() => !!(document.getElementById('deliverables-section').compareDocumentPosition("
             "document.querySelector('[role=tablist][aria-label=\"Assessment results\"]'))"

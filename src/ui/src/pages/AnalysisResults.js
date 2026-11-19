@@ -59,6 +59,8 @@ import { schemaDesignsRefused } from "../utils/schemaDesignsLoad";
 import ExecutiveSummary from "../components/ExecutiveSummary";
 import TableOwnersCallout from "../components/TableOwnersCallout";
 import DeliverablesPanel from "../components/DeliverablesPanel";
+import ResultsPageHeader, { resultsBreadcrumbs } from "../components/ResultsPageHeader";
+import { RESULTS_HELP_URL } from "../utils/helpSite";
 import AssumptionsPanel from "../components/AssumptionsPanel";
 import CostBreakdown from "../components/CostBreakdown";
 import TradeOffDecisions from "../components/TradeOffDecisions";
@@ -115,6 +117,9 @@ const AnalysisResultsPage = memo(() => {
   // The experimental graph explorer (#308): its entry shows only when the server flag is on.
   const graphExplorer = useGraphExplorerFlag();
   const [resultsData, setResultsData] = useState(null);
+  // #2314: the assessment's own record (GET /assessments/{id}), for the header's
+  // source engine label; the header leaves the source out when it is not on record.
+  const [assessment, setAssessment] = useState(null);
   const [schemaDesigns, setSchemaDesigns] = useState([]);
   // #2308: the design files could not be read, so an empty design is "not available", not "none".
   const [designsLoadFailed, setDesignsLoadFailed] = useState(false);
@@ -180,7 +185,10 @@ const AnalysisResultsPage = memo(() => {
       const results = await apiManager.execute([
         { id: 'results', path: `assessments/${jobId}/results`, method: 'GET', params: {} },
         { id: 'schemas', path: `assessments/${jobId}/schema-designs`, method: 'GET', params: {} },
+        { id: 'assessment', path: `assessments/${jobId}`, method: 'GET', params: {} },
       ]);
+
+      if (results['assessment']?.success) setAssessment(results['assessment']);
 
       if (results['results']?.success) {
         setResultsData(results['results']);
@@ -399,12 +407,12 @@ const AnalysisResultsPage = memo(() => {
     return addCacheOverlayNode({ nodes, links }, cacheOverlay);
   }, [afterDist, cacheOverlay]);
 
-  const breadcrumbItems = useMemo(() => [
-    { href: "/", text: t('analysis-results.breadcrumb.home') },
-    { href: "/dashboard", text: t('analysis-results.breadcrumb.dashboard') },
-    { href: `/analysis/monitor/summary/${jobId}`, text: t('analysis-results.breadcrumb.assessment') },
-    { href: `/analysis/results/${jobId}`, text: t('analysis-results.breadcrumb.results') }
-  ], [jobId, t]);
+  // #2314: the database the report names (the job's record for a report without one).
+  const databaseName = resultsData?.synthesis?.database_name || assessment?.database_name || '';
+  const breadcrumbItems = useMemo(
+    () => resultsBreadcrumbs(t, databaseName, jobId),
+    [databaseName, jobId, t]
+  );
 
   // Names for the layout's navigation landmark and its toggle buttons, so
   // assistive tech can tell them apart (axe: button-name, landmark-unique).
@@ -691,13 +699,13 @@ const AnalysisResultsPage = memo(() => {
   if (loading && !resultsData) {
     return (
       <>
-        <AppHeader />
+        <AppHeader helpHref={RESULTS_HELP_URL} />
         <AppLayoutToolbar
           disableContentPaddings={false}
           navigationOpen={navigationOpen}
           onNavigationChange={({ detail }) => setNavigationOpen(detail.open)}
           ariaLabels={layoutAriaLabels}
-          breadcrumbs={<BreadcrumbGroup items={breadcrumbItems} />}
+          breadcrumbs={<BreadcrumbGroup items={breadcrumbItems} ariaLabel={t('analysis-results.breadcrumb.aria-label')} />}
           navigation={
             <SideNavigation
               activeHref={`/analysis/results/${jobId}`}
@@ -1372,13 +1380,13 @@ const AnalysisResultsPage = memo(() => {
 
   return (
     <>
-      <AppHeader />
+      <AppHeader helpHref={RESULTS_HELP_URL} />
       <AppLayoutToolbar
         disableContentPaddings={false}
         navigationOpen={navigationOpen}
         onNavigationChange={({ detail }) => setNavigationOpen(detail.open)}
         ariaLabels={layoutAriaLabels}
-        breadcrumbs={<BreadcrumbGroup items={breadcrumbItems} />}
+        breadcrumbs={<BreadcrumbGroup items={breadcrumbItems} ariaLabel={t('analysis-results.breadcrumb.aria-label')} />}
         navigation={
           <SideNavigation
             activeHref={`/analysis/results/${jobId}`}
@@ -1393,27 +1401,29 @@ const AnalysisResultsPage = memo(() => {
                 <Flashbar items={flashbarItems.map(item => ({ ...item, onDismiss: () => handleFlashbarDismiss(item.id) }))} />
               )}
 
-              <Header
-                variant="h1"
+              {/* #2314: the h1 names the assessment; the one Download menu (#957, #1028)
+                  is in its actions, above the tabs. */}
+              <ResultsPageHeader
+                databaseName={databaseName}
+                sourceLabel={assessment?.source_database_label || assessment?.source_database_type}
+                jobId={jobId}
+                timestamp={synthesis?.timestamp}
+                t={t}
                 actions={
-                  <SpaceBetween direction="horizontal" size="xs">
+                  <SpaceBetween direction="horizontal" size="xs" alignItems="center">
                     <Button iconName="refresh" variant="normal" onClick={fetchData} loading={loading} ariaLabel={t('common.actions.refresh')} />
                     {graphExplorer.enabled && <ExploreGraphButton jobId={jobId} enabled={graphExplorer.enabled} />}
                     <Button href={`/analysis/monitor/summary/${jobId}`}>{t('analysis-results.actions.back-to-assessment')}</Button>
+                    <DeliverablesPanel
+                      files={deliverables.files}
+                      loading={deliverables.loading}
+                      error={deliverables.error}
+                      onRetry={() => setDeliverablesRound(n => n + 1)}
+                      baseUrl={ApiConfigurations.baseUrl}
+                      t={t}
+                    />
                   </SpaceBetween>
                 }
-              >
-                {t('analysis-results.header.title')}
-              </Header>
-
-              {/* Deliverables (#957, #1028): three download buttons, first. */}
-              <DeliverablesPanel
-                files={deliverables.files}
-                loading={deliverables.loading}
-                error={deliverables.error}
-                onRetry={() => setDeliverablesRound(n => n + 1)}
-                baseUrl={ApiConfigurations.baseUrl}
-                t={t}
               />
 
               <div ref={setTabsRoot}>

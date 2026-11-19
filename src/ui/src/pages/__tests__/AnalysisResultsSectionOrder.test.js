@@ -5,7 +5,7 @@
  * #1028: the results page shows the headline first and the detail on demand.
  * #2313: the page is split into tabs, one per reader question (Summary, Plan,
  * Queries, Data model, Risks and decisions), and each tab orders its sections by
- * the decision. The deliverable buttons stay above the tabs. Which tab holds which
+ * the decision. The Download menu (#2314) stays above the tabs. Which tab holds which
  * section, in which order, is RESULTS_TABS (src/ui/src/utils/resultsTabs.js, pinned
  * by resultsTabs.test.js); this test checks the page renders each section in its
  * tab's content, in that order, once.
@@ -114,7 +114,7 @@ test('each component a tab names renders the section id the tab and its anchor u
   });
 });
 
-test('the deliverable buttons sit above the tabs, on every tab', () => {
+test('the Download menu sits above the tabs, on every tab', () => {
   const elements = openingElements(AST.program, []);
   const panel = elements.filter(el => el.name === 'DeliverablesPanel');
   expect(panel).toHaveLength(1);
