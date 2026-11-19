@@ -787,46 +787,33 @@ def test_a_link_opens_the_linked_table_design_tab_when_it_is_not_the_first(
     page: Page, ui: str, all_runs: list[PipelineResult]
 ) -> None:
     """#2300: Cloudscape tabs decide on their first render whether they are controlled,
-    so the linked engine has to be known then. A second Aurora design is added to the
-    served schema designs (no e2e job has two), and the link to it opens its tab."""
+    so the linked engine has to be known then. When the job designed one Aurora engine, the
+    other relational engine's design is added to the served schema designs (no e2e job has
+    two), and the link to the engine that sorts second opens its tab. The engines are the
+    job's own (#2488): PostgreSQL sorts after MySQL, so the link names PostgreSQL. The
+    served Aurora designs list no access patterns, as the deterministic design has none."""
     checked = 0
     for r in all_runs:
+        if len(_designed_aurora_engines(r)) != 1:
+            continue  # no Aurora design, or two already: nothing to add a second tab to
         _goto_results(page, ui, r, "data-model")
-        design = page.locator("#table-design-section")
-        expect(design).to_be_visible(timeout=READY_MS)
-        tabs = design.locator("[role=tab]").all_inner_texts()
-        if not (
-            any("Aurora MySQL" in t for t in tabs)
-            and not any("Aurora PostgreSQL" in t for t in tabs)
-        ):
-            continue  # PostgreSQL sorts after MySQL, so it is the second tab only here
-
-        def add_second_design(route: playwright.sync_api.Route) -> None:
-            response = route.fetch()
-            body = response.json()
-            body["schema_designs"].append(
-                {
-                    "target_type": "aurora_postgresql",
-                    "content": {
-                        "table_definitions": [{"table_name": "second_design", "columns": []}]
-                    },
-                }
-            )
-            route.fulfill(response=response, json=body)
-
-        page.route("**/schema-designs", add_second_design)
+        expect(page.locator("#table-design-section")).to_be_visible(timeout=READY_MS)
+        _serve_extra_aurora_design(page, _another_aurora_engine(r), drop_patterns=True)
         try:
             page.goto(f"{ui}/analysis/patterns/{r.job_id}?target=aurora_postgresql")
             selected = page.locator("#table-design-section [role=tab][aria-selected=true]")
             expect(selected).to_contain_text("Aurora PostgreSQL", timeout=READY_MS)
-            assert len(page.locator("#table-design-section [role=tab]").all_inner_texts()) == 2
+            tabs = page.locator("#table-design-section [role=tab]").all_inner_texts()
+            # A real design's own sections add tabs (validation errors, warnings): count
+            # the engine tabs only.
+            assert len([t for t in tabs if t.startswith("Aurora")]) == 2, tabs
         finally:
             page.unroute("**/schema-designs")
         checked += 1
-    # An external job's designed engines are its own, so it may have no single-MySQL design.
+    # An external job's designed engines are its own, so it may have no single Aurora design.
     assert checked or any(
         r.external for r in all_runs
-    ), "no job with a single Aurora MySQL design to add a second design to"
+    ), "no job with a single Aurora design to add a second design to"
 
 
 def _moved_query_trace(r: PipelineResult) -> dict | None:
@@ -2979,14 +2966,46 @@ def test_a_querys_access_patterns_open_in_its_panel_and_source_tables_on_data_mo
     assert checked or any(r.external for r in all_runs), "no job with a NoSQL design"
 
 
-def _aurora_design_tables(r: PipelineResult) -> list[str]:
-    """The table names of the job's Aurora design, as its schema_output.json lists them."""
+def _aurora_design_tables(r: PipelineResult, engine: str | None = None) -> list[str]:
+    """The table names of the job's Aurora design (of one engine when given), as its
+    schema_output.json lists them."""
     names: list[str] = []
     for path in real_designs(r.job_dir()):
-        if path.parent.parent.name.startswith("schema-aurora_"):
+        folder = path.parent.parent.name
+        if folder.startswith("schema-aurora_") and engine in (None, folder.removeprefix("schema-")):
             design = json.loads(path.read_text())
             names += [t["table_name"] for t in design.get("table_definitions") or []]
     return names
+
+
+def _another_aurora_engine(r: PipelineResult) -> str:
+    """An Aurora engine the job has no design for (the other relational engine)."""
+    designed = _designed_aurora_engines(r)
+    return "aurora_mysql" if "aurora_mysql" not in designed else "aurora_postgresql"
+
+
+def _serve_extra_aurora_design(page: Page, engine: str, drop_patterns: bool = False) -> None:
+    """Add one more Aurora design, for ``engine``, to the schema designs the page loads.
+    ``drop_patterns`` also removes the access patterns from the Aurora designs served
+    already: a link to an engine whose design lists them lands on its queries (a model run
+    designs them), and a link to one that lists none lands on its Table design tab."""
+
+    def add_design(route: playwright.sync_api.Route) -> None:
+        response = route.fetch()
+        body = response.json()
+        if drop_patterns:
+            for design in body["schema_designs"]:
+                if str(design.get("target_type", "")).startswith("aurora_"):
+                    design["content"].pop("access_patterns", None)
+        body["schema_designs"].append(
+            {
+                "target_type": engine,
+                "content": {"table_definitions": [{"table_name": "second_design", "columns": []}]},
+            }
+        )
+        route.fulfill(response=response, json=body)
+
+    page.route("**/schema-designs", add_design)
 
 
 def test_the_aurora_design_is_a_table_with_a_filter_and_a_detail_panel(
@@ -3060,35 +3079,29 @@ def test_the_aurora_table_panel_closes_when_the_design_tab_changes(
     page: Page, ui: str, all_runs: list[PipelineResult]
 ) -> None:
     """#2325: the panel shows one engine's table, so switching to another engine's design
-    tab closes it. A second Aurora design is added to the served schema designs."""
+    tab closes it. When the job designed one Aurora engine, the other engine's design is
+    added to the served schema designs; the tabs are the job's own (#2488), so the test
+    holds on a MySQL source (wordpress) and a PostgreSQL one (discourse, trailgear)."""
     checked = 0
     for r in _designed_runs(all_runs):
-        names = _aurora_design_tables(r)
+        engines = _designed_aurora_engines(r)
+        if not engines:
+            continue
+        first = engines[0]
+        names = _aurora_design_tables(r, first)
         if not names:
             continue
-
-        def add_second_design(route: playwright.sync_api.Route) -> None:
-            response = route.fetch()
-            body = response.json()
-            body["schema_designs"].append(
-                {
-                    "target_type": "aurora_postgresql",
-                    "content": {
-                        "table_definitions": [{"table_name": "second_design", "columns": []}]
-                    },
-                }
-            )
-            route.fulfill(response=response, json=body)
-
-        page.route("**/schema-designs", add_second_design)
+        second = engines[1] if len(engines) > 1 else _another_aurora_engine(r)
+        if len(engines) == 1:
+            _serve_extra_aurora_design(page, second)
         try:
             _goto_results(page, ui, r, "data-model")
             design = page.locator("#table-design-section")
-            design.get_by_role("tab", name=re.compile("Aurora MySQL")).click()
+            design.get_by_role("tab", name=re.compile(re.escape(ENGINE_LABELS[first]))).click()
             design.get_by_role("button", name=f"Open {names[0]} in the detail panel").click()
             panel = page.get_by_role("region", name=f"Table {names[0]}").first
             expect(panel).to_be_visible(timeout=READY_MS)
-            design.get_by_role("tab", name=re.compile("Aurora PostgreSQL")).click()
+            design.get_by_role("tab", name=re.compile(re.escape(ENGINE_LABELS[second]))).click()
             expect(panel).to_be_hidden(timeout=READY_MS)
         finally:
             page.unroute("**/schema-designs")
