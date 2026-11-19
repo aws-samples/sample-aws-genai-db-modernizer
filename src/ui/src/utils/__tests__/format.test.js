@@ -169,6 +169,29 @@ describe('formatReportDate (#2314)', () => {
     expect(formatReportDate('2026-01-01T00:00:00Z')).toBe('Jan 1, 2026');
   });
 
+  // A formatter that reads the timestamp as an instant (`new Date(ts)`) and prints it in
+  // UTC gets these wrong even when CI runs with TZ=UTC: the offset moves the instant onto
+  // the next or the previous UTC day. The cover prints the first ten characters.
+  it('keeps the stated day of a timestamp with an offset, whatever the reader time zone', () => {
+    expect(formatReportDate('2026-11-18T23:30:00-05:00')).toBe('Nov 18, 2026');
+    expect(formatReportDate('2026-11-19T00:30:00+09:00')).toBe('Nov 19, 2026');
+    expect(formatReportDate('2026-01-01T00:15:00+14:00')).toBe('Jan 1, 2026');
+  });
+
+  it('prints the same day as the first ten characters the executive report cover prints', () => {
+    const stamps = [
+      '2026-11-18T23:30:00-05:00',
+      '2026-11-19T00:30:00+09:00',
+      '2026-12-31T23:59:59-11:00',
+      '2026-11-18T15:10:47.174567Z',
+    ];
+    stamps.forEach((ts) => {
+      const [y, m, d] = ts.slice(0, 10).split('-').map(Number);
+      const month = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'][m - 1];
+      expect(formatReportDate(ts)).toBe(`${month} ${d}, ${y}`);
+    });
+  });
+
   it('prints nothing for a missing or unreadable timestamp, as the cover does', () => {
     expect(formatReportDate(undefined)).toBeNull();
     expect(formatReportDate(null)).toBeNull();
