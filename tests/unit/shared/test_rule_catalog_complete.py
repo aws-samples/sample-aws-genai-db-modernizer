@@ -299,6 +299,11 @@ ENGINE_OR_PATTERN_TABLES: dict[str, tuple[frozenset[str], str]] = {
         frozenset({"PATTERN_ENGINES"}),
         _PLUMBING + ": the engines whose design groups are built per query pattern (#1602)",
     ),
+    "src/agents/schema_design/single_pass_view.py": (
+        frozenset({"SINGLE_PASS_VIEW_ENGINES"}),
+        _PLUMBING + ": the engines whose external request is a design view (#2463); which "
+        "of them read routines comes from their output contract, not a list",
+    ),
     "src/agents/schema_design/scope.py": (
         frozenset({"_ENGINE_FIELDS", "_WARNING_FIELDS"}),
         _PLUMBING,

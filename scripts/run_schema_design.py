@@ -212,8 +212,18 @@ def run_external(store, job_id: str, db: str, engine: str, assignment_version: i
         # draft, so it gets a compact view, not the collector + full draft.
         llm_request = _aurora_delta_request(llm_request, engine)
     else:
+        from src.agents.schema_design.single_pass_view import (
+            SINGLE_PASS_VIEW_ENGINES,
+            single_pass_design_view,
+        )
+
         # Inject the output schema so the LLM knows exactly what to produce
-        llm_request["output_schema"] = _get_output_schema(engine)
+        output_schema = _get_output_schema(engine)
+        if engine in SINGLE_PASS_VIEW_ENGINES:
+            # #2463: only what the designer reads, as Aurora's design view does; the
+            # output contract says whether the design reads routines (migration notes).
+            llm_request = single_pass_design_view(llm_request, output_schema)
+        llm_request["output_schema"] = output_schema
 
     # The file says its content is data, not instructions (#1317).
     llm_request = with_untrusted_notice(llm_request)

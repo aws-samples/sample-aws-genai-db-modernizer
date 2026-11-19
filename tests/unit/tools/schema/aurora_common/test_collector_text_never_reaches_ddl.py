@@ -348,6 +348,12 @@ DDL_WRITERS = {
     # the routine's name and schemas (tests/unit/agents/routine_repair/
     # test_routine_repair_seam.py::test_a_candidate_that_breaks_a_rule_is_refused).
     "src/tools/routines/repair_text.py",
+    # The single-pass design view's parser input (#2463): a MySQL routine or trigger body
+    # wrapped in a placeholder CREATE (fixed names, no collector identifier) only so the
+    # routine parser can say which tables it names; the text is never written or run
+    # (tests/unit/agents/schema_design/test_single_pass_design_view.py::
+    # test_wordpress_routines_on_its_tables_are_kept_from_their_bodies).
+    "src/agents/schema_design/single_pass_view.py",
     # The local graph store's own Cypher schema (table names from a fixed list), not SQL.
     "src/graph/store.py",
     # Disposable source engines (#1943): the DDL and routine text it runs is the customer's
