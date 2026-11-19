@@ -182,6 +182,99 @@ def test_two_schemas_with_no_shared_name_keep_their_rule_fields():
         ("a.users", "valid", ["INT"]), ("b.orders", "valid", ["INT"])]  # fmt: skip
 
 
+def test_tables_whose_names_fold_to_one_block_both_rules():
+    """#2478: ``Users`` and ``users`` in one schema share the bare key the base folds to,
+    so the design base leaves both out; step 1 blocks both rules, never a valid rule with
+    no fields. The other table keeps its fields."""
+    tables = [_table("a", "Users", [_col("id", "int", 1)]),
+              _table("a", "users", [_col("id", "int", 1)]),
+              _table("a", "solo", [_col("id", "int", 1)])]  # fmt: skip
+    c = build_step1(_inputs(tables=tables))
+    assert c.status == "has_blocked_rules" and c.blocked_rule_count == 2
+    for table_id in ("a.Users", "a.users"):
+        rule = _rule(c, table_id)
+        assert rule.status == "blocked" and rule.fields == []
+        assert [f.code for f in rule.findings] == ["colliding_table_name"]
+        assert "once case and quote marks are ignored" in rule.findings[0].message
+        assert "in schema a" in rule.findings[0].message
+    solo = _rule(c, "a.solo")
+    assert solo.status == "valid" and [f.target_type for f in solo.fields] == ["INT"]
+
+
+@pytest.mark.passes_on_main
+def test_two_schemas_tables_whose_names_differ_only_by_case_keep_their_fields():
+    """#2478 maintainer decision: ``sales.Orders`` and ``archive.orders`` are both designed,
+    so step 1 keeps main's valid rules with their fields (the multi-schema step 1 is
+    #2494). The same name in two schemas is still ``ambiguous_target``."""
+    tables = [_table("sales", "Orders", [_col("id", "int", 1), _col("total", "int", 2)]),
+              _table("archive", "orders", [_col("id", "int", 1)])]  # fmt: skip
+    c = build_step1(_inputs(tables=tables))
+    assert c.blocked_rule_count == 0
+    orders = _rule(c, "sales.Orders")
+    assert orders.status == "valid" and orders.findings == []
+    assert [f.target_column for f in orders.fields] == ["id", "total"]
+    archived = _rule(c, "archive.orders")
+    assert archived.status == "valid" and archived.findings == []
+    assert [f.target_column for f in archived.fields] == ["id"]
+    same = [_table("sales", "orders", [_col("id", "int", 1)]),
+            _table("archive", "orders", [_col("id", "int", 1)])]  # fmt: skip
+    c = build_step1(_inputs(tables=same))
+    assert {r.source_table: [f.code for f in r.findings] for r in c.rules} == {
+        "sales.orders": ["ambiguous_target"], "archive.orders": ["ambiguous_target"]}  # fmt: skip
+
+
+@pytest.mark.parametrize("engine,system", [("postgresql", "pg_catalog"), ("mysql", "mysql")])
+def test_a_system_schemas_table_is_blocked_and_the_others_keep_their_fields(engine, system):
+    """#2478: the design base leaves a system schema's table out, so step 1 blocks its rule
+    with the reason; two user schemas' tables keep their fields."""
+    tables = [_table(system, "audit", [_col("id", "int", 1)]),
+              _table("a", "users", [_col("id", "int", 1)]),
+              _table("b", "orders", [_col("id", "int", 1)])]  # fmt: skip
+    c = build_step1(_inputs(engine=engine, tables=tables))
+    rule = _rule(c, f"{system}.audit")
+    assert rule.status == "blocked" and rule.fields == []
+    assert [f.code for f in rule.findings] == ["system_schema"]
+    assert f"system schema {system}" in rule.findings[0].message
+    for table_id in ("a.users", "b.orders"):
+        assert _rule(c, table_id).status == "valid" and _rule(c, table_id).fields
+
+
+@pytest.mark.parametrize("engine,system", [("postgresql", "pg_catalog"), ("mysql", "mysql")])
+def test_a_system_table_never_makes_a_user_tables_name_ambiguous(engine, system):
+    """#2478 review: ``pg_catalog.audit`` is left out of the design base, so it shares no
+    target with ``public.audit``. The user table keeps a valid rule with its fields and
+    moves; only the system table is blocked."""
+    tables = [_table("public", "audit", [_col("id", "int", 1), _col("msg", "text", 2)]),
+              _table(system, "audit", [_col("id", "int", 1)]),
+              _table("public", "users", [_col("id", "int", 1)])]  # fmt: skip
+    c = build_step1(_inputs(engine=engine, tables=tables))
+    audit = _rule(c, "public.audit")
+    assert audit.status == "valid" and audit.findings == []
+    assert [f.target_column for f in audit.fields] == ["id", "msg"]
+    assert [f.code for f in _rule(c, f"{system}.audit").findings] == ["system_schema"]
+    assert c.blocked_rule_count == 1
+
+
+@pytest.mark.passes_on_main
+@pytest.mark.parametrize("engine,schema", [("postgresql", "sys"), ("mysql", "pg_app")])
+def test_a_schema_only_another_engine_reserves_moves(engine, schema):
+    """#2478 review: ``sys`` is a user schema on PostgreSQL and ``pg_app`` a user database
+    on MySQL, so their tables get valid rules with their fields. Two such schemas' tables
+    of one name meet the same ``ambiguous_target`` as any two schemas' (step 1 targets one
+    schema), never ``system_schema``."""
+    tables = [_table("public", "orders", [_col("id", "int", 1)]),
+              _table(schema, "items", [_col("id", "int", 1)])]  # fmt: skip
+    c = build_step1(_inputs(engine=engine, tables=tables))
+    for table_id in ("public.orders", f"{schema}.items"):
+        rule = _rule(c, table_id)
+        assert rule.status == "valid" and [f.target_column for f in rule.fields] == ["id"]
+    same = [_table("public", "orders", [_col("id", "int", 1)]),
+            _table(schema, "orders", [_col("id", "int", 1)])]  # fmt: skip
+    c = build_step1(_inputs(engine=engine, tables=same))
+    codes = {f.code for r in c.rules for f in r.findings}
+    assert codes == {"ambiguous_target"}
+
+
 def test_the_input_is_not_changed():
     inputs = _inputs()
     before = copy.deepcopy(inputs.collector)

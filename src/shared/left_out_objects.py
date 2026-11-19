@@ -6,8 +6,9 @@
 The schema merge leaves an object out of the design when it cannot create it safely: a
 table whose name collides with another once case and quote marks are folded
 (``colliding_table_name``), a name SQL may not quote (``unsafe_name``), a foreign key
-whose referenced table two other schemas have (``ambiguous_reference``), or a second
-index of one name (``duplicate_index_name``). Each one becomes an app-layer note whose
+whose referenced table two other schemas have (``ambiguous_reference``), a second
+index of one name (``duplicate_index_name``), or a table of a system schema such as
+``pg_catalog`` (``system_schema``, #2478). Each one becomes an app-layer note whose
 recommendation reads ``<Object> not created: <reason>.``
 (``delta_merge._left_out_notes``).
 
@@ -27,7 +28,13 @@ from src.shared.sql_identifiers import comment_text
 
 #: The note features the merge writes for an object it leaves out of the design.
 LEFT_OUT_FEATURES = frozenset(
-    {"unsafe_name", "colliding_table_name", "ambiguous_reference", "duplicate_index_name"}
+    {
+        "unsafe_name",
+        "colliding_table_name",
+        "ambiguous_reference",
+        "duplicate_index_name",
+        "system_schema",
+    }
 )
 
 _OBJECTS = ("Table", "Column", "Primary key", "Index", "Foreign key")

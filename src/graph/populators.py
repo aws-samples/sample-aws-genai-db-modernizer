@@ -19,6 +19,7 @@ from src.graph.store import GraphStore
 from src.shared import catalog
 from src.shared.engine_names import display_engine
 from src.shared.query_trace import assignment_lineage, candidate_keys_by_query, version_moves
+from src.shared.table_keys import DesignTableKeys, left_out_system_schemas, table_key
 from src.storage.artifact_store import ArtifactStore
 
 logger = logging.getLogger(__name__)
@@ -788,7 +789,27 @@ def _defined_objects(engine: str, design: dict) -> set[tuple[str, str, str | Non
         }
     if engine == "elasticache":
         return {("key_pattern", n, None) for n in _names(design.get("key_designs"), "key_pattern")}
-    return {("table", n, None) for n in _names(tables, "table_name")}
+    return {("table", name, None) for name in _aurora_tables(design).values()}
+
+
+def _aurora_pairs(design: dict) -> set[tuple[str, str | None]]:
+    """An Aurora design's ``(table_name, schema_name)`` pairs: ``schema_name`` is set in a
+    design of several schemas (#2455) and None in one of one schema or saved before."""
+    return {
+        (str(t["table_name"]), str(t["schema_name"]) if t.get("schema_name") else None)
+        for t in design.get("table_definitions") or []
+        if isinstance(t, dict) and t.get("table_name")
+    }
+
+
+def _aurora_tables(design: dict) -> dict[str, str]:
+    """Each Aurora table's object name by its key (``table_keys.table_key``, #2478): its
+    ``schema.table`` in a design of several schemas, so two schemas' ``orders`` are two
+    objects, else its bare name."""
+    return {
+        table_key(name, schema): f"{schema}.{name}" if schema else name
+        for name, schema in sorted(_aurora_pairs(design), key=lambda p: (p[1] or "", p[0]))
+    }
 
 
 def _pattern_query_ids(ap: dict) -> list[str]:
@@ -808,10 +829,16 @@ def _design_objects(
     (``schema_design.scope.covered_query_ids``' rule), and an ``unsupported_patterns``
     entry records a query the design does not serve: those queries are returned as
     not served, unless another pattern serves them."""
-    from src.agents.schema_design.scope import normalize_table_name
-
     defined = _defined_objects(engine, design)
-    aurora_tables = {normalize_table_name(n): n for kind, n, _ in defined if kind == "table"}
+    aurora_tables = _aurora_tables(design) if engine in AURORA_TARGET_ENGINES else {}
+    # A pattern's source table names a design table as the design keys it (#2478): by
+    # schema and name in a design of several schemas, never another schema's table, and
+    # a system schema's table the design left out names no table.
+    aurora_keys = DesignTableKeys(
+        _aurora_pairs(design),
+        design.get("source_database"),
+        system_schemas=left_out_system_schemas(design.get("app_layer_notes")),
+    )
     by_query: dict[str, dict] = {}
     not_served: set[str] = set()
     for up in design.get("unsupported_patterns") or []:
@@ -837,7 +864,8 @@ def _design_objects(
             named.append(("key_pattern", str(ap["key_pattern"]), None))
         elif engine in AURORA_TARGET_ENGINES:
             for source in ap.get("source_tables") or []:
-                name = aurora_tables.get(normalize_table_name(str(source)))
+                key = aurora_keys.key_of(str(source))
+                name = aurora_tables.get(key) if key is not None else None
                 if name:
                     named.append(("table", name, None))
         for kind, name, parent in named:

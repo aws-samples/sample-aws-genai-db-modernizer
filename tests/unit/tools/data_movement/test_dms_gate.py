@@ -562,6 +562,35 @@ def test_unsupported_fields_and_skipped_rules_are_named_exceptions():
     assert [e.table for e in gate.exceptions] == sorted(e.table for e in gate.exceptions)
 
 
+@pytest.mark.parametrize("engine,system", [("postgresql", "pg_catalog"), ("mysql", "mysql")])
+def test_tables_the_design_leaves_out_get_a_blocked_rule_and_the_gate_lists_them_as_skipped(
+    engine, system
+):
+    """#2478 review: a table the design leaves out for a system schema, or for a name
+    another table of its schema has once case is folded, gets a blocked step 1 rule. Its
+    rows do not move (it is no contract table), and the gate names it as a
+    ``skipped_rule``. Another schema's ``Orders`` next to ``app.orders`` moves."""
+    from src.tools.data_movement.dms_step import contract_tables, skipped_rules
+    from src.tools.transformation_contract.step1 import build_step1
+    from tests.unit.tools.transformation_contract.conftest import col, step1_inputs, table
+
+    tables = [table(system, "audit", [col("id", "int", 1)]),
+              table("app", "Users", [col("id", "int", 1)]),
+              table("app", "users", [col("id", "int", 1)]),
+              table("app", "orders", [col("id", "int", 1)]),
+              table("crm", "Orders", [col("id", "int", 1)])]  # fmt: skip
+    contract = build_step1(step1_inputs(engine=engine, tables=tables))
+    left_out = {f"{system}.audit", "app.Users", "app.users"}
+    assert {t.table_id for t in contract_tables(contract)} == {"app.orders", "crm.Orders"}
+    skipped = skipped_rules(contract)
+    assert {s.table_id for s in skipped} == left_out
+    gate = _gate(replace(INPUTS, skipped=skipped))
+    assert {e.table for e in gate.exceptions if e.kind == "skipped_rule"} == left_out
+    reasons = {e.table: e.reason for e in gate.exceptions if e.kind == "skipped_rule"}
+    assert f"system schema {system}" in reasons[f"{system}.audit"]
+    assert "once case and quote marks are ignored" in reasons["app.users"]
+
+
 def test_exceptions_do_not_hide_a_failure():
     inputs = replace(INPUTS, skipped=(SkippedRule("shop.legacy", "blocked"),))
     assert _gate(inputs, stats=_cust(failed=1)).status == "fail"

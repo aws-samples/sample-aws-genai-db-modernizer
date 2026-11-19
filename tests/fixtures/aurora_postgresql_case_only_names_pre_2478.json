@@ -1,0 +1,82 @@
+{
+  "access_patterns": [],
+  "app_layer_notes": [],
+  "contract_version": "1.1",
+  "generated_ddl": "CREATE TABLE \"Orders\" (\n  \"id\" INTEGER NOT NULL,\n  \"note\" TEXT,\n  PRIMARY KEY (\"id\")\n);\n\nCREATE TABLE \"orders\" (\n  \"id\" INTEGER NOT NULL,\n  \"note\" TEXT,\n  PRIMARY KEY (\"id\")\n);\n\nCREATE INDEX \"by_note\" ON \"Orders\" (\"note\");\n\nCREATE INDEX \"by_note2\" ON \"orders\" (\"note\");",
+  "job_id": "job1",
+  "migration_strategy": "carry_over",
+  "optimizations": [],
+  "source_database": "shop",
+  "table_definitions": [
+    {
+      "columns": [
+        {
+          "aurora_type": "INTEGER",
+          "name": "id",
+          "needs_judgment": false,
+          "script_derived": true,
+          "source_type": null
+        },
+        {
+          "aurora_type": "TEXT",
+          "name": "note",
+          "needs_judgment": false,
+          "script_derived": true,
+          "source_type": null
+        }
+      ],
+      "ddl_statements": [
+        "CREATE TABLE \"Orders\" (\n  \"id\" INTEGER NOT NULL,\n  \"note\" TEXT,\n  PRIMARY KEY (\"id\")\n);",
+        "CREATE INDEX \"by_note\" ON \"Orders\" (\"note\");"
+      ],
+      "foreign_keys": [],
+      "indexes": [
+        "CREATE INDEX \"by_note\" ON \"Orders\" (\"note\");"
+      ],
+      "primary_key": [
+        "id"
+      ],
+      "table_name": "Orders"
+    },
+    {
+      "columns": [
+        {
+          "aurora_type": "INTEGER",
+          "name": "id",
+          "needs_judgment": false,
+          "script_derived": true,
+          "source_type": null
+        },
+        {
+          "aurora_type": "TEXT",
+          "name": "note",
+          "needs_judgment": false,
+          "script_derived": true,
+          "source_type": null
+        }
+      ],
+      "ddl_statements": [
+        "CREATE TABLE \"orders\" (\n  \"id\" INTEGER NOT NULL,\n  \"note\" TEXT,\n  PRIMARY KEY (\"id\")\n);",
+        "CREATE INDEX \"by_note2\" ON \"orders\" (\"note\");"
+      ],
+      "foreign_keys": [],
+      "indexes": [
+        "CREATE INDEX \"by_note2\" ON \"orders\" (\"note\");"
+      ],
+      "primary_key": [
+        "id"
+      ],
+      "table_name": "orders"
+    }
+  ],
+  "target_engine": "aurora_postgresql",
+  "trade_offs": [
+    {
+      "description": "The 2 tables are carried over 1:1 from the source; the deterministic draft's types, keys, indexes and foreign keys are kept unless listed as a change.",
+      "engine": "aurora_postgresql",
+      "impact": "The relational model the application already uses stays as it is, so the migration risk sits in data movement and cut-over rather than in a redesign."
+    }
+  ],
+  "validation_failures": [],
+  "validation_passed": true
+}

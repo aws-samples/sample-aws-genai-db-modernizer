@@ -2968,8 +2968,8 @@ class LeftOutObjectFacts(BaseModel):
     feature: str = Field(
         ...,
         description=(
-            "The note's kind: colliding_table_name, unsafe_name, ambiguous_reference or "
-            "duplicate_index_name"
+            "The note's kind: colliding_table_name, unsafe_name, ambiguous_reference, "
+            "duplicate_index_name or system_schema"
         ),
     )
     label: str = Field(..., description="The kind as the deliverables print it")

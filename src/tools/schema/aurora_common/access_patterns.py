@@ -376,7 +376,9 @@ def derive_access_patterns(
     ``source_database`` (#2479 review).
     """
     keys = DesignTableKeys(
-        ((t.table_name, t.schema_name if qualified else None) for t in tables), source_database
+        ((t.table_name, t.schema_name if qualified else None) for t in tables),
+        source_database,
+        source_engine=source_engine,
     )
     by_key = {
         table_key(t.table_name, t.schema_name if qualified else None): (

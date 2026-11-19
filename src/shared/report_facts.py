@@ -76,7 +76,7 @@ from src.shared.risk_severity import (
 )
 from src.shared.signal_labels import SIGNAL_NOUNS
 from src.shared.source_cache import cost_basis_sentence
-from src.shared.table_keys import DesignTableKeys, normalize_table_name
+from src.shared.table_keys import DesignTableKeys, left_out_system_schemas, normalize_table_name
 from src.shared.table_writer import table_writer
 from src.shared.target_databases import engine_scope_display_order
 from src.shared.trade_off_topics import (
@@ -2578,8 +2578,10 @@ def query_group_facts(report: dict[str, Any]) -> dict[str, Any] | None:
 
 def _design_table_keys(report: Mapping[str, Any], engine: str) -> DesignTableKeys | None:
     """The keys of the engine's design tables when its design names their schemas (#2455:
-    its tables come from more than one schema), from the report's design summary; None
-    for a design of one schema, a report with no design, and one saved before."""
+    its tables come from more than one schema) or leaves a system schema's table out
+    (#2478, so a query on it keeps its own ``schema.table`` row), from the report's design
+    summary; None for any other design of one schema, a report with no design, and one
+    saved before."""
     summary = (report.get("schema_designs") or {}).get(engine)
     tables = summary.get("tables") if isinstance(summary, dict) else None
     pairs = [
@@ -2588,9 +2590,12 @@ def _design_table_keys(report: Mapping[str, Any], engine: str) -> DesignTableKey
         if isinstance(t, dict) and isinstance(t.get("table_name"), str)
     ]
     database = report.get("database_name")
-    if not any(schema for _, schema in pairs):
+    system = left_out_system_schemas(summary.get("app_layer_notes") if summary else None)
+    if not any(schema for _, schema in pairs) and not system:
         return None
-    return DesignTableKeys(pairs, database if isinstance(database, str) else None)
+    return DesignTableKeys(
+        pairs, database if isinstance(database, str) else None, system_schemas=system
+    )
 
 
 def _table_query_rows(
