@@ -168,6 +168,11 @@
   white-space: nowrap;
 }
 
+/* #2497: the dark theme's orange is 4.46:1 on the badge's tint; this one is 5.4:1. */
+.awsui-dark-mode .diff-badge {
+  color: #f08c3c;
+}
+
 /* Cache overlay indicator (#296): a cached read keeps its owner engine above
    this badge, which just flags that ElastiCache also serves it as a cache
    layer. cache_reason (if any) is attached as the native title tooltip. */
@@ -214,7 +219,7 @@
 }
 
 .query-list-col--query      { flex: 0 0 200px; display: flex; align-items: center; gap: 6px; }
-.query-list-col--engine     { flex: 0 0 150px; }
+.query-list-col--engine     { flex: 0 0 150px; overflow: visible; }
 .query-list-col--confidence { flex: 0 0 110px; text-align: right; padding-right: 20px; }
 .query-list-col--tables     { flex: 0 0 150px; font-size: 12px; color: var(--dbm-text-secondary); }
 .query-list-col--signals    { flex: 0 0 200px; overflow: visible; white-space: normal; }

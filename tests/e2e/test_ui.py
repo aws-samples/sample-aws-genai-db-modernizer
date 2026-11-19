@@ -3247,7 +3247,7 @@ def test_the_query_table_filters_by_the_target_design(
     """#2483: the explorer's target operation, pattern group and Uses GSI filters are
     properties of the query table, grouped under Target design. Each token keeps a query
     the design's own pattern serves, reads as the value picked, and axe finds nothing
-    blocking with a token applied."""
+    blocking with a token applied and the property list open."""
     page.set_viewport_size({"width": 1440, "height": 900})
     checked = 0
     for r in _designed_runs(all_runs):
@@ -3271,13 +3271,119 @@ def test_the_query_table_filters_by_the_target_design(
             _filter_queries(section, qid)
             opener = section.get_by_role("button", name=f"{OPEN_TRACE}{qid}")
             expect(opener).to_be_visible(timeout=READY_MS)
-            page.keyboard.press("Escape")
+            box.blur()
+            box.focus()
+            expect(page.get_by_role("listbox").first).to_be_visible(timeout=READY_MS)
+            page.evaluate("Promise.all(document.getAnimations().map((a) => a.finished))")
             blocking, where, _ = _axe_blocking(page)
             assert blocking == [], (r.db, prop, blocking, where)
+            page.keyboard.press("Escape")
             section.get_by_role("button", name="Clear filters").click()
         assert ev == {"console": [], "pageerror": [], "failed": []}, (r.job_id, ev)
         checked += 1
     assert checked or any(r.external for r in all_runs), "no job with a NoSQL design"
+
+
+def _assert_open_list_unclipped(page: Page, where: object) -> None:
+    """#2497: the open list's last option is on screen and nothing covers it. axe has no
+    clipping rule and ``to_be_visible`` passes for a half-hidden list, so scroll the last
+    option into view and ask the page what sits at its centre."""
+    last = page.get_by_role("listbox").first.get_by_role("option").last
+    last.scroll_into_view_if_needed()
+    box = last.bounding_box()
+    assert box, (where, "the last option has no box")
+    viewport = page.viewport_size
+    assert box["x"] >= 0 and box["y"] >= 0, (where, box)
+    assert box["x"] + box["width"] <= viewport["width"], (where, box, viewport)
+    assert box["y"] + box["height"] <= viewport["height"], (where, box, viewport)
+    covered = last.evaluate("""(el) => {
+            const r = el.getBoundingClientRect();
+            const hit = document.elementFromPoint(r.left + r.width / 2, r.top + r.height / 2);
+            return !hit || !(el === hit || el.contains(hit));
+        }""")
+    assert not covered, (where, "something covers the last option", box)
+
+
+def _show_the_review_waiting(page: Page, r: PipelineResult) -> None:
+    """Serve the job's detail with the approval stage last and in progress, which is what
+    a job waiting at the assignment gate looks like: the review then offers each query's
+    engine as a Select."""
+
+    def waiting(route: playwright.sync_api.Route) -> None:
+        response = route.fetch()
+        body = response.json()
+        stages = body.setdefault("progress", {}).setdefault("stages", [])
+        names = [st.get("name") for st in stages]
+        if "WaitForAssignmentApproval" in names:
+            del stages[names.index("WaitForAssignmentApproval") + 1 :]
+        else:
+            stages.append({"name": "WaitForAssignmentApproval"})
+        stages[-1]["status"] = "in-progress"
+        body["status"] = "RUNNING"
+        route.fulfill(response=response, json=body)
+
+    page.route(re.compile(rf"/api/v1/assessments/{re.escape(r.job_id)}$"), waiting)
+
+
+@pytest.mark.parametrize("width", [1440, 390])
+def test_the_assignment_review_lists_have_no_accessibility_violations_when_open(
+    page: Page, ui: str, all_runs: list[PipelineResult], width: int
+) -> None:
+    """#2497: on a review waiting at the gate, axe finds nothing blocking with the filter's
+    property list open and with the last query's engine list open, and neither list is
+    clipped or covered."""
+    page.set_viewport_size({"width": width, "height": 900})
+    page.emulate_media(reduced_motion="reduce")
+    r = all_runs[0]
+    _show_the_review_waiting(page, r)
+    page.goto(f"{ui}/analysis/assignments/{r.job_id}")
+    expect(page.get_by_text(f"Your {r.db} workload").first).to_be_visible(timeout=READY_MS)
+    _open_per_query_view(page)
+    expect(page.locator(".query-list-row__summary").first).to_be_visible(timeout=READY_MS)
+    box = page.get_by_label("Filter query assignments")
+    box.focus()
+    expect(page.get_by_role("listbox").first).to_be_visible(timeout=READY_MS)
+    page.evaluate("Promise.all(document.getAnimations().map((a) => a.finished))")
+    blocking, where, _ = _axe_blocking(page)
+    assert blocking == [], (width, "filter", blocking, where)
+    _assert_open_list_unclipped(page, (width, "filter"))
+    page.keyboard.press("Escape")
+    triggers = page.locator(".query-list-col--engine [aria-haspopup=listbox]")
+    assert triggers.count() > 0, "the waiting review offers no engine Select"
+    last_row = triggers.last
+    last_row.scroll_into_view_if_needed()
+    last_row.click()
+    expect(page.get_by_role("listbox").first).to_be_visible(timeout=READY_MS)
+    page.evaluate("Promise.all(document.getAnimations().map((a) => a.finished))")
+    blocking, where, _ = _axe_blocking(page)
+    assert blocking == [], (width, "engine select", blocking, where)
+    _assert_open_list_unclipped(page, (width, "engine select"))
+
+
+@pytest.mark.parametrize("width", [1440, 390])
+def test_the_query_table_filter_lists_have_no_accessibility_violations_when_open(
+    page: Page, ui: str, all_runs: list[PipelineResult], width: int
+) -> None:
+    """#2497: with the property filter's list open, on the property names and on a
+    property's values, axe finds nothing blocking: the list stays inside a landmark."""
+    page.set_viewport_size({"width": width, "height": 900})
+    page.emulate_media(reduced_motion="reduce")
+    r = all_runs[0]
+    ev = _watch(page)
+    _goto_results(page, ui, r, "queries")
+    section = page.locator("#query-routing-section")
+    _wait_for_query_routing_rows(section, r, ev)
+    box = section.get_by_label("Filter queries")
+    for typed in ("", "Engine = "):
+        box.fill(typed)
+        box.focus()
+        listbox = page.get_by_role("listbox")
+        expect(listbox.first).to_be_visible(timeout=READY_MS)
+        page.evaluate("Promise.all(document.getAnimations().map((a) => a.finished))")
+        blocking, where, _ = _axe_blocking(page)
+        assert blocking == [], (width, typed, blocking, where)
+        _assert_open_list_unclipped(page, (width, typed))
+    assert ev == {"console": [], "pageerror": [], "failed": []}, (r.job_id, ev)
 
 
 def _aurora_design_tables(r: PipelineResult, engine: str | None = None) -> list[str]:

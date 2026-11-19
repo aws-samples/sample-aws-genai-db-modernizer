@@ -1289,10 +1289,10 @@ const AssignmentGatePage = memo(() => {
             filteringOptions={filterOptions}
             filteringPlaceholder={t('assignment-gate.filter.placeholder')}
             countText={t('assignment-gate.filter.count-text', { count: filteredQueries.length })}
-            expandToViewport
             i18nStrings={{
               filteringAriaLabel: t('assignment-gate.filter.aria-label'),
               dismissAriaLabel: t('assignment-gate.filter.dismiss-aria-label'),
+              clearAriaLabel: t('assignment-gate.filter.clear-aria-label'),
               filteringPlaceholder: t('assignment-gate.filter.placeholder'),
               groupValuesText: t('assignment-gate.filter.group-values-text'),
               groupPropertiesText: t('assignment-gate.filter.group-properties-text'),
@@ -1422,7 +1422,6 @@ const AssignmentGatePage = memo(() => {
                             }}
                             options={rowEngineOptions}
                             triggerVariant="option"
-                            expandToViewport
                           />
                           <Checkbox
                             checked={isCached}
