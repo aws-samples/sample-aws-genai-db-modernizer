@@ -258,7 +258,7 @@ test("an unsafe refusal text falls back to the fixed message (#2346)", async () 
   await submit();
 
   expect(stepErrors()).toContain(en['errors.request.rejected-form']);
-  expect(stepErrors()).not.toMatch(/script|10\.0\.0\.5|8000/);
+  expect(stepErrors()).not.toMatch(/script|10\.0\.0\.5|\b8000\b/);
 });
 
 test('no credentials choice in the form sends a password, whatever is typed', async () => {

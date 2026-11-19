@@ -23,7 +23,8 @@ global.matchMedia = global.matchMedia || (() => ({ matches: false, addListener()
 
 const SERVER_TEXT = '<script>window.__pwned = 1</script><img src=x onerror="window.__pwned = 1"> GET http://10.0.0.5:8000/api/v1/assessments/x failed with 502 at Object.<anonymous> (server.py:12)';
 const result = (status) => ({ success: false, status, error: new Error(SERVER_TEXT) });
-const LEAKS = /10\.0\.0\.5|8000|\b502\b|\b500\b|script|server\.py|api\/v1|onerror|Object\.</;
+// Port 8000 is matched as a whole number, so a millisecond timestamp attribute such as 1795046638000 is not a leak.
+const LEAKS = /10\.0\.0\.5|\b8000\b|\b502\b|\b500\b|script|server\.py|api\/v1|onerror|Object\.</;
 
 let container;
 let root;
@@ -95,5 +96,33 @@ describe('a flashbar item', () => {
     const retryButton = [...container.querySelectorAll('button')].find((b) => b.textContent === 'Retry');
     act(() => { retryButton.click(); });
     expect(retry).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe('the leak pattern', () => {
+  test.each([
+    'localhost:8000',
+    'http://127.0.0.1:8000/api',
+    'GET http://10.0.0.5:8000/api/v1/x',
+    'port 8000',
+  ])('still catches %s', (text) => {
+    expect(text).toMatch(LEAKS);
+  });
+
+  test.each(['1795046638000', 'data-ts="1795046638000"', 'id-80001', '18000'])('ignores the unrelated number in %s', (text) => {
+    expect(text).not.toMatch(LEAKS);
+  });
+
+  test('a rendered message with localhost:8000 would fail the check', () => {
+    render(<div data-ts="1795046638000">The service returned an error. http://127.0.0.1:8000/api</div>);
+    expect(container.innerHTML).toMatch(LEAKS);
+  });
+
+  test('a timestamp attribute that contains 8000 does not trip the check', () => {
+    jest.spyOn(Date, 'now').mockReturnValue(1795046638000);
+    render(<RequestError failure={result(500)} onRetry={() => {}} t={t} />);
+    container.setAttribute('data-ts', String(Date.now()));
+    expect(container.outerHTML).toContain('1795046638000');
+    expect(container.innerHTML).not.toMatch(LEAKS);
   });
 });

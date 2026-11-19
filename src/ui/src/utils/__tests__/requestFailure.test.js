@@ -105,7 +105,7 @@ describe('the technical detail goes to the console only', () => {
   test('a flash item has a fixed header and message, and nothing of the request', () => {
     const item = failureFlash(t, HOSTILE, { header: 'The artifacts were not deleted', context: 'delete' });
     expect(item).toMatchObject({ type: 'error', header: 'The artifacts were not deleted', content: 'The service returned an error.', dismissible: true });
-    expect(JSON.stringify(item)).not.toMatch(/10\.0\.0\.5|8000|502|script|server\.py|api\/v1/);
+    expect(JSON.stringify(item)).not.toMatch(/10\.0\.0\.5|\b8000\b|\b502\b|script|server\.py|api\/v1/);
   });
 
   test('a flash item offers Retry only where retrying can help', () => {
