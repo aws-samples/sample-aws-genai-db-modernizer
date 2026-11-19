@@ -967,6 +967,7 @@ PROSE_DETECTORS: tuple[ProseDetector, ...] = (
 )
 
 NOT_PROSE_DETECTORS: dict[str, str] = {
+    "src/report/executive_report.py:cover_decision": "reads the stored decision headline for the cover, rewrites nothing",
     f"{_PROSE}:collector_identifiers": "reads a collection's table and column names",
     f"{_PROSE}:style_list_markdown": "renders the style list for a prompt",
     f"{_GUARD}:scan_json": "scan_text over each string of a document, registered",

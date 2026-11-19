@@ -8,6 +8,7 @@ from __future__ import annotations
 from collections.abc import Collection
 from typing import Any
 
+from src.shared.decision_headline import decision_readiness_label
 from src.shared.design_text import (
     design_text_item,
     split_carried_write_detail,
@@ -208,6 +209,21 @@ def brief_summary(report: dict[str, Any]) -> str | None:
     if not isinstance(facts, dict):
         return None
     return executive_brief_text(report_facts(report), str(report.get("database_name") or ""))
+
+
+def _decision_md(facts: dict[str, Any]) -> list[str]:
+    """#2460: the decision line the results page's summary and the chat summary open with
+    (``facts.executive_brief.decision_headline``), and its wave's readiness as the results
+    page shows it beside it; nothing for a report with no headline."""
+    brief = facts.get("executive_brief")
+    headline = brief.get("decision_headline") if isinstance(brief, dict) else None
+    if not isinstance(headline, str) or not headline.strip():
+        return []
+    out = [f"**{escaping.md_text(headline.strip())}**", ""]
+    readiness = decision_readiness_label(facts)
+    if readiness:
+        out += [escaping.md_text(readiness), ""]
+    return out
 
 
 def _summary_md(report: dict[str, Any], trust: bool) -> list[str]:
@@ -1349,9 +1365,10 @@ def render_engineering_report_md(
         out += ["---"]
         out += [f'{k}: "{escaping.md_yaml_value(v)}"' for k, v in prov.items() if v]
         out += ["---", ""]
+    facts = report_facts(report)
+    out += ["# Database Modernization: Engineering Report", ""]
+    out += _decision_md(facts)
     out += [
-        "# Database Modernization: Engineering Report",
-        "",
         f"Source database: `{escaping.md_code(db)}`. This is the build companion to the "  # nosemgrep: string-concat-in-list -- intentional multi-line string
         "executive report (`executive-report.pdf`): "
         "the source-to-target mapping, the per-engine target schemas, and the query "
@@ -1359,7 +1376,6 @@ def render_engineering_report_md(
         "",
     ]
 
-    facts = report_facts(report)
     if facts.get("engine_scope"):
         # #1328: the customer's engine scope, stated once near the top; each name is
         # escaped, since a loaded report.json may hold any string there.

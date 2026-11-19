@@ -24,6 +24,7 @@ import pytest
 
 from src.report.renderers import render_engineering_report_md
 from src.shared.report_facts import compute_report_facts
+from tests.report_opening import without_decision_opening
 from tests.unit.agents.referee import slice_plan_jobs as job
 
 GOLDEN = Path(__file__).parent / "fixtures" / "engineering_report_no_adoption.golden.txt"
@@ -67,7 +68,9 @@ def report_without_adoption_paths() -> dict[str, Any]:
 def test_a_report_with_no_adoption_path_renders_byte_for_byte_as_before() -> None:
     report = report_without_adoption_paths()
     assert report["facts"]["adoption"]["paths"] == []
-    assert render_engineering_report_md(report) == GOLDEN.read_text(encoding="utf-8")
+    # #2460: the decision line under the title is new; the rest is as main rendered it.
+    rendered = without_decision_opening(render_engineering_report_md(report))
+    assert rendered == GOLDEN.read_text(encoding="utf-8")
 
 
 @pytest.mark.passes_on_main
@@ -75,4 +78,5 @@ def test_a_report_with_no_facts_block_renders_byte_for_byte_as_before() -> None:
     report = report_without_adoption_paths()
     del report["facts"]
     golden = GOLDEN.with_name("engineering_report_no_adoption_no_facts.golden.txt")
-    assert render_engineering_report_md(report) == golden.read_text(encoding="utf-8")
+    rendered = without_decision_opening(render_engineering_report_md(report))
+    assert rendered == golden.read_text(encoding="utf-8")
