@@ -190,6 +190,7 @@ def test_an_empty_request_has_one_small_page():
     assert summary["input_pages"] == [{"offset": 1, "limit": len(text.splitlines())}]
 
 
+@pytest.mark.passes_on_main  # a guard: every text here is over the Read line cut
 def test_elasticache_write_queries_in_the_invalidation_context_get_short_lines():
     """The discourse ElastiCache shape: long write-query texts outside query_patterns."""
     texts = {
@@ -215,7 +216,7 @@ def test_elasticache_write_queries_in_the_invalidation_context_get_short_lines()
     for write in writes:
         original = texts[write["query_id"]]
         assert write["query_text"] == original
-        if len(json.dumps(original)) > 1500:
+        if len(json.dumps(original)) > READ_LINE_LIMIT:
             assert " ".join(write["query_text_lines"]) == " ".join(original.split())
         else:
             assert "query_text_lines" not in write
@@ -237,3 +238,42 @@ def test_any_long_string_field_gets_lines_and_existing_lines_are_left_alone():
     assert "short_lines" not in loaded["a"]
     assert " ".join(loaded["b"][0]["free_text_lines"]) == long.strip()
     assert request["b"][0].keys() == {"free_text"}
+
+
+@pytest.mark.parametrize("depth", [1, 2, 4, 7])
+def test_a_text_gets_lines_exactly_when_read_would_cut_its_line(depth):
+    """#2463: a text whose line Read returns whole gets no ``_lines`` copy, whatever its
+    indentation; one whose line Read cuts keeps it."""
+    request: dict = {}
+    node = request
+    for _ in range(depth - 1):
+        node["n"] = {"pad": "x" * 1600}  # each level is too wide to inline
+        node = node["n"]
+    for size in range(1880, 2010):
+        node[f"t{size}"] = "a " * (size // 2)
+    text, _ = render_external_request(request)
+    loaded = json.loads(text)
+    leaf = loaded
+    for _ in range(depth - 1):
+        leaf = leaf["n"]
+    lines = {
+        line.strip().split('"')[1]: len(line) for line in text.splitlines() if '": "a a' in line
+    }
+    copied = {key for key in leaf if key.endswith("_lines")}
+    assert copied and len(copied) < len(lines)
+    for key, chars in lines.items():
+        assert (f"{key}_lines" in copied) == (chars >= READ_LINE_LIMIT), (key, chars)
+
+
+def test_a_line_is_counted_in_utf16_units_so_astral_text_is_never_cut():
+    """A character outside the Basic Multilingual Plane (an emoji, say) is one code point
+    in Python and two UTF-16 units. If Read counts units, a line Python counts under the
+    cut can still be cut; the copy is made on the unit count, the larger of the two."""
+    emoji = "\U0001f600"
+    text = (emoji + " ") * 700  # 1,400 code points, 2,100 UTF-16 units
+    loaded = json.loads(render_external_request({"q": {"query_text": text}})[0])
+    assert len(json.dumps(text, ensure_ascii=False)) < READ_LINE_LIMIT
+    assert " ".join(loaded["q"]["query_text_lines"]) == text.strip()
+    plain = "a " * 700  # the same code points, all in the BMP: read whole
+    loaded = json.loads(render_external_request({"q": {"query_text": plain}})[0])
+    assert "query_text_lines" not in loaded["q"]

@@ -114,6 +114,7 @@ __all__ = [
     "trigger_shape",
     "written_statements",
     "nondeterministic_calls",
+    "read_touched_tables",
     "touched_tables",
 ]
 
@@ -352,6 +353,33 @@ def touched_tables(text: str, engine: str, kind: str) -> tuple[str, ...]:
         tables, _ = _references(text, engine, kind)
     except RoutineTokenError:
         return ()
+    return tuple(sorted({f"{s}.{n}" if s else n for s, n in tables}))
+
+
+def read_touched_tables(text: str, engine: str, kind: str) -> tuple[str, ...] | None:
+    """:func:`touched_tables`, or None when ``text`` does not parse as a ``kind``
+    (``procedure``, ``function`` or ``trigger``) of ``engine``, so a caller can tell "names
+    no table" from "could not be read" (#2463)."""
+    try:
+        if engine == "mysql":
+            verdict = check_mysql_routine(
+                MySqlRoutine(routine_id="proof.routine", kind=kind, create_sql=text),  # type: ignore[arg-type]
+                target_engine="aurora_mysql",
+                source_version=None,
+            )
+            if verdict.parse_failure is not None:
+                return None
+        elif engine == "postgresql":
+            if kind == "trigger":
+                if trigger_references(text) is None:
+                    return None
+            elif parse_routine(text, kind) is not None:  # type: ignore[arg-type]
+                return None
+        else:
+            return None
+        tables, _ = _references(text, engine, kind)
+    except (RoutineTokenError, ValueError):
+        return None
     return tuple(sorted({f"{s}.{n}" if s else n for s, n in tables}))
 
 

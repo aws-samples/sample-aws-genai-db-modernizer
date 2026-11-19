@@ -68,6 +68,11 @@ READERS = LOADERS | {
     # The repair loop's rounds on the test cluster (#2384): the script opens the cluster
     # session through src.tools.routines.proof_run; not a routing or synthesis module.
     "scripts.run_routine_repair",
+    # The single-pass design view (#2463): it reads which tables a routine or trigger body
+    # names through src.tools.routines.proof_screen, to keep the routines a DocumentDB or
+    # ElastiCache design reads; a schema design request builder, not a routing or
+    # synthesis module.
+    "src.agents.schema_design.single_pass_view",
 }
 
 
