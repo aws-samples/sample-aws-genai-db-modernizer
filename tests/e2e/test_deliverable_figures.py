@@ -760,3 +760,41 @@ def test_designed_wave_1_states_what_later_waves_move(designed_job: PipelineResu
     for deliverable, text in texts.items():
         assert sentence in norm(text), f"{deliverable} does not show {sentence!r}"
         assert "mapped to a target engine in a later wave" not in norm(text), deliverable
+
+
+def test_every_deliverable_opens_with_the_decision_headline(run: PipelineResult) -> None:
+    """#2460: the engineering report and the executive report open with the decision line
+    the results page's summary header and the chat summary open with
+    (facts.executive_brief.decision_headline), with its wave's readiness as the results
+    page shows it beside it. ``tests/e2e/test_ui.py`` checks the UI header against the
+    same fact."""
+    from src.report.escaping import md_text
+    from src.report.executive_report import printable
+    from src.report.facts import report_facts
+    from src.report.printed_summary import prose, render_final_summary
+    from src.shared.decision_headline import decision_readiness_label
+
+    report = _report_json(run)
+    facts = report_facts(report)
+    headline = facts["executive_brief"]["decision_headline"]
+    assert headline, run.db
+    readiness = decision_readiness_label(facts)
+
+    printed = render_final_summary(
+        report, database_name=run.db, job_id=run.job_id, deliverables_dir="d/", deliverables=[]
+    )
+    assert printed.splitlines()[2] == f"**{prose(headline)}**", run.db
+
+    lines = run.deliverable("engineering-report.md").read_text().splitlines()
+    top = lines.index("# Database Modernization: Engineering Report")
+    assert lines[top + 2] == f"**{md_text(headline)}**", (run.db, lines[top : top + 6])
+    if readiness:
+        assert lines[top + 4] == md_text(readiness), (run.db, lines[top : top + 6])
+    else:
+        assert lines[top + 4].startswith("Source database: "), run.db
+
+    cover = pdf_page_texts(str(run.deliverable("executive-report.pdf")))[0]
+    shown = norm(printable(headline)) + (f" {norm(printable(readiness))}" if readiness else "")
+    assert f"Source database {run.db} {shown}" in cover, (run.db, cover)
+    for word in ("cutover", "wait", "not ready", "collect"):
+        assert word not in headline.lower(), (run.db, headline)

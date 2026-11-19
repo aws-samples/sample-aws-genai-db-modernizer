@@ -3,7 +3,8 @@
 
 """The executive summary's lead line: the decision, in one line (#2315, ADR-032).
 
-The results page's summary header and the chat summary open with it. It is worded from
+The results page's summary header and the chat summary open with it, and so do the
+executive report's cover and the engineering report (#2460). It is worded from
 the facts' own executive brief only (``decision_wave`` and what each wave does), never
 from a model's text:
 
@@ -95,3 +96,49 @@ def decision_headline(brief: Any, database_name: str | None) -> str | None:
     if not added:
         return f"Move {db} to {_join(moved)} in {count} {noun}"
     return f"Move {db} to {_join(moved)}, and add {_join(added)}, in {count} {noun}"
+
+
+# #2460: each wave readiness as the results page's summary words it beside the headline
+# (en.json ``analysis-results.waves.readiness-status.*``; a test keeps the two equal).
+READINESS_LABELS: dict[str, str] = {
+    "suggested": "Suggested",
+    "held": "Not suggested yet",
+    "not_designed": "Not designed",
+    "not_reviewed": "Not reviewed",
+}
+
+
+def decision_readiness_label(facts: Any) -> str | None:
+    """The readiness of the wave the headline is about, as the results page's summary
+    states it beside the headline ("Wave 1: Suggested, 2 warnings to accept").
+
+    The wave is the brief's decision wave, else its first wave; its readiness is the
+    stored ``facts.waves[].readiness`` and ``open_warning_count``. None when the facts
+    state no readiness for it (a report saved before the readiness check, #1992)."""
+    if not isinstance(facts, Mapping):
+        return None
+    brief = facts.get("executive_brief")
+    if not isinstance(brief, Mapping):
+        return None
+    waves = [w for w in brief.get("waves") or [] if isinstance(w, Mapping)]
+    decision = brief.get("decision_wave")
+    if isinstance(decision, int) and not isinstance(decision, bool):
+        wave = decision
+    elif waves:
+        wave = _wave_number(waves[0])
+    else:
+        return None
+    row = next(
+        (r for r in facts.get("waves") or [] if isinstance(r, Mapping) and r.get("wave") == wave),
+        None,
+    )
+    if row is None or not row.get("readiness_line"):
+        return None
+    label = READINESS_LABELS.get(str(row.get("readiness")))
+    if label is None:
+        return None
+    warnings = row.get("open_warning_count")
+    if row.get("readiness") == "suggested" and isinstance(warnings, int) and warnings > 0:
+        noun = "warning" if warnings == 1 else "warnings"
+        label = f"{label}, {warnings} {noun} to accept"
+    return f"Wave {wave}: {label}"

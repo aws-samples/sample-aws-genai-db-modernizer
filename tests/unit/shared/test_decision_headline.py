@@ -21,7 +21,12 @@ from typing import Any
 import pytest
 
 from src.report.facts import report_facts
-from src.shared.decision_headline import decision_headline, wave_adds_engines
+from src.shared.decision_headline import (
+    READINESS_LABELS,
+    decision_headline,
+    decision_readiness_label,
+    wave_adds_engines,
+)
 from src.shared.executive_brief import decision_paragraph
 from src.shared.report_facts import BRIEF_WAVE_KINDS
 
@@ -258,3 +263,79 @@ def test_the_contract_carries_the_headline_and_an_old_brief_still_loads() -> Non
     assert ExecutiveBriefFacts.model_validate(stored).decision_headline is None
     loaded = ExecutiveBriefFacts.model_validate({**stored, "decision_headline": "Approve wave 1"})
     assert loaded.decision_headline == "Approve wave 1"
+
+
+# -- the decision wave's readiness (#2460) ----------------------------------------------
+
+
+def _facts(brief: dict[str, Any], *rows: dict[str, Any]) -> dict[str, Any]:
+    return {"executive_brief": brief, "waves": list(rows)}
+
+
+def _row(wave: int, readiness: str | None, warnings: int = 0) -> dict[str, Any]:
+    return {
+        "wave": wave,
+        "readiness": readiness,
+        "readiness_line": f"{readiness} line" if readiness else None,
+        "open_warning_count": warnings,
+    }
+
+
+@pytest.mark.parametrize(
+    ("readiness", "warnings", "label"),
+    [
+        ("suggested", 0, "Wave 1: Suggested"),
+        ("suggested", 1, "Wave 1: Suggested, 1 warning to accept"),
+        ("suggested", 2, "Wave 1: Suggested, 2 warnings to accept"),
+        ("held", 0, "Wave 1: Not suggested yet"),
+        ("not_designed", 0, "Wave 1: Not designed"),
+        ("not_reviewed", 0, "Wave 1: Not reviewed"),
+    ],
+)
+def test_the_decision_wave_readiness_reads_as_the_results_page_shows_it(
+    readiness: str, warnings: int, label: str
+) -> None:
+    facts = _facts(_brief(1), _row(1, readiness, warnings), _row(2, "held"))
+    assert decision_readiness_label(facts) == label
+
+
+def test_with_no_decision_wave_the_readiness_is_the_first_wave_s() -> None:
+    facts = _facts(_brief(None), _row(2, "suggested"), _row(1, "not_designed"))
+    assert decision_readiness_label(facts) == "Wave 1: Not designed"
+    assert decision_readiness_label(_facts(_brief(2), _row(2, "held"))) == (
+        "Wave 2: Not suggested yet"
+    )
+
+
+@pytest.mark.parametrize(
+    "facts",
+    [
+        {},
+        {"executive_brief": None},
+        _facts({"decision_wave": None, "waves": []}, _row(1, "suggested")),
+        # A report saved before the wave readiness check (#1992): no readiness line.
+        _facts(_brief(1), {"wave": 1}),
+        _facts(_brief(1), {**_row(1, "suggested"), "readiness_line": ""}),
+        _facts(_brief(1), {**_row(1, "suggested"), "readiness": None}),
+        _facts(_brief(1), _row(2, "suggested")),
+        _facts(_brief(1), {**_row(1, "suggested"), "readiness": "unknown"}),
+    ],
+)
+def test_no_readiness_is_stated_when_the_facts_state_none(facts: dict[str, Any]) -> None:
+    assert decision_readiness_label(facts) is None
+
+
+def test_the_readiness_labels_are_the_results_page_s() -> None:
+    """The results page words the same readiness from ``en.json``; the reports read the
+    Python copy, so the two must hold the same words."""
+    en = json.loads(
+        (Path(__file__).resolve().parents[3] / "src/ui/src/locales/en.json").read_text()
+    )
+    prefix = "analysis-results.waves.readiness-status."
+    for key, label in READINESS_LABELS.items():
+        assert en[prefix + key] == label, key
+    assert en[prefix + "suggested-warnings_one"] == "Suggested, {{count}} warning to accept"
+    assert en[prefix + "suggested-warnings_other"] == "Suggested, {{count}} warnings to accept"
+    assert en["analysis-results.executive-summary.wave-readiness"] == "Wave {{wave}}: {{readiness}}"
+    shown = {k[len(prefix) :] for k in en if k.startswith(prefix)}
+    assert shown - {"suggested-warnings_one", "suggested-warnings_other"} == set(READINESS_LABELS)

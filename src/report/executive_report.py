@@ -12,7 +12,8 @@ string the facts layer or another deliverable already words; only the headings
 and the short labels are new. This module formats; it never counts, totals or
 filters a figure the facts layer owns.
 
-Pages, in order: the cover, the recommendation (target architecture with each
+Pages, in order: the cover (with the decision line and its wave's readiness,
+#2460), the recommendation (target architecture with each
 engine's role and workload share), the numbers (projected monthly cost, engines
 kept and removed, queries moved), why (each engine's deciding reason, one line
 each, and the reality check's decisions), the migration waves (counts, stages
@@ -69,6 +70,7 @@ from reportlab.platypus import (
 )
 
 from src.shared import catalog
+from src.shared.decision_headline import decision_readiness_label
 from src.shared.engine_names import display_engine
 from src.shared.ranking import PIN_RULE_PREDATES_NOTE, report_predates_pin_rule
 from src.shared.report_facts import CACHE_LAYER
@@ -1870,9 +1872,27 @@ def _page_end(c: Canvas, doc: _Doc) -> None:
     c.restoreState()
 
 
+# #2460: the cover's decision line steps down to fit the cover's text width.
+COVER_HEADLINE_SIZES = (22.0, 20.0, 18.0, 16.0, 14.0)
+
+
+def cover_decision(report: dict[str, Any]) -> tuple[str | None, str | None]:
+    """The cover's decision line (``facts.executive_brief.decision_headline``, as the
+    results page's summary header and the chat summary state it) and its wave's
+    readiness (``decision_readiness_label``); (None, None) for a report with no headline,
+    whose cover keeps its opening."""
+    facts = report_facts(report)
+    brief = facts.get("executive_brief")
+    headline = brief.get("decision_headline") if isinstance(brief, dict) else None
+    if not isinstance(headline, str) or not headline.strip():
+        return None, None
+    return headline.strip(), decision_readiness_label(facts)
+
+
 def _cover(c: Canvas, doc: _Doc) -> None:
-    """The cover: the deck's aurora as a vector gradient, the product, the report and
-    the source database, each wrapped and sized to fit."""
+    """The cover: the deck's aurora as a vector gradient, the product, the report, the
+    source database and the decision line with its wave's readiness, each wrapped and
+    sized to fit."""
     report = doc.report
     c.saveState()
     c.setFillColor(HexColor("#0B2230"))
@@ -1902,6 +1922,14 @@ def _cover(c: Canvas, doc: _Doc) -> None:
     block(PRODUCT_NAME, True, (40, 36, 32, 28, 24), WHITE, 10)
     block(REPORT_NAME, False, (26, 24, 22, 20), PAPER, 26)
     block(f"Source database {doc.db}", True, (24, 22, 20, 18, 16, 14), BLUE, 8)
+    # #2460: the decision line the results page's summary and the chat summary open with,
+    # and its wave's readiness as the results page shows it beside it.
+    headline, readiness = cover_decision(report)
+    if headline:
+        y -= 14
+        block(headline, True, COVER_HEADLINE_SIZES, WHITE, 6)
+        if readiness:
+            block(readiness, False, (13.0, 12.0), PAPER, 0)
     generated = _date(report)
     small = f"Job {report.get('job_id') or 'unknown'}" + (
         f" · Generated {generated.isoformat()}" if generated else ""

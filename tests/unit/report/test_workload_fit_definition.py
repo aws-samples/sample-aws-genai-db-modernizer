@@ -45,6 +45,7 @@ import pytest
 from src.report import renderers
 from src.shared.workload_fit_labels import CACHE_FIT_DEFINITION, WORKLOAD_FIT_DEFINITION
 from tests.executive_pdf import engineering_text
+from tests.report_opening import without_decision_opening
 
 FIXTURE = Path(__file__).parent / "fixtures" / "e2e09_report.json"
 
@@ -199,8 +200,10 @@ def _report_without_cache_layer() -> dict[str, Any]:
 GOLDEN = Path(__file__).parent / "fixtures" / "engineering_report_no_cache_layer.md"
 
 
+@pytest.mark.passes_on_main  # main rendered the golden; #2460 keeps the rest of it
 def test_engineering_report_without_a_cache_layer_is_unchanged() -> None:
     """#1291: the output with no cache layer is byte-for-byte what origin/main rendered
     before the cache fit line existed (the golden was generated on main's code)."""
     md = renderers.render_engineering_report_md(_report_without_cache_layer())
-    assert md == GOLDEN.read_text(encoding="utf-8")
+    # #2460: the decision line under the title is new; the rest is as main rendered it.
+    assert without_decision_opening(md) == GOLDEN.read_text(encoding="utf-8")
