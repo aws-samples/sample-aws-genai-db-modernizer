@@ -58,6 +58,7 @@ from src.shared.engine_names import (
     display_engine,
 )
 from src.shared.exposure_wording import group_exposures
+from src.shared.left_out_objects import left_out_objects
 from src.shared.migration_wave_engines import NON_OWNER_ENGINES, primary_owner_engine
 from src.shared.overlap_risk import overlap_risk_ids
 
@@ -3922,6 +3923,55 @@ def _designs(report: Mapping[str, Any]) -> Mapping[str, Any]:
     return designs if isinstance(designs, Mapping) else {}
 
 
+_LEFT_OUT_NOUNS = (
+    ("table", "tables"),
+    ("column", "columns"),
+    ("primary key", "primary keys"),
+    ("index", "indexes"),
+    ("foreign key", "foreign keys"),
+)
+
+
+def _left_out_brief_line(engine: str, objects: list[dict[str, str]]) -> str:
+    """The executive report's sentence for one design's left-out objects (#2484): what is
+    not created, counted by kind, and where each one is named. It names no table, as the
+    executive report never does."""
+    parts = []
+    for one, many in _LEFT_OUT_NOUNS:
+        n = sum(1 for o in objects if o["object"] == one)
+        if n:
+            parts.append(f"{n} {one if n == 1 else many}")
+    what = parts[0] if len(parts) == 1 else f"{', '.join(parts[:-1])} and {parts[-1]}"
+    return (
+        f"The {display_engine(engine)} design leaves out {what}. The engineering report "
+        "and the results page name each one and say why."
+    )
+
+
+def design_left_out_facts(report: Mapping[str, Any]) -> list[dict[str, Any]]:
+    """Per Aurora engine, the source objects its design leaves out (#2484): each table,
+    column, primary key, index or foreign key the merge did not create, with the kind of
+    note and its one-sentence reason (``left_out_objects``), from the report's design
+    summaries. An engine whose design leaves nothing out is left out; empty when none."""
+    out: list[dict[str, Any]] = []
+    for engine, summary in sorted(_designs(report).items()):
+        if not isinstance(summary, Mapping):
+            continue
+        objects = left_out_objects(summary.get("app_layer_notes"))
+        if objects:
+            out.append(
+                {
+                    "engine": engine,
+                    "object_count": len(objects),
+                    "objects": objects,
+                    "brief_line": _left_out_brief_line(engine, objects),
+                    # Set by the design summary from the stored script (#2484 review).
+                    "ddl_names_each": summary.get("ddl_names_left_out") is True,
+                }
+            )
+    return out
+
+
 def routine_to_dos(routines: Mapping[str, Any] | None) -> dict[int, list[str]]:
     """wave -> the routine to-do its line lists (#1938): ``facts.routines``'
     ``migrate_yourself_line``, in the wave that brings in the routines' target."""
@@ -4250,6 +4300,8 @@ def compute_report_facts(
         "trade_off_topics": trade_off_topic_facts(report, rc_trade_offs),
         "trade_off_count": n_trade_offs - sum(1 for t in rc_trade_offs if t["reversed"]),
         **risks,
+        # #2484: the objects each Aurora design leaves out, named with their reason.
+        "design_left_out": design_left_out_facts(report),
         # #2363: the counts the results page's tabs show.
         "results_tab_counts": results_tab_count_facts(
             query_total_count=query_total_facts(report, moves["in_scope_query_count"])[

@@ -22,6 +22,7 @@ from src.contracts.aurora_design_delta import IDENTIFIER
 from src.shared.sql_identifiers import (  # noqa: F401 -- re-exported for the DDL writers
     SqlFragmentError,
     UnsafeIdentifierError,
+    comment_text,
     is_unprintable,
 )
 

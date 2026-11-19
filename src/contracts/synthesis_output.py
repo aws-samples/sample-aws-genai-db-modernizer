@@ -2960,6 +2960,45 @@ class TableQueryRow(BaseModel):
     )
 
 
+class LeftOutObjectFacts(BaseModel):
+    """One source object an Aurora design leaves out (#2484), from the merge's app-layer
+    note: the deliverables name it and say why, and the script carries a comment for it."""
+
+    name: str = Field(..., description="The object's name as the note writes it, cleaned")
+    feature: str = Field(
+        ...,
+        description=(
+            "The note's kind: colliding_table_name, unsafe_name, ambiguous_reference or "
+            "duplicate_index_name"
+        ),
+    )
+    label: str = Field(..., description="The kind as the deliverables print it")
+    object: str = Field(
+        ..., description="What is left out: table, column, primary key, index or foreign key"
+    )
+    reason: str = Field(..., description="The one-sentence reason, the merge's fixed text")
+
+
+class DesignLeftOutFacts(BaseModel):
+    """The objects one Aurora engine's design leaves out (#2484)."""
+
+    engine: str = Field(..., description="The Aurora engine (id)")
+    object_count: int = Field(0, ge=0, description="How many objects it leaves out")
+    objects: list[LeftOutObjectFacts] = Field(
+        default_factory=list, description="Each one, in the design's note order"
+    )
+    brief_line: str = Field(
+        "", description="The executive report's sentence: what is not created, counted"
+    )
+    ddl_names_each: bool = Field(
+        False,
+        description=(
+            "True when the design's generated script ends with a comment per object; false "
+            "for a design saved before #2484, whose script has none"
+        ),
+    )
+
+
 class UngroupedQueryRow(BaseModel):
     """An owner engine's in-scope queries that no query group of its own serves (#226)."""
 
@@ -5666,6 +5705,14 @@ class ReportFacts(BaseModel):
         description=(
             "The query groups the engineering report lists and the relational-only rest "
             "(#1410); None when the report has no query_groups"
+        ),
+    )
+    design_left_out: list[DesignLeftOutFacts] | None = Field(
+        None,
+        description=(
+            "Per Aurora engine, the source objects its design leaves out, each with its "
+            "kind and reason (#2484); empty when no design leaves any out. None in a "
+            "report written before it"
         ),
     )
     table_sources: TableSourceFacts | None = Field(

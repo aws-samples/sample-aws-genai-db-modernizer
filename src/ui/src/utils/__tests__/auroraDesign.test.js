@@ -327,3 +327,34 @@ describe('AURORA_BLAME_LABELS ordering (#478)', () => {
     ]);
   });
 });
+
+// #2484: the objects a design leaves out come from facts.design_left_out, per engine.
+describe('left-out objects (#2484)', () => {
+  const LEFT_OUT = [{
+    engine: 'aurora_mysql',
+    object_count: 1,
+    objects: [{ name: 'Sales.orders', feature: 'colliding_table_name', label: 'Colliding table name', object: 'table', reason: 'its schema and name match another table.' }],
+    brief_line: 'The Aurora MySQL design leaves out 1 table.',
+  }];
+
+  test("each engine's design carries its own row of the fact", () => {
+    const designs = buildAuroraDesigns(
+      [{ target_type: 'aurora_mysql', content: AURORA_CONTENT }, { target_type: 'aurora_postgresql', content: AURORA_CONTENT }],
+      QUERY_GROUPS,
+      [],
+      LEFT_OUT,
+    );
+    expect(designs.find(d => d.engine === 'aurora_mysql').leftOut).toBe(LEFT_OUT[0]);
+    expect(designs.find(d => d.engine === 'aurora_postgresql').leftOut).toBeNull();
+  });
+
+  test('a report with no fact, or an empty row, shows no left-out objects', () => {
+    const [none] = buildAuroraDesigns([{ target_type: 'aurora_mysql', content: AURORA_CONTENT }], QUERY_GROUPS);
+    expect(none.leftOut).toBeNull();
+    const [empty] = buildAuroraDesigns(
+      [{ target_type: 'aurora_mysql', content: AURORA_CONTENT }], QUERY_GROUPS, [],
+      [{ ...LEFT_OUT[0], object_count: 0, objects: [] }],
+    );
+    expect(empty.leftOut).toBeNull();
+  });
+});

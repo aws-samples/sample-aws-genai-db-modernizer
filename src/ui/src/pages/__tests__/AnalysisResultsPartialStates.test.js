@@ -263,3 +263,44 @@ test('a query list that loads shows its count and no alert', async () => {
   await renderWith({ results: report({ facts: FACTS_20 }), journeys });
   expect(alerts().some((a) => a.includes('query-routing.unavailable'))).toBe(false);
 });
+
+// #2484: the objects the design leaves out, from facts.design_left_out.
+const LEFT_OUT_ROW = {
+  engine: ENGINE,
+  object_count: 1,
+  objects: [{ name: 'Sales.orders', feature: 'colliding_table_name', label: 'Colliding table name', object: 'table', reason: 'why.' }],
+  ddl_names_each: true,
+};
+const leftOutAlert = () => container.querySelector('#aurora-design-left-out');
+
+test('the left-out alert sits above the table list', async () => {
+  const facts = { engines: [{ engine: ENGINE, target_objects: 2 }], design_left_out: [LEFT_OUT_ROW] };
+  await renderWith({ results: report({ facts }), schemas: { success: true, schema_designs: [design(['a', 'b'])] } });
+  const list = container.textContent;
+  const alertAt = list.indexOf('analysis-results.aurora-design.left-out-title|1');
+  const tablesAt = list.indexOf('analysis-results.aurora-design.tables-header|2');
+  expect(alertAt).toBeGreaterThanOrEqual(0);
+  expect(tablesAt).toBeGreaterThan(alertAt);
+  expect(has('analysis-results.aurora-design.left-out-body-ddl')).toBe(true);
+});
+
+test('the left-out alert leaves out the DDL sentence when the script has no comments', async () => {
+  const facts = { engines: [{ engine: ENGINE, target_objects: 2 }], design_left_out: [{ ...LEFT_OUT_ROW, ddl_names_each: false }] };
+  await renderWith({ results: report({ facts }), schemas: { success: true, schema_designs: [design(['a', 'b'])] } });
+  expect(leftOutAlert()).not.toBeNull();
+  expect(has('analysis-results.aurora-design.left-out-body-ddl')).toBe(false);
+});
+
+test('no left-out alert when the design is not available', async () => {
+  const facts = { engines: [{ engine: ENGINE, target_objects: 20 }], design_left_out: [LEFT_OUT_ROW] };
+  await renderWith({ results: report({ facts }) });
+  expect(tabLabels()).toContain('analysis-results.aurora-design.tab-label-unavailable');
+  expect(leftOutAlert()).toBeNull();
+});
+
+test('no left-out alert when there is no design yet', async () => {
+  const facts = { engines: [{ engine: ENGINE, target_objects: null }], design_left_out: [LEFT_OUT_ROW] };
+  await renderWith({ results: report({ facts }) });
+  expect(tabLabels()).toContain('analysis-results.aurora-design.tab-label-none');
+  expect(leftOutAlert()).toBeNull();
+});

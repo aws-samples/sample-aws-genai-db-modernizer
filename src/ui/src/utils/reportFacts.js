@@ -674,6 +674,15 @@ export function tableQueryRowsOf(synthesis) {
   return Array.isArray(rows && rows.table_queries) ? rows.table_queries : [];
 }
 
+// #2484: per Aurora engine, the objects its design leaves out (facts.design_left_out): each
+// one's name, kind of note (label) and reason, with the count. An empty list for a design
+// that leaves nothing out, and for a report saved before the fact (the /results API fills
+// it in for a real report). Nothing is counted here.
+export function designLeftOutOf(synthesis) {
+  const rows = factsOf(synthesis) && factsOf(synthesis).design_left_out;
+  return Array.isArray(rows) ? rows.filter((r) => r && typeof r.engine === 'string') : [];
+}
+
 // #2315: what the executive summary leads with, read as the facts state it: the decision
 // line (facts.executive_brief.decision_headline) and the wave its status is for (the
 // decision wave, else the first wave), the overall risk level with the open and the

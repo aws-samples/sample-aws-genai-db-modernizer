@@ -8,6 +8,7 @@
  */
 import {
   cacheLayerFactsOf,
+  designLeftOutOf,
   derivedCopySyncOf,
   accessPatternTotals,
   closeCallsOf,
@@ -562,5 +563,17 @@ describe('the cost and assumptions helpers (#2316)', () => {
     expect(costSizingBasisText(t2, { basis: 'assigned_queries', unqueried_table_count: 28 }))
       .toBe('analysis-results.cost-breakdown.basis.assigned_queries' + 'analysis-results.cost-breakdown.sized-unqueried|28');
     expect(costSizingBasisText(t2, null)).toBe('');
+  });
+});
+
+// #2484: the objects each Aurora design leaves out, read as the facts state them.
+describe('designLeftOutOf', () => {
+  test('reads facts.design_left_out, and an empty list without it', () => {
+    const rows = [{ engine: 'aurora_postgresql', object_count: 2, objects: [{ name: 'a' }, { name: 'b' }] }];
+    expect(designLeftOutOf({ facts: { design_left_out: rows } })).toEqual(rows);
+    expect(designLeftOutOf({ facts: { design_left_out: null } })).toEqual([]);
+    expect(designLeftOutOf({ facts: {} })).toEqual([]);
+    expect(designLeftOutOf(null)).toEqual([]);
+    expect(designLeftOutOf({ facts: { design_left_out: [null, { objects: [] }] } })).toEqual([]);
   });
 });

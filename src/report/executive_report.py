@@ -1469,6 +1469,11 @@ def _risks(report: dict[str, Any], st: dict[str, ParagraphStyle], names: Any) ->
     note = rate_window_risk_note(facts)
     if note:
         flow += [_para(f"{note}.", st["small"]), _gap(4)]
+    # #2484: what each Aurora design leaves out, counted; the names stay in the
+    # engineering report and the results page, as every table name does.
+    for left_out in facts.get("design_left_out") or []:
+        if isinstance(left_out, dict) and left_out.get("brief_line"):
+            flow += [_para(left_out["brief_line"], st["small"]), _gap(4)]
     if risks:
         flow.append(_para(RISK_RULE_NOTE, st["small"]))
     else:

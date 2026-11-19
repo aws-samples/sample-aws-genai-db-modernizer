@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: MIT-0
 
 import { memo, useMemo, useState } from 'react';
+import Alert from '@cloudscape-design/components/alert';
 import Box from '@cloudscape-design/components/box';
 import SpaceBetween from '@cloudscape-design/components/space-between';
 import Header from '@cloudscape-design/components/header';
@@ -136,6 +137,35 @@ const AuroraDesignTables = memo(({ design, count, selectedKey, onSelect, t }) =>
         </Box>
       )}
     </SpaceBetween>
+  );
+});
+
+/**
+ * #2484: the objects the design leaves out, from facts.design_left_out (`leftOut`, one
+ * engine's row): a short alert above the table naming each one, its kind of note and the
+ * reason, so a table the design does not create is never just missing from the list.
+ * The count is the fact's; every name renders as text.
+ */
+export const AuroraLeftOutAlert = memo(({ leftOut, t }) => {
+  if (!leftOut || !(leftOut.objects || []).length) return null;
+  return (
+    <Alert type="warning" header={t('analysis-results.aurora-design.left-out-title', { count: leftOut.object_count })}>
+      <SpaceBetween size="xxs">
+        <Box fontSize="body-s">{t(leftOut.ddl_names_each ? 'analysis-results.aurora-design.left-out-body-ddl' : 'analysis-results.aurora-design.left-out-body')}</Box>
+        <ul id="aurora-design-left-out" style={{ margin: 0, paddingLeft: '1.25rem' }}>
+          {leftOut.objects.map((o, i) => (
+            <li key={i}>
+              <Box fontSize="body-s">
+                {t('analysis-results.aurora-design.left-out-item', { object: o.object, label: o.label })}{' '}
+                <Box variant="code" display="inline">{o.name}</Box>
+                {': '}
+                {o.reason}
+              </Box>
+            </li>
+          ))}
+        </ul>
+      </SpaceBetween>
+    </Alert>
   );
 });
 

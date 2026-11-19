@@ -320,7 +320,10 @@ def test_an_old_job_loads_and_renders_without_the_section() -> None:
         "engine_query_counts",
         "target_engines",
         "executive_brief",
+        # #2484: the objects each Aurora design leaves out (none here), from its notes.
+        "design_left_out",
     )
+    assert facts["design_left_out"] == []
     brief = old["facts"]["executive_brief"]
     assert facts["executive_brief"] == {
         **brief,

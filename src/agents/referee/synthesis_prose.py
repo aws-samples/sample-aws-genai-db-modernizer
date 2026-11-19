@@ -60,6 +60,7 @@ from src.shared.design_text import (
     trade_off_review_line,
 )
 from src.shared.engine_names import display_engine, display_engine_ids
+from src.shared.left_out_objects import is_left_out_note
 from src.shared.prose_style import (
     find_style_hits,
     has_confidence_figure,
@@ -217,7 +218,8 @@ def clean_schema_design_prose(
     )
     for key, fields in _LABEL_FIELDS:
         for entry in out.get(key) or []:
-            if isinstance(entry, dict):
+            # #2484: a left-out note's name is the merge's, the one its DDL comment carries.
+            if isinstance(entry, dict) and not is_left_out_note(entry):
                 for field in fields:
                     if isinstance(entry.get(field), str):
                         entry[field] = replace_dashes(entry[field], names)

@@ -1,0 +1,6 @@
+# A pending contract version bump (ADR-008 Decision 8). The number is assigned by
+# uv run python scripts/resolve_contract_versions.py --release at release (a MAJOR: in its pull request).
+contract = "aurora_postgresql_model_output.AuroraPostgresqlModelOutputContract"
+kind = "minor"
+reason = "generated_ddl may close with one '-- Not created: <name>: <reason>' comment per object the design leaves out; a left-out table's note names it once"
+issue = 2484
