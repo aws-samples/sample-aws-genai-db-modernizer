@@ -193,3 +193,39 @@ describe('source tables of a design that spans two schemas', () => {
     expect(sourceTableRows(ownerAccessPatterns([ddb], null), []).map(r => r.table)).toEqual(['order_items', 'orders']);
   });
 });
+
+// #2483: the query table's source table property also matches the tables merged with a
+// query's own, into the destination a pattern serves it from: the destination's own
+// source_tables and the other patterns on it. Two schemas' `orders` stay apart.
+describe('the tables merged into a pattern\'s destination', () => {
+  test('a named destination lists its own source tables and every pattern\'s on it', () => {
+    const withSources = design('dynamodb', {
+      table_definitions: [{ table_name: 'orders', source_tables: ['shop.orders', 'shop.customers'] }],
+      access_patterns: [
+        { pattern_id: 'D1', operation: 'GetItem', table_name: 'orders', source_tables: ['shop.orders'], source_query_ids: ['q1'] },
+        { pattern_id: 'D2', operation: 'Query', table_name: 'orders', source_tables: ['shop.order_items'], source_query_ids: ['q2'] },
+      ],
+    });
+    const [d1, d2] = ownerAccessPatterns([withSources], null);
+    expect(d1.mergedSourceTables).toEqual(['customers', 'order_items', 'orders']);
+    expect(d2.mergedSourceTables).toEqual(['customers', 'order_items', 'orders']);
+  });
+
+  test('an Aurora join and a cache key design merge nothing', () => {
+    expect(owner[2].mergedSourceTables).toEqual([]);
+    expect(cached[0].mergedSourceTables).toBeUndefined();
+  });
+
+  test('a design of several schemas keeps each schema\'s table apart', () => {
+    const sales = design('aurora_postgresql', {
+      table_definitions: [{ table_name: 'orders', schema_name: 'sales' }, { table_name: 'orders', schema_name: 'archive' }],
+      access_patterns: [],
+    });
+    const merged = design('dynamodb', {
+      table_definitions: [{ table_name: 'orders_by_user', source_tables: ['sales.orders', 'sales.users'] }],
+      access_patterns: [{ pattern_id: 'D1', operation: 'GetItem', table_name: 'orders_by_user', source_tables: ['sales.orders'], source_query_ids: ['q1'] }],
+    });
+    const [d1] = ownerAccessPatterns([sales, merged], null);
+    expect(d1.mergedSourceTables).toEqual(['sales.orders', 'sales.users']);
+  });
+});

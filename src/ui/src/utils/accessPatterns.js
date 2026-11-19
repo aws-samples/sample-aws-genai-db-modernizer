@@ -161,7 +161,29 @@ export function ownerAccessPatterns(designs, cacheOverlay, auroraReasonByPattern
       });
     });
   });
-  return patterns;
+  return withMergedSourceTables(patterns, shorten);
+}
+
+// #2483: the source tables merged into each pattern's destination, for the query table's
+// source table property: the destination's own source_tables (the Data model's
+// "consolidated tables") and those of every pattern on it, through the same name mapper,
+// so two schemas' `orders` stay apart. Like groupBySourceTable, a pattern that names no
+// destination (an Aurora join) merges nothing. Listed and sorted, never counted.
+function withMergedSourceTables(patterns, shorten) {
+  const byDestination = new Map();
+  patterns.forEach((p) => {
+    if (!p.destNamed) return;
+    const key = destinationKey(p.engine, p.destTable);
+    const set = byDestination.get(key) || new Set();
+    const def = p.destDef || {};
+    (def.source_tables || def.source_collections || []).forEach(s => set.add(shorten(s)));
+    p.sourceTables.forEach(s => set.add(s));
+    byDestination.set(key, set);
+  });
+  return patterns.map(p => ({
+    ...p,
+    mergedSourceTables: p.destNamed ? [...byDestination.get(destinationKey(p.engine, p.destTable))].sort() : [],
+  }));
 }
 
 // The cache layer's access patterns and key designs (#429 part 2), with their type.

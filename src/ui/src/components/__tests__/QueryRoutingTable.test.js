@@ -313,3 +313,58 @@ test('a linked engine opens the table filtered to it, and the reader can clear i
   act(() => wrapper().findPropertyFilter().findTokens()[0].findRemoveButton().click());
   expect(wrapper().findTable().findRows()).toHaveLength(2);
 });
+
+// #2483: the explorer's pattern group, Uses GSI, target operation and merged source
+// table filters are properties here, grouped under the target design, which says a
+// query matches when any pattern that serves it matches.
+describe('target design properties', () => {
+  const gsiQuery = journey(4);
+  const designLinks = {
+    designById: new Map([
+      [journey(1).query_id, { patternGroups: new Set(['posts']), usesGsi: new Set(['no']), targetOperations: new Set(['GetItem']), sourceTables: new Set(['wp_posts', 'wp_postmeta']) }],
+      [gsiQuery.query_id, { patternGroups: new Set(['posts']), usesGsi: new Set(['yes']), targetOperations: new Set(['Query']), sourceTables: new Set(['wp_posts']) }],
+    ]),
+  };
+  const shownIds = () => wrapper().findTable().findRows().map(r => r.getElement().querySelector('span[title]').getAttribute('title'));
+  const enter = (text) => {
+    const filter = wrapper().findPropertyFilter();
+    act(() => filter.setInputValue(text));
+    act(() => { filter.findNativeInput().keydown({ keyCode: 13, key: 'Enter' }); });
+  };
+
+  test('the four properties are offered under the target design, which says how a query matches', () => {
+    render({ rows: rowsOf([journey(1), gsiQuery, moved], designLinks) });
+    const filter = wrapper().findPropertyFilter();
+    act(() => filter.focus());
+    const dropdown = filter.findDropdown({ expandToViewport: true }).getElement().textContent;
+    ['Pattern group', 'Uses GSI', 'Target operation', 'Source table, with merged tables'].forEach(label => expect(dropdown).toContain(label));
+    expect(dropdown).toContain('any access pattern that serves the query');
+  });
+
+  test('a Uses GSI token keeps the queries a GSI serves and reads Yes', () => {
+    render({ rows: rowsOf([journey(1), gsiQuery, moved], designLinks) });
+    enter('Uses GSI = Yes');
+    expect(shownIds()).toEqual([gsiQuery.query_id]);
+    expect(wrapper().findPropertyFilter().findTokens()[0].getElement().textContent).toContain('Yes');
+  });
+
+  test('a target operation token and a merged source table token filter the rows', () => {
+    render({ rows: rowsOf([journey(1), gsiQuery, moved], designLinks) });
+    enter('Target operation = GetItem');
+    expect(shownIds()).toEqual([journey(1).query_id]);
+    act(() => wrapper().findPropertyFilter().findTokens()[0].findRemoveButton().click());
+    enter('Source table, with merged tables = wp_postmeta');
+    expect(shownIds()).toEqual([journey(1).query_id]);
+  });
+
+  test('without a schema design the properties offer no values and every query is listed', () => {
+    render({ rows: rowsOf([journey(1), moved]) });
+    expect(wrapper().findTable().findRows()).toHaveLength(2);
+    const filter = wrapper().findPropertyFilter();
+    act(() => filter.focus());
+    expect(filter.findDropdown({ expandToViewport: true }).getElement().textContent).toContain('Uses GSI');
+    act(() => filter.setInputValue('Uses GSI = '));
+    const values = filter.findDropdown({ expandToViewport: true }).findOptions().map(o => o.getElement().textContent);
+    expect(values.some(v => v.includes('Yes') || v.includes('No'))).toBe(false);
+  });
+});
