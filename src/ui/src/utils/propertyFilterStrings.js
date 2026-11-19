@@ -9,6 +9,7 @@ export function propertyFilterStrings(t, { ariaLabel, placeholder }) {
   return {
     filteringAriaLabel: ariaLabel,
     dismissAriaLabel: k('dismiss-aria-label'),
+    clearAriaLabel: k('clear-aria-label'),
     filteringPlaceholder: placeholder,
     groupValuesText: k('group-values-text'),
     groupPropertiesText: k('group-properties-text'),

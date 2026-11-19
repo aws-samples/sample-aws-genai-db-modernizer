@@ -151,7 +151,6 @@ const CloseCallCallout = memo(({ synthesis, jobId, onOpen, queries, t }) => {
             i18nStrings={i18nStrings}
             filteringPlaceholder={t('analysis-results.close-calls.filter-placeholder')}
             countText={t('analysis-results.close-calls.count-text', { count: filtered.length, shown: formatCount(filtered.length) })}
-            expandToViewport
           />
           <Table
             variant="embedded"

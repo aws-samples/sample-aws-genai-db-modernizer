@@ -275,7 +275,6 @@ const QueryRoutingTable = memo(({
               customGroupsText={customGroupsText}
               filteringPlaceholder={t('analysis-results.query-routing.filter-placeholder')}
               countText={t('analysis-results.query-routing.count-text', { count: filtered.length, shown: formatCount(filtered.length) })}
-              expandToViewport
             />
             {!hasLedger && !loading && (
               <Box color="text-body-secondary">{t('analysis-results.query-trace.no-ledger')}</Box>

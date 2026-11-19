@@ -254,10 +254,10 @@ test('the filter offers the operation types the rows hold, by name', () => {
   render();
   const filter = wrapper().findPropertyFilter();
   act(() => filter.focus());
-  const properties = filter.findDropdown({ expandToViewport: true }).findOptions().map(o => o.getElement().textContent);
+  const properties = filter.findDropdown().findOptions().map(o => o.getElement().textContent);
   expect(properties).toContain('Operation type');
   act(() => filter.setInputValue('Operation type = '));
-  const values = filter.findDropdown({ expandToViewport: true }).findOptions().map(o => o.getElement().textContent);
+  const values = filter.findDropdown().findOptions().map(o => o.getElement().textContent);
   expect(values.some(v => v.includes('Read'))).toBe(true);
   expect(values.some(v => v.includes('Update'))).toBe(true);
   expect(values.some(v => v.includes('Search'))).toBe(false);
@@ -270,7 +270,7 @@ test('a statement of no known type is listed and filtered as Other', () => {
   const filter = wrapper().findPropertyFilter();
   act(() => filter.focus());
   act(() => filter.setInputValue('Operation type = '));
-  const values = filter.findDropdown({ expandToViewport: true }).findOptions().map(o => o.getElement().textContent);
+  const values = filter.findDropdown().findOptions().map(o => o.getElement().textContent);
   expect(values.some(v => v.includes('Other'))).toBe(true);
   act(() => filter.setInputValue('Operation type = Other'));
   act(() => {
@@ -336,7 +336,7 @@ describe('target design properties', () => {
     render({ rows: rowsOf([journey(1), gsiQuery, moved], designLinks) });
     const filter = wrapper().findPropertyFilter();
     act(() => filter.focus());
-    const dropdown = filter.findDropdown({ expandToViewport: true }).getElement().textContent;
+    const dropdown = filter.findDropdown().getElement().textContent;
     ['Pattern group', 'Uses GSI', 'Target operation', 'Source table, with merged tables'].forEach(label => expect(dropdown).toContain(label));
     expect(dropdown).toContain('any access pattern that serves the query');
   });
@@ -362,9 +362,9 @@ describe('target design properties', () => {
     expect(wrapper().findTable().findRows()).toHaveLength(2);
     const filter = wrapper().findPropertyFilter();
     act(() => filter.focus());
-    expect(filter.findDropdown({ expandToViewport: true }).getElement().textContent).toContain('Uses GSI');
+    expect(filter.findDropdown().getElement().textContent).toContain('Uses GSI');
     act(() => filter.setInputValue('Uses GSI = '));
-    const values = filter.findDropdown({ expandToViewport: true }).findOptions().map(o => o.getElement().textContent);
+    const values = filter.findDropdown().findOptions().map(o => o.getElement().textContent);
     expect(values.some(v => v.includes('Yes') || v.includes('No'))).toBe(false);
   });
 });
