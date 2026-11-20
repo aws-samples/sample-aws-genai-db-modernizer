@@ -81,8 +81,8 @@ afterEach(() => {
 
 const terms = () => [...container.querySelectorAll('dt')].map((d) => d.textContent);
 const stat = (label) => container.querySelectorAll('dd')[terms().indexOf(label)].textContent;
-const STAT_LABELS = ['Total analyses', 'Active jobs', 'Success rate', 'Average time', 'Last analysis', 'Completed today'];
-const tableHeading = () => [...container.querySelectorAll('h2')].find((h) => h.textContent.includes('Recent analyses'));
+const STAT_LABELS = ['Total assessments', 'Active assessments', 'Success rate', 'Average time', 'Last assessment', 'Completed today'];
+const tableHeading = () => [...container.querySelectorAll('h2')].find((h) => h.textContent.includes('Recent assessments'));
 const alertWrapper = () => container.querySelector('[role="alert"]');
 
 describe('API down', () => {
@@ -117,7 +117,7 @@ describe('API down', () => {
     expect(container.textContent).toContain('Assessments unavailable');
     expect(container.textContent).not.toContain('No assessments yet');
     expect(container.textContent).not.toContain('No records');
-    expect(tableHeading().textContent).toBe('Recent analyses');
+    expect(tableHeading().textContent).toBe('Recent assessments');
     expect(container.textContent).not.toContain('(0)');
   });
 
@@ -133,7 +133,7 @@ describe('API down', () => {
     expect(alertWrapper().querySelector('button').className).toMatch(/disabled/);
     await act(async () => { finish(UP); });
     expect(alertWrapper()).toBeNull();
-    expect(stat('Total analyses')).toBe('6');
+    expect(stat('Total assessments')).toBe('6');
   });
 
   test('an unexpected exception also shows the alert, not zeros', async () => {
@@ -144,7 +144,7 @@ describe('API down', () => {
     jest.spyOn(console, 'error').mockImplementation(() => {});
     await act(async () => { root.render(<Dashboard />); });
     expect(container.querySelectorAll('[role="alert"]')).toHaveLength(1);
-    expect(stat('Total analyses')).toBe('—');
+    expect(stat('Total assessments')).toBe('—');
   });
 });
 
@@ -152,13 +152,13 @@ describe('a later refresh fails after a good load', () => {
   test('the old figures and rows are hidden, not left beside "did not load"', async () => {
     jest.useFakeTimers();
     await renderDashboard({ 'get-assessments': { success: true, assessments: [JOB] }, 'get-dashboard-stats': STATS });
-    expect(stat('Total analyses')).toBe('6');
+    expect(stat('Total assessments')).toBe('6');
     expect(container.textContent).toContain('wordpress');
     expect(tableHeading().textContent).toContain('(1)');
     mockExecute.mockResolvedValue(DOWN_ALL);
     await act(async () => { jest.advanceTimersByTime(30000); });
     expect(alertWrapper()).not.toBeNull();
-    expect(stat('Total analyses')).toBe('—');
+    expect(stat('Total assessments')).toBe('—');
     expect(container.textContent).not.toContain('wordpress');
     expect(container.textContent).toContain('Assessments unavailable');
     expect(tableHeading().textContent).not.toContain('(');
@@ -174,7 +174,7 @@ describe('while the first load is pending', () => {
     await act(async () => { root.render(<Dashboard />); });
     for (const label of STAT_LABELS) expect(stat(label)).toBe('Loading...');
     expect(container.textContent).not.toMatch(/0\.0%|0\.0h/);
-    expect(tableHeading().textContent).toBe('Recent analyses');
+    expect(tableHeading().textContent).toBe('Recent assessments');
     expect(container.querySelector('[role="alert"]')).toBeNull();
   });
 });
@@ -182,14 +182,14 @@ describe('while the first load is pending', () => {
 describe('API up', () => {
   test('figures come from the stats, formatted by the shared formatter, in one container', async () => {
     await renderDashboard(UP);
-    expect(stat('Total analyses')).toBe('6');
-    expect(stat('Active jobs')).toBe('2');
+    expect(stat('Total assessments')).toBe('6');
+    expect(stat('Active assessments')).toBe('2');
     expect(stat('Success rate')).toBe('83.3%');
     expect(stat('Average time')).toBe('1.5h');
     expect(stat('Completed today')).toBe('4');
-    expect(stat('Last analysis')).toBe('—');
-    // "Active jobs" appears once, not in a second container (#2306).
-    expect(terms().filter((x) => x === 'Active jobs')).toHaveLength(1);
+    expect(stat('Last assessment')).toBe('—');
+    // "Active assessments" appears once, not in a second container (#2306).
+    expect(terms().filter((x) => x === 'Active assessments')).toHaveLength(1);
     expect(container.querySelector('[role="alert"]')).toBeNull();
   });
 
@@ -201,7 +201,7 @@ describe('API up', () => {
 
   test('a real zero from the API still prints as 0, and an empty list says (0)', async () => {
     await renderDashboard({ ...UP, 'get-dashboard-stats': { ...STATS, total_assessments: 0, active_jobs: 0, success_rate_percent: 0, completed_today: 0 } });
-    expect(stat('Total analyses')).toBe('0');
+    expect(stat('Total assessments')).toBe('0');
     expect(stat('Success rate')).toBe('0.0%');
     expect(tableHeading().textContent).toContain('(0)');
   });
@@ -215,7 +215,7 @@ describe('API up', () => {
     await renderDashboard(UP);
     expect(container.textContent).toContain('No assessments yet');
     expect(container.textContent).not.toContain('No records');
-    const link = [...container.querySelectorAll('a')].find((a) => a.textContent.includes('New analysis') && a.closest('table'));
+    const link = [...container.querySelectorAll('a')].find((a) => a.textContent.includes('New assessment') && a.closest('table'));
     expect(link.getAttribute('href')).toBe('/analysis/create');
   });
 });
@@ -228,7 +228,7 @@ describe('assessments anchor', () => {
     await renderDashboard(UP);
     const section = container.querySelector('#assessments');
     expect(section).not.toBeNull();
-    expect(section.textContent).toContain('Recent analyses');
+    expect(section.textContent).toContain('Recent assessments');
     expect(document.activeElement).not.toBe(section);
   });
 

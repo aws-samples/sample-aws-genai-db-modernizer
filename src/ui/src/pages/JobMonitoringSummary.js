@@ -118,8 +118,8 @@ const JobMonitoringSummaryPage = memo(() => {
     if (!jobId) {
       addFlashbarMessage({
         type: 'error',
-        header: 'Invalid Job ID',
-        content: 'No job ID provided in URL',
+        header: t('analysis-results.error.invalid-job-id'),
+        content: t('analysis-results.error.no-job-id'),
         dismissible: true,
         id: `error-${Date.now()}`
       });
@@ -394,10 +394,9 @@ const JobMonitoringSummaryPage = memo(() => {
 
   //--## Breadcrumb items
   const breadcrumbItems = useMemo(() => [
-    { href: "/", text: t("dashboard.breadcrumb.home") },
-    { href: "/dashboard", text: t("dashboard.breadcrumb.dashboard") },
-    { href: `/analysis/monitor/summary/${jobId}`, text: t("job-summary.breadcrumb.assessment") }
-  ], [jobId, t]);
+    { href: "/dashboard", text: t("common.breadcrumb.assessments") },
+    { href: `/analysis/monitor/summary/${jobId}`, text: jobData?.database_name || t("job-summary.breadcrumb.assessment") }
+  ], [jobData?.database_name, jobId, t]);
 
 
   //--## Get current pipeline step from job data

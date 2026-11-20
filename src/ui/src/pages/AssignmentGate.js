@@ -894,11 +894,10 @@ const AssignmentGatePage = memo(() => {
 
   // ---- Breadcrumbs ----
   const breadcrumbItems = useMemo(() => [
-    { href: "/", text: t('assignment-gate.breadcrumb.home') },
-    { href: "/dashboard", text: t('assignment-gate.breadcrumb.dashboard') },
-    { href: `/analysis/monitor/summary/${jobId}`, text: `Job ${jobId?.slice(0, 8)}...` },
+    { href: "/dashboard", text: t('common.breadcrumb.assessments') },
+    { href: `/analysis/monitor/summary/${jobId}`, text: databaseName || t('job-summary.breadcrumb.assessment') },
     { href: `#`, text: t('assignment-gate.breadcrumb.assignment-review') }
-  ], [jobId, t]);
+  ], [databaseName, jobId, t]);
 
 
   // ---- Render: Loading ----

@@ -1170,8 +1170,7 @@ function DatabaseAnalysisForm() {
         breadcrumbs={
           <BreadcrumbGroup
             items={[
-              { href: "/", text: t("create-analysis.breadcrumb.home") },
-              { href: "/dashboard", text: t("create-analysis.breadcrumb.analyses") },
+              { href: "/dashboard", text: t("common.breadcrumb.assessments") },
               { href: "#", text: t("create-analysis.breadcrumb.create-analysis") },
             ]}
           />

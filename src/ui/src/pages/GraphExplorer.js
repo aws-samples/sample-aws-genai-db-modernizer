@@ -585,7 +585,7 @@ export default function GraphExplorer() {
   const activeFilters = [engineFilter != null, threshold > 0, wave != null && startKind !== 'wave'].filter(Boolean).length;
 
   const breadcrumbs = [
-    { href: '/dashboard', text: t('dashboard.breadcrumb.dashboard') },
+    { href: '/dashboard', text: t('common.breadcrumb.assessments') },
     { href: `/analysis/results/${jobId}`, text: t('analysis-results.breadcrumb.results') },
     { href: `/analysis/explore/${jobId}`, text: t('graph-explorer.breadcrumb') },
   ];

@@ -69,7 +69,7 @@ test('the h1 names the database, and the description states source, id and date'
   expect(h1.textContent).toBe('wordpress assessment');
   const description = header.findDescription().getElement();
   expect(description.textContent).toContain('MySQL source');
-  expect(description.textContent).toContain('Assessment 8dd35fce');
+  expect(description.textContent).toContain('Assessment id 8dd35fce');
   expect(description.textContent).toContain('Nov 18, 2026');
   // The id has a copy button named for the database it belongs to.
   const copy = createWrapper(description).findCopyToClipboard();
@@ -89,7 +89,7 @@ test('an old job with no source on record and no report timestamp leaves those p
   const header = render({ databaseName: 'discourse', sourceLabel: null, timestamp: undefined });
   expect(container.querySelector('h1').textContent).toBe('discourse assessment');
   const text = header.findDescription().getElement().textContent;
-  expect(text).toContain('Assessment 8dd35fce');
+  expect(text).toContain('Assessment id 8dd35fce');
   expect(text).not.toContain('source');
   expect(text).not.toMatch(/undefined|null|Invalid/);
 });

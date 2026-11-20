@@ -88,13 +88,13 @@ test('each selection radio names its assessment', async () => {
 
 test('the table is named, so its region landmark is unique', async () => {
   await renderDashboard(rowsResult());
-  expect(container.querySelector('[aria-label="Recent analyses"]')).not.toBeNull();
+  expect(container.querySelector('[aria-label="Recent assessments"]')).not.toBeNull();
 });
 
 test('every column header is sortable by its displayed name, never its field id', async () => {
   await renderDashboard(rowsResult());
   const all = [...container.querySelectorAll('[aria-label]')].map((el) => el.getAttribute('aria-label'));
-  expect(all).toContain('Job ID, not sorted.');
+  expect(all).toContain('Assessment id, not sorted.');
   expect(all).toContain('Database, not sorted.');
   expect(all.filter((l) => /^(jobId|databaseName|created|duration|database|status)\b/.test(l) && l.includes('sorted'))).toEqual([]);
 });

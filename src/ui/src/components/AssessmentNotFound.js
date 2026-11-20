@@ -44,8 +44,7 @@ export function JobRouteShell({ lastCrumb, children }) {
         breadcrumbs={
           <BreadcrumbGroup
             items={[
-              { href: '/', text: t('dashboard.breadcrumb.home') },
-              { href: '/dashboard', text: t('dashboard.breadcrumb.dashboard') },
+              { href: '/dashboard', text: t('common.breadcrumb.assessments') },
               { href: '#', text: lastCrumb },
             ]}
           />
