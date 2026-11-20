@@ -36,7 +36,7 @@ import { getStatusType as sharedGetStatusType, getStatusText as sharedGetStatusT
 import { buildDashboardActionItems } from "../utils/dashboardActions";
 import { assessmentHref, copyJobIdLabel, databaseLabel } from "../utils/assessmentRows";
 import { formatDuration, UNKNOWN_DURATION } from "../utils/duration";
-import { formatCount, formatPercent, formatHours, formatMonthlyMoney, NO_FIGURE } from "../utils/format";
+import { formatCount, formatPercent, formatHours, formatMonthlyMoney, NO_FIGURE, formatDateTime as formatDate } from "../utils/format";
 import EngineBadge from "../components/EngineBadge";
 import usePhoneWidth from "../hooks/usePhoneWidth";
 
@@ -499,15 +499,7 @@ const ComponentPage = memo(() => {
 
   const formatDateTime = useCallback((dateString) => {
           if (!dateString) return 'N/A';
-          const date = new Date(dateString);
-          return date.toLocaleString('en-US', {
-            year: 'numeric',
-            month: 'short',
-            day: 'numeric',
-            hour: '2-digit',
-            minute: '2-digit',
-            second: '2-digit'
-          });
+          return formatDate(dateString) ?? 'N/A';
   }, []);
 
 

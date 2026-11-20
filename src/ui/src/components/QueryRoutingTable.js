@@ -257,10 +257,10 @@ const QueryRoutingTable = memo(({
                 <span data-figure="query-patterns">
                   {t('analysis-results.executive-summary.query-patterns', {
                     count: queryPatterns.patterns,
-                    patterns: queryPatterns.patterns.toLocaleString('en-US'),
+                    patterns: formatCount(queryPatterns.patterns),
                     queries: t('analysis-results.executive-summary.query-patterns-queries', {
                       count: queryPatterns.queries,
-                      queries: queryPatterns.queries.toLocaleString('en-US'),
+                      queries: formatCount(queryPatterns.queries),
                     }),
                   })}
                 </span>

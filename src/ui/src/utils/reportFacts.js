@@ -6,6 +6,8 @@
 // (src/shared/report_facts.py); the UI only formats it. The /results API fills
 // `facts` in for a report synthesized before it existed (src/api/routes/results.py).
 
+import { formatFigure } from './format';
+
 export function waveFacts(synthesis, wave) {
   const rows = (synthesis && synthesis.facts && synthesis.facts.waves) || [];
   return rows.find(r => r.wave === wave.wave) || null;
@@ -420,14 +422,8 @@ export function costSizingOf(synthesis, engine) {
   return (row && row.cost_sizing) || null;
 }
 
-// A number as the reports print it (fmt_num): thousands separators, at most two places,
-// and a non-zero value too small for them as "<0.01" (">-0.01"), never "0".
-export function formatFigure(value) {
-  const n = Number(value) || 0;
-  if (n !== 0 && Math.abs(n) < 0.005) return n > 0 ? '<0.01' : '>-0.01';
-  const text = n.toLocaleString('en-US', { minimumFractionDigits: 0, maximumFractionDigits: 2 });
-  return text === '-0' ? '0' : text;
-}
+// A number as the reports print it (fmt_num). It lives in format.js (#2347).
+export { formatFigure };
 
 // "Sized for 67 queries, 96.51 calls/s" / "Sized for 20 cached reads, 185.07 calls/s",
 // the reports' "Sized for" column; '' with no sizing.

@@ -10,7 +10,7 @@ import Popover from "@cloudscape-design/components/popover";
 import SpaceBetween from "@cloudscape-design/components/space-between";
 import StatusIndicator from "@cloudscape-design/components/status-indicator";
 import { displayEngine } from '../utils/engineNames';
-import { formatMoney, formatMonthlyMoney } from '../utils/format';
+import { formatCount, formatMoney, formatMonthlyMoney } from '../utils/format';
 import { riskSeverityLabel, riskSeverityStatus } from '../utils/riskAssessment';
 
 /**
@@ -174,13 +174,13 @@ const ExecutiveSummaryStats = memo(({
       value: (
         <div data-tile="queries">
           <Headline figure="query-count">
-            {summary.queryCount === null ? '—' : summary.queryCount.toLocaleString('en-US')}
+            {summary.queryCount === null ? '—' : formatCount(summary.queryCount)}
           </Headline>
           {summary.sourceTableCount !== null && summary.sourceTableCount > 0 && (
             <Note figure="source-tables">
               {t('analysis-results.executive-summary.across-source-tables', {
                 count: summary.sourceTableCount,
-                tables: summary.sourceTableCount.toLocaleString('en-US'),
+                tables: formatCount(summary.sourceTableCount),
               })}
             </Note>
           )}

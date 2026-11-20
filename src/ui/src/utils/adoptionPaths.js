@@ -18,7 +18,7 @@
 //   relational_monthly_cost_usd is None (no relational step).
 
 import { displayEngine } from './engineNames';
-import { formatFigure } from './reportFacts';
+import { formatCount as formatWhole, formatFigure, formatFigurePercent, formatMoney } from './format';
 
 export const PER_PATH_SIZING = 'per_path_sizing';
 export const FULL_TARGET = 'full_target';
@@ -27,13 +27,13 @@ export const RELATIONAL_ONLY = 'relational_only';
 // _fmt_usd from src/report/formatting.py: "$1,178.33".
 export function formatUsd(value) {
   if (typeof value !== 'number' || !Number.isFinite(value)) return '-';
-  return `$${value.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+  return formatMoney(value);
 }
 
 // fmt_num for a count: thousands separators.
 export function formatCount(value) {
   const n = Number(value);
-  return Number.isFinite(n) ? n.toLocaleString('en-US') : '0';
+  return Number.isFinite(n) ? formatWhole(n) : '0';
 }
 
 // facts.adoption when it offers a path, else null: a report written before it (or
@@ -308,7 +308,7 @@ export function stepMetric(step, field) {
 // a share as a percent, a cost in dollars).
 export function metricValueText(field, value) {
   if (value === null || value === undefined) return '-';
-  if (field === 'value_call_share_percent') return `${formatFigure(value)}%`;
+  if (field === 'value_call_share_percent') return formatFigurePercent(value);
   if (field === 'value_monthly_cost_usd') return formatUsd(value);
   return formatFigure(value);
 }

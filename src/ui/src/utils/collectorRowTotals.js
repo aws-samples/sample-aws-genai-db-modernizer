@@ -5,6 +5,8 @@
 // count for it. The monitoring page's "Total rows" sums the known counts only and says
 // how many are unknown; with no known count at all the total is not known, never 0.
 
+import { formatCompactCount } from './format';
+
 const isKnown = (count) => Number.isInteger(count) && count >= 0;
 
 export function collectorRowTotals(tables) {
@@ -21,8 +23,5 @@ export function collectorRowTotals(tables) {
 // (the page then shows its "Not known" label).
 export function totalRowsText(totals) {
   if (!totals || !totals.knownRowTables) return null;
-  const n = totals.totalRows;
-  if (n > 1000000) return `${(n / 1000000).toFixed(1)}M`;
-  if (n > 1000) return `${(n / 1000).toFixed(1)}K`;
-  return n.toLocaleString();
+  return formatCompactCount(totals.totalRows);
 }

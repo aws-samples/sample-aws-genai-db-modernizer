@@ -64,7 +64,7 @@ import { summaryFallbackInfo } from "../utils/summaryFallback";
 import { reroutedQueryIds, rowMoveKind } from "../utils/postSchemaReroutes";
 import { pinnedFitLabel } from "../utils/queryRouting";
 import { displayTables } from "../utils/tableNames";
-import { formatRate, formatPercent, formatCount } from "../utils/format";
+import { formatRate, formatPercent, formatCount, formatFigurePercent, formatFixed, formatMilliseconds } from "../utils/format";
 import Checkbox from "@cloudscape-design/components/checkbox";
 
 import './AssignmentGate.css';
@@ -114,7 +114,7 @@ function DistributionBar({ distribution, eliminated = [] }) {
             key={engine}
             className={`distribution-bar__segment ${isEliminated ? 'distribution-bar__segment--eliminated' : ''}`}
             style={{ width: `${pct}%`, backgroundColor: color }}
-            title={`${engine}: ${count} queries (${pct.toFixed(1)}%)`}
+            title={`${engine}: ${count} queries (${formatPercent(pct, 1)})`}
           >
             <span>{count > 0 && `${engine} (${count})`}</span>
           </div>
@@ -1449,7 +1449,7 @@ const AssignmentGatePage = memo(() => {
                       )}
                     </div>
                     <div className="query-list-col query-list-col--confidence">
-                      {pinnedFitLabel(item.pinned, t) ?? `${item.confidence ?? '-'}%`}
+                      {pinnedFitLabel(item.pinned, t) ?? (item.confidence == null ? '-%' : formatFigurePercent(item.confidence))}
                     </div>
                     <div className="query-list-col query-list-col--tables">
                       {(item.source_tables || []).map(t => t.split('.').pop()).join(', ') || '-'}
@@ -1489,7 +1489,7 @@ const AssignmentGatePage = memo(() => {
                             </Box>
                             <Box>
                               <Box variant="awsui-key-label">{t('assignment-gate.row-detail.avg-latency')}</Box>
-                              <Box>{details.execution_time_ms_avg ? `${details.execution_time_ms_avg.toFixed(1)}ms` : '-'}</Box>
+                              <Box>{details.execution_time_ms_avg ? formatMilliseconds(details.execution_time_ms_avg) : '-'}</Box>
                             </Box>
                             <Box>
                               <Box variant="awsui-key-label">{t('assignment-gate.row-detail.tables-accessed')}</Box>
@@ -1516,7 +1516,7 @@ const AssignmentGatePage = memo(() => {
                             </Box>
                             <Box>
                               <Box variant="awsui-key-label">{t('assignment-gate.row-detail.rows-examined')}</Box>
-                              <Box>{details.rows_examined_avg?.toFixed(0) || '-'}</Box>
+                              <Box>{(details.rows_examined_avg == null ? '-' : formatFixed(details.rows_examined_avg, 0))}</Box>
                             </Box>
                           </ColumnLayout>
                         </div>

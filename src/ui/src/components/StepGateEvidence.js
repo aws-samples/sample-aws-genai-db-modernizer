@@ -10,6 +10,7 @@ import SpaceBetween from "@cloudscape-design/components/space-between";
 import StatusIndicator from "@cloudscape-design/components/status-indicator";
 import Table from "@cloudscape-design/components/table";
 import { stepGateOf } from "../utils/reportFacts";
+import { formatCount } from "../utils/format";
 
 /**
  * "Step 1 gate evidence" (#1801, ADR-033 Decision 10): what step 1's read-only
@@ -33,7 +34,7 @@ function Mono({ children }) {
 }
 
 function rowsText(value, t) {
-  return typeof value === 'number' ? value.toLocaleString('en-US') : t('analysis-results.step-gate.not-reported');
+  return typeof value === 'number' ? formatCount(value) : t('analysis-results.step-gate.not-reported');
 }
 
 const StepGateEvidence = memo(({ synthesis, t }) => {

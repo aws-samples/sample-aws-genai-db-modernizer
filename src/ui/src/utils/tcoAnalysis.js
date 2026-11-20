@@ -1,7 +1,7 @@
 // Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
 // SPDX-License-Identifier: MIT-0
 
-import { formatMonthlyMoney } from './format';
+import { formatFigurePercent, formatMonthlyMoney } from './format';
 
 /**
  * The current-cost baseline / savings figure as every deliverable shows it
@@ -34,9 +34,7 @@ export function isCostBaselineUnknown(tco) {
 /** "0%", "44%", "44.3%" -- trailing zeros dropped, mirrors formatting.fmt_num(x, 1). */
 export function formatSavingsPercent(value) {
   const n = Number(value);
-  if (!Number.isFinite(n)) return '0%';
-  const rounded = Math.round(n * 10) / 10;
-  return `${Number.isInteger(rounded) ? rounded.toFixed(0) : rounded.toFixed(1)}%`;
+  return formatFigurePercent(Number.isFinite(n) ? n : 0, 1);
 }
 
 /** "$123.45/mo" for a known baseline. */

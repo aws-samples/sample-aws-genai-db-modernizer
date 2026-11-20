@@ -185,6 +185,11 @@ describe('getQueryCacheInfo', () => {
 describe('formatCacheLayerLine', () => {
   const overlay = { engine: 'elasticache', query_count: 20, calls_per_second: 120.4, call_share_percent: 83.4 };
 
+  // #2347: the share prints as src/report/cache_layer.py prints it (fmt_num(x, 1)).
+  test('prints a whole share without a trailing zero, as the engineering report does', () => {
+    expect(formatCacheLayerLine({ ...overlay, call_share_percent: 76 }, { t, kind: 'designed' })).toBe('Cache layer · 20 designed cached reads · 76% of calls');
+  });
+
   test('matches the spec example exactly: "Cache layer · 20 designed cached reads · 83.4% of calls"', () => {
     expect(formatCacheLayerLine(overlay, { t, kind: 'designed' })).toBe('Cache layer · 20 designed cached reads · 83.4% of calls');
   });
@@ -624,6 +629,19 @@ describe('formatCacheReadLine (#462)', () => {
     expect(formatCacheReadLine(read, { t, engineLabel: label })).toBe(
       'wp_options (Aurora MySQL, point lookup): 41.3 calls/s, 19.3% of calls',
     );
+  });
+
+  // #2347: the share prints as the chat gate prints it (fmt_num(x, 1)): "19%", not "19.0%".
+  test('prints a whole share without a trailing zero, as the chat gate does', () => {
+    expect(formatCacheReadLine({ ...read, call_share_percent: 19 }, { t, engineLabel: label })).toBe(
+      'wp_options (Aurora MySQL, point lookup): 41.3 calls/s, 19% of calls',
+    );
+  });
+
+  // #2347: the rate prints as the report prints it (fmt_num(x, 1)), with separators and no trailing zero.
+  test('prints the rate with the same rule as the share', () => {
+    expect(formatCacheReadLine({ ...read, calls_per_second: 2 }, { t, engineLabel: label })).toContain(': 2 calls/s, ');
+    expect(formatCacheReadLine({ ...read, calls_per_second: 1234.56 }, { t, engineLabel: label })).toContain(': 1,234.6 calls/s, ');
   });
 
   test('says how many more tables a read touches', () => {

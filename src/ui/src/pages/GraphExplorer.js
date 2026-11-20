@@ -41,6 +41,7 @@ import GraphExplorerToolbar from '../components/GraphExplorerToolbar';
 import GraphExplorerViewBar from '../components/GraphExplorerViewBar';
 import { StepBar, WalkthroughPanel } from '../components/GraphExplorerWalkthroughs';
 import ApiManager from '../classes/ApiManager';
+import { formatMoney, formatRate } from '../utils/format';
 import { failureMessageKey, reportFailure } from '../utils/requestFailure';
 import useGraphExplorerFlag from '../hooks/useGraphExplorerFlag';
 import { SideNavigationConfigurations } from '../config/GlobalConfigurations';
@@ -596,13 +597,13 @@ export default function GraphExplorer() {
     let lines;
     if (hovered.group === 'edge' && hovered.kind === 'bundle') {
       lines = [
-        t('graph-explorer.hover.bundle', { count: hovered.count, value: (hovered.cps ?? 0).toLocaleString() }),
+        t('graph-explorer.hover.bundle', { count: hovered.count, value: formatRate(hovered.cps ?? 0) }),
         t('graph-explorer.tip.fan', { count: hovered.count }),
       ];
     } else if (hovered.group === 'edge') {
       lines = [
         hovered.label,
-        hovered.cps != null ? t('graph-explorer.hover.cps', { value: hovered.cps.toLocaleString() }) : null,
+        hovered.cps != null ? t('graph-explorer.hover.cps', { value: formatRate(hovered.cps) }) : null,
         t('graph-explorer.tip.details'),
       ];
     } else if (node && node.placeholder) {
@@ -610,7 +611,7 @@ export default function GraphExplorer() {
     } else {
       lines = [
         hovered.label,
-        hovered.cost != null ? t('graph-explorer.hover.cost', { value: hovered.cost.toLocaleString() }) : null,
+        hovered.cost != null ? t('graph-explorer.hover.cost', { value: formatMoney(hovered.cost) }) : null,
         t('graph-explorer.tip.expand'),
       ];
     }
@@ -713,7 +714,7 @@ export default function GraphExplorer() {
       <SpaceBetween size="xs">
         {collapseButton}
         <Box variant="h3">{t('graph-explorer.details.bundle', { table: selectedBundle.table, engine: displayEngine(selectedBundle.engine) })}</Box>
-        <Box>{t('graph-explorer.hover.bundle', { count: selectedBundle.query_count, value: selectedBundle.calls_per_second.toLocaleString() })}</Box>
+        <Box>{t('graph-explorer.hover.bundle', { count: selectedBundle.query_count, value: formatRate(selectedBundle.calls_per_second) })}</Box>
         {selectedBundle.access && <Box>{t(`graph-explorer.access.${selectedBundle.access}`)}</Box>}
         {selectedBundle.wave != null && <Box>{t('graph-explorer.tags.wave', { wave: selectedBundle.wave })}</Box>}
         {selectedBundle.cached_in_wave != null && <Box>{t('graph-explorer.tags.cached', { wave: selectedBundle.cached_in_wave })}</Box>}
@@ -740,7 +741,7 @@ export default function GraphExplorer() {
           <Box>{t('graph-explorer.details.replicas', { engines: selectedNode.replica_engines.map(displayEngine).join(', ') })}</Box>
         )}
         {selectedNode.wave != null && <Box>{t('graph-explorer.tags.wave', { wave: selectedNode.wave })}</Box>}
-        {selectedNode.monthly_cost_usd != null && <Box>{t('graph-explorer.hover.cost', { value: selectedNode.monthly_cost_usd.toLocaleString() })}</Box>}
+        {selectedNode.monthly_cost_usd != null && <Box>{t('graph-explorer.hover.cost', { value: formatMoney(selectedNode.monthly_cost_usd) })}</Box>}
         {linksNote && <Box variant="small" color="text-body-secondary">{linksNote}</Box>}
       </SpaceBetween>
     );

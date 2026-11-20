@@ -154,8 +154,8 @@ test('the wave filter is shown only when the job has waves, and offers every wav
 
 test('the cost legend shows the report engine costs', () => {
   render({ mode: 'cost', cost: { min: 12.29, max: 192.12, samples: [12.29, 192.12] } });
-  expect(container.textContent).toContain('graph-explorer.legend.cost {"value":"12.29"}');
-  expect(container.textContent).toContain('graph-explorer.legend.cost {"value":"192.12"}');
+  expect(container.textContent).toContain('graph-explorer.legend.cost {"value":"$12.29"}');
+  expect(container.textContent).toContain('graph-explorer.legend.cost {"value":"$192.12"}');
 });
 
 describe('the icon legend', () => {

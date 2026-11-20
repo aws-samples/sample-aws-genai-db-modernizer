@@ -12,16 +12,14 @@
 
 import { waveFacts } from './reportFacts';
 import { displayEngine } from './engineNames';
+import { formatFigure } from './format';
 
 // fmt_num(value, 1) from src/report/formatting.py: thousands separators, at
 // most one decimal place, trailing zeros dropped, a small non-zero value as
 // "<0.1".
 export function formatShare(value) {
   const n = Number(value);
-  if (!Number.isFinite(n) || n === 0) return '0';
-  if (Math.abs(n) < 0.05) return n > 0 ? '<0.1' : '>-0.1';
-  const text = n.toLocaleString('en-US', { minimumFractionDigits: 0, maximumFractionDigits: 1 });
-  return text === '-0' ? '0' : text;
+  return formatFigure(Number.isFinite(n) ? n : 0, 1);
 }
 
 export function migrationWaves(synthesis) {

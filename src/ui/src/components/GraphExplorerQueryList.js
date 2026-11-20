@@ -8,6 +8,7 @@ import Button from '@cloudscape-design/components/button';
 import Input from '@cloudscape-design/components/input';
 import SpaceBetween from '@cloudscape-design/components/space-between';
 import { engineIcon } from '../utils/nodeIcons';
+import { formatRate } from '../utils/format';
 import { waveTags } from '../utils/graphExplorer';
 import { colorBorderDividerDefault, colorBorderItemSelected } from '@cloudscape-design/design-tokens';
 
@@ -167,7 +168,7 @@ export default function GraphExplorerQueryList({
                   {q.short_id}
                 </span>
                 <Box fontWeight="bold" textAlign="right">
-                  {q.calls_per_second == null ? '-' : t('graph-explorer.hover.cps', { value: q.calls_per_second.toLocaleString() })}
+                  {q.calls_per_second == null ? '-' : t('graph-explorer.hover.cps', { value: formatRate(q.calls_per_second) })}
                 </Box>
               </div>
               {q.sql_preview && (

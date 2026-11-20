@@ -9,17 +9,13 @@ import Slider from '@cloudscape-design/components/slider';
 import SpaceBetween from '@cloudscape-design/components/space-between';
 import Toggle from '@cloudscape-design/components/toggle';
 import { COST_NODE_SIZE, EDGE_WIDTH, SLIDER_STEPS, logScale, sliderThreshold } from '../utils/graphExplorer';
+import { formatMoney, formatSignificant } from '../utils/format';
 import { NODE_TYPE_ICONS, engineIcon } from '../utils/nodeIcons';
 import { GRAPH_CANVAS } from '../styles/palette';
 
 function formatNumber(value) {
   if (value == null) return '-';
-  return Number(value).toLocaleString(undefined, { maximumSignificantDigits: 3 });
-}
-
-// A cost is the report's figure, shown to the cent.
-function formatCost(value) {
-  return Number(value).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+  return formatSignificant(value, 3);
 }
 
 /** The node icons: tables, the "No table" placeholder and each engine drawn, always with their names. */
@@ -121,7 +117,7 @@ export function Legend({ mode, traffic, cost, t }) {
                 background: GRAPH_CANVAS.muted,
               }}
             />
-            {t('graph-explorer.legend.cost', { value: formatCost(value) })}
+            {t('graph-explorer.legend.cost', { value: formatMoney(value) })}
           </span>
         ))}
       </SpaceBetween>
