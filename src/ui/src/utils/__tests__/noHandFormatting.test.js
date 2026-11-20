@@ -38,7 +38,6 @@ const ALLOWED = [
   { file: 'utils/explorerLayout.js', kind: 'Math.round', count: 1, reason: 'the details panel width in whole pixels, never printed' },
   { file: 'pages/CreateAnalysis.js', kind: 'Math.round', count: 1, reason: 'the upload progress value the ProgressBar draws' },
   { file: 'pages/JobMonitoringSummary.js', kind: 'Math.round', count: 2, reason: 'the pipeline progress value the ProgressBar draws' },
-  { file: 'pages/AssignmentGate.js', kind: 'percent literal', count: 1, reason: 'the CSS width of a distribution bar segment' },
 ];
 
 const NUMBER_METHODS = new Set(['toFixed', 'toLocaleString', 'toPrecision']);

@@ -11,6 +11,12 @@
  * where applyMode adds awsui-dark-mode), so each resolves to the current theme's value.
  * A plain CSS file cannot import the tokens package, which is why this list is
  * JavaScript and index.js writes it into the page as one style element.
+ *
+ * The properties follow the page's theme, even inside a section Cloudscape themes
+ * differently (such as the top navigation or a dark content header). The tokens resolve
+ * once, on <body>, so a rule inside such a section gets the page's value, not the
+ * section's. No rule reads --dbm-* inside one today. If one needs to, use the token from
+ * @cloudscape-design/design-tokens in that component instead.
  */
 import {
   colorBackgroundBadgeGrey,

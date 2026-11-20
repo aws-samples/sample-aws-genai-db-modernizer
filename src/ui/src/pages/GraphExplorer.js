@@ -84,7 +84,7 @@ import {
   walkthroughsPath,
 } from '../utils/graphExplorer';
 import {
-  colorBackgroundPopover, colorBorderDividerDefault, colorBorderPopover, colorTextAccent, colorTextBodyDefault,
+  colorBackgroundPopover, colorBorderDividerDefault, colorBorderItemSelected, colorBorderPopover, colorTextBodyDefault,
 } from '@cloudscape-design/design-tokens';
 
 async function get(id, path) {
@@ -1006,7 +1006,7 @@ export default function GraphExplorer() {
                     }}
                   >
                     {tip.lines.map((line, i) => (
-                      <div key={line} style={i === tip.lines.length - 1 ? { color: colorTextAccent, marginTop: 2 } : undefined}>
+                      <div key={line} style={i === tip.lines.length - 1 ? { color: colorBorderItemSelected, marginTop: 2 } : undefined}>
                         {line}
                       </div>
                     ))}
