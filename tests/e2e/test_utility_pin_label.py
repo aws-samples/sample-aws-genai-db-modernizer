@@ -117,18 +117,19 @@ def test_an_assignment_saved_before_the_field_still_labels_its_pins(
 def test_discourses_catalog_reads_show_the_label_not_zero(
     discourse_run: PipelineResult, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """Discourse's 36 utility pins that score 0 on Aurora PostgreSQL (26 catalog reads
-    on ``pg_*`` tables, 10 whose tables the collector could not name): their
-    confidence stays that real score, and every view labels them as pins."""
+    """Discourse's 20 utility pins that score 0 on Aurora PostgreSQL, all catalog reads
+    on ``pg_*`` tables (36 before the sample refresh of #2378: 26 catalog reads and 10
+    whose tables the collector could not name): their confidence stays that real score,
+    and every view labels them as pins."""
     store = _copy(discourse_run, tmp_path)
     pins = _utility_pins(_versions(store, discourse_run))
     served = _served(store, discourse_run, monkeypatch)
     zero = {q for q in pins if served[q]["confidence"] == 0}
-    assert len(zero) == 36, len(zero)
+    assert len(zero) == 20, len(zero)
     catalog = {
         q for q in zero if all(t.startswith("pg_") for t in served[q]["source_tables"] or ["?"])
     }
-    assert len(catalog) == 26, len(catalog)
+    assert len(catalog) == 20, len(catalog)
     assert all(served[q]["pinned"] == "utility" for q in zero)
     journeys = _journeys(store, discourse_run, tmp_path, sorted(zero))
     assert {j["pinned"] for j in journeys.values()} == {"utility"}

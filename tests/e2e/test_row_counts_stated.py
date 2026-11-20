@@ -4,7 +4,7 @@
 """The deliverables state the tables the source has no row count for (#1636).
 
 Before #1636 a table with no statistics reached every figure as an empty one: 265 of
-discourse's 311 tables. wordpress's 31 InnoDB zeros are one-page empty tables and stay
+discourse's 311 tables then, 221 of the 312 of the sample refreshed in #2378. wordpress's 31 InnoDB zeros are one-page empty tables and stay
 0, so its deliverables claim no unknown count. The collector output keeps an unknown
 count as ``row_count`` None,
 synthesis counts them once (``facts.row_counts``) and the engineering report and the
@@ -20,7 +20,7 @@ from src.report.facts import report_facts
 from tests.e2e.deliverable_figures import md_plain, pdf_page_texts
 from tests.e2e.pipeline import PipelineResult
 
-UNKNOWN = {"wordpress": (0, 50), "discourse": (265, 311), "trailgear": (0, 30)}
+UNKNOWN = {"wordpress": (0, 50), "discourse": (221, 312), "trailgear": (0, 30)}
 
 
 def _collected_tables(run: PipelineResult) -> list[dict]:

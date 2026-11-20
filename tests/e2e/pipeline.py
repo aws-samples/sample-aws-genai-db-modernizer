@@ -114,6 +114,24 @@ def unzip_pre_1955_wordpress(dest: Path) -> Path:
     return dest / "wordpress-collection.json"
 
 
+# The discourse collection bundled before #2378 (1,654 statements, collected before the
+# collector read routine code or rate samples). Its shapes are ones the refreshed sample
+# lacks: the #885 key-anchored topics and categories joins, and the query the fallback
+# owner check of the round-2 review names; the e2e tests that check those cases run a job
+# on it.
+PRE_2378_DISCOURSE = REPO / "tests" / "fixtures" / "discourse_pre_2378" / "discourse.zip"
+
+
+def run_pre_2378_discourse(artifact_root: Path, job_id: str) -> PipelineResult:
+    """The deterministic job on the collection bundled before #2378, with the sample's
+    routine set added, as ``run_pipeline`` adds it."""
+    dest = artifact_root.parent / f"input-pre-2378-{job_id}"
+    with zipfile.ZipFile(PRE_2378_DISCOURSE) as z:
+        z.extractall(dest)
+    src = add_sample_routines(dest / "discourse-collection.json", "discourse")
+    return run_pipeline_from_file(src, "discourse", artifact_root, job_id)
+
+
 def run_pipeline(sample: str, artifact_root: Path, job_id: str) -> PipelineResult:
     db = SAMPLES[sample]
     src = add_sample_routines(

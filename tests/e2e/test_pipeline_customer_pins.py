@@ -74,7 +74,11 @@ def _pin_search_back(run: PipelineResult, root: Path) -> dict:
     }
     search = sorted(search_patterns | first_on_search)
     assert len(search) >= 2, "at least two search queries OpenSearch could serve"
-    pin, others = search[-1], search[:-1]
+    # A query the first assignment put on OpenSearch, when there is one (discourse): the
+    # check moved it off, and the customer pins it back. A search pattern OpenSearch's
+    # analysis reports may sit in a group it can't take (discourse since #2378).
+    pin = sorted(first_on_search)[-1] if first_on_search else search[-1]
+    others = [q for q in search if q != pin]
     result = apply_assignment_overrides(
         LocalArtifactStore(base_dir=str(root)),
         run.db,

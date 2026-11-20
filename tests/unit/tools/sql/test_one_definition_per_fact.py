@@ -709,6 +709,21 @@ RELATED_FACTS: dict[frozenset[str], str] = {
         "statement writes, write_targets which tables (#992), and it is empty for CALL or COPY"
     ),
     frozenset({"where_word", "keyed_after_where"}): "a keyed read is a WHERE with an equality",
+    # The three below overlap on the discourse sample refreshed in #2378, whose reads
+    # filter on IN lists and whose few search statements all rank their matches.
+    frozenset({"in_list", "keyed_after_where"}): (
+        "keyed_after_where reads an IN list after WHERE as a key; in_list is any IN list, "
+        "in a join condition or a select list too, and an equality alone is no IN list"
+    ),
+    frozenset({"in_list", "where_word"}): (
+        "most IN lists sit in a WHERE clause, but a WHERE needs no IN list, and an IN list "
+        "can sit in a join condition"
+    ),
+    frozenset({"fulltext_search", "search_depth"}): (
+        "search_depth is a search predicate with relevance ranking, fuzzy matching or a "
+        "facet, which a similarity match shows too; fulltext_search is the full-text match "
+        "itself, ranked or not (#326)"
+    ),
     frozenset({"routine_source", "stored_routine_keyword"}): (
         "both see a SQL Server EXEC, but stored_routine_keyword is a statement that is a routine "
         "call or definition, and routine_source a statement that takes rows from a "

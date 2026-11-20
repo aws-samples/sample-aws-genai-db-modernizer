@@ -680,7 +680,14 @@ def test_the_request_is_smaller_than_the_full_input_rendered(tmp_path, capsys, e
 REPO = Path(__file__).resolve().parents[4]
 
 
-def _sample_collector(name: str, dest: Path) -> dict:
+# The discourse collection bundled before #2378: its routines are names with no body
+# (266 functions and aggregates), and its 3 read-only triggers' functions have none, the
+# shapes the fail-safe tests below need. The refreshed sample collects every routine's
+# code.
+PRE_2378_DISCOURSE = REPO / "tests" / "fixtures" / "discourse_pre_2378" / "discourse.zip"
+
+
+def _sample_collector(name: str, dest: Path, zip_path: Path | None = None) -> dict:
     import zipfile
 
     from ci.llm.sample_routines import add_sample_routines
@@ -688,7 +695,7 @@ def _sample_collector(name: str, dest: Path) -> dict:
     from src.tools.database.collection_text import extract_json_object
     from src.tools.database.offline_parser import parse_offline_collection
 
-    with zipfile.ZipFile(REPO / "docs" / "examples" / name / f"{name}.zip") as z:
+    with zipfile.ZipFile(zip_path or REPO / "docs" / "examples" / name / f"{name}.zip") as z:
         z.extractall(dest)
     collection = dest / f"{name}-collection.json"
     add_sample_routines(collection, name, REPO)
@@ -699,10 +706,14 @@ def _sample_collector(name: str, dest: Path) -> dict:
 
 @pytest.fixture(scope="module")
 def samples(tmp_path_factory) -> dict[str, dict]:
-    return {
+    loaded = {
         name: _sample_collector(name, tmp_path_factory.mktemp(name))
         for name in ("wordpress", "discourse")
     }
+    loaded["discourse_pre_2378"] = _sample_collector(
+        "discourse", tmp_path_factory.mktemp("discourse_pre_2378"), PRE_2378_DISCOURSE
+    )
+    return loaded
 
 
 def _scoped_request(collector: dict, tables: set[str], queries: list[dict] | None = None):
@@ -784,13 +795,15 @@ def test_a_routine_an_in_scope_query_calls_is_kept(samples):
     assert "wp_post_comment_count" not in _kept(view, "procedures", "procedure_id")
 
 
+@pytest.mark.passes_on_main  # main's check, moved to the legacy fixture (#2378)
 def test_discourse_routines_on_its_tables_are_kept_from_their_bodies(samples):
     """``topic_visible_post_count`` reads ``posts`` and ``prune_read_notifications``
     deletes from ``notifications`` (``depends_on: []``); ``posts_bump_topic`` is the
     function of the trigger on ``posts``. ``begin_upload_snapshot`` touches no table and
     the compiled extension functions have no body to read: both dropped. An SQL or
-    PL/pgSQL routine with no body collected is kept: what cannot be read is not dropped."""
-    discourse = samples["discourse"]
+    PL/pgSQL routine with no body collected is kept: what cannot be read is not dropped.
+    Run on the collection bundled before #2378, whose routines are names with no body."""
+    discourse = samples["discourse_pre_2378"]
     request = _scoped_request(discourse, {"public.posts", "public.notifications"})
     view = _view(request, "documentdb")
     kept = _kept(view, "procedures", "procedure_id")
@@ -833,10 +846,11 @@ def test_a_trigger_is_kept_when_its_body_writes_an_in_scope_table(samples):
 
 def test_a_view_defined_on_an_in_scope_table_is_kept(samples):
     """``badge_posts`` reads ``posts``, ``topics`` and ``categories``: a design of any of
-    them meets it, whether or not an in-scope query reads it."""
+    them meets it, whether or not an in-scope query reads it. The sample refreshed in
+    #2378 names the view's schema, so its id is ``public.badge_posts``."""
     discourse = samples["discourse"]
     view = _view(_scoped_request(discourse, {"public.categories"}, []), "opensearch")
-    assert _kept(view, "views", "view_id") == {"badge_posts"}
+    assert _kept(view, "views", "view_id") == {"public.badge_posts"}
 
 
 def test_a_routine_whose_body_cannot_be_read_is_kept(samples):
@@ -859,14 +873,16 @@ def test_a_routine_whose_body_cannot_be_read_is_kept(samples):
     assert _kept(view, "triggers", "trigger_id") == {"wp_broken_trg"}
 
 
+@pytest.mark.passes_on_main  # main's check, moved to the legacy fixture (#2378)
 def test_an_empty_scope_keeps_no_unreadable_routine_or_trigger(samples):
     """With no in-scope table there is nothing a routine or trigger could write: the
     bodiless discourse routines and the read-only triggers (whose functions have no body)
-    stay out of a request that designs nothing."""
-    view = _view(_scoped_request(samples["discourse"], set(), []), "documentdb")
+    stay out of a request that designs nothing. Run on the collection bundled before
+    #2378, which has those bodiless routines."""
+    view = _view(_scoped_request(samples["discourse_pre_2378"], set(), []), "documentdb")
     assert _kept(view, "procedures", "procedure_id") == set()
     assert _kept(view, "triggers", "trigger_id") == set()
-    view = _view(_scoped_request(samples["discourse"], {"public.users"}), "documentdb")
+    view = _view(_scoped_request(samples["discourse_pre_2378"], {"public.users"}), "documentdb")
     assert "topic_timers_topic_id_readonly" in _kept(view, "triggers", "trigger_id")
 
 

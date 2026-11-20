@@ -27,8 +27,9 @@ REPO = Path(__file__).resolve().parents[4]
 
 
 def _discourse_collector(tmp_path: Path) -> dict[str, Any]:
-    """The bundled discourse collection (pre-#1652), ingested as run_collect.py does."""
-    with zipfile.ZipFile(REPO / "docs/examples/discourse/discourse.zip") as z:
+    """The discourse collection bundled before #2378 (pre-#1652), ingested as run_collect.py
+    does. The refreshed sample's routines all have code, so it has no name-only row."""
+    with zipfile.ZipFile(REPO / "tests/fixtures/discourse_pre_2378/discourse.zip") as z:
         z.extractall(tmp_path)
     raw = json.loads((tmp_path / "discourse-collection.json").read_text())
     parsed = parse_offline_collection(raw, database_name="discourse")

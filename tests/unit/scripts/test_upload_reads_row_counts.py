@@ -145,7 +145,10 @@ def test_a_stored_output_with_no_version_reads_the_same(tmp_path: Path) -> None:
 
 def _discourse_as_4x_wrote_it() -> dict[str, Any]:
     """discourse's collector output as the 4.x collector stored it: every count clamped
-    (``max(row_count or 0, 0)``, so PostgreSQL 16's -1 became 0) and no basis."""
+    (``max(row_count or 0, 0)``, so PostgreSQL 16's -1 became 0) and no basis. The
+    collection is the one bundled before #2378, whose 265 never-analysed tables are the
+    -1 shape and whose other counts are all above 0; the refreshed sample writes its
+    unknown counts as null and holds 4 real zeros, which the clamp would mix in."""
     import zipfile
 
     from src.agents.collector.offline_ingest import build_offline_collector_output
@@ -153,7 +156,7 @@ def _discourse_as_4x_wrote_it() -> dict[str, Any]:
     from src.tools.database.offline_parser import parse_offline_collection
 
     repo = Path(__file__).resolve().parents[3]
-    with zipfile.ZipFile(repo / "docs" / "examples" / "discourse" / "discourse.zip") as z:
+    with zipfile.ZipFile(repo / "tests" / "fixtures" / "discourse_pre_2378" / "discourse.zip") as z:
         member = next(n for n in z.namelist() if n.endswith("-collection.json"))
         raw = json.loads(extract_json_object(z.read(member).decode("utf-8")))
     out = build_offline_collector_output(

@@ -30,14 +30,15 @@ from src.shared.report_facts import wave_readiness_rows
 from tests.e2e.deliverable_figures import md_plain, pdf_page_texts
 from tests.e2e.pipeline import PipelineResult
 
-# The waves the deterministic samples hold, and what holds each one. discourse: the
-# DocumentDB analysis's correlated-subquery flag on a query now on DynamoDB, which
-# DynamoDB's own analysis flags too (a write wider than one transaction); with no wave 1
-# design yet, the wave also waits on wave 1. wordpress and trailgear hold none: their
-# HIGH is an Aurora note on a query now on DynamoDB that DynamoDB does not flag.
+# The waves the deterministic samples hold, and what holds each one. None does: on
+# wordpress and trailgear the HIGH is an Aurora note on a query now on DynamoDB that
+# DynamoDB does not flag, and on discourse (the sample refreshed in #2378) it is the
+# DocumentDB analysis's correlated-subquery flag on 2 queries now on DynamoDB, which
+# DynamoDB's own analysis does not flag either. The 1,654-statement discourse sample held
+# wave 3, where DynamoDB flagged its query too (a write wider than one transaction).
 KNOWN_HELD: dict[str, dict[int, list[str]]] = {
     "wordpress": {},
-    "discourse": {3: ["open_high_risk", "earlier_wave"]},
+    "discourse": {},
     "trailgear": {},
 }
 

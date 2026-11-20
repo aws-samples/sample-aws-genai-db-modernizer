@@ -5,8 +5,9 @@
 and the engineering report and the executive PDF state the same sentence once.
 
 wordpress and trailgear record each statement's first/last seen; discourse (PostgreSQL,
-collected before the scripts read ``pg_stat_statements_info``) records only an uptime,
-which is not its counters' window, so its rates assume 24 hours.
+refreshed in #2378) took two counter snapshots 300 seconds apart after a full statistics
+reset, so most of its statements are rated over that sample and the rest over the time
+since the reset.
 """
 
 from __future__ import annotations
@@ -39,9 +40,11 @@ def test_the_report_counts_every_statements_rate_window(run: PipelineResult) -> 
     assert md.count(line) == 1
     pdf = " ".join(" ".join(pdf_page_texts(str(run.deliverable("executive-report.pdf")))).split())
     assert pdf.count(line) == 1
-    expected = {"wordpress": "observed", "trailgear": "observed", "discourse": "assumed_24h"}
+    expected = {"wordpress": "observed", "trailgear": "observed"}
     if run.db in expected:
         assert bases[expected[run.db]] == len(patterns), bases
+    if run.db == "discourse":  # two counter snapshots 300 s apart, after a full reset (#2378)
+        assert bases == {"sampled": 2483, "stats_reset": 376}, bases
 
 
 # A replayed or headless job may predate #1991's facts: the deterministic run checks it.

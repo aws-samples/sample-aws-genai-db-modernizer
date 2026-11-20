@@ -32,16 +32,25 @@ def _raw(**fields: object) -> dict:
     return {"table_name": "t", "columns": [dict(_COLUMN)], **fields}
 
 
-def _sample(name: str) -> dict:
-    with zipfile.ZipFile(_REPO / "docs" / "examples" / name / f"{name}.zip") as z:
+# The discourse collection bundled before #2378: 265 of its 311 tables were never
+# analysed, written as ``reltuples`` -1. The refreshed sample's collector writes such a
+# count as null (221 of its 312 tables), so only this file holds the -1 shape.
+PRE_2378_DISCOURSE = _REPO / "tests" / "fixtures" / "discourse_pre_2378" / "discourse.zip"
+
+
+def _sample(name: str, zip_path: Path | None = None) -> dict:
+    with zipfile.ZipFile(zip_path or _REPO / "docs" / "examples" / name / f"{name}.zip") as z:
         member = next(n for n in z.namelist() if n.endswith("-collection.json"))
         data: dict = json.loads(extract_json_object(z.read(member).decode("utf-8")))
     return data
 
 
-def _offline(name: str) -> dict:
+def _offline(name: str, zip_path: Path | None = None) -> dict:
     return build_offline_collector_output(
-        parse_offline_collection(_sample(name)), job_id="j", database_name=name, s3_key="k"
+        parse_offline_collection(_sample(name, zip_path)),
+        job_id="j",
+        database_name=name,
+        s3_key="k",
     )
 
 
@@ -116,9 +125,12 @@ def test_an_old_postgresql_zero_reads_by_the_collections_version() -> None:
     assert (old_13.row_count, old_16.row_count) == (None, 0)
 
 
+@pytest.mark.passes_on_main  # the -1 shape, now read from the legacy fixture (#2378)
 def test_the_discourse_samples_unknown_counts_stay_unknown() -> None:
-    raw = {t["table_name"]: t["row_count"] for t in _sample("discourse")["tables"]}
-    out = _offline("discourse")
+    raw = {
+        t["table_name"]: t["row_count"] for t in _sample("discourse", PRE_2378_DISCOURSE)["tables"]
+    }
+    out = _offline("discourse", PRE_2378_DISCOURSE)
     tables = out["database_schema"]["tables"]
     unknown = [t for t in tables if t["row_count"] is None]
     assert len(tables) == 311 and len(unknown) == 265

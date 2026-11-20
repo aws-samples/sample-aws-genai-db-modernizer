@@ -104,9 +104,11 @@ WP_COUNT = (
 COUNT_FOLLOWS_WRITES: dict[str, tuple[str, list[str], str] | None] = {
     "wordpress": (WP_WRITE, [WP_COUNT], "aurora_mysql"),
     "discourse": (
-        # A write of user_actions; the two COUNT(*) FROM user_actions WHERE action_type = $1
+        # A write of user_actions; the COUNT(*) FROM user_actions WHERE action_type = $1 AND
+        # created_at > $2. Since #2378 (the refreshed sample) the count without the
+        # created_at filter ties and goes to Aurora PostgreSQL, so only this one is waived.
         "-7300874177885411526",
-        ["-271909517620911052", "-888320679945847940"],
+        ["-888320679945847940"],
         "aurora_postgresql",
     ),
     # trailgear places no COUNT on DynamoDB.

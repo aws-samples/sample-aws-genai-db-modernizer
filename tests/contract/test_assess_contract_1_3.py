@@ -44,9 +44,15 @@ ADDED = {
 }
 
 
+# The discourse collection bundled before #2378, which wrote an unknown count as -1.
+PRE_2378_DISCOURSE = REPO / "tests" / "fixtures" / "discourse_pre_2378" / "discourse.zip"
+
+
 @cache
-def _collection(sample: str) -> dict[str, Any]:
-    loaded: dict[str, Any] = load_collection(REPO / "docs" / "examples" / sample / f"{sample}.zip")
+def _collection(sample: str, path: Path | None = None) -> dict[str, Any]:
+    loaded: dict[str, Any] = load_collection(
+        path or REPO / "docs" / "examples" / sample / f"{sample}.zip"
+    )
     return loaded
 
 
@@ -92,14 +98,16 @@ def _expected(child: Any, parent: Any) -> float | None:
     return child / parent if child >= 0 and parent > 0 else None
 
 
-def _check_against_the_collection(sample: str) -> dict[str, dict[str, Any]]:
-    collection = _collection(sample)
+def _check_against_the_collection(
+    sample: str, path: Path | None = None
+) -> dict[str, dict[str, Any]]:
+    collection = _collection(sample, path)
     counts = _raw_counts(collection)
     parents = {
         fk["constraint_name"]: fk["referenced_table_name"] for fk in collection["foreign_keys"]
     }
     children = {fk["constraint_name"]: fk["table_name"] for fk in collection["foreign_keys"]}
-    fks = _foreign_keys(json.loads(_sample_json(sample)))
+    fks = _foreign_keys(json.loads(_run(collection, sample)))
     assert set(fks) == set(parents)
     for name, fk in fks.items():
         expected = _expected(counts[children[name]], counts[parents[name]])
@@ -122,10 +130,37 @@ def test_trailgear_averages_are_the_collected_counts() -> None:
 
 
 def test_discourse_unknown_counts_give_null() -> None:
-    """PostgreSQL: 265 of 311 tables were never analysed (``reltuples`` -1), so only the
-    foreign keys between two counted tables, with a non-empty parent, have an average."""
+    """PostgreSQL: 221 of the 312 tables of the sample refreshed in #2378 were never
+    analysed (a null count), so only the foreign keys between two counted tables, with a
+    non-empty parent, have an average."""
     fks = _check_against_the_collection("discourse")
     counts = _raw_counts(_collection("discourse"))
+    assert len(fks) == 23
+    with_average = sorted(n for n, fk in fks.items() if fk["avg_children_per_parent"] is not None)
+    assert with_average == [
+        "fk_rails_1d362f2e97", "fk_rails_38ea484ed4", "fk_rails_848ece0184",
+        "fk_rails_a6e6974b7e", "fk_rails_aa85becb42", "fk_rails_b50b782d08",
+        "fk_rails_b64de9b025", "fk_rails_ca64aa462b",
+    ]  # fmt: skip
+    # user_profiles 293 rows per badges 55; poll_votes 1,395 per polls 640.
+    assert fks["fk_rails_38ea484ed4"]["avg_children_per_parent"] == 293 / 55
+    assert fks["fk_rails_a6e6974b7e"]["avg_children_per_parent"] == 1395 / 640
+    # A table with no count is a child or a parent here: its keys have no average.
+    assert (counts["optimized_videos"], counts["ai_agents"]) == (None, None)
+    assert fks["fk_rails_84f2496311"]["avg_children_per_parent"] is None
+    assert fks["fk_rails_bf8a76772d"]["avg_children_per_parent"] is None
+    # An empty parent (theme_fields, 0 rows) gives no average either.
+    assert counts["theme_fields"] == 0
+    assert fks["fk_rails_ed33506dbd"]["avg_children_per_parent"] is None
+
+
+@pytest.mark.passes_on_main  # the old sample's check, moved to its legacy fixture (#2378)
+def test_pre_2378_discourse_minus_one_counts_give_null() -> None:
+    """PostgreSQL: the discourse collection bundled before #2378 wrote its 265 never
+    analysed tables' counts as ``reltuples`` -1, so only the foreign keys between two
+    counted tables, with a non-empty parent, have an average."""
+    fks = _check_against_the_collection("discourse", PRE_2378_DISCOURSE)
+    counts = _raw_counts(_collection("discourse", PRE_2378_DISCOURSE))
     assert len(fks) == 23
     with_average = sorted(n for n, fk in fks.items() if fk["avg_children_per_parent"] is not None)
     assert with_average == ["fk_rails_38ea484ed4", "fk_rails_ed33506dbd"]
@@ -412,7 +447,8 @@ def test_a_known_value_is_kept(where: tuple[str, ...], value: Any) -> None:
 def test_a_collector_output_as_the_collection_gives_the_same_averages(sample: str) -> None:
     """A collector output passed back as the collection (the run's own) gives the
     averages and table facts the raw collection gives: it records an unknown count as
-    unknown (None), so discourse's keys stay null."""
+    unknown (None), so discourse's keys stay null (8 of its 23 have an average since
+    the sample refresh of #2378, 2 before)."""
     collection = _collection(sample)
     run = assess(
         {
@@ -427,7 +463,7 @@ def test_a_collector_output_as_the_collection_gives_the_same_averages(sample: st
     raw = json.loads(_sample_json(sample))
     assert _foreign_keys(again) == _foreign_keys(raw)
     with_average = [fk for fk in _foreign_keys(again).values() if fk["basis"]]
-    assert len(with_average) == {"trailgear": 28, "discourse": 2}[sample]
+    assert len(with_average) == {"trailgear": 28, "discourse": 8}[sample]
     assert again["summary"]["table_facts"] == raw["summary"]["table_facts"]
 
 

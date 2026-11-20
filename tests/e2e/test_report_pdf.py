@@ -260,9 +260,11 @@ def test_the_ways_to_adopt_page_states_every_path_the_facts_name(run: PipelineRe
     for p in shown:
         label = words.path_label(p["path_id"], block["default_path_id"])
         cost = words.cost_text(p, per_path)
-        row = f"{label} {p['step_count']} {p['gate_count']} {p['queries_moved']} {cost}"
+        # The count as both renderers print it: 1,085, not 1085 (discourse since #2378).
+        moved = fmt_num(p["queries_moved"], 0)
+        row = f"{label} {p['step_count']} {p['gate_count']} {moved} {cost}"
         assert normalize(row) in page, row
-        assert f"| {label} | {p['queries_moved']} | {cost} |" in md, label
+        assert f"| {label} | {fmt_num(p['queries_moved'])} | {cost} |" in md, label
     ids = {p["path_id"] for p in shown}
     for p in block["paths"]:
         if p["path_id"] not in ids:

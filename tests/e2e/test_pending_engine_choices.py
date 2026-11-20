@@ -30,6 +30,9 @@ from tests.e2e.engine_choice_checks import (
 from tests.e2e.pipeline import REPO, PipelineResult, _env
 
 JOB = "choices"
+# The table the customer picks: two tied queries, which decide-for-me would put on
+# DynamoDB (the sample refreshed in #2378; theme_fields before).
+PICKED = "email_change_requests"
 
 
 def _script(cwd: Path, *args: str) -> list[dict]:
@@ -69,9 +72,7 @@ def decided(discourse_run: PipelineResult, tmp_path_factory: pytest.TempPathFact
     job = root / "discourse" / JOB
     common = ["--job-id", JOB, "--db", "discourse", "--artifact-root", str(root)]
     before = _latest(job)
-    chose = _script(
-        cwd, "scripts/run_assessment.py", *common, "--choose", "theme_fields=documentdb"
-    )
+    chose = _script(cwd, "scripts/run_assessment.py", *common, "--choose", f"{PICKED}=documentdb")
     after_pick = _latest(job)
     rest = _script(cwd, "scripts/run_assessment.py", *common, "--decide-for-me")
     after_auto = _latest(job)
@@ -121,7 +122,7 @@ def test_every_open_tie_is_in_exactly_one_choice_per_table(plain: dict) -> None:
             "unrounded_score",
         )
     # Fewer decisions than queries: the ties sit on a few tables (#1003).
-    assert {c["table"] for c in choices} >= {"public.theme_fields", "public.incoming_emails"}
+    assert {c["table"] for c in choices} >= {"public.email_change_requests", "public.email_tokens"}
 
 
 @pytest.mark.deterministic
@@ -142,7 +143,7 @@ def test_the_deliverables_present_one_choice_per_table(
 @pytest.mark.deterministic
 def test_a_table_pick_settles_that_table_only(decided: dict) -> None:
     pick = decided["chose"]
-    assert pick["picked"] == {"public.theme_fields": "documentdb"} and pick["decided"] == []
+    assert pick["picked"] == {f"public.{PICKED}": "documentdb"} and pick["decided"] == []
     qas = {qa["query_id"]: qa for qa in decided["after_pick"]["query_assignments"]}
     was_tied = {
         qa["query_id"] for qa in decided["before"]["query_assignments"] if qa["tied_engines"]
@@ -150,12 +151,12 @@ def test_a_table_pick_settles_that_table_only(decided: dict) -> None:
     theme = [
         qa
         for qid, qa in qas.items()
-        if qid in was_tied and qa["source_tables"] == ["public.theme_fields"]
+        if qid in was_tied and qa["source_tables"] == [f"public.{PICKED}"]
     ]
     assert theme and {qa["assigned_engine"] for qa in theme} == {"documentdb"}
     assert all(qa["customer_override"] and not qa["tied_engines"] for qa in theme)
     remaining = {c["choice"] for c in pick["pending_choices"]}
-    assert "public.theme_fields" not in remaining and remaining
+    assert f"public.{PICKED}" not in remaining and remaining
     assert decided["after_pick"]["auto_decided_choices"] == []
     assert (decided["after_pick"]["status"], decided["after_pick"]["source"]) == (
         "customer_modified",
@@ -173,7 +174,7 @@ def test_decide_for_me_settles_every_other_choice_by_the_documented_rule(
     assert rest["pending_choices"] == []
     by_choice = {c["choice_id"]: c for c in plain["pending_engine_choices"]}
     expected = {cid: c["decide_for_me_engine"] for cid, c in by_choice.items()}
-    expected.pop("public.theme_fields")
+    expected.pop(f"public.{PICKED}")
     assert {d["choice"]: d["engine"] for d in rest["decided"]} == expected
     after = decided["after_auto"]
     # Decided by the rule: the version is not a customer edit (#1003).
@@ -208,7 +209,7 @@ def test_the_deliverables_mark_each_decision_for_review(decided: dict) -> None:
     assert heading in decided["pdf"]
     assert "Pending engine choices" not in decided["md"] + decided["pdf"]
     # The table the customer picked is theirs, not an automatic decision.
-    assert "`theme_fields`" not in decided["md"].split(f"## {heading}")[1].split("\n## ")[0]
+    assert f"`{PICKED}`" not in decided["md"].split(f"## {heading}")[1].split("\n## ")[0]
 
 
 @pytest.mark.deterministic

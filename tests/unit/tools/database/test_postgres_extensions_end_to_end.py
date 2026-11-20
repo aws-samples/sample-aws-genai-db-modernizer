@@ -242,8 +242,15 @@ def test_the_schema_stage_reads_the_extensions_and_survives_a_failure():
 # -- end to end: a collection file through run_collect.py to the gap check -------------
 
 
-def _discourse(dest: Path) -> dict:
-    with zipfile.ZipFile(REPO / "docs" / "examples" / "discourse" / "discourse.zip") as z:
+# The discourse collection bundled before #2378, taken before the collector read
+# extensions (#1078): its file has no ``extensions`` section.
+PRE_2378_DISCOURSE = REPO / "tests" / "fixtures" / "discourse_pre_2378" / "discourse.zip"
+
+
+def _discourse(dest: Path, zip_path: Path | None = None) -> dict:
+    with zipfile.ZipFile(
+        zip_path or REPO / "docs" / "examples" / "discourse" / "discourse.zip"
+    ) as z:
         z.extractall(dest)
     text = (dest / "discourse-collection.json").read_text()
     data: dict = json.loads(text[text.index("{") :])
@@ -292,13 +299,30 @@ def test_run_collect_carries_the_extensions_to_the_gap_check(tmp_path: Path):
     assert not_offered["objects"] == [{"kind": "extension", "id": "acme_geo", "note": None}]
 
 
-def test_the_bundled_discourse_sample_has_no_extension_list(tmp_path: Path):
-    raw = _discourse(tmp_path / "in")
+@pytest.mark.passes_on_main  # the old sample's check, moved to its legacy fixture (#2378)
+def test_a_collection_with_no_extension_list_has_no_extension_gap(tmp_path: Path):
+    raw = _discourse(tmp_path / "in", PRE_2378_DISCOURSE)
     src = tmp_path / "discourse.json"
     src.write_text(json.dumps(raw))
 
     output = _collect(src, tmp_path / "a")
 
     assert output["metadata"]["extensions"] is None
+    gaps = detect_relational_gaps(output, "aurora_postgresql") or {}
+    assert not any(g["rule_id"].startswith("postgresql-extension-") for g in gaps["gaps"])
+
+
+def test_the_bundled_discourse_sample_lists_extensions_aurora_offers(tmp_path: Path):
+    """The refreshed sample (#2378) lists its 7 extensions; Aurora PostgreSQL offers each."""
+    raw = _discourse(tmp_path / "in")
+    src = tmp_path / "discourse.json"
+    src.write_text(json.dumps(raw))
+
+    output = _collect(src, tmp_path / "a")
+
+    names = [e["name"] for e in output["metadata"]["extensions"]]
+    assert names == [
+        "citext", "hstore", "pg_stat_statements", "pg_trgm", "plpgsql", "unaccent", "vector",
+    ]  # fmt: skip
     gaps = detect_relational_gaps(output, "aurora_postgresql") or {}
     assert not any(g["rule_id"].startswith("postgresql-extension-") for g in gaps["gaps"])

@@ -88,10 +88,13 @@ def test_fallback_owner_never_beats_its_own_best_score(run: PipelineResult) -> N
 
 
 @pytest.mark.deterministic
-def test_discourse_capability_signal_excludes_dynamodb(discourse_run: PipelineResult) -> None:
-    # Discourse only (the query id is from that sample): the per-sample `run`
-    # fixture would skip on wordpress and trip --fail-on-skip.
-    run = discourse_run
+def test_discourse_capability_signal_excludes_dynamodb(
+    discourse_pre_2378_run: PipelineResult,
+) -> None:
+    # Discourse only (the query id is from the collection bundled before #2378, which the
+    # refreshed sample does not hold): the per-sample `run` fixture would skip on
+    # wordpress and trip --fail-on-skip.
+    run = discourse_pre_2378_run
 
     triage, collector_output, analysis_outputs = _load_pipeline_artifacts(run.job_dir())
     queries = collector_output.get("queries", {}).get("query_patterns", [])

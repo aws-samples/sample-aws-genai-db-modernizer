@@ -333,6 +333,15 @@ def test_dynamodb_check_costs_on_a_real_split_group(run: PipelineResult, tmp_pat
     source_table = group["primary_tables"][0]
     # The group input carries the pipeline-computed design_rps the draft must copy (#626).
     rates = {q["query_id"]: q["design_rps"] for q in group_input["design_metrics"]["queries"]}
+    # A query that stands for a query pattern serves all its members: the draft lists them
+    # all (discourse's first group leads with a 21-statement pattern since #2378).
+    [row] = [
+        q
+        for q in group_input["design_metrics"]["queries"]
+        if query_id == q["query_id"] or query_id in (q.get("member_query_ids") or [])
+    ]
+    query_id = row["query_id"]
+    served = list(row.get("member_query_ids") or [query_id])
 
     draft = {
         "job_id": run.job_id,
@@ -341,7 +350,7 @@ def test_dynamodb_check_costs_on_a_real_split_group(run: PipelineResult, tmp_pat
             {
                 "pattern_id": "DDB-AP-1",
                 "pattern_group": "Reads",
-                "query_ids": [query_id],
+                "query_ids": served,
                 "source_tables": [source_table],
                 "description": "Get item by key",
                 "operation": "GetItem",
@@ -372,7 +381,7 @@ def test_dynamodb_check_costs_on_a_real_split_group(run: PipelineResult, tmp_pat
                 "partition_limit": 3000,
                 "utilization_pct": 0.17,
                 "at_risk": False,
-                "contributing_patterns": [query_id],
+                "contributing_patterns": served,
             }
         ],
         "trade_offs": [
@@ -381,7 +390,7 @@ def test_dynamodb_check_costs_on_a_real_split_group(run: PipelineResult, tmp_pat
                 "impact": "Lookups by key only",
                 "source_tables": [source_table],
                 "target_tables": ["Main"],
-                "query_ids": [query_id],
+                "query_ids": served,
                 "engine": "dynamodb",
             }
         ],

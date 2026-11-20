@@ -78,10 +78,16 @@ def test_no_write_or_locking_read_is_owned_by_an_engine_that_is_not_a_system_of_
 
 
 @pytest.mark.deterministic
+@pytest.mark.parametrize(
+    "job_name,at_least",
+    # The #885 repro's collection, the discourse sample bundled before #2378, holds 20 or
+    # more of these joins; the refreshed sample holds 9.
+    [("discourse_pre_2378_run", 20), ("discourse_run", 9)],
+)
 def test_885_key_anchored_topics_and_categories_joins_stay_on_aurora_postgresql(
-    discourse_run: PipelineResult,
+    job_name: str, at_least: int, request: pytest.FixtureRequest
 ) -> None:
-    job_dir = discourse_run.job_dir()
+    job_dir = request.getfixturevalue(job_name).job_dir()
     collector = _collector(job_dir)
     model = QueryPatternModel.from_pipeline(collector, {})
     joins = [
@@ -91,7 +97,7 @@ def test_885_key_anchored_topics_and_categories_joins_stay_on_aurora_postgresql(
         == {"topics", "categories"}
         and model.classification(q).name == KEY_SCOPED
     ]
-    assert len(joins) >= 20, "the #885 repro needs discourse's key-anchored joins"
+    assert len(joins) >= at_least, "the #885 repro needs discourse's key-anchored joins"
     versions = _versions(job_dir)
     for version, assignments in (versions[0], versions[-1]):
         engines = {qid: assignments[qid]["assigned_engine"] for qid in joins}

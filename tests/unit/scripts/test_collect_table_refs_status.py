@@ -20,12 +20,13 @@ from pathlib import Path
 
 REPO = Path(__file__).resolve().parents[3]
 
-# discourse on sqlglot 30.22.0: 13 fallbacks, 33 disagreements with the regex.
+# discourse on sqlglot 30.22.0, the sample refreshed in #2378 (2,859 statements): 4
+# fallbacks, 85 disagreements with the regex (13 and 33 of 1,654 before).
 DISCOURSE_TABLE_REFS = {
-    "regex_fallback": 13,
-    "reasons": {"command": 11, "not_a_statement": 1, "parse_error": 1},
-    "agree": 1621,
-    "disagree": 33,
+    "regex_fallback": 4,
+    "reasons": {"command": 1, "not_a_statement": 1, "parse_error": 2},
+    "agree": 2774,
+    "disagree": 85,
 }
 
 

@@ -1026,7 +1026,7 @@ def test_a_selected_query_opens_in_a_split_panel_beside_the_table(
 def test_the_query_table_filters_and_pages_a_large_job(
     page: Page, ui: str, all_runs: list[PipelineResult]
 ) -> None:
-    """#2319: discourse lists 1,654 queries. The table renders one page of rows, not all of
+    """#2319: discourse lists 2,859 queries. The table renders one page of rows, not all of
     them, and a property filter token narrows the list and its counter."""
     r = next((x for x in all_runs if x.db == "discourse"), all_runs[0])
     ev = _watch(page)

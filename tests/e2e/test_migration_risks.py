@@ -49,17 +49,17 @@ EXPECTED_RULES: dict[str, list[str]] = {
     # DynamoDB without the frequent-full-scan penalty a redesign removes: one
     # design.redesign risk for DynamoDB.
     "wordpress": ["sync.wave", "routing.close_calls", "design.redesign"],
-    # #1231: discourse's DocumentDB and DynamoDB plans rely on a redesign for some of
-    # their queries: one design.redesign risk each (Aurora PostgreSQL scores its
-    # redesigned queries as well as written, so it raises none).
+    # #1231: discourse's DynamoDB plan relies on a redesign for 19 of its queries: one
+    # design.redesign risk (Aurora PostgreSQL scores its redesigned queries as well as
+    # written, so it raises none). Its DocumentDB plan raised one too before #2378
+    # refreshed the sample.
     "discourse": [
         "sync.wave",
         "routing.tie_open",
         "routing.close_calls",
         "design.redesign",
-        "design.redesign",
-        # #1362: ten tables' write groups keep 13 statements DynamoDB serves poorly
-        # (scores 11 to 26): one design.carried_writes risk for DynamoDB.
+        # #1362: four tables' write groups keep 5 statements DynamoDB serves poorly
+        # (scores 13 to 27): one design.carried_writes risk for DynamoDB.
         "design.carried_writes",
     ],
     # #1149: trailgear's SQL Server to Aurora PostgreSQL wave 1 has 6 gaps that need a
@@ -92,7 +92,9 @@ EXPECTED_RULES: dict[str, list[str]] = {
 # BROAD_FLAGGED_QUERIES and get their own risk instead of joining the coverage gap.
 # #1954: wordpress and discourse also raise the two routine risks of their routine sets
 # (routines.migrate_yourself and routines.carried, tests/e2e/test_sample_routines.py).
-EXPECTED_OPEN = {"wordpress": 6, "discourse": 15, "trailgear": 13}
+# #2378: the refreshed discourse sample lists 14 (15 before): one design.redesign risk
+# instead of two.
+EXPECTED_OPEN = {"wordpress": 6, "discourse": 14, "trailgear": 13}
 
 DESIGNED_RULES = [
     "sync.wave",
@@ -140,7 +142,8 @@ def test_each_sample_raises_its_migration_risks(run: PipelineResult) -> None:
     per_wave = {w: sum(1 for r in risks if r["wave"] == w) for w in {r["wave"] for r in risks}}
     for r in risks:
         # A wave with more risks than a gate line names is counted (the cards carry
-        # the ids, ``GATE_IDS_NAMED``): discourse's Wave 3 (6 risks) since #1362.
+        # the ids, ``GATE_IDS_NAMED``): discourse's Wave 3 had 6 risks from #1362 until
+        # the sample refresh of #2378; it has 5, each named.
         if per_wave[r["wave"]] > GATE_IDS_NAMED:
             assert f"the {per_wave[r['wave']]} Wave {r['wave']} risks" in gates[r["wave"]]
         else:
@@ -241,17 +244,18 @@ def test_an_unwritten_table_a_later_step_reads_is_a_cdc_copy(run: PipelineResult
         assert norm(cdc) in pdf and norm(_UNWRITTEN_STEP) in pdf, r["risk_id"]
         assert stored[r["risk_id"]]["description"] == r["description"]
         assert stored[r["risk_id"]]["mitigation"] == r["mitigation"]
-    # The same counts on discourse as its wave plan (#2166, #2237): wave 3 reads 134
-    # tables nothing writes, all from Aurora PostgreSQL through the hub.
+    # The same counts on discourse as its wave plan (#2166, #2237): wave 3 reads 149
+    # tables nothing writes (134 before the sample refresh of #2378), all from Aurora
+    # PostgreSQL through the hub.
     if run.db == "discourse":
         (risk,) = sync
         assert risk["wave"] == 3 and risk["severity"] == "MEDIUM"
         assert risk["description"].endswith(
-            "The other 134 tables are written by no captured query; CDC keeps their copies "
+            "The other 149 tables are written by no captured query; CDC keeps their copies "
             "current too, and a copy changes only when something outside the captured "
             "workload writes its table."
         ), risk["description"]
-        assert _sync_figures(risk["description"])[2] == 134
+        assert _sync_figures(risk["description"])[2] == 149
 
 
 # One engine pair of a close-call risk: "Aurora MySQL keeps 14 close calls and 5 ties over
