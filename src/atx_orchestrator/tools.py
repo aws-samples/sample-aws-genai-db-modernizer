@@ -24,6 +24,7 @@ import json
 import logging
 import os
 from collections.abc import Callable
+from typing import Any
 
 from strands.tools import tool
 
@@ -2610,49 +2611,50 @@ _SCHEMA_DOC = """Design the {label} target schema by invoking a deployed subagen
     """
 
 
-@tool
+def _schema_design_tool(label: str, engine: str) -> Callable[[Callable[..., str]], Any]:
+    """``@tool`` with the shared ``_SCHEMA_DOC`` as the tool description.
+
+    The docstring is set before ``tool`` wraps the function: Strands reads the
+    description and the parameter docs when it decorates, so a docstring
+    assigned afterwards never reaches the model (the description would be the
+    function name). One template keeps the six tools from drifting apart.
+    """
+
+    def decorate(fn: Callable[..., str]) -> Any:
+        fn.__doc__ = _SCHEMA_DOC.format(label=label, engine=engine)
+        return tool(fn)
+
+    return decorate
+
+
+@_schema_design_tool("DynamoDB", "dynamodb")
 def run_schema_design_dynamodb_via_a2a(job_id: str, database_name: str) -> str:
     return _run_schema_design_via_a2a("dynamodb", job_id, database_name)
 
 
-@tool
+@_schema_design_tool("DocumentDB", "documentdb")
 def run_schema_design_documentdb_via_a2a(job_id: str, database_name: str) -> str:
     return _run_schema_design_via_a2a("documentdb", job_id, database_name)
 
 
-@tool
+@_schema_design_tool("ElastiCache", "elasticache")
 def run_schema_design_elasticache_via_a2a(job_id: str, database_name: str) -> str:
     return _run_schema_design_via_a2a("elasticache", job_id, database_name)
 
 
-@tool
+@_schema_design_tool("OpenSearch", "opensearch")
 def run_schema_design_opensearch_via_a2a(job_id: str, database_name: str) -> str:
     return _run_schema_design_via_a2a("opensearch", job_id, database_name)
 
 
-@tool
+@_schema_design_tool("Aurora PostgreSQL", "aurora_postgresql")
 def run_schema_design_aurora_pg_via_a2a(job_id: str, database_name: str) -> str:
     return _run_schema_design_via_a2a("aurora-pg", job_id, database_name)
 
 
-@tool
+@_schema_design_tool("Aurora MySQL", "aurora_mysql")
 def run_schema_design_aurora_mysql_via_a2a(job_id: str, database_name: str) -> str:
     return _run_schema_design_via_a2a("aurora-mysql", job_id, database_name)
-
-
-# Docstrings are assigned rather than written inline so the six tools cannot drift
-# apart. The LLM reads these as the tool descriptions, so a divergence between
-# them would be a behavioural difference, not a cosmetic one.
-for _fn, _label, _engine in (
-    (run_schema_design_dynamodb_via_a2a, "DynamoDB", "dynamodb"),
-    (run_schema_design_documentdb_via_a2a, "DocumentDB", "documentdb"),
-    (run_schema_design_elasticache_via_a2a, "ElastiCache", "elasticache"),
-    (run_schema_design_opensearch_via_a2a, "OpenSearch", "opensearch"),
-    (run_schema_design_aurora_pg_via_a2a, "Aurora PostgreSQL", "aurora_postgresql"),
-    (run_schema_design_aurora_mysql_via_a2a, "Aurora MySQL", "aurora_mysql"),
-):
-    _target = getattr(_fn, "__wrapped__", _fn)
-    _target.__doc__ = _SCHEMA_DOC.format(label=_label, engine=_engine)
 
 
 # =============================================================================
