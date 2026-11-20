@@ -5,6 +5,7 @@ import { useRef } from 'react';
 import Button from '@cloudscape-design/components/button';
 import Tabs from '@cloudscape-design/components/tabs';
 import { PANEL_TABS, clampWidth } from '../utils/explorerLayout';
+import { colorBorderDividerDefault } from '@cloudscape-design/design-tokens';
 
 const RAIL_WIDTH = 44;
 const KEY_STEP = 24;
@@ -24,7 +25,7 @@ export default function GraphExplorerSidePanel({ t, width, collapsed, onToggle, 
       <nav
         data-testid="graph-explorer-side-panel"
         aria-label={t('graph-explorer.panel.label')}
-        style={{ width: RAIL_WIDTH, flex: `0 0 ${RAIL_WIDTH}px`, display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 6, paddingTop: 8, borderRight: '1px solid #414d5c' }}
+        style={{ width: RAIL_WIDTH, flex: `0 0 ${RAIL_WIDTH}px`, display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 6, paddingTop: 8, borderRight: `1px solid ${colorBorderDividerDefault}` }}
       >
         <Button
           variant="icon"
@@ -66,7 +67,7 @@ export default function GraphExplorerSidePanel({ t, width, collapsed, onToggle, 
     <section
       data-testid="graph-explorer-side-panel"
       aria-label={t('graph-explorer.panel.label')}
-      style={{ width, flex: `0 0 ${width}px`, position: 'relative', display: 'flex', flexDirection: 'column', minHeight: 0, borderRight: '1px solid #414d5c' }}
+      style={{ width, flex: `0 0 ${width}px`, position: 'relative', display: 'flex', flexDirection: 'column', minHeight: 0, borderRight: `1px solid ${colorBorderDividerDefault}` }}
     >
       <div style={{ display: 'flex', alignItems: 'center', gap: 4, paddingRight: 4 }}>
         <div style={{ flex: 1, minWidth: 0 }}>

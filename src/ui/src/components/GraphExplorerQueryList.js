@@ -9,6 +9,7 @@ import Input from '@cloudscape-design/components/input';
 import SpaceBetween from '@cloudscape-design/components/space-between';
 import { engineIcon } from '../utils/nodeIcons';
 import { waveTags } from '../utils/graphExplorer';
+import { colorBorderDividerDefault, colorBorderItemSelected } from '@cloudscape-design/design-tokens';
 
 /**
  * A wave tag: outlined rather than filled, one style for every wave tag, so it
@@ -39,7 +40,7 @@ export function EngineTag({ engine }) {
   return (
     <span
       data-testid="graph-explorer-engine-tag"
-      style={{ display: 'inline-flex', alignItems: 'center', gap: 4, border: '1px solid #5f6b7a', borderRadius: 4, padding: '0 6px 0 2px', fontSize: 12, lineHeight: '18px', fontWeight: 700 }}
+      style={{ display: 'inline-flex', alignItems: 'center', gap: 4, border: `1px solid ${colorBorderDividerDefault}`, borderRadius: 4, padding: '0 6px 0 2px', fontSize: 12, lineHeight: '18px', fontWeight: 700 }}
     >
       <img src={src} alt="" width={16} height={16} style={{ borderRadius: 2 }} />
       {label}
@@ -155,7 +156,7 @@ export default function GraphExplorerQueryList({
               }}
               style={{
                 cursor: 'pointer',
-                border: `${selected ? 2 : 1}px solid ${selected ? '#ff9900' : '#5f6b7a'}`,
+                border: `${selected ? 2 : 1}px solid ${selected ? colorBorderItemSelected : colorBorderDividerDefault}`,
                 borderRadius: 8,
                 padding: '8px 10px',
                 marginBottom: 8,

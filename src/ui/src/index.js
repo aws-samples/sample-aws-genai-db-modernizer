@@ -8,6 +8,7 @@ import { BrowserRouter } from "react-router-dom";
 import '@cloudscape-design/global-styles/index.css';
 import { applyMode, Mode } from '@cloudscape-design/global-styles';
 import './styles/global.css';
+import { installThemeVars } from './styles/themeTokens';
 
 // i18n
 import './i18n';
@@ -32,6 +33,8 @@ window.addEventListener('error', resizeObserverErrorHandler);
 // Theme setup - read from localStorage, default to dark
 const savedTheme = localStorage.getItem('dbm-theme') || 'dark';
 applyMode(savedTheme === 'light' ? Mode.Light : Mode.Dark);
+// The app's --dbm-* colours, as Cloudscape design tokens (#2311).
+installThemeVars();
 
 function App() {
   return (

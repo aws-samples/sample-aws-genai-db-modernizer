@@ -5,6 +5,8 @@ import Box from '@cloudscape-design/components/box';
 import Button from '@cloudscape-design/components/button';
 import SpaceBetween from '@cloudscape-design/components/space-between';
 import { waveTags } from '../utils/graphExplorer';
+import { colorBackgroundPopover, colorTextBodyDefault, shadowContainerActive } from '@cloudscape-design/design-tokens';
+import { GRAPH_CANVAS } from '../styles/palette';
 
 const fmt = (value) => (value == null ? '-' : Number(value).toLocaleString());
 
@@ -173,10 +175,10 @@ export function StepBar({ t, walkthroughs, active, onStep, onClose, loading }) {
         maxWidth: '90%',
         padding: '6px 10px',
         borderRadius: 999,
-        border: '1px solid #ff9900',
-        background: 'rgba(15, 20, 26, 0.94)',
-        color: '#e9ebed',
-        boxShadow: '0 2px 10px rgba(0,0,0,0.4)',
+        border: `1px solid ${GRAPH_CANVAS.selected}`,
+        background: colorBackgroundPopover,
+        color: colorTextBodyDefault,
+        boxShadow: shadowContainerActive,
       }}
     >
       <Button variant="icon" iconName="angle-left" disabled={index === 0 || loading} ariaLabel={t('graph-explorer.walkthroughs.previous')} onClick={() => onStep(index - 1)} />

@@ -9,12 +9,13 @@ import Popover from '@cloudscape-design/components/popover';
 import SegmentedControl from '@cloudscape-design/components/segmented-control';
 import Select from '@cloudscape-design/components/select';
 import Spinner from '@cloudscape-design/components/spinner';
+import { colorBackgroundPopover, colorBorderPopover, shadowContainerActive } from '@cloudscape-design/design-tokens';
 
 const card = {
-  background: 'rgba(15, 20, 26, 0.92)',
-  border: '1px solid #414d5c',
+  background: colorBackgroundPopover,
+  border: `1px solid ${colorBorderPopover}`,
   borderRadius: 10,
-  boxShadow: '0 2px 10px rgba(0,0,0,0.35)',
+  boxShadow: shadowContainerActive,
   padding: '6px 8px',
 };
 

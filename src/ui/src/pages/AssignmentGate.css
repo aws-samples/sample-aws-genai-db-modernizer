@@ -15,7 +15,6 @@
   display: flex;
   align-items: center;
   justify-content: center;
-  color: #fff;
   font-size: 13px;
   font-weight: 600;
   letter-spacing: 0.02em;
@@ -32,57 +31,6 @@
 
 .distribution-bar__segment span {
   padding: 0 8px;
-}
-
-/* Consolidation flow card */
-.consolidation-card {
-  display: flex;
-  align-items: center;
-  gap: 16px;
-  padding: 14px 20px;
-  border-radius: 8px;
-  background: var(--dbm-bg-surface);
-  border: 1px solid var(--dbm-border-subtle);
-  transition: background 0.2s ease;
-}
-
-.consolidation-card:hover {
-  background: var(--dbm-bg-surface-hover);
-}
-
-.consolidation-card__arrow {
-  color: var(--dbm-text-secondary);
-  font-size: 20px;
-  flex-shrink: 0;
-}
-
-.consolidation-card__savings {
-  margin-left: auto;
-  font-size: 15px;
-  font-weight: 700;
-  color: var(--dbm-accent-green);
-  white-space: nowrap;
-}
-
-/* Pattern card */
-.pattern-card {
-  padding: 16px 20px;
-  border-radius: 8px;
-  background: var(--dbm-bg-surface);
-  border: 1px solid var(--dbm-border-subtle);
-}
-
-.pattern-card__name {
-  font-size: 14px;
-  font-weight: 600;
-  color: var(--dbm-text-primary);
-  margin-bottom: 6px;
-}
-
-.pattern-card__desc {
-  font-size: 13px;
-  color: var(--dbm-text-secondary);
-  line-height: 1.5;
 }
 
 /* Summary hero section */
@@ -145,13 +93,8 @@
   align-items: center;
   gap: 4px;
   font-size: 11px;
-  color: var(--dbm-accent-orange);
+  color: var(--dbm-moved-text);
   font-weight: 600;
-}
-
-/* Consolidated row highlight */
-.row--consolidated {
-  background: rgba(236, 114, 17, 0.06) !important;
 }
 
 /* Diff badge for moved queries */
@@ -163,14 +106,10 @@
   border-radius: 3px;
   font-size: 11px;
   font-weight: 600;
-  background: rgba(236, 114, 17, 0.12);
-  color: var(--dbm-accent-orange);
+  background: var(--dbm-moved-bg);
+  border: 1px solid var(--dbm-moved-border);
+  color: var(--dbm-moved-text);
   white-space: nowrap;
-}
-
-/* #2497: the dark theme's orange is 4.46:1 on the badge's tint; this one is 5.4:1. */
-.awsui-dark-mode .diff-badge {
-  color: #f08c3c;
 }
 
 /* Cache overlay indicator (#296): a cached read keeps its owner engine above
@@ -184,7 +123,7 @@
   border-radius: 3px;
   font-size: 11px;
   font-style: italic;
-  background: rgba(49, 132, 232, 0.1);
+  background: var(--dbm-cache-bg);
   color: var(--dbm-text-secondary);
   white-space: nowrap;
 }
@@ -236,15 +175,14 @@
 
 .query-list-row--expanded {
   background: var(--dbm-bg-highlight);
-  border-bottom-color: rgba(9, 114, 211, 0.15);
 }
 
 .query-list-row--expanded:hover {
-  background: var(--dbm-bg-highlight-hover);
+  background: var(--dbm-bg-highlight);
 }
 
 .query-list-row--moved {
-  border-left: 3px solid var(--dbm-accent-orange);
+  border-left: 3px solid var(--dbm-moved-border);
 }
 
 /* #503: mark a query with an unresolved engine tie so the top banner's
@@ -346,37 +284,6 @@
 
 .query-row-toggle:hover .query-row-arrow {
   color: var(--dbm-text-link-hover);
-}
-
-/* Recommendation bullets */
-.recommendation-list {
-  list-style: none;
-  padding: 0;
-  margin: 0;
-}
-
-.recommendation-list li {
-  position: relative;
-  padding: 8px 0 8px 20px;
-  font-size: 14px;
-  color: var(--dbm-text-primary);
-  line-height: 1.5;
-  border-bottom: 1px solid var(--dbm-border-divider);
-}
-
-.recommendation-list li:last-child {
-  border-bottom: none;
-}
-
-.recommendation-list li::before {
-  content: '';
-  position: absolute;
-  left: 0;
-  top: 16px;
-  width: 8px;
-  height: 8px;
-  border-radius: 50%;
-  background: var(--dbm-accent-blue);
 }
 
 /* Signal badges in collapsed row */

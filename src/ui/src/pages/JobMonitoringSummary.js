@@ -530,28 +530,9 @@ const JobMonitoringSummaryPage = memo(() => {
                 type="warning"
                 header={t("job-summary.alert.approval-header")}
                 action={
-                  <div style={{ display: 'flex', alignItems: 'center', height: '100%' }}>
-                    <a
-                      href={`/analysis/assignments/${jobId}`}
-                      style={{
-                        display: 'inline-block',
-                        padding: '8px 20px',
-                        fontSize: '14px',
-                        fontWeight: '700',
-                        color: '#0f1b2a',
-                        backgroundColor: '#ec7211',
-                        borderRadius: '6px',
-                        textDecoration: 'none',
-                        cursor: 'pointer',
-                        transition: 'background-color 0.15s ease',
-                        whiteSpace: 'nowrap',
-                      }}
-                      onMouseEnter={e => e.target.style.backgroundColor = '#f09030'}
-                      onMouseLeave={e => e.target.style.backgroundColor = '#ec7211'}
-                    >
-                      {t("job-summary.alert.approval-action")}
-                    </a>
-                  </div>
+                  <Button variant="primary" href={`/analysis/assignments/${jobId}`}>
+                    {t("job-summary.alert.approval-action")}
+                  </Button>
                 }
               >
                 {t("job-summary.alert.approval-body")}

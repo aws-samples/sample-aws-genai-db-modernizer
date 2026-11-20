@@ -2930,6 +2930,98 @@ def test_job_pages_have_no_accessibility_violations(
         assert "Projected cost, not sorted." in sort_labels, sort_labels
 
 
+# #2311: what a ``.diff-badge`` (the review's "moved" badge) reads as, text and fill, on
+# each badge on the page plus one probe badge in the first row, so the check runs
+# whether or not the sample job has a moved query.
+_MOVED_BADGE_COLOURS_JS = """() => {
+  const host = document.querySelector('.query-list-row__summary .query-list-col--query');
+  const probe = document.createElement('span');
+  probe.className = 'diff-badge';
+  probe.textContent = 'Moved';
+  host.appendChild(probe);
+  const out = [...document.querySelectorAll('.diff-badge')].map((el) => {
+    const cs = getComputedStyle(el);
+    return [cs.color, cs.backgroundColor];
+  });
+  probe.remove();
+  return out;
+}"""
+
+
+def _css_rgb(value: str) -> tuple[int, int, int]:
+    parts = re.findall(r"[\d.]+", value)
+    assert len(parts) == 3 or (len(parts) == 4 and float(parts[3]) == 1), value
+    return int(parts[0]), int(parts[1]), int(parts[2])
+
+
+def _contrast(a: str, b: str) -> float:
+    def lum(rgb: tuple[int, int, int]) -> float:
+        c = [v / 255 for v in rgb]
+        c = [v / 12.92 if v <= 0.03928 else ((v + 0.055) / 1.055) ** 2.4 for v in c]
+        return 0.2126 * c[0] + 0.7152 * c[1] + 0.0722 * c[2]
+
+    hi, lo = sorted((lum(_css_rgb(a)), lum(_css_rgb(b))), reverse=True)
+    return (hi + 0.05) / (lo + 0.05)
+
+
+@pytest.mark.parametrize("theme", ["dark", "light"])
+@pytest.mark.parametrize("width", [1440, 390])
+def test_every_page_reads_in_both_themes(
+    page: Page, ui: str, all_runs: list[PipelineResult], width: int, theme: str
+) -> None:
+    """#2311: the colours are Cloudscape design tokens, so axe finds nothing blocking
+    (colour contrast included) on every results tab with every section open, on the
+    progress page and on the per-query assignment review with every row open, in the
+    light and the dark theme, at a desktop and a phone width. The review's "moved" badge
+    reads 4.5:1 in both themes (#2498 fixed only the dark one)."""
+    page.set_viewport_size({"width": width, "height": 900})
+    page.emulate_media(reduced_motion="reduce")
+    page.add_init_script(f"window.localStorage.setItem('dbm-theme', '{theme}')")
+    scans: dict[str, list[str]] = {}
+    where: dict[str, object] = {}
+
+    def scan(name: str) -> None:
+        page.evaluate("Promise.all(document.getAnimations().map((a) => a.finished))")
+        blocking, found, minor = _axe_blocking(page)
+        if minor:
+            print(f"\naxe minor findings ({theme}, {width}px, {name}): {minor}")
+        if blocking:
+            scans[name], where[name] = blocking, found
+
+    for r in all_runs:
+        _open_results(page, ui, r)
+        dark = page.evaluate("document.body.classList.contains('awsui-dark-mode')")
+        assert dark == (theme == "dark"), (theme, dark)
+        # The --dbm-* colours are on the page (styles/themeTokens.js).
+        assert page.evaluate(
+            "getComputedStyle(document.body).getPropertyValue('--dbm-text-primary').trim()"
+        ), theme
+        for tab in _each_tab(page):
+            _expand_every_section(page)
+            scan(f"results:{r.db}:{tab}")
+
+    r = all_runs[0]
+    page.goto(f"{ui}/analysis/monitor/summary/{r.job_id}")
+    page.wait_for_load_state("networkidle")
+    scan("progress")
+
+    page.goto(f"{ui}/analysis/assignments/{r.job_id}")
+    expect(page.get_by_text(f"Your {r.db} workload").first).to_be_visible(timeout=READY_MS)
+    _open_per_query_view(page)
+    rows = page.locator(".query-list-row__summary")
+    expect(rows.first).to_be_visible(timeout=READY_MS)
+    for i in range(rows.count()):
+        rows.nth(i).click()
+    expect(page.locator(".query-list-row__detail").first).to_be_visible(timeout=READY_MS)
+    scan("assignments")
+    badges = page.evaluate(_MOVED_BADGE_COLOURS_JS)
+    assert badges, "no moved badge measured"
+    low = [(fg, bg, round(_contrast(fg, bg), 2)) for fg, bg in badges if _contrast(fg, bg) < 4.5]
+    print(f"\nmoved badge ({theme}, {width}px): {badges[-1]}, {_contrast(*badges[-1]):.2f}:1")
+    assert low == [], (theme, width, low)
+    assert scans == {}, (theme, width, scans, where)
+
+
 def _page_fits_viewport(page: Page) -> bool:
     return bool(page.evaluate("document.documentElement.scrollWidth <= window.innerWidth + 1"))
 

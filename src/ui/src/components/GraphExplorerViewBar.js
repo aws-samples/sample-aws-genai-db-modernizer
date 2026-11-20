@@ -10,6 +10,7 @@ import SpaceBetween from '@cloudscape-design/components/space-between';
 import Toggle from '@cloudscape-design/components/toggle';
 import { COST_NODE_SIZE, EDGE_WIDTH, SLIDER_STEPS, logScale, sliderThreshold } from '../utils/graphExplorer';
 import { NODE_TYPE_ICONS, engineIcon } from '../utils/nodeIcons';
+import { GRAPH_CANVAS } from '../styles/palette';
 
 function formatNumber(value) {
   if (value == null) return '-';
@@ -32,7 +33,7 @@ export function IconLegend({ t, engines = [], placeholder = false }) {
     <div data-testid="graph-explorer-icon-legend" style={{ display: 'flex', flexWrap: 'wrap', gap: 10, alignItems: 'center' }}>
       {items.map((item) => (
         <span key={item.key} style={{ display: 'inline-flex', alignItems: 'center', gap: 4 }}>
-          <img src={item.src} alt="" width={16} height={16} style={{ borderRadius: 2, background: '#2a3644' }} />
+          <img src={item.src} alt="" width={16} height={16} style={{ borderRadius: 2, background: GRAPH_CANVAS.nodeFill }} />
           <Box variant="small">{item.label}</Box>
         </span>
       ))}
@@ -45,10 +46,10 @@ export function IconLegend({ t, engines = [], placeholder = false }) {
  * fanned-out query is its own curved link. The round 4 legend line, restored.
  */
 // A question's result on the graph (the Questions tab): the canvas's `node.result` colour.
-export const RESULT_COLOUR = '#00a1c9';
+export const RESULT_COLOUR = GRAPH_CANVAS.result;
 
 export function LinkLegend({ t, wave = null, result = false }) {
-  const stroke = '#8d99a8';
+  const stroke = GRAPH_CANVAS.mutedText;
   return (
     <div data-testid="graph-explorer-link-legend" style={{ display: 'flex', flexWrap: 'wrap', gap: 10, alignItems: 'center' }}>
       <span style={{ display: 'inline-flex', alignItems: 'center', gap: 4 }}>
@@ -117,7 +118,7 @@ export function Legend({ mode, traffic, cost, t }) {
                 width: logScale(value, cost, COST_NODE_SIZE) / 2,
                 height: logScale(value, cost, COST_NODE_SIZE) / 2,
                 borderRadius: '50%',
-                background: '#7d8998',
+                background: GRAPH_CANVAS.muted,
               }}
             />
             {t('graph-explorer.legend.cost', { value: formatCost(value) })}
@@ -149,7 +150,7 @@ function LineSample({ width, dashed = false, dotted = false, faint = false, labe
         style={{
           display: 'inline-block',
           width: 36,
-          borderTop: `${width}px ${dotted ? 'dotted' : dashed ? 'dashed' : 'solid'} #8d99a8`,
+          borderTop: `${width}px ${dotted ? 'dotted' : dashed ? 'dashed' : 'solid'} ${GRAPH_CANVAS.mutedText}`,
           opacity: faint ? 0.45 : 1,
         }}
       />

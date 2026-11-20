@@ -53,7 +53,7 @@ const SYNTHESIS = {
   },
 };
 
-function respond({ stages, synthesis }) {
+function respond({ stages, synthesis, currentStage }) {
   return async (calls) => {
     const out = {};
     calls.forEach(({ id }) => {
@@ -64,7 +64,7 @@ function respond({ stages, synthesis }) {
           source_database_type: 'mysql',
           source_database_label: 'MySQL',
           created_at: '2026-11-01T10:00:00Z',
-          progress: { stages },
+          progress: { stages, ...(currentStage ? { current_stage: currentStage } : {}) },
         };
       } else if (id === 'get-results') {
         out[id] = synthesis ? { success: true, synthesis } : { success: false };
@@ -198,5 +198,19 @@ describe('a running assessment', () => {
     await renderPage({ stages: RUNNING_STAGES });
     expect(text()).toContain('Assessment id');
     expect(container.querySelector('button[aria-label="Copy assessment id for wordpress (job-1)"]')).not.toBeNull();
+  });
+});
+
+describe('an assessment waiting at the assignment review', () => {
+  test('offers the review as a Cloudscape primary button with no colours of its own (#2311)', async () => {
+    await renderPage({
+      stages: [stage('RunCollector'), stage('RunRefereeTriage'), stage('WaitForAssignmentApproval', 'in-progress')],
+      currentStage: 'WaitForAssignmentApproval',
+    });
+    expect(text()).toContain('Assessment ready, waiting for your review');
+    const review = Array.from(container.querySelectorAll('a')).find((a) => a.textContent === 'Review assignments');
+    expect(review.getAttribute('href')).toBe('/analysis/assignments/job-1');
+    expect(review.className).toMatch(/primary/);
+    expect(review.getAttribute('style')).toBeNull();
   });
 });

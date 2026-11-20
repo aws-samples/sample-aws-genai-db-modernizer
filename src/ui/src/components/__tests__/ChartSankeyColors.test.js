@@ -3,6 +3,7 @@
 
 import { act } from 'react';
 import { createRoot } from 'react-dom/client';
+import { colorTextBodyDefault } from '@cloudscape-design/design-tokens';
 import ChartSankey from '../ChartSankey';
 
 global.IS_REACT_ACT_ENVIRONMENT = true;
@@ -68,4 +69,14 @@ test('colours the links into each Aurora engine with that engine colour', () => 
   const links = Array.from(container.querySelectorAll('path'));
   expect(links[0].getAttribute('stroke')).toBe(LIVE_UI_AURORA_MYSQL);
   expect(links[1].getAttribute('stroke')).toBe(LIVE_UI_AURORA_POSTGRESQL);
+});
+
+test('draws its labels in the theme\'s body text token, so both themes read them (#2311)', () => {
+  renderSankey(queryFlow({ dynamodb: 3, elasticache: 1 }));
+  const labels = Array.from(container.querySelectorAll('text'));
+  expect(labels.length).toBeGreaterThan(0);
+  labels.forEach((label) => {
+    expect(label.style.fill).toBe(colorTextBodyDefault);
+    expect(label.getAttribute('fill')).toBeNull();
+  });
 });

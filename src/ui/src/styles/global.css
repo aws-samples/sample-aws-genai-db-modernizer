@@ -8,13 +8,8 @@ body {
     sans-serif;
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
-  background-color: #f2f3f3;
-  color: #0f1b2a;
-}
-
-body.awsui-dark-mode {
-  background-color: #0f1b2a;
-  color: #d1d5db;
+  background-color: var(--dbm-page-bg);
+  color: var(--dbm-text-primary);
 }
 
 code {
@@ -27,111 +22,22 @@ code {
 }
 
 /* ============================================ */
-/* Theme-aware CSS variables                    */
+/* Theme colours (#2311)                        */
 /* ============================================ */
 
-:root {
-  /* Light mode (default) */
-  --dbm-text-primary: #0f1b2a;
-  --dbm-text-secondary: #5f6b7a;
-  --dbm-text-muted: #7f8897;
-  --dbm-text-link: #0972D3;
-  --dbm-text-link-hover: #033160;
-  --dbm-text-code: #0972D3;
-  --dbm-border-subtle: rgba(0, 0, 0, 0.08);
-  --dbm-border-divider: rgba(0, 0, 0, 0.05);
-  --dbm-bg-surface: rgba(0, 0, 0, 0.02);
-  --dbm-bg-surface-hover: rgba(0, 0, 0, 0.04);
-  --dbm-bg-code: rgba(0, 0, 0, 0.04);
-  --dbm-bg-highlight: rgba(9, 114, 211, 0.06);
-  --dbm-bg-highlight-hover: rgba(9, 114, 211, 0.1);
-  --dbm-accent-blue: #0972D3;
-  --dbm-accent-orange: #ec7211;
-  --dbm-accent-green: #1d8102;
-  --dbm-signal-badge-muted-bg: rgba(0, 0, 0, 0.06);
-}
-
-.awsui-dark-mode {
-  /* Dark mode overrides */
-  --dbm-text-primary: #d1d5db;
-  --dbm-text-secondary: #879596;
-  --dbm-text-muted: #687078;
-  --dbm-text-link: #539fe5;
-  --dbm-text-link-hover: #89bcf0;
-  --dbm-text-code: #89bcf0;
-  --dbm-border-subtle: rgba(255, 255, 255, 0.06);
-  --dbm-border-divider: rgba(255, 255, 255, 0.04);
-  --dbm-bg-surface: rgba(255, 255, 255, 0.03);
-  --dbm-bg-surface-hover: rgba(255, 255, 255, 0.05);
-  --dbm-bg-code: rgba(0, 0, 0, 0.3);
-  --dbm-bg-highlight: rgba(9, 114, 211, 0.04);
-  --dbm-bg-highlight-hover: rgba(9, 114, 211, 0.06);
-  --dbm-accent-blue: #0972D3;
-  --dbm-accent-orange: #ec7211;
-  --dbm-accent-green: #1d8102;
-  --dbm-signal-badge-muted-bg: rgba(255, 255, 255, 0.06);
-}
-
-/* ============================================ */
-/* Amplify Authenticator Styles */
-/* ============================================ */
-
-/* Center the Amplify Authenticator form vertically and horizontally */
-[data-amplify-authenticator] {
-  min-height: 100vh;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  background-color: rgb(19, 25, 32);
-}
-
-/* Ensure the form container is properly sized */
-[data-amplify-authenticator] [data-amplify-container] {
-  width: 100%;
-  max-width: 460px;
-}
+/* Every --dbm-* property these rules read is a Cloudscape design token, declared on
+   body by styles/themeTokens.js, so the light and dark themes both apply with no
+   per-theme copy here. A colour no token covers lives in styles/palette.js. */
 
 /* Graph explorer (#308): a visible focus ring on the panel's resize edge. */
 .graph-explorer-resize:focus-visible {
-  outline: 2px solid #ff9900;
+  outline: 2px solid var(--dbm-focus-ring);
   outline-offset: -2px;
 }
 
 /* ============================================ */
 /* Cards and code blocks (#2310)                */
 /* ============================================ */
-
-:root {
-  --dbm-card-info-border: #0972d3;
-  --dbm-card-info-bg: #f2f8fd;
-  --dbm-card-note-border: #ec7211;
-  --dbm-card-note-bg: #fff8e6;
-  --dbm-card-danger-border: #d91515;
-  --dbm-card-danger-bg: #fef2f2;
-  --dbm-card-error-border: #d13212;
-  --dbm-card-warning-border: #b7791f;
-  --dbm-card-success-border: #1d8102;
-  --dbm-card-stopped-border: #6b7785;
-  --dbm-card-neutral-bg: #ffffff;
-  --dbm-code-bg: #f2f3f3;
-  --dbm-code-text: #0f1b2a;
-}
-
-.awsui-dark-mode {
-  --dbm-card-info-border: #539fe5;
-  --dbm-card-info-bg: rgba(83, 159, 229, 0.12);
-  --dbm-card-note-border: #ec7211;
-  --dbm-card-note-bg: rgba(236, 114, 17, 0.14);
-  --dbm-card-danger-border: #ff7a7a;
-  --dbm-card-danger-bg: rgba(255, 122, 122, 0.12);
-  --dbm-card-error-border: #ff7a7a;
-  --dbm-card-warning-border: #ffc107;
-  --dbm-card-success-border: #2ea44f;
-  --dbm-card-stopped-border: #879596;
-  --dbm-card-neutral-bg: rgba(255, 255, 255, 0.04);
-  --dbm-code-bg: #232f3e;
-  --dbm-code-text: #d4d4d4;
-}
 
 .dbm-card {
   border-left: 3px solid var(--dbm-card-info-border);
@@ -185,20 +91,6 @@ code {
 }
 
 /* Query id chips and mapping chip rows (#2323) */
-
-:root {
-  --dbm-id-chip-bg: #e9ebed;
-  --dbm-id-chip-text: #0f141a;
-  --dbm-id-chip-hover-bg: #0972d3;
-  --dbm-id-chip-hover-text: #ffffff;
-}
-
-.awsui-dark-mode {
-  --dbm-id-chip-bg: #2a3a4d;
-  --dbm-id-chip-text: #e9ebed;
-  --dbm-id-chip-hover-bg: #539fe5;
-  --dbm-id-chip-hover-text: #000716;
-}
 
 .dbm-id-chip {
   display: inline-block;

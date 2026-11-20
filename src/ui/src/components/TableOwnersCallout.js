@@ -41,10 +41,12 @@ function engineList(engines) {
 
 function badges(engines) {
   if (!engines || engines.length === 0) return DASH;
+  // The badges wrap inside the cell: on a phone a second badge on the same line ran
+  // under the next column, clipped from view (axe read the next cell's text on it).
   return (
-    <span style={{ whiteSpace: 'nowrap' }}>
-      {engines.map((engine, i) => (
-        <span key={engine}>{i > 0 && ' '}<EngineBadge engine={engine} /></span>
+    <span data-badge-list style={{ display: 'inline-flex', flexWrap: 'wrap', gap: 4 }}>
+      {engines.map((engine) => (
+        <span key={engine}><EngineBadge engine={engine} /></span>
       ))}
     </span>
   );

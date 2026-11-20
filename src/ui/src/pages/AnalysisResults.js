@@ -924,6 +924,11 @@ const AnalysisResultsPage = memo(() => {
             }
           >
             <Tabs
+              // A narrow screen scrolls the tab list with two icon buttons; they need names.
+              i18nStrings={{
+                scrollLeftAriaLabel: t('analysis-results.tabs.scroll-left'),
+                scrollRightAriaLabel: t('analysis-results.tabs.scroll-right'),
+              }}
               activeTabId={activeDesignEngine(designTab, auroraDesigns.map(d => d.engine))}
               onChange={({ detail }) => {
                 // The panel shows one engine's table: it closes when the engine changes.
@@ -1195,6 +1200,10 @@ const AnalysisResultsPage = memo(() => {
                   caveat={resultsData?.no_open_risks_caveat}
                 />
                 <Tabs
+                  i18nStrings={{
+                    scrollLeftAriaLabel: t('analysis-results.tabs.scroll-left'),
+                    scrollRightAriaLabel: t('analysis-results.tabs.scroll-right'),
+                  }}
                   activeTabId={
                     riskTabIds.includes(riskTab)
                       ? riskTab
@@ -1295,6 +1304,10 @@ const AnalysisResultsPage = memo(() => {
             header={<Header variant="h2">{t('analysis-results.tradeoffs.title')}</Header>}
           >
             <Tabs
+              i18nStrings={{
+                scrollLeftAriaLabel: t('analysis-results.tabs.scroll-left'),
+                scrollRightAriaLabel: t('analysis-results.tabs.scroll-right'),
+              }}
               tabs={tradeOffTabsShown(engineTradeOffs)
                 .map(([engine, tradeoffs]) => {
                   // Separate PE notes from design decisions. Only the fallback below
