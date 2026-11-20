@@ -36,8 +36,11 @@ export const GRAPH_CANVAS = {
   // Placeholders, other waves' links and nodes, and cross-wave links.
   muted: '#7d8998',
   mutedText: '#8d99a8',
-  // A question's result (the Questions tab), under the selection's orange.
+  // A question's result (the Questions tab), under the selection's blue.
   result: '#00a1c9',
-  // The selection and hover highlight, and the active walkthrough's outline.
-  selected: '#ff9900',
+  // The selection and hover highlight, and the active walkthrough's outline. The same
+  // blue as the query list card and the tooltip's last line (Cloudscape's
+  // colorBorderItemSelected, #006ce0 in the light theme). A canvas cannot read the
+  // token, so this one value serves both themes.
+  selected: '#006ce0',
 };

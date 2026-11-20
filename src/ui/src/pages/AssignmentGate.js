@@ -55,7 +55,7 @@ import {
 } from "../utils/assignmentSummary";
 import { gateState, offersDecision } from "../utils/gateState";
 import { sourceEngineOf } from "../utils/sqlLocking";
-import { ENGINE_STYLES, engineHex } from "../utils/engineColors";
+import { ENGINE_STYLES } from "../utils/engineColors";
 import EngineBadge from "../components/EngineBadge";
 import SignalChips from "../components/SignalChips";
 import { resultsEngineHref, awaitsApproval, synthesisRan } from "../utils/resultsLinks";
@@ -92,38 +92,6 @@ const PAGE_SIZE = 25;
 // ============================================
 // Helper: Engine badge component
 // ============================================
-
-// ============================================
-// Helper: Distribution bar
-// ============================================
-
-function DistributionBar({ distribution, eliminated = [] }) {
-  const total = Object.values(distribution).reduce((a, b) => a + b, 0);
-  if (total === 0) return null;
-
-  const sorted = Object.entries(distribution).sort((a, b) => b[1] - a[1]);
-
-  return (
-    <div className="distribution-bar">
-      {sorted.map(([engine, count]) => {
-        const pct = (count / total) * 100;
-        const isEliminated = eliminated.includes(engine);
-        const color = engineHex(engine);
-        return (
-          <div
-            key={engine}
-            className={`distribution-bar__segment ${isEliminated ? 'distribution-bar__segment--eliminated' : ''}`}
-            style={{ width: `${pct}%`, backgroundColor: color }}
-            title={`${engine}: ${count} queries (${formatPercent(pct, 1)})`}
-          >
-            <span>{count > 0 && `${engine} (${count})`}</span>
-          </div>
-        );
-      })}
-    </div>
-  );
-}
-
 
 // ============================================
 // Main Page Component

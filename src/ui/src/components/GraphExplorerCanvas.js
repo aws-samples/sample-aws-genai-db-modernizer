@@ -72,9 +72,9 @@ function stylesheet(dark) {
     { selector: 'node[expanded = "yes"]', style: { 'border-width': 3, 'border-color': text } },
     // Pinned (dropped there by the user): a dotted outline around the node.
     { selector: 'node.pinned', style: { 'outline-width': 2, 'outline-style': 'dotted', 'outline-color': text, 'outline-offset': 4 } },
-    // In a question's result (the Questions tab): a blue outline, under the selection's orange.
+    // In a question's result (the Questions tab): a blue outline, under the selection's blue.
     { selector: 'node.result', style: { 'border-width': 3, 'border-color': GRAPH_CANVAS.result } },
-    // Selected: an orange outline and a soft halo around the icon.
+    // Selected: a blue outline and a soft halo around the icon.
     {
       selector: 'node:selected',
       style: { 'border-width': 4, 'border-color': GRAPH_CANVAS.selected, 'underlay-color': GRAPH_CANVAS.selected, 'underlay-opacity': 0.25, 'underlay-padding': 6 },
@@ -119,7 +119,7 @@ function stylesheet(dark) {
     },
     { selector: '.wave-hidden', style: { display: 'none' } },
     { selector: '.hidden', style: { display: 'none' } },
-    // A link carrying one of a question's queries (the Questions tab); hover and selection stay orange.
+    // A link carrying one of a question's queries (the Questions tab); hover and selection stay blue.
     { selector: 'edge.result', style: { opacity: 0.9, 'line-color': GRAPH_CANVAS.result } },
     { selector: 'edge.highlight', style: { opacity: 1, 'line-color': GRAPH_CANVAS.selected, 'z-index': 10 } },
   ];
