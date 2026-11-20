@@ -7,6 +7,7 @@ import { displayEngine } from '../utils/engineNames';
 import { ENGINE_HEX } from '../utils/engineCatalog.generated';
 import { isCacheEngine } from '../utils/cacheLayer';
 import { DEFAULT_ENGINE_HEX } from '../utils/engineColors';
+import { colorTextBodyDefault } from '@cloudscape-design/design-tokens';
 
 const MARGIN_Y = 25;
 const MARGIN_X = 5;
@@ -43,10 +44,14 @@ const cacheLabelRoom = (data) => {
 
 // Node colours: the source node's grey, then every engine's live UI colour from the
 // engine catalog (colors.ui, src/catalog/engines, #492). Before #476 the Aurora node
-// ids missed this map and fell back to a default blue that read as DynamoDB's #3184e8;
-// since #1246 Aurora MySQL (#9c5700) and Aurora PostgreSQL (#c33d69) differ too.
+// ids missed this map and fell back to a default blue that read as DynamoDB's colour;
+// since #1246 Aurora MySQL and Aurora PostgreSQL differ too.
+// Labels in the theme's body text colour (#2311). A design token is a CSS variable, which
+// an SVG fill attribute cannot read, so it is set as a style.
+const LABEL_STYLE = { fill: colorTextBodyDefault };
+
 export const NODE_COLORS = {
-  patterns: '#5f6b7a',      // Gray for source
+  patterns: DEFAULT_ENGINE_HEX, // the neutral grey for the source
   ...ENGINE_HEX,
 };
 
@@ -70,15 +75,13 @@ const ChartSankey = ({ width = 800, height = 400, data, onNodeClick, unavailable
   const layoutWidth = Math.max(measured > 0 ? measured : width, MIN_LAYOUT_WIDTH);
   const compact = layoutWidth < COMPACT_LAYOUT_WIDTH;
 
-  // Theme detection for text color
+  // The theme, for the links' opacity (a fainter link reads better on the dark page).
   const [isDark, setIsDark] = useState(() => document.body.classList.contains('awsui-dark-mode'));
   useEffect(() => {
     const check = () => setIsDark(document.body.classList.contains('awsui-dark-mode'));
     window.addEventListener('dbm-theme-change', check);
     return () => window.removeEventListener('dbm-theme-change', check);
   }, []);
-
-  const textFill = isDark ? '#ffffff' : '#16191f';
 
   // Compute nodes and links positions
   const { nodes, links } = useMemo(() => {
@@ -181,7 +184,7 @@ const ChartSankey = ({ width = 800, height = 400, data, onNodeClick, unavailable
             dy={labelAbove ? undefined : '0.35em'}
             textAnchor={labelAnchor}
             fontSize={LABEL_FONT_SIZE}
-            fill={textFill}
+            style={LABEL_STYLE}
           >
             {label}
           </text>
@@ -192,7 +195,7 @@ const ChartSankey = ({ width = 800, height = 400, data, onNodeClick, unavailable
               dy="2em"
               textAnchor={labelAnchor}
               fontSize={10}
-              fill={textFill}
+              style={LABEL_STYLE}
               opacity={0.65}
             >
               cache layer
@@ -204,7 +207,7 @@ const ChartSankey = ({ width = 800, height = 400, data, onNodeClick, unavailable
     // d3-sankey lays out in place, so `nodes` keeps its identity when the width changes:
     // the width is a dependency of its own (#2317).
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [nodes, layoutWidth, compact, nodeValues, onNodeClick, unavailableTitle, textFill]);
+  }, [nodes, layoutWidth, compact, nodeValues, onNodeClick, unavailableTitle]);
 
   // Draw the links
   const allLinks = useMemo(() => {

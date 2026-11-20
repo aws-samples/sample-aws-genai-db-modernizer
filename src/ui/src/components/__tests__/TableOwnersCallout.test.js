@@ -367,3 +367,14 @@ test("states an older report's own rule above its most-queries rows", () => {
   expect(rule).toContain('is owned by the engine that serves most of its queries');
   expect(rule).not.toContain("plan's relational engine");
 });
+
+test('several CDC targets wrap inside their cell, one badge each, never under the next column', () => {
+  const lines = ownership.table_lines.map(line => (line.table === 'wordpress.wp_usermeta'
+    ? { ...line, also_read_by: ['dynamodb', 'documentdb'] } : line));
+  renderOpen({ table_owner_lines: { ...ownership, table_lines: lines } });
+  const list = rowOf('wordpress.wp_usermeta').querySelector('[data-cell="cdc-to"] [data-badge-list]');
+  expect(list.style.flexWrap).toBe('wrap');
+  expect(list.style.whiteSpace).toBe('');
+  expect([...list.querySelectorAll('[data-engine-badge]')].map(b => b.getAttribute('data-engine-badge')))
+    .toEqual(['dynamodb', 'documentdb']);
+});

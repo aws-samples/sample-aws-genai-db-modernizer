@@ -105,31 +105,22 @@ describe('the stylesheet', () => {
     expect(css).toContain('.dbm-fill {');
   });
 
-  const block = (from) => css.slice(from, css.indexOf('}', from));
-  const rootStart = css.indexOf(':root {', css.indexOf('Cards and code blocks'));
-  const darkStart = css.indexOf('.awsui-dark-mode {', rootStart);
-  const names = (b) => [...b.matchAll(/(--dbm-(?:card|code)-[a-z-]+):/g)].map((m) => m[1]);
+  // #2311: the card and code colours are Cloudscape design tokens (styles/themeTokens.js),
+  // read here in each theme from the installed components' theme stylesheet.
+  const { THEME_VARS } = require('../../styles/themeTokens');
+  const { tokenValues } = require('../../testUtils/themeTokenValues');
+  const names = Object.keys(THEME_VARS).filter((name) => /^--dbm-(?:card|code)-/.test(name));
 
-  test('sets every card and code variable in the dark theme as well as the light one', () => {
-    const light = names(block(rootStart));
-    expect(light).toHaveLength(13);
-    expect(names(block(darkStart)).sort()).toEqual(light.sort());
+  test('every card and code variable is a token, so both themes have it', () => {
+    expect(names).toHaveLength(13);
+    names.forEach((name) => expect([name, tokenValues(THEME_VARS[name]).defined]).toEqual([name, true]));
   });
 
-  test('the severity borders keep 3:1 against the card background in both themes', () => {
+  test.each(['light', 'dark'])('the severity borders keep 3:1 against the card background in the %s theme', (theme) => {
     const { contrastRatio } = require('../../utils/engineColors');
-    const val = (b, v) => {
-      const line = b.split('\n').find((l) => l.trim().startsWith(`${v}:`));
-      return /#[0-9a-f]{6}/i.exec(line)[0];
-    };
-    const light = block(rootStart);
+    const val = (name) => tokenValues(THEME_VARS[name])[theme];
     for (const tone of ['error', 'warning', 'success', 'stopped']) {
-      expect(contrastRatio(val(light, `--dbm-card-${tone}-border`), val(light, '--dbm-card-neutral-bg'))).toBeGreaterThanOrEqual(3);
-    }
-    // The dark card background is a faint white over the page's #0f1b2a.
-    const dark = block(darkStart);
-    for (const tone of ['error', 'warning', 'success', 'stopped']) {
-      expect(contrastRatio(val(dark, `--dbm-card-${tone}-border`), '#0f1b2a')).toBeGreaterThanOrEqual(3);
+      expect([tone, contrastRatio(val(`--dbm-card-${tone}-border`), val('--dbm-card-neutral-bg')) >= 3]).toEqual([tone, true]);
     }
   });
 });

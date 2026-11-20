@@ -208,28 +208,24 @@ describe('untrusted text', () => {
 });
 
 describe('the id chip colours', () => {
+  // #2311: the chip's colours are Cloudscape design tokens (styles/themeTokens.js), read
+  // here in each theme from the installed components' theme stylesheet.
   const css = fs.readFileSync(path.join(__dirname, '..', '..', 'styles', 'global.css'), 'utf8');
-  const varsIn = (selector) => {
-    // The block that sets the --dbm-id-chip-* variables under `selector`.
-    const starts = [];
-    for (let at = css.indexOf(`${selector} {`); at !== -1; at = css.indexOf(`${selector} {`, at + 1)) starts.push(at);
-    const out = {};
-    starts.forEach((s) => {
-      const body = css.slice(s, css.indexOf('}', s));
-      [...body.matchAll(/(--dbm-id-chip-[a-z-]+):\s*(#[0-9a-fA-F]{6})/g)].forEach((m) => { out[m[1]] = m[2]; });
-    });
-    return out;
-  };
+  const { THEME_VARS } = require('../../styles/themeTokens');
+  const { tokenValues } = require('../../testUtils/themeTokenValues');
+  const chip = (theme) => Object.fromEntries(Object.entries(THEME_VARS)
+    .filter(([name]) => name.startsWith('--dbm-id-chip-'))
+    .map(([name, token]) => [name, tokenValues(token)[theme]]));
 
-  test.each([[':root', 'light'], ['.awsui-dark-mode', 'dark']])('in the %s theme (%s) the chip text reads 4.5:1 at rest and on hover', (selector) => {
-    const v = varsIn(selector);
+  test.each(['light', 'dark'])('in the %s theme the chip text reads 4.5:1 at rest and on hover', (theme) => {
+    const v = chip(theme);
     expect(Object.keys(v).sort()).toEqual(['--dbm-id-chip-bg', '--dbm-id-chip-hover-bg', '--dbm-id-chip-hover-text', '--dbm-id-chip-text']);
     expect(contrastRatio(v['--dbm-id-chip-bg'], v['--dbm-id-chip-text'])).toBeGreaterThanOrEqual(4.5);
     expect(contrastRatio(v['--dbm-id-chip-hover-bg'], v['--dbm-id-chip-hover-text'])).toBeGreaterThanOrEqual(4.5);
   });
 
   test('the dark chip is not the light chip', () => {
-    expect(varsIn('.awsui-dark-mode')['--dbm-id-chip-bg']).not.toBe(varsIn(':root')['--dbm-id-chip-bg']);
+    expect(chip('dark')['--dbm-id-chip-bg']).not.toBe(chip('light')['--dbm-id-chip-bg']);
   });
 
   test('the chip rule reads its colours from the theme variables, with no hard-coded fill', () => {

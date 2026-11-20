@@ -6,6 +6,8 @@ import cytoscape from 'cytoscape';
 import cola from 'cytoscape-cola';
 import { ringPositions } from '../utils/graphExplorer';
 import { DROP_PASS_MS, EXPAND_PASS_MS, TIDY_PASS_MS, colaOptions, dragGroup, isPinned, lockAllBut, pin, releaseLocks, settle, unpin } from './graphExplorerPhysics';
+import { colorBorderDividerDefault } from '@cloudscape-design/design-tokens';
+import { GRAPH_CANVAS } from '../styles/palette';
 
 // Register the force-directed layout once (cytoscape.use warns on a second call).
 let colaRegistered = false;
@@ -23,9 +25,7 @@ const FOCUS_MIN_ZOOM = 0.7;
 const FOCUS_MAX_ZOOM = 1.2;
 
 function stylesheet(dark) {
-  const text = dark ? '#e9ebed' : '#000716';
-  const background = dark ? '#161d26' : '#ffffff';
-  const edge = dark ? '#8d99a8' : '#7d8998';
+  const { text, textBackground: background, edge } = dark ? GRAPH_CANVAS.dark : GRAPH_CANVAS.light;
   return [
     {
       selector: 'node',
@@ -33,14 +33,14 @@ function stylesheet(dark) {
         // Identity is the icon (utils/nodeIcons) and the label, never the
         // fill: one neutral node shape for every kind, so colour is free for
         // analysis. States are outlines, halos and opacity.
-        'background-color': '#2a3644',
+        'background-color': GRAPH_CANVAS.nodeFill,
         'background-image': 'data(icon)',
         'background-fit': 'contain',
         'background-width': '74%',
         'background-height': '74%',
         'background-clip': 'none',
         'border-width': 1,
-        'border-color': '#5f6b7a',
+        'border-color': GRAPH_CANVAS.nodeBorder,
         // Labels are drawn on the canvas as plain text, never parsed as markup.
         label: 'data(label)',
         color: text,
@@ -60,7 +60,7 @@ function stylesheet(dark) {
         'overlay-opacity': 0,
       },
     },
-    { selector: 'node[placeholder = "yes"]', style: { 'border-width': 2, 'border-style': 'dashed', 'border-color': '#7d8998', opacity: 0.85 } },
+    { selector: 'node[placeholder = "yes"]', style: { 'border-width': 2, 'border-style': 'dashed', 'border-color': GRAPH_CANVAS.muted, opacity: 0.85 } },
     // An engine is a rounded square filled by its AWS service icon, as
     // published (not recoloured); tables are the smaller table-icon rectangles.
     {
@@ -73,11 +73,11 @@ function stylesheet(dark) {
     // Pinned (dropped there by the user): a dotted outline around the node.
     { selector: 'node.pinned', style: { 'outline-width': 2, 'outline-style': 'dotted', 'outline-color': text, 'outline-offset': 4 } },
     // In a question's result (the Questions tab): a blue outline, under the selection's orange.
-    { selector: 'node.result', style: { 'border-width': 3, 'border-color': '#00a1c9' } },
+    { selector: 'node.result', style: { 'border-width': 3, 'border-color': GRAPH_CANVAS.result } },
     // Selected: an orange outline and a soft halo around the icon.
     {
       selector: 'node:selected',
-      style: { 'border-width': 4, 'border-color': '#ff9900', 'underlay-color': '#ff9900', 'underlay-opacity': 0.25, 'underlay-padding': 6 },
+      style: { 'border-width': 4, 'border-color': GRAPH_CANVAS.selected, 'underlay-color': GRAPH_CANVAS.selected, 'underlay-opacity': 0.25, 'underlay-padding': 6 },
     },
     {
       selector: 'edge',
@@ -106,22 +106,22 @@ function stylesheet(dark) {
     // what only cuts over in it 0.45, everything else greyed out at 0.25.
     { selector: 'edge.cache-layer', style: { opacity: 0.75 } },
     { selector: 'edge.cutover', style: { opacity: 0.45 } },
-    { selector: 'edge.other-wave', style: { opacity: 0.25, 'line-color': '#7d8998' } },
+    { selector: 'edge.other-wave', style: { opacity: 0.25, 'line-color': GRAPH_CANVAS.muted } },
     {
       selector: 'node.other-wave',
-      style: { opacity: 0.55, 'background-image-opacity': 0.3, 'border-color': '#7d8998', color: '#8d99a8' },
+      style: { opacity: 0.55, 'background-image-opacity': 0.3, 'border-color': GRAPH_CANVAS.muted, color: GRAPH_CANVAS.mutedText },
     },
     // Cross-wave links: thin, short-dashed and grey, unlike Who writes'
     // replica reads (longer dashes, at the link's own width and colour).
     {
       selector: 'edge.cross-wave',
-      style: { width: 1, 'line-style': 'dashed', 'line-dash-pattern': [2, 5], 'line-color': '#8d99a8', 'curve-style': 'straight' },
+      style: { width: 1, 'line-style': 'dashed', 'line-dash-pattern': [2, 5], 'line-color': GRAPH_CANVAS.mutedText, 'curve-style': 'straight' },
     },
     { selector: '.wave-hidden', style: { display: 'none' } },
     { selector: '.hidden', style: { display: 'none' } },
     // A link carrying one of a question's queries (the Questions tab); hover and selection stay orange.
-    { selector: 'edge.result', style: { opacity: 0.9, 'line-color': '#00a1c9' } },
-    { selector: 'edge.highlight', style: { opacity: 1, 'line-color': '#ff9900', 'z-index': 10 } },
+    { selector: 'edge.result', style: { opacity: 0.9, 'line-color': GRAPH_CANVAS.result } },
+    { selector: 'edge.highlight', style: { opacity: 1, 'line-color': GRAPH_CANVAS.selected, 'z-index': 10 } },
   ];
 }
 
@@ -408,7 +408,7 @@ export default function GraphExplorerCanvas({
     <div
       ref={container}
       data-testid="graph-explorer-canvas"
-      style={borderless ? { width: '100%', height } : { width: '100%', height, minHeight: 420, border: '1px solid #5f6b7a', borderRadius: 8 }}
+      style={borderless ? { width: '100%', height } : { width: '100%', height, minHeight: 420, border: `1px solid ${colorBorderDividerDefault}`, borderRadius: 8 }}
     />
   );
 }

@@ -82,6 +82,9 @@ import {
   truncatedPickerLimit,
   walkthroughsPath,
 } from '../utils/graphExplorer';
+import {
+  colorBackgroundPopover, colorBorderDividerDefault, colorBorderPopover, colorTextAccent, colorTextBodyDefault,
+} from '@cloudscape-design/design-tokens';
 
 async function get(id, path) {
   const results = await new ApiManager().execute([{ id, path, method: 'GET', params: {} }]);
@@ -838,7 +841,7 @@ export default function GraphExplorer() {
             <div
               data-testid="graph-explorer-page-bar"
               // Room either side for the app layout's navigation and help triggers.
-              style={{ display: 'flex', alignItems: 'center', gap: 12, flexWrap: 'wrap', padding: '6px 60px', borderBottom: '1px solid #414d5c' }}
+              style={{ display: 'flex', alignItems: 'center', gap: 12, flexWrap: 'wrap', padding: '6px 60px', borderBottom: `1px solid ${colorBorderDividerDefault}` }}
             >
               <BreadcrumbGroup items={breadcrumbs} ariaLabel={t('graph-explorer.breadcrumb')} />
               <Box variant="h1" fontSize="heading-m" margin={{ left: 'xs' }}>
@@ -992,9 +995,9 @@ export default function GraphExplorer() {
                       top: Math.max(4, tip.y + 14),
                       maxWidth: 340,
                       pointerEvents: 'none',
-                      background: '#0f141a',
-                      color: '#e9ebed',
-                      border: '1px solid #5f6b7a',
+                      background: colorBackgroundPopover,
+                      color: colorTextBodyDefault,
+                      border: `1px solid ${colorBorderPopover}`,
                       borderRadius: 6,
                       padding: '6px 8px',
                       fontSize: 12,
@@ -1002,7 +1005,7 @@ export default function GraphExplorer() {
                     }}
                   >
                     {tip.lines.map((line, i) => (
-                      <div key={line} style={i === tip.lines.length - 1 ? { color: '#ff9900', marginTop: 2 } : undefined}>
+                      <div key={line} style={i === tip.lines.length - 1 ? { color: colorTextAccent, marginTop: 2 } : undefined}>
                         {line}
                       </div>
                     ))}

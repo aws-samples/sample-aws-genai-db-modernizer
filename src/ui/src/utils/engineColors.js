@@ -12,6 +12,7 @@
  * ui_picker_order), so a new catalog engine appears here with no edit.
  */
 import { ENGINE_HEX, ENGINE_LABELS, ENGINE_PICKER_ORDER } from './engineCatalog.generated';
+import { BADGE_TEXT_DARK, BADGE_TEXT_LIGHT, NEUTRAL_ENGINE_HEX } from '../styles/palette';
 
 export const ENGINE_STYLES = Object.fromEntries(ENGINE_PICKER_ORDER.map((engine) => [
   engine,
@@ -21,14 +22,14 @@ export const ENGINE_STYLES = Object.fromEntries(ENGINE_PICKER_ORDER.map((engine)
 // A neutral grey for an id the catalog does not know (#1246): never another engine's
 // colour (the old default blue read as DynamoDB's), and never the literal "undefined"
 // a missing private-table key produced (#482).
-export const DEFAULT_ENGINE_HEX = '#5f6b7a';
+export const DEFAULT_ENGINE_HEX = NEUTRAL_ENGINE_HEX;
 
 // The live UI colour for an engine id -- one lookup for every page, so a new
 // catalog engine reaches all of them with no edit (#482).
 export const engineHex = (engineId) => ENGINE_HEX[engineId] || DEFAULT_ENGINE_HEX;
 
-const DARK_TEXT = '#000716';
-const LIGHT_TEXT = '#ffffff';
+const DARK_TEXT = BADGE_TEXT_DARK;
+const LIGHT_TEXT = BADGE_TEXT_LIGHT;
 
 // WCAG relative luminance of a #rrggbb colour. The executive report computes the same
 // for its share-bar labels (contrast_ratio in src/report/executive_report.py); keep the

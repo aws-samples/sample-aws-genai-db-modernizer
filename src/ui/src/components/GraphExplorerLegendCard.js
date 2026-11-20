@@ -4,6 +4,7 @@
 import { useState } from 'react';
 import Button from '@cloudscape-design/components/button';
 import { IconLegend, Legend, LinkLegend } from './GraphExplorerViewBar';
+import { colorBackgroundPopover, colorBorderPopover, colorTextBodySecondary } from '@cloudscape-design/design-tokens';
 
 /** The legend as a small collapsible card in the graph's corner, with how much the view draws. */
 export default function GraphExplorerLegendCard({ t, mode, traffic, cost, status, engines, placeholder, wave = null, result = false }) {
@@ -17,8 +18,8 @@ export default function GraphExplorerLegendCard({ t, mode, traffic, cost, status
         bottom: 10,
         zIndex: 3,
         maxWidth: 'min(460px, 34%)',
-        background: 'rgba(15, 20, 26, 0.9)',
-        border: '1px solid #414d5c',
+        background: colorBackgroundPopover,
+        border: `1px solid ${colorBorderPopover}`,
         borderRadius: 8,
         padding: '4px 8px',
         fontSize: 12,
@@ -33,7 +34,7 @@ export default function GraphExplorerLegendCard({ t, mode, traffic, cost, status
         {t('graph-explorer.legend.title')}
       </Button>
       {status && (
-        <span data-testid="graph-explorer-status" style={{ marginLeft: 8, color: '#8d99a8' }}>
+        <span data-testid="graph-explorer-status" style={{ marginLeft: 8, color: colorTextBodySecondary }}>
           {status}
         </span>
       )}
