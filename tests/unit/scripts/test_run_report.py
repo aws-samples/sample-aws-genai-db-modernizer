@@ -116,7 +116,7 @@ def test_index_lists_each_file_its_audience_and_the_assignment_version(tmp_path:
 
     index = (tmp_path / DB / JOB / "deliverables" / "index.md").read_text()
     assert "Assignment version: v3" in index
-    assert f"Job: {JOB}" in index
+    assert f"Assessment id: {JOB}" in index
     for name in DOCUMENTED_FILES - {"index.md"}:
         row = next((line for line in index.splitlines() if f"`{name}`" in line), None)
         assert row is not None, name

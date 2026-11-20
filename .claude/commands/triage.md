@@ -35,7 +35,7 @@ Read files with the Read tool (use `offset`/`limit` for large files). Search fil
 4. **Decision gate**
    Ask user: "Do you want to proceed with these engines, or modify the selection?"
    - If user approves: continue
-   - If user modifies: note the modified selection. Refuse any engine outside `engine_scope` (when the line has one): say it is outside the customer's engine scope, that a job's scope is fixed once it starts, and that a new job whose scope adds it can use it; never add it to the selection (`run_analysis.py` refuses it too). Engines the scope leaves out never come back through this gate.
+   - If user modifies: note the modified selection. Refuse any engine outside `engine_scope` (when the line has one): say it is outside the customer's engine scope, that an assessment's scope is fixed once it starts, and that a new assessment whose scope adds it can use it; never add it to the selection (`run_analysis.py` refuses it too). Engines the scope leaves out never come back through this gate.
 
 5. **Update state**
    Update `.modernizer-state.json`:

@@ -247,7 +247,7 @@ def test_committed_run_index_names_its_assignment_version(site_dir: Path) -> Non
     version = build_docs_sample.sample_run_report(RUN_DIR).parent.name  # "v2"
     index = (site_dir / "sample" / "index.md").read_text(encoding="utf-8")
     assert f"Assignment version: {version}" in index
-    assert f"Job: {_committed_report()['job_id']}" in index
+    assert f"Assessment id: {_committed_report()['job_id']}" in index
 
 
 def test_committed_run_renders_with_no_render_error(tmp_path: Path) -> None:

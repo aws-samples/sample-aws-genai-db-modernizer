@@ -26,7 +26,9 @@ class JobBusyError(RuntimeError):
     """Another change to this job is running."""
 
     def __init__(self, job_id: str) -> None:
-        super().__init__(f"Another change to job {job_id} is running; try again when it finishes.")
+        super().__init__(
+            f"Another change to assessment {job_id} is running; try again when it finishes."
+        )
         self.job_id = job_id
 
 

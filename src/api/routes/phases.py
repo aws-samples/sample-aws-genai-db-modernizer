@@ -87,7 +87,7 @@ async def resume_phase(body: ResumeRequest, job_id: str = Depends(job_id_param))
     if sfn_service is not None and sfn_service.is_cancelled(job_id):
         raise HTTPException(
             status_code=409,
-            detail=f"Job {job_id} was cancelled; no further phases can be resumed",
+            detail=f"Assessment {job_id} was cancelled; no further phases can be resumed",
         )
 
     scope: PhaseScope | None = None

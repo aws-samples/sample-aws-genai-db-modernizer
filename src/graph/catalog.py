@@ -1250,7 +1250,7 @@ def explain_empty(unmet: list[Need]) -> str:
     if not unmet:
         return "No rows: the graph holds the data this question needs, and none matched."
     stages = "; ".join(f"{n.stage} ({n.produces})" for n in unmet)
-    return f"No rows: this job's graph has no data from: {stages}."
+    return f"No rows: this assessment's graph has no data from: {stages}."
 
 
 def _ids(value: object) -> Iterable[str]:

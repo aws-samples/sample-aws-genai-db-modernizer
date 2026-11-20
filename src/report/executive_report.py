@@ -1936,7 +1936,7 @@ def _cover(c: Canvas, doc: _Doc) -> None:
         if readiness:
             block(readiness, False, (13.0, 12.0), PAPER, 0)
     generated = _date(report)
-    small = f"Job {report.get('job_id') or 'unknown'}" + (
+    small = f"Assessment id {report.get('job_id') or 'unknown'}" + (
         f" · Generated {generated.isoformat()}" if generated else ""
     )
     style = _style("cover_small", fontSize=10, leading=13, textColor=PAPER)
@@ -2016,7 +2016,7 @@ def render_executive_report_pdf(
         title=f"{PRODUCT_NAME}: {REPORT_NAME}, {db}",
         author=PRODUCT_NAME,
         creator=PRODUCT_NAME,
-        subject=f"{REPORT_NAME}, job {report.get('job_id') or 'unknown'}",
+        subject=f"{REPORT_NAME}, assessment id {report.get('job_id') or 'unknown'}",
         invariant=1,
         pageCompression=1,
     )

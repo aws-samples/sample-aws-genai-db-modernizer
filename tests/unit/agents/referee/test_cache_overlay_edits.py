@@ -139,7 +139,7 @@ class TestLegacy:
             )
             assert result.assignment.version == start + n
             assert any(
-                "this job was saved before that rule" in w
+                "this assessment was saved before that rule" in w
                 for w in result.assignment.validation_warnings
             )
 

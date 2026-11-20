@@ -475,7 +475,7 @@ def test_the_final_summary_leads_with_the_decision_the_results_page_heads_with()
         "decision_headline": "Approve wave 1: move word_press to Aurora MySQL",
     }
     lines = _final(report).splitlines()
-    assert lines[0] == "## Assessment: wordpress (job job1)"
+    assert lines[0] == "## Assessment: wordpress (assessment id job1)"
     assert lines[2] == "**Approve wave 1: move word\\_press to Aurora MySQL**"
     assert lines[4] == "### Executive summary"
 

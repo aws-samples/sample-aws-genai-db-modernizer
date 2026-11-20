@@ -142,7 +142,7 @@ def render_gate_block(
     ``summary_url`` (the job's summary page, given unless the run is chat only) ends the
     block, so quoting the block quotes the pointer the user follows before approving."""
     facts = gate_block_facts(gate)
-    lines = [f"## Assignment for approval: {prose(database_name)} (job {job_id})", ""]
+    lines = [f"## Assignment for approval: {prose(database_name)} (assessment id {job_id})", ""]
     surviving = [display_engine(e) for e in facts["surviving"]]
     if surviving:
         head = (
@@ -368,7 +368,7 @@ def render_final_summary(
     facts = report_facts(dict(report))
     tco = report.get("tco_analysis") or {}
     names = _names_pattern(table_names(dict(report)))
-    lines = [f"## Assessment: {prose(database_name)} (job {job_id})", ""]
+    lines = [f"## Assessment: {prose(database_name)} (assessment id {job_id})", ""]
     # #2315: the decision first, as the results page's summary header states it.
     brief = facts.get("executive_brief")
     headline = brief.get("decision_headline") if isinstance(brief, Mapping) else None

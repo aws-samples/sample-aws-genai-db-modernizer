@@ -3,7 +3,7 @@
 
 """Every consumer of a query no engine in the customer's engine scope can serve (#1329).
 
-The customer gate refuses to edit one (a job's scope is fixed: a new assessment widens it)
+The customer gate refuses to edit one (an assessment's scope is fixed: a new assessment widens it)
 and carries the list into every version it writes; the legacy cache owner fallback
 (the #1331 review's note) makes a query unservable instead of placing it outside the
 scope; wave 1 names no engine the scope leaves out; synthesis lists the queries in
@@ -81,7 +81,7 @@ class TestTheCustomerGate:
         message = str(refused.value)
         assert "Query w1 has no engine" in message
         assert "(DynamoDB)" in message
-        assert "start a new job whose scope adds Aurora MySQL" in message
+        assert "start a new assessment whose scope adds Aurora MySQL" in message
         assert not store.exists(f"{PREFIX}/assignment/v2/assignment.json")
 
     def test_a_version_the_gate_writes_carries_the_unservable_queries(self, tmp_path) -> None:

@@ -67,7 +67,7 @@ def test_the_gate_block_is_the_whole_stdout(run_root: Path) -> None:
     proc = _run(run_root, "--gate")
     assert proc.returncode == 0, proc.stderr
     out = proc.stdout
-    assert out.startswith("## Assignment for approval: wordpress (job ps-job)\n")
+    assert out.startswith("## Assignment for approval: wordpress (assessment id ps-job)\n")
     assert "| Engine | Queries before | Queries final | Share of final | Outcome |" in out
     assert "Output available at" not in out  # the artifact logger's line is not part of it
     assert "\x1b[" not in out
@@ -104,7 +104,7 @@ def test_the_final_summary_states_the_report_facts(run_root: Path) -> None:
     assert proc.returncode == 0, proc.stderr
     out = proc.stdout
     facts = report_facts(_report(run_root))
-    assert out.startswith("## Assessment: wordpress (job ps-job)\n")
+    assert out.startswith("## Assessment: wordpress (assessment id ps-job)\n")
     assert f"Projected monthly cost: ${facts['projected_monthly_cost_usd']:,.2f}" in out
     assert f"Open risks: {facts['open_risk_count']}" in out
     for engine in facts["engines"]:
@@ -208,14 +208,16 @@ def test_mode_adds_the_summary_page_url_to_the_gate_block(run_root: Path, mode: 
     out = _run(run_root, "--gate", "--mode", mode).stdout
     url = job_page_url("ps-job", "summary")
     assert out.rstrip().endswith(f"- Summary page (the query flow and every query's engine): {url}")
-    assert out.startswith("## Assignment for approval: wordpress (job ps-job)\n")
+    assert out.startswith("## Assignment for approval: wordpress (assessment id ps-job)\n")
 
 
 def test_chat_mode_adds_no_url_to_the_gate_block(run_root: Path) -> None:
     for extra in ((), ("--mode", "chat")):
         proc = _run(run_root, "--gate", *extra)
         assert proc.returncode == 0, proc.stderr
-        assert proc.stdout.startswith("## Assignment for approval: wordpress (job ps-job)\n")
+        assert proc.stdout.startswith(
+            "## Assignment for approval: wordpress (assessment id ps-job)\n"
+        )
         assert "/analysis/" not in proc.stdout and "Summary page" not in proc.stdout
 
 

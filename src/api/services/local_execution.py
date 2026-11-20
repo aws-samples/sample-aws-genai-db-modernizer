@@ -155,9 +155,9 @@ class LocalExecutionService:
             # A second start would rewrite the job's input and its engine scope after
             # triage may have routed under the first one (#1328 review).
             raise JobAlreadyStartedError(
-                f"Job {job_id} was already started, and its input and engine scope are "
-                "fixed. Start a new job (leave job_id out, or prepare a new one) to run "
-                "with another scope."
+                f"Assessment {job_id} was already started, and its input and engine scope "
+                "are fixed. Start a new assessment (leave job_id out, or prepare a new "
+                "one) to run with another scope."
             )
         meta = {
             "job_id": job_id,
@@ -715,7 +715,7 @@ class LocalExecutionService:
 
         if self._recently_modified(expected_job_dir, job_dir_exists, expected_meta, meta_exists):
             raise JobRecentlyModifiedError(
-                f"job {job_id!r} has files modified in the last "
+                f"assessment {job_id!r} has files modified in the last "
                 f"{_STALE_WINDOW_SECONDS}s; try again shortly"
             )
 

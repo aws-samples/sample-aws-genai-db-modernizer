@@ -365,7 +365,7 @@ def test_an_edit_of_a_saved_version_with_a_split_group_is_refused(routed) -> Non
     assert not routed.exists(_path(2))
 
 
-CARRIED = "this job was saved before that rule"
+CARRIED = "this assessment was saved before that rule"
 
 
 def test_a_split_saved_before_units_were_whole_is_carried_version_after_version(routed) -> None:

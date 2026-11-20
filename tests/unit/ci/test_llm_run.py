@@ -2389,6 +2389,7 @@ def test_gate_url_quoted_only_by_a_subagent_does_not_count(tmp_path: Path) -> No
     _fails_with(tmp_path, records, "never quoted the summary-page ui_url")
 
 
+@pytest.mark.passes_on_main  # #2505 only renames the heading's id; the prefix match is main's
 def test_the_results_url_may_come_from_the_printed_final_summary() -> None:
     # #1307: `print_summary.py --final --mode ui` lists the results page itself.
     records = _ui_records()
@@ -2403,7 +2404,7 @@ def test_the_results_url_may_come_from_the_printed_final_summary() -> None:
                 )
             elif block.get("type") == "tool_result" and _RESULTS_URL in json.dumps(block):
                 block["content"][0]["text"] = (
-                    "## Assessment: wordpress (job dry00002)\n\n### Where to look next\n\n"
+                    "## Assessment: wordpress (assessment id dry00002)\n\n### Where to look next\n\n"
                     f"- Results page (the interactive report): {_RESULTS_URL}\n"
                 )
     assert run.check_ui_pointers(records, "ui") == (True, None)
@@ -2413,7 +2414,7 @@ _GATE_COMMAND = (
     "uv run python scripts/print_summary.py --job-id dry00002 --db wordpress --gate --mode ui"
 )
 _GATE_BLOCK = (
-    "## Assignment for approval: wordpress (job dry00002)\n\n"
+    "## Assignment for approval: wordpress (assessment id dry00002)\n\n"
     "| Engine | Queries before | Queries final | Share of final | Outcome |\n\n"
     f"- Summary page (the query flow and every query's engine): {_SUMMARY_URL}\n"
 )
@@ -2624,7 +2625,7 @@ def _final_printed_records(synthesis: list[dict] | None) -> list[dict]:
                 final_at = i
             elif block.get("type") == "tool_result" and _RESULTS_URL in json.dumps(block):
                 block["content"][0]["text"] = (
-                    "## Assessment: wordpress (job dry00002)\n\n### Where to look next\n\n"
+                    "## Assessment: wordpress (assessment id dry00002)\n\n### Where to look next\n\n"
                     f"- Results page (the interactive report): {_RESULTS_URL}\n"
                 )
     assert final_at is not None

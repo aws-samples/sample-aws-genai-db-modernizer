@@ -743,7 +743,7 @@ def run_graph_catalog_entry(
         unlisted = catalog.unlisted_params(store, entry, params)
         if unlisted:
             raise _invalid_params(
-                "Not one of the parameter's choices on this job's graph: "
+                "Not one of the parameter's choices on this assessment's graph: "
                 f"{', '.join(unlisted)} (GET .../graph/catalog lists them)."
             )
         result = catalog.run_entry(store, entry, params)

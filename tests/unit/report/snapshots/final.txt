@@ -1,4 +1,4 @@
-## Assessment: wordpress (job job1)
+## Assessment: wordpress (assessment id job1)
 
 ### Executive summary
 

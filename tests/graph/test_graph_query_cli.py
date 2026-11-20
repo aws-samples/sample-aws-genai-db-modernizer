@@ -288,7 +288,7 @@ def test_run_refuses_a_value_that_is_not_one_of_the_choices(capsys, root):
         "--param", "table_id=wordpress.wp_nonexistent",
     )  # fmt: skip
     assert code == 1 and out["status"] == "error"
-    assert out["message"].startswith("table_id is not a known table on this job's graph")
+    assert out["message"].startswith("table_id is not a known table on this assessment's graph")
     assert "wp_nonexistent" not in out["message"]
     code, out = _main(capsys, "run", "query_provenance", *_job_args(root), "--param", "query_id=x")
     assert code == 1 and "query_id is not a known query" in out["message"]

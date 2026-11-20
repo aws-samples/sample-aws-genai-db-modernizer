@@ -1,4 +1,4 @@
-## Assignment for approval: wordpress (job job1)
+## Assignment for approval: wordpress (assessment id job1)
 
 Recommended architecture: Aurora MySQL, DynamoDB and ElastiCache
 

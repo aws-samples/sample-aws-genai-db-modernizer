@@ -70,10 +70,10 @@ Claude Code is the main way to run the tool, but the pipeline itself is a set of
 
     | Field | Meaning |
     |---|---|
-    | `totals`, `by_model`, `by_phase` | Model calls and tokens (input, output, cache read, cache write) over every run of the job, per model ID, and per phase then model ID |
+    | `totals`, `by_model`, `by_phase` | Model calls and tokens (input, output, cache read, cache write) over every run of the assessment, per model ID, and per phase then model ID |
     | `wall_clock_seconds` | The runs' wall-clock time, in seconds |
     | `phases` | Per phase, in the order the runs reached them: `seconds` (its wall-clock time) and `engines` (the engines it processed: the engines analysed for triage, analysis and assignment; the engines the reality check kept for the reality check, engine choices and schema design; the engines the final assignment keeps for synthesis) |
-    | `runs` | Each run of the job in order (every `run_assessment.py` call on the job, for example `--resume-reality-check`, or another `assess()` call on the same job and store, adds one); each entry has the fields above for that run alone, plus `run` (its number) and, only when a ceiling stopped it, `ceiling_exceeded`: the `ceiling`, its `env_var`, the `limit`, the `observed` figure and the `phase` it was crossed in |
+    | `runs` | Each run of the assessment in order (every `run_assessment.py` call on the assessment, for example `--resume-reality-check`, or another `assess()` call on the same assessment and store, adds one); each entry has the fields above for that run alone, plus `run` (its number) and, only when a ceiling stopped it, `ceiling_exceeded`: the `ceiling`, its `env_var`, the `limit`, the `observed` figure and the `phase` it was crossed in |
 
     Price it with `uv run python scripts/usage_cost.py artifacts/<db>/<job>/_logs/model_usage.json`, which prints the cost per phase and model, per run and in total, at the public Bedrock list prices in `src/catalog/model_prices.toml`. A record written by an older release has no timings; it still loads, and its runs add no time to the totals.
 
@@ -89,7 +89,7 @@ Claude Code is the main way to run the tool, but the pipeline itself is a set of
 
     The ceilings are checked when each phase ends, so a phase that has started finishes and a run can go over by what one phase spends; being exactly at a limit is within it. A run over a ceiling, in any phase including the last, keeps that phase's output and fails:
 
-    - `run_assessment.py` prints that phase's one status line as its failure: `"status": "error"`, its own status kept as `phase_result` (for example `complete` or `awaiting_llm`), the `ceiling`, `limit` and `observed` figure, and a message naming the variable. It marks the phase `failed` in `.modernizer-state.json`, writes the job's `_status.json` as `FAILED` (error type `RunLimitExceeded`), records `ceiling_exceeded` in the run's usage record and exits with status 1. No later phase runs.
+    - `run_assessment.py` prints that phase's one status line as its failure: `"status": "error"`, its own status kept as `phase_result` (for example `complete` or `awaiting_llm`), the `ceiling`, `limit` and `observed` figure, and a message naming the variable. It marks the phase `failed` in `.modernizer-state.json`, writes the assessment's `_status.json` as `FAILED` (error type `RunLimitExceeded`), records `ceiling_exceeded` in the run's usage record and exits with status 1. No later phase runs.
     - `assess()` raises `AssessmentRunError` with the same message and builds no result; the usage record (written when the run called a model) has `ceiling_exceeded`.
 
     Nothing is cut short or dropped without that failure.
@@ -163,13 +163,13 @@ Claude Code is the main way to run the tool, but the pipeline itself is a set of
     uv run python scripts/start_local_ui.py
     ```
 
-    It binds both servers to `127.0.0.1` and prints one JSON line with the URLs. Open <http://localhost:3000> to browse every job under `./artifacts`. Stop both servers with `uv run python scripts/start_local_ui.py --stop`.
+    It binds both servers to `127.0.0.1` and prints one JSON line with the URLs. Open <http://localhost:3000> to browse every assessment under `./artifacts`. Stop both servers with `uv run python scripts/start_local_ui.py --stop`.
 
     The New assessment page (New assessment in the side navigation) is one form with one action, Start assessment. You choose a collector output file (`.json`), which stays on this machine, under the artifact folder. The page fills in the database name and the source engine from the file, and you can change both. ElastiCache starts unticked in the target engines. A cache fronts the database's frequent reads and owns no query, so you opt in to it. A missing file, name or target engine is marked on its field. Connecting to a live database is offered only where the deployment supports it, never by the local API. <!-- claim: src/ui/src/pages/__tests__/CreateAnalysisUploadForm.test.js, src/ui/src/__tests__/LocaleSentenceCase.test.js, tests/unit/api/test_health_local_flag.py::test_health_says_local_when_the_local_file_service_is_wired --> The local API cannot receive the file from the browser yet ([#2408](https://github.com/aws-samples/sample-aws-genai-db-modernizer/issues/2408)); until then, run an assessment from a file with Claude Code or the command line.
 
     To work on the UI with hot reload, run `make local` instead: it starts the API on `127.0.0.1:8000` and the UI's development server (`npm start` in `src/ui`) on `localhost:3000`, which proxies API calls to the API. Leave `API_HOST` unset: it defaults to `127.0.0.1`, and `API_HOST=0.0.0.0` opens the API to your network. Press Ctrl+C in that terminal to stop both servers (`--stop` above only stops what `start_local_ui.py` started).
 
-    To try the experimental graph explorer on a job, start them with `uv run python scripts/start_local_ui.py --experimental-graph-explorer --page explore --job-id <job_id>` (or `make explore JOB=<job_id>`); see [Explore the graph](explore-the-graph.md). It is off unless you pass that option.
+    To try the experimental graph explorer on an assessment, start them with `uv run python scripts/start_local_ui.py --experimental-graph-explorer --page explore --job-id <job_id>` (or `make explore JOB=<job_id>`); see [Explore the graph](explore-the-graph.md). It is off unless you pass that option.
 
     The local API only answers requests addressed to `localhost`, `127.0.0.1`, or `::1`; set `MODERNIZER_ALLOWED_HOSTS` to reach it under another host name.
 
@@ -181,7 +181,7 @@ Claude Code is the main way to run the tool, but the pipeline itself is a set of
 `artifacts/<db>/<job>/deliverables/` holds `executive-report.pdf` (executive report: a landscape briefing), `engineering-report.md` (engineering report), `assessment-data.json` (Assessment Data, JSON), `engineering-report-detailed.md` (detailed engineering report: the full routing detail, for auditing the result), and `index.md`, which lists who each file is for and the assignment version.
 <!-- /deliverables-list -->
 
-To render them again for a finished job, for example after an edit made a new assignment version:
+To render them again for a finished assessment, for example after an edit made a new assignment version:
 
 ```bash
 uv run python scripts/run_report.py --job-id <job_id> --db <db_name>

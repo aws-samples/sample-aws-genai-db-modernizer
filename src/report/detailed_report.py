@@ -72,7 +72,7 @@ def _absences(detail: dict[str, Any]) -> list[str]:
         return out
     if not detail.get("has_ledger"):
         out.append(
-            "No move ledger: this job's assignments were saved before each routing step "
+            "No move ledger: this assessment's assignments were saved before each routing step "
             "was recorded, so no query has a move history, scores per engine or a runner-up."
         )
     if not detail.get("has_access_record"):
@@ -89,7 +89,7 @@ def _absences(detail: dict[str, Any]) -> list[str]:
         )
     if not detail.get("has_analysis"):
         out.append(
-            "No engine analysis is saved with this job: the complexity and performance "
+            "No engine analysis is saved with this assessment: the complexity and performance "
             "dimensions are not shown."
         )
     if not detail.get("has_carried_writes"):

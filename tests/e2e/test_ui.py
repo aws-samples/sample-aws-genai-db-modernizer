@@ -1833,6 +1833,8 @@ def test_results_page_header_names_the_assessment(
         iso = str(json.loads(r.report_json().read_text())["timestamp"])[:10]
         cover = pdf_page_texts(str(r.deliverable("executive-report.pdf")))[0]
         assert f"Generated {iso}" in " ".join(cover.split()), (r.db, iso)
+        # #2505: and the id under the same name the header gives it.
+        assert f"Assessment id {r.job_id}" in " ".join(cover.split()), (r.db, cover)
         assert (
             header.get_by_role(
                 "button", name=re.compile(r"^Copy assessment id .*" + re.escape(r.job_id))

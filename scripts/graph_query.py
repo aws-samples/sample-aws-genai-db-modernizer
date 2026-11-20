@@ -137,7 +137,7 @@ def _check_values(graph: object, entry: catalog.CatalogEntry, params: dict[str, 
             if p.name in unlisted
         )
         raise UsageError(
-            f"{named} on this job's graph; run 'graph_query.py params {entry.id} "
+            f"{named} on this assessment's graph; run 'graph_query.py params {entry.id} "
             "--job-id <job>' for its choices"
         )
 

@@ -175,7 +175,7 @@ def render_folder_index(
     lines = [
         f"# Database Modernizer Assessment Tool: deliverables for {database_name}",
         "",
-        f"Job: {job_id}",
+        f"Assessment id: {job_id}",
         f"Assignment version: v{assignment_version}",
         *([f"Code commit: {commit}"] if commit else []),
         "",
@@ -209,7 +209,7 @@ def render_folder_index(
         ]
     lines += [
         "",
-        "The other folders of the job hold the pipeline's working files (per-phase "
+        "The assessment's other folders hold the pipeline's working files (per-phase "
         "outputs, versioned assignments, model inputs and traces). You don't need "
         "them to read the assessment.",
         "",
@@ -249,7 +249,7 @@ def synthesis_report_key(
         if store.exists(key):
             return key
     raise FileNotFoundError(
-        f"No synthesis report found for job {job_id!r} under "
+        f"No synthesis report found for assessment {job_id!r} under "
         f"'{database_name}/{job_id}/' (tried {', '.join(dict.fromkeys(candidates))})."
     )
 
