@@ -136,20 +136,20 @@ describe('phone list', () => {
     setPhone(true);
     await renderDashboard([WITH_REPORT]);
     expect(headers()).toEqual(expect.arrayContaining(['Database', 'Target engines', 'Projected cost', 'Status']));
-    for (const dropped of ['Job ID', 'Created', 'Duration', 'Source']) {
+    for (const dropped of ['Assessment id', 'Created', 'Duration', 'Source']) {
       expect(headers()).not.toContain(dropped);
     }
   });
 
   test('follows the window across 600 px without a reload', async () => {
     await renderDashboard([WITH_REPORT]);
-    expect(headers()).toContain('Job ID');
+    expect(headers()).toContain('Assessment id');
     phone = true;
     await act(async () => { listeners.forEach((fn) => fn()); });
-    expect(headers()).not.toContain('Job ID');
+    expect(headers()).not.toContain('Assessment id');
     expect(headers()).toContain('Target engines');
     phone = false;
     await act(async () => { listeners.forEach((fn) => fn()); });
-    expect(headers()).toContain('Job ID');
+    expect(headers()).toContain('Assessment id');
   });
 });

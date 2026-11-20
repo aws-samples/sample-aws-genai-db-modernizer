@@ -16,18 +16,13 @@ export const SideNavigationConfigurations = {
   },
   items: [
     {
-      href: "/",
-      text: "Home",
-      type: "link",
-    },
-    {
       href: "/dashboard",
-      text: "Dashboard",
+      text: "Assessments",
       type: "link",
     },
     {
       href: "/analysis/create",
-      text: "New analysis",
+      text: "New assessment",
       type: "link",
     },
   ],

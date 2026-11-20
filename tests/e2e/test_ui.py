@@ -361,11 +361,11 @@ def test_dashboard_stats_are_plain_values_with_real_figures(
     page: Page, ui: str, all_runs: list[PipelineResult]
 ) -> None:
     """#2306: the status figures are one container of plain values, none a link
-    without a target, and "Active jobs" appears once, not in a second container."""
+    without a target, and "Active assessments" appears once, not in a second container."""
     page.goto(f"{ui}/dashboard")
-    expect(page.get_by_text("Total analyses")).to_be_visible(timeout=READY_MS)
+    expect(page.get_by_text("Total assessments")).to_be_visible(timeout=READY_MS)
     expect(page.locator("dd").first).to_contain_text(re.compile(r"\d"))
-    assert page.get_by_text("Active jobs", exact=True).count() == 1
+    assert page.get_by_text("Active assessments", exact=True).count() == 1
     assert page.get_by_text("Recent activity").count() == 0
     # A link without an href is focusable and does nothing.
     assert page.locator("dl a").count() == 0, page.locator("dl a").all_inner_texts()
@@ -1825,7 +1825,7 @@ def test_results_page_header_names_the_assessment(
         source = _source_label(r)
         assert source, r.db
         assert f"{source} source" in text, (r.db, text)
-        assert f"Assessment {r.job_id}" in text, (r.db, text)
+        assert f"Assessment id {r.job_id}" in text, (r.db, text)
         assert _report_date(r) in text, (r.db, text)
         # The same day the executive report's cover prints.
         from tests.e2e.deliverable_figures import pdf_page_texts
@@ -1894,7 +1894,7 @@ def test_an_old_job_without_source_date_or_detailed_report_still_names_itself(
     expect(h1).to_have_text(f"{r.db} assessment")
     header = page.locator("#results-header")
     text = " ".join(header.inner_text().split())
-    assert f"Assessment {r.job_id}" in text, text
+    assert f"Assessment id {r.job_id}" in text, text
     assert " source" not in text and _report_date(r) not in text, text
     rows = _download_menu(page).locator("[data-deliverable]")
     assert [x.get_attribute("data-deliverable") for x in rows.all()] == [
@@ -1928,7 +1928,7 @@ def test_a_failed_assessment_request_leaves_the_header_on_the_database_name(
     _loaded(page, r)
     expect(page.get_by_role("heading", level=1)).to_have_text(f"{r.db} assessment")
     header = " ".join(page.locator("#results-header").inner_text().split())
-    assert f"Assessment {r.job_id}" in header, header
+    assert f"Assessment id {r.job_id}" in header, header
     assert " source" not in header, header
     assert page.locator('[class*="awsui_flashbar"]').count() == 0
     assert page.get_by_role("button", name="Retry").count() == 0
@@ -2915,8 +2915,8 @@ def test_job_pages_have_no_accessibility_violations(
     sort_labels = page.locator("table th [aria-label$='sorted.']").evaluate_all(
         "els => els.map(e => e.getAttribute('aria-label'))"
     )
-    # The phone list drops the Job ID column (#2345), so it names the database column.
-    expected_label = "Job ID, not sorted." if width == 1440 else "Database, not sorted."
+    # The phone list drops the Assessment id column (#2345), so it names the database column.
+    expected_label = "Assessment id, not sorted." if width == 1440 else "Database, not sorted."
     assert expected_label in sort_labels, sort_labels
     raw_ids = (
         "jobId",
@@ -3275,7 +3275,7 @@ def test_a_querys_access_patterns_open_in_its_panel_and_source_tables_on_data_mo
             rf"^{re.escape(ENGINE_LABELS[engine])}( \(cache layer\))? access pattern "
         )
         expect(panel.get_by_role("heading", name=heading).first).to_be_visible(timeout=READY_MS)
-        expect(panel).to_contain_text("Destination Table")
+        expect(panel).to_contain_text("Destination table")
         blocking, where, _ = _axe_blocking(page)
         assert blocking == [], (r.db, width, "query panel", blocking, where)
         page.get_by_role("button", name="Close the query details").click()

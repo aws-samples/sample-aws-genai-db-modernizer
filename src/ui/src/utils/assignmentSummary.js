@@ -47,9 +47,9 @@ export function buildAssignmentSummary({
   const database = databaseName || t('assignment-gate.summary.default-database', {
     defaultValue: 'database',
   });
-  const patternsText = t('assignment-gate.summary.access-patterns-count', {
+  const patternsText = t('assignment-gate.summary.queries-count', {
     count: queryCount,
-    defaultValue: queryCount === 1 ? '{{count}} access pattern' : '{{count}} access patterns',
+    defaultValue: queryCount === 1 ? '{{count}} query' : '{{count}} queries',
   });
   const factSentence = typeof tableCount === 'number' && tableCount > 0
     ? t('assignment-gate.summary.workload-fact-with-tables', {

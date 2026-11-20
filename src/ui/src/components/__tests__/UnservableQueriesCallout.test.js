@@ -113,7 +113,7 @@ test('flags each query with its engine, why, the gates and a redesign', () => {
   expect(text).toContain('No engine could score this query, so it falls back to Aurora MySQL.');
   expect(text).toContain('Ruled out: DynamoDB (missing a capability the query needs).');
   expect(text).toContain('Keep it on Aurora MySQL, or redesign it. Maintain the aggregate as the data changes.');
-  expect(text).toContain('3 more queries are listed in the Engineering Report.');
+  expect(text).toContain('3 more queries are listed in the engineering report.');
 });
 
 test('a query opens its Why this engine trace', () => {

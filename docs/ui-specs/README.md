@@ -12,7 +12,7 @@ Every kept route has a routing-table test in `src/ui/src/__tests__/AppRoutes.tes
 |---|---|---|---|
 | `/` | — (redirect) | Keep | Entry redirect to `/dashboard`. |
 | `/dashboard` | `Dashboard.js` | Keep | Job list and hub; linked from the side nav and from every page's "back to dashboard" action. |
-| `/analysis/create` | `CreateAnalysis.js` | Keep | The New assessment page; linked from the side nav and the Dashboard's "New analysis" button. With the local API it is one upload form (#2327); a deployment that is not local also offers the live-database Wizard. |
+| `/analysis/create` | `CreateAnalysis.js` | Keep | The New assessment page; linked from the side nav and the Dashboard's "New assessment" button. With the local API it is one upload form (#2327); a deployment that is not local also offers the live-database Wizard. |
 | `/analysis/monitor/:jobId` | `JobMonitoring.js` | **Removed** (#957) | No link reached it except the engine-analysis page's breadcrumb; its "Download logs" and "Download artifact" buttons only logged to the console. `JobMonitoringSummary.js` is the job page. |
 | `/analysis/monitor/summary/:jobId` | `JobMonitoringSummary.js` | Keep | Post-phase hub; linked from `CreateAnalysis`, `AssignmentGate`, `Dashboard`. |
 | `/analysis/assignments/:jobId` | `AssignmentGate.js` | Keep | Assignment approval gate; linked from `JobMonitoringSummary`; the intended UI for the `/assign` gate. It states the gate state: waiting, approved (only once an approval is recorded or the cloud history completed the gate), rerouted after schema design, a later version than the results, done, failed, or a neutral running state. It offers approval only while the job waits. It shows the recommendation in one sentence with its figures (queries, source tables, engines kept and removed, cache candidates) and the hottest cache candidates as a table. The figures are the assignments API's `gate_facts`, the chat gate's figures too, and describe the version the page states: its report's facts once synthesis wrote it, else its own in-scope queries (#2326). Queries is the report's `query_total_count`. A read past the gate writes no new version (#992). |
@@ -32,6 +32,22 @@ Side navigation (`src/ui/src/config/GlobalConfigurations.js`,
 entries along with their pages. The Dashboard's "View analysis" action went
 with the engine-analysis page (#957). Every side-nav link opens its own route
 (`src/ui/src/__tests__/AppRoutes.test.js`).
+
+The side navigation lists two entries, **Assessments** (the dashboard) and **New assessment** (#2328). Every page's breadcrumb starts at **Assessments**. <!-- claim: src/ui/src/__tests__/LocaleSentenceCase.test.js -->
+
+## UI vocabulary (#2328)
+
+The UI uses one word for each thing, and sentence case for headings, labels, buttons, tabs, table headers and alert headers (the Cloudscape writing guideline). Only the first word and proper nouns (engine, service and product names) start with a capital.
+
+| Term | Means | Not |
+|---|---|---|
+| assessment | One run of the tool on one database | analysis, job |
+| query | One statement the workload runs | pattern, query pattern |
+| access pattern | The target design's own unit, which serves one or more queries | pattern (alone) |
+| engine | An AWS database the assessment can route queries to | target database, AWS service |
+| assessment id | The id of one assessment | Job ID, Assessment ID |
+
+"Query pattern" stays where it means a distinct query shape ("107 queries in 97 distinct query patterns"). The reports, the chat summary and the help site still say "job" for an assessment in places; #2505 brings them in line. `src/ui/src/__tests__/LocaleSentenceCase.test.js` checks that `src/ui/src/locales/en.json` never calls an assessment an analysis or a job, and that headings and buttons are in sentence case. <!-- claim: src/ui/src/__tests__/LocaleSentenceCase.test.js -->
 
 ---
 

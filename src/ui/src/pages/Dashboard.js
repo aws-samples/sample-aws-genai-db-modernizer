@@ -267,8 +267,8 @@ const ComponentPage = memo(() => {
       if (selectedItems.length === 0) {
         addFlashbarMessage({
           type: 'warning',
-          header: 'No Selection',
-          content: 'Please select an analysis to view results',
+          header: t('dashboard.cancel-modal.no-selection-header'),
+          content: t('dashboard.view-results.no-selection-content'),
           dismissible: true,
           id: `warning-${Date.now()}`
         });
@@ -626,18 +626,7 @@ const ComponentPage = memo(() => {
         disableContentPaddings={false}
         navigationOpen={navigationOpen}
         onNavigationChange={({ detail }) => setNavigationOpen(detail.open)}
-        breadcrumbs={<BreadcrumbGroup items={[
-                                              {
-                                                href: "#db-mod-dash",
-                                                text: t("dashboard.breadcrumb.home"),
-                                              },
-                                              {
-                                                href: "#db-mod-dash",
-                                                text: t("dashboard.breadcrumb.dashboard"),
-                                              },
-                                            ]}
-                      />
-        }
+        breadcrumbs={<BreadcrumbGroup items={[{ href: "/dashboard", text: t("common.breadcrumb.assessments") }]} />}
         navigation={
           <SideNavigation
             activeHref="/dashboard"

@@ -13,7 +13,7 @@ import { formatReportDate } from '../utils/format';
  */
 export function resultsBreadcrumbs(t, databaseName, jobId) {
   return [
-    { href: '/dashboard', text: t('analysis-results.breadcrumb.assessments') },
+    { href: '/dashboard', text: t('common.breadcrumb.assessments') },
     { href: `/analysis/results/${jobId}`, text: databaseName || jobId },
   ];
 }

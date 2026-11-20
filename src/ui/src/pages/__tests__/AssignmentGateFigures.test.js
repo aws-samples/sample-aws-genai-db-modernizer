@@ -120,7 +120,7 @@ const figures = () => {
 test('one sentence, then the figures from the gate facts', async () => {
   await render(GATE_FACTS);
   const hero = container.querySelector('.gate-hero__summary').textContent;
-  expect(hero).toBe('Your wordpress workload has 110 access patterns across 50 tables.');
+  expect(hero).toBe('Your wordpress workload has 110 queries across 50 tables.');
   expect(figures()).toEqual([
     'Queries: 110',
     'Source tables: 50',
@@ -151,7 +151,7 @@ test('the hottest cache candidates are a table, with how many more under it', as
   const table = container.querySelector('[data-figure="gate-cache-candidates"]');
   expect(table.textContent).toContain('Hottest cache candidates');
   const headers = [...table.querySelectorAll('th')].map((th) => th.textContent.trim());
-  expect(headers).toEqual(['Table', 'Owner', 'Pattern', 'Calls/s', 'Share of calls']);
+  expect(headers).toEqual(['Table', 'Owner', 'Access pattern', 'Calls/s', 'Share of calls']);
   const rows = [...table.querySelectorAll('tbody tr')].map((tr) => [...tr.querySelectorAll('td')].map((td) => td.textContent.trim()));
   expect(rows).toEqual([
     ['wp_options', 'DynamoDB', 'point lookup', '75.8', '34.2%'],
@@ -164,5 +164,5 @@ test('the hottest cache candidates are a table, with how many more under it', as
 test('an API without gate facts shows no figures and no counted sentence', async () => {
   await render(undefined);
   expect(figures()).toBeNull();
-  expect(container.querySelector('.gate-hero__summary').textContent).not.toMatch(/access pattern/);
+  expect(container.querySelector('.gate-hero__summary').textContent).not.toMatch(/workload has/);
 });

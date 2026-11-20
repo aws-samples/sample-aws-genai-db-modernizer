@@ -49,7 +49,7 @@ const build = (overrides = {}) => buildAssignmentSummary({
 
 describe('buildAssignmentSummary', () => {
   test('deterministic run: one fact sentence from the gate facts', () => {
-    expect(build()).toBe('Your wordpress workload has 107 access patterns across 50 tables.');
+    expect(build()).toBe('Your wordpress workload has 107 queries across 50 tables.');
   });
 
   test('#2326: no distribution, pattern or cache sentence repeats the figures', () => {
@@ -59,25 +59,25 @@ describe('buildAssignmentSummary', () => {
       patterns: [{ name: 'CQRS' }],
       cacheOverlay: { engine: 'elasticache', query_count: 4, call_share_percent: 20 },
     });
-    expect(text).toBe('Your wordpress workload has 107 access patterns across 50 tables.');
+    expect(text).toBe('Your wordpress workload has 107 queries across 50 tables.');
   });
 
   test('LLM summary present: fact line still leads, LLM prose follows', () => {
     expect(build({ llmSummary: LLM })).toBe(
-      `Your wordpress workload has 107 access patterns across 50 tables. ${LLM}`,
+      `Your wordpress workload has 107 queries across 50 tables. ${LLM}`,
     );
   });
 
   test('LLM summary is trimmed and blank summaries fall back to the deterministic text', () => {
     expect(build({ llmSummary: `  ${LLM}\n` })).toBe(
-      `Your wordpress workload has 107 access patterns across 50 tables. ${LLM}`,
+      `Your wordpress workload has 107 queries across 50 tables. ${LLM}`,
     );
     expect(build({ llmSummary: '   ' })).toBe(build());
   });
 
-  test('no table count: the sentence names the access patterns only', () => {
-    expect(build({ queryCount: 12, tableCount: null })).toBe('Your wordpress workload has 12 access patterns.');
-    expect(build({ queryCount: 12, tableCount: 0 })).toBe('Your wordpress workload has 12 access patterns.');
+  test('no table count: the sentence names the queries only', () => {
+    expect(build({ queryCount: 12, tableCount: null })).toBe('Your wordpress workload has 12 queries.');
+    expect(build({ queryCount: 12, tableCount: 0 })).toBe('Your wordpress workload has 12 queries.');
   });
 
   test('no gate facts (an older API): the LLM summary alone, else empty', () => {
@@ -89,23 +89,23 @@ describe('buildAssignmentSummary', () => {
 
   test('missing database name falls back to a generic subject', () => {
     expect(build({ databaseName: '', llmSummary: LLM })).toBe(
-      `Your database workload has 107 access patterns across 50 tables. ${LLM}`,
+      `Your database workload has 107 queries across 50 tables. ${LLM}`,
     );
   });
 
-  test('#254 count=1: access pattern and table both pluralise to the singular form', () => {
+  test('#254 count=1: query and table both pluralise to the singular form', () => {
     expect(build({ queryCount: 1, tableCount: 1 })).toBe(
-      'Your wordpress workload has 1 access pattern across 1 table.',
+      'Your wordpress workload has 1 query across 1 table.',
     );
   });
 
-  test('#254 count=0: zero access patterns use the CLDR "other" form, not "one"', () => {
-    expect(build({ queryCount: 0, tableCount: 0 })).toBe('Your wordpress workload has 0 access patterns.');
+  test('#254 count=0: zero queries use the CLDR "other" form, not "one"', () => {
+    expect(build({ queryCount: 0, tableCount: 0 })).toBe('Your wordpress workload has 0 queries.');
   });
 
   test('#254 falls back to sane English when no translation function is supplied', () => {
     expect(buildAssignmentSummary({ databaseName: 'wordpress', queryCount: 1, tableCount: 1 })).toBe(
-      'Your wordpress workload has 1 access pattern across 1 table.',
+      'Your wordpress workload has 1 query across 1 table.',
     );
   });
 });

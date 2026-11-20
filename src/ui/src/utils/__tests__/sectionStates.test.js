@@ -62,7 +62,7 @@ describe('wording of the states (#2308)', () => {
   const en = require('../../locales/en.json');
   test('no design says what is recorded, not a cause', () => {
     const body = en['analysis-results.aurora-design.none-body'];
-    expect(body).toContain('has not been made for this job yet');
+    expect(body).toContain('has not been made for this assessment yet');
     expect(body).not.toMatch(/without a model|skips/);
   });
   test('the no-count message states no figure', () => {
