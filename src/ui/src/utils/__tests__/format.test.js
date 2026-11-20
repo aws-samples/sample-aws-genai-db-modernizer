@@ -3,8 +3,29 @@
 
 import fs from 'fs';
 import path from 'path';
-import { formatFigure } from '../reportFacts';
-import { formatCount, formatHours, formatMoney, formatMonthlyMoney, formatPercent, formatRate, formatReportDate, formatShortId } from '../format';
+import { formatFigure as formatFigureFromFacts } from '../reportFacts';
+import {
+  formatBytes, formatCompactCount, formatCount, formatDatabaseSize, formatDateTime, formatDecimal, formatFigure,
+  formatFigurePercent, formatFixed, formatHours, formatMilliseconds, formatMoney, formatMonthlyMoney, formatPercent,
+  formatRate, formatReportDate, formatShortId, formatSignificant,
+} from '../format';
+
+describe('a missing figure and a negative amount (#2347)', () => {
+  it.each([null, undefined, '', 'abc'])('formatFigure prints the missing marker for %p, never 0', (value) => {
+    expect(formatFigure(value, 1)).toBe('—');
+  });
+
+  it('formatFigure keeps a real zero as 0', () => {
+    expect(formatFigure(0, 1)).toBe('0');
+  });
+
+  it('formatMoney puts the sign after the dollar sign, as the reports do', () => {
+    expect(formatMoney(-5)).toBe('$-5.00');
+    expect(formatMoney(-1234.5)).toBe('$-1,234.50');
+    expect(formatMoney(-5, { whole: true })).toBe('$-5');
+    expect(formatMonthlyMoney(-5)).toBe('$-5.00/mo');
+  });
+});
 
 describe('formatMoney (#2309)', () => {
   it('prints dollars with a thousands separator and two decimals', () => {
@@ -69,52 +90,104 @@ describe('formatPercent, formatCount, formatShortId (#2309)', () => {
   });
 });
 
-// The rule the issue asks for: new figures go through format.js, not toFixed.
-// The counts below are the calls that existed when the formatter arrived; a
-// file may only go down. Lower a count when you move a call to format.js: the
-// test that fails when a call is gone but its count is still listed is meant to
-// make you do that in the same change, it is not a bug.
-describe('toFixed is not spreading (#2309)', () => {
-  const ALLOWED = {
-    'components/QueryDecisionTrace.js': 1,
-    'pages/AssignmentGate.js': 3,
-    'pages/JobMonitoringSummary.js': 2,
-    'utils/cacheLayer.js': 4,
-    'utils/collectorRowTotals.js': 2,
-    'utils/engineChoices.js': 1,
-    'utils/tcoAnalysis.js': 2,
-  };
+// The rule the issue asks for: new figures go through format.js. The guard is
+// noHandFormatting.test.js (#2347), which replaced the per-file toFixed ratchet.
 
-  function sources(dir) {
-    return fs.readdirSync(dir, { withFileTypes: true }).flatMap((entry) => {
-      const full = `${dir}/${entry.name}`;
-      if (entry.isDirectory()) return entry.name === '__tests__' ? [] : sources(full);
-      return entry.name.endsWith('.js') ? [full] : [];
-    });
-  }
-
-  const root = path.resolve(__dirname, '..', '..');
-  const counts = {};
-  sources(root).forEach((file) => {
-    const n = (fs.readFileSync(file, 'utf8').match(/\.toFixed\(/g) || []).length;
-    if (n > 0) counts[file.slice(root.length + 1)] = n;
+describe('formatFigure, the twin of fmt_num (#2347)', () => {
+  it.each([
+    [17.460499999999996, 2, '17.46'],
+    [3.0, 2, '3'],
+    [29795.38, 2, '29,795.38'],
+    [0.0042, 2, '<0.01'],
+    [-0.0042, 2, '>-0.01'],
+    [-0.0, 2, '0'],
+    [44.25, 1, '44.3'],
+    [44.0, 1, '44'],
+    [0.04, 1, '<0.1'],
+    [-0.04, 1, '>-0.1'],
+    [1234.5, 1, '1,234.5'],
+    [75, 0, '75'],
+    [0.3, 0, '<1'],
+  ])('fmt_num(%p, %p) is %p', (value, decimals, text) => {
+    expect(formatFigure(value, decimals)).toBe(text);
   });
 
-  it('adds no toFixed call to any file', () => {
-    Object.entries(counts).forEach(([file, n]) => {
-      expect([file, n <= (ALLOWED[file] || 0)]).toEqual([file, true]);
-    });
+  it('is the function reportFacts.js exports', () => {
+    expect(formatFigureFromFacts).toBe(formatFigure);
+  });
+});
+
+describe('formatFigurePercent (#2347)', () => {
+  it('prints fmt_num and a percent sign, as the reports do', () => {
+    expect(formatFigurePercent(19.0, 1)).toBe('19%');
+    expect(formatFigurePercent(19.34, 1)).toBe('19.3%');
+    expect(formatFigurePercent(0.04, 1)).toBe('<0.1%');
+    expect(formatFigurePercent(12.345)).toBe('12.35%');
+    expect(formatFigurePercent(null)).toBe('—');
+    expect(formatFigurePercent('abc')).toBe('—');
+  });
+});
+
+describe('formatFixed and formatDecimal (#2347)', () => {
+  it('formatFixed prints a fixed number of places with no separators, as Python ":.Nf"', () => {
+    expect(formatFixed(41.25, 1)).toBe('41.3');
+    expect(formatFixed(1234.5, 1)).toBe('1234.5');
+    expect(formatFixed(75.3, 2)).toBe('75.30');
+    expect(formatFixed(12345.6, 0)).toBe('12346');
+    expect(formatFixed(null, 1)).toBe('—');
   });
 
-  it('keeps the allowance honest: it does not list calls that are gone', () => {
-    Object.entries(ALLOWED).forEach(([file, n]) => {
-      expect([file, counts[file] || 0]).toEqual([file, n]);
-    });
+  it('formatDecimal prints a fixed number of places with separators', () => {
+    expect(formatDecimal(2, 1)).toBe('2.0');
+    expect(formatDecimal(1234.56, 1)).toBe('1,234.6');
+    expect(formatDecimal(undefined, 1)).toBe('—');
   });
 
-  it('format.js is where figures are printed', () => {
-    const format = fs.readFileSync(`${root}/utils/format.js`, 'utf8');
-    expect(format).toContain('Intl.NumberFormat');
+  it('formatMilliseconds adds the unit', () => {
+    expect(formatMilliseconds(12.34)).toBe('12.3ms');
+    expect(formatMilliseconds(null)).toBe('—');
+  });
+
+  it('formatSignificant keeps three significant digits by default', () => {
+    expect(formatSignificant(185.0712)).toBe('185');
+    expect(formatSignificant(0.004219)).toBe('0.00422');
+    expect(formatSignificant(29795.38)).toBe('29,800');
+    expect(formatSignificant(null)).toBe('—');
+  });
+});
+
+describe('sizes and compact counts (#2347)', () => {
+  it('formatBytes prints B, KB, MB and GB', () => {
+    expect(formatBytes(512)).toBe('512 B');
+    expect(formatBytes(20 * 1024)).toBe('20 KB');
+    expect(formatBytes(1.24 * 1024 * 1024)).toBe('1.2 MB');
+    expect(formatBytes(3 * 1024 * 1024 * 1024)).toBe('3 GB');
+    expect(formatBytes(null)).toBe('');
+  });
+
+  it('formatDatabaseSize prints GB from one gigabyte up, MB below', () => {
+    expect(formatDatabaseSize(12.34)).toBe('12.3 GB');
+    expect(formatDatabaseSize(1)).toBe('1.0 GB');
+    expect(formatDatabaseSize(0.5)).toBe('512 MB');
+    expect(formatDatabaseSize(0)).toBe('—');
+    expect(formatDatabaseSize(null)).toBe('—');
+  });
+
+  it('formatCompactCount prints K and M above a thousand and a million', () => {
+    expect(formatCompactCount(830)).toBe('830');
+    expect(formatCompactCount(1000)).toBe('1,000');
+    expect(formatCompactCount(12500)).toBe('12.5K');
+    expect(formatCompactCount(1234567)).toBe('1.2M');
+    expect(formatCompactCount(null)).toBe('—');
+  });
+});
+
+describe('formatDateTime (#2347)', () => {
+  it('prints a date and time in en-US, and null for none', () => {
+    const text = formatDateTime('2026-11-18T10:20:30Z');
+    expect(text).toMatch(/^Nov 18, 2026, \d{2}:\d{2}:\d{2} (AM|PM)$/);
+    expect(formatDateTime(null)).toBeNull();
+    expect(formatDateTime('')).toBeNull();
   });
 });
 

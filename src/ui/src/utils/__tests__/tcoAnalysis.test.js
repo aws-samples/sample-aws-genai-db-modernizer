@@ -52,6 +52,12 @@ describe('formatSavingsPercent', () => {
     expect(formatSavingsPercent(0)).toBe('0%');
   });
 
+  // #2347: fmt_num(x, 1) prints a small non-zero saving as "<0.1", never "0".
+  it('prints a small non-zero saving as the reports do', () => {
+    expect(formatSavingsPercent(0.04)).toBe('<0.1%');
+    expect(formatSavingsPercent(-0.04)).toBe('>-0.1%');
+  });
+
   it('is "0%" for a non-numeric value instead of throwing or showing NaN', () => {
     expect(formatSavingsPercent('not-a-number')).toBe('0%');
     expect(formatSavingsPercent(undefined)).toBe('0%');

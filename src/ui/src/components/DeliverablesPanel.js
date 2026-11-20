@@ -6,21 +6,10 @@ import Box from "@cloudscape-design/components/box";
 import ButtonDropdown from "@cloudscape-design/components/button-dropdown";
 import SpaceBetween from "@cloudscape-design/components/space-between";
 import RequestError from "./RequestError";
+import { formatBytes } from "../utils/format";
 
-// A file size for display: "512 B", "20 KB", "1.2 MB".
-export function formatBytes(n) {
-  if (typeof n !== 'number' || !Number.isFinite(n)) return '';
-  if (n < 1024) return `${n} B`;
-  const units = ['KB', 'MB', 'GB'];
-  let value = n / 1024;
-  let unit = 0;
-  while (value >= 1024 && unit < units.length - 1) {
-    value /= 1024;
-    unit += 1;
-  }
-  const shown = value >= 10 ? Math.round(value) : Math.round(value * 10) / 10;
-  return `${shown} ${units[unit]}`;
-}
+// A file size for display: "512 B", "20 KB", "1.2 MB" (utils/format.js).
+export { formatBytes };
 
 // The folder's own index (index.md) stays in the folder, without a menu item.
 const FOLDER_INDEX = 'index.md';

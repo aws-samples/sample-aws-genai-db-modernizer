@@ -248,6 +248,13 @@ test('formatTraceScore', () => {
   expect(formatTraceScore(undefined)).toBe('—');
 });
 
+// #2347: a gap prints as the close-call table and the reports print it (fmt_num(x, 1)),
+// so a gap too small for one place reads "<0.1", never "0".
+test('formatTraceScore prints a tiny gap as the reports do', () => {
+  expect(formatTraceScore(0.03)).toBe('<0.1');
+  expect(formatTraceScore(2)).toBe('2');
+});
+
 test('every key the component uses resolves to an English label', () => {
   // eslint-disable-next-line global-require
   const fs = require('fs');

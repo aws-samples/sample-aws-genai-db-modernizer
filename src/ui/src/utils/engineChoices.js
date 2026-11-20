@@ -1,6 +1,7 @@
 // Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
 // SPDX-License-Identifier: MIT-0
 
+import { formatFixed } from './format';
 import { isPlaceholderTable } from './tableNames';
 
 // #1003: the assignment review's per-table engine choices. The API sends the open
@@ -46,5 +47,5 @@ export function formatChoiceScore(engine, t) {
   const whole = engine && engine.score;
   const exact = engine && engine.unrounded_score;
   if (typeof whole !== 'number' || typeof exact !== 'number') return t('assignment-gate.choices.no-score');
-  return t('assignment-gate.choices.score', { score: whole, unrounded: exact.toFixed(2) });
+  return t('assignment-gate.choices.score', { score: whole, unrounded: formatFixed(exact, 2) });
 }

@@ -12,7 +12,7 @@ import SpaceBetween from "@cloudscape-design/components/space-between";
 import Table from "@cloudscape-design/components/table";
 import EngineBadge from "./EngineBadge";
 import { closeCallFilterOptions, closeCallRows, hasListedCloseCalls, unlistedCloseCalls } from "../utils/closeCalls";
-import { formatCount, formatShortId } from "../utils/format";
+import { formatCount, formatFigure, formatShortId } from "../utils/format";
 import { propertyFilterStrings } from "../utils/propertyFilterStrings";
 import { filterQueryRows } from "../utils/queryRouting";
 import { closeCallsOf } from "../utils/reportFacts";
@@ -34,7 +34,6 @@ import { displayEngine } from "../utils/engineNames";
  */
 
 const PAGE_SIZE = 25;
-const GAP_FORMAT = new Intl.NumberFormat('en-US', { minimumFractionDigits: 1, maximumFractionDigits: 1 });
 
 const CloseCallCallout = memo(({ synthesis, jobId, onOpen, queries, t }) => {
   const cc = closeCallsOf(synthesis);
@@ -111,7 +110,7 @@ const CloseCallCallout = memo(({ synthesis, jobId, onOpen, queries, t }) => {
     {
       id: 'gap',
       header: t('analysis-results.close-calls.col-gap'),
-      cell: item => (typeof item.gap === 'number' ? GAP_FORMAT.format(item.gap) : '—'),
+      cell: item => (typeof item.gap === 'number' ? formatFigure(item.gap, 1) : '—'),
       width: 90,
     },
     {

@@ -2178,6 +2178,7 @@ def _assert_close_calls_table(page: Page, report: dict, pairs: list[dict], db: s
     assigned engine, the runner-up, the report's gap and what settled it. An id opens the
     query's decision trace."""
     from src.shared.engine_names import display_engine
+    from src.shared.figure_format import fmt_num
 
     section = page.locator("#close-calls-section")
     table = section.get_by_role("table", name="Close calls")
@@ -2193,7 +2194,8 @@ def _assert_close_calls_table(page: Page, report: dict, pairs: list[dict], db: s
     assert cells[0] == first["query_id"][:8], (db, cells)
     assert cells[2] == display_engine(first["engine"]), (db, cells)
     assert cells[3] == display_engine(first["alternative"]), (db, cells)
-    assert cells[4] == f"{first['gap']:.1f}", (db, cells)
+    # #2347: the gap prints as the reports print it, fmt_num(gap, 1) ("1", not "1.0").
+    assert cells[4] == fmt_num(first["gap"], 1), (db, cells)
     settled = (
         "Tie rule"
         if first.get("settled_tie")

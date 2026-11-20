@@ -93,7 +93,7 @@ test('close calls are a table with a row per query, closest first and the settle
   expect(rows[0]).toEqual(['-3536340', 'SELECT * FROM wp_options WHERE option_name = ?', 'DynamoDB', 'Aurora MySQL', '0.5', 'Score']);
   expect(rows[1][0]).toBe('00112233');
   expect(rows[1][4]).toBe('3.5');
-  expect(rows[2].slice(4)).toEqual(['0.0', 'Tie rule']);
+  expect(rows[2].slice(4)).toEqual(['0', 'Tie rule']);
   // A query the page has not loaded shows a dash for its statement.
   expect(rows[2][1]).toBe('—');
 });

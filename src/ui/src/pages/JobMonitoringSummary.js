@@ -34,6 +34,7 @@ import { failureFlash, upsertFlash } from "../utils/requestFailure";
 import AssessmentSummary, { AssessmentId } from "../components/AssessmentSummary";
 import PipelineSteps from "../components/PipelineSteps";
 import QueryFlow from "../components/QueryFlow";
+import { formatDatabaseSize } from '../utils/format';
 import { stepOfStage } from "../utils/pipelineSteps";
 import { getCacheOverlay, addCacheOverlayNode, ownerDistribution } from "../utils/cacheLayer";
 import { finalEngineCounts, placedQueryCountOf } from "../utils/reportFacts";
@@ -625,11 +626,7 @@ const JobMonitoringSummaryPage = memo(() => {
                     <Box>
                       <Box variant="awsui-key-label">{t("job-summary.collector.database-size")}</Box>
                       <Box fontSize="heading-l" fontWeight="bold">
-                        {collectorInsights.sizeGb
-                          ? (collectorInsights.sizeGb >= 1
-                              ? `${collectorInsights.sizeGb.toFixed(1)} GB`
-                              : `${(collectorInsights.sizeGb * 1024).toFixed(0)} MB`)
-                          : '—'}
+                        {formatDatabaseSize(collectorInsights.sizeGb)}
                       </Box>
                     </Box>
                   </ColumnLayout>

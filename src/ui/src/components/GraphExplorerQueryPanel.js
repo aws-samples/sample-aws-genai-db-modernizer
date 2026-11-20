@@ -8,6 +8,7 @@ import Header from '@cloudscape-design/components/header';
 import SpaceBetween from '@cloudscape-design/components/space-between';
 import Spinner from '@cloudscape-design/components/spinner';
 import { waveTags } from '../utils/graphExplorer';
+import { formatRate } from '../utils/format';
 
 function Field({ label, children }) {
   return (
@@ -36,7 +37,7 @@ export default function GraphExplorerQueryPanel({ t, detail, loading, error, emb
             </Field>
             <Field label={t('graph-explorer.query.operation')}>{detail.operation}</Field>
             <Field label={t('graph-explorer.query.cps')}>
-              {detail.calls_per_second == null ? null : detail.calls_per_second.toLocaleString()}
+              {detail.calls_per_second == null ? null : formatRate(detail.calls_per_second)}
             </Field>
             <Field label={t('graph-explorer.query.engine')}>{detail.engine_label}</Field>
             <Field label={t('graph-explorer.query.waves')}>

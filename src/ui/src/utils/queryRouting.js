@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: MIT-0
 
 import { displayTables } from './tableNames';
+import { formatFigurePercent } from './format';
 import { OPERATION_TYPES, statementType } from './accessPatterns';
 // #822: the rows of the results page's query routing table, one per query of
 // the assessment (GET /assessments/{job_id}/query-journeys), so every query's
@@ -217,5 +218,5 @@ export function journeyWorkloadFit(journey, t = (key) => key) {
   const pinned = assignment && pinnedFitLabel(assignment.pinned, t);
   if (pinned) return pinned;
   const confidence = assignment && assignment.confidence;
-  return confidence ? `${confidence}%` : null;
+  return confidence ? formatFigurePercent(confidence) : null;
 }

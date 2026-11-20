@@ -7,8 +7,7 @@ import SpaceBetween from '@cloudscape-design/components/space-between';
 import { waveTags } from '../utils/graphExplorer';
 import { colorBackgroundPopover, colorTextBodyDefault, shadowContainerActive } from '@cloudscape-design/design-tokens';
 import { GRAPH_CANVAS } from '../styles/palette';
-
-const fmt = (value) => (value == null ? '-' : Number(value).toLocaleString());
+import { formatFigurePercent, formatMoney, formatRate } from '../utils/format';
 
 /**
  * One step's explanation: the job's own text and figures (the wave plan,
@@ -51,7 +50,7 @@ export function StepText({ t, step }) {
     const q = step.query;
     return (
       <SpaceBetween size="xxs">
-        <Box variant="h4">{t('graph-explorer.walkthroughs.query-title', { label: q.label, value: fmt(q.calls_per_second) })}</Box>
+        <Box variant="h4">{t('graph-explorer.walkthroughs.query-title', { label: q.label, value: formatRate(q.calls_per_second) })}</Box>
         <Box>{waveTags(q, t).join(' · ')}</Box>
         {step.assignment_reason && <Box>{t('graph-explorer.walkthroughs.why', { reason: step.assignment_reason })}</Box>}
         {q.sql_preview && <Box variant="code">{q.sql_preview}</Box>}
@@ -65,8 +64,9 @@ export function StepText({ t, step }) {
           {t('graph-explorer.walkthroughs.engine-title', {
             engine: step.engine_label,
             role: step.role || '-',
-            share: fmt(step.workload_percent),
-            cost: fmt(step.monthly_cost_usd),
+            // A missing share prints "-", as the report's printed summary does.
+            share: typeof step.workload_percent === 'number' ? formatFigurePercent(step.workload_percent, 1) : '-',
+            cost: formatMoney(step.monthly_cost_usd),
           })}
         </Box>
         {step.rationale && <Box>{step.rationale}</Box>}
@@ -74,7 +74,7 @@ export function StepText({ t, step }) {
           <Box variant="small">
             {t('graph-explorer.walkthroughs.busiest-tables', {
               tables: step.busiest_tables
-                .map((b) => t('graph-explorer.walkthroughs.table-traffic', { table: b.table, count: b.query_count, value: fmt(b.calls_per_second) }))
+                .map((b) => t('graph-explorer.walkthroughs.table-traffic', { table: b.table, count: b.query_count, value: formatRate(b.calls_per_second) }))
                 .join('; '),
             })}
           </Box>

@@ -8,6 +8,7 @@ import StatusIndicator from "@cloudscape-design/components/status-indicator";
 import Badge from "@cloudscape-design/components/badge";
 import RequestError from "./RequestError";
 import { pinnedFitLabel } from "../utils/queryRouting";
+import { formatFigure } from "../utils/format";
 
 /**
  * "Why this engine" (#339): one query's decision trace, from
@@ -36,7 +37,7 @@ const SCORE_PLACES = 1;
 // A score as the trace prints it: 82, 82.5, or an em dash when there is none.
 export function formatTraceScore(score) {
   if (typeof score !== 'number' || Number.isNaN(score)) return '—';
-  return String(Number(score.toFixed(SCORE_PLACES)));
+  return formatFigure(score, SCORE_PLACES);
 }
 
 function stepKey(step) {

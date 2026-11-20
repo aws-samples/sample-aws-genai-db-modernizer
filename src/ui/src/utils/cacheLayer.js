@@ -27,6 +27,7 @@
 
 import { CACHE_ENGINE_IDS } from './engineCatalog.generated';
 import { destinationOf } from './destinations';
+import { formatFigure, formatFixed } from './format';
 
 // The same set as src/shared/cache_engines.py (#398): both come from the engine
 // catalog's role = "cache" (src/catalog/engines, #492).
@@ -319,7 +320,7 @@ export function formatCacheLayerLine(overlay, { t = defaultT, withLabel = true, 
     ?? overlay.call_share_percent ?? overlay.cache_call_share_percent;
   if (typeof share === 'number' && Number.isFinite(share)) {
     parts.push(t('cache-layer.call-share-percent', {
-      percent: share.toFixed(1),
+      percent: formatFigure(share, 1),
       defaultValue: '{{percent}}% of calls',
     }));
   }
@@ -329,7 +330,7 @@ export function formatCacheLayerLine(overlay, { t = defaultT, withLabel = true, 
   const fit = overlay.routed_confidence;
   if (typeof fit === 'number' && Number.isFinite(fit)) {
     parts.push(t('cache-layer.cache-fit', {
-      percent: fit.toFixed(0),
+      percent: formatFixed(fit, 0),
       defaultValue: '{{percent}}% cache fit',
     }));
   }
@@ -356,8 +357,8 @@ export function formatCacheReadLine(read, { t = defaultT, engineLabel = (e) => e
     .filter(Boolean)
     .join(', ');
   const rate = t('cache-layer.read-rate', {
-    rate: Number(read.calls_per_second || 0).toFixed(1),
-    percent: Number(read.call_share_percent || 0).toFixed(1),
+    rate: formatFigure(Number(read.calls_per_second || 0), 1),
+    percent: formatFigure(Number(read.call_share_percent || 0), 1),
     defaultValue: '{{rate}} calls/s, {{percent}}% of calls',
   });
   return `${table}${shape ? ` (${shape})` : ''}: ${rate}`;
