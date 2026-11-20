@@ -9,7 +9,7 @@ The graph explorer is an experimental page of the local UI. It draws one assessm
 
 ## Turn it on
 
-Start the local API and UI with the explorer on, and print a job's explorer URL, in one command:
+Start the local API and UI with the explorer on, and print an assessment's explorer URL, in one command:
 
 ```bash
 uv run python scripts/start_local_ui.py --experimental-graph-explorer --page explore --job-id <job_id>
@@ -19,7 +19,7 @@ uv run python scripts/start_local_ui.py --experimental-graph-explorer --page exp
 
 The option sets one environment variable on the API, `MODERNIZER_EXPERIMENTAL_GRAPH_UI=1`. To run the API on its own (for example with `make local-api` or your own `uvicorn` command), set that variable yourself; `start_local_ui.py` without the option starts the API with it unset, even when your shell exports it. Nothing else turns it on: without it (or with any value but `1`) the results page asks the API and is told the explorer is off, so it shows no entry, and the explorer's data routes answer 404 to every request, like a path that does not exist. `/modernize`, the headless runs and everything else are unchanged.
 
-With the explorer on, a job's results page carries an **Explore (experimental)** button that opens it.
+With the explorer on, an assessment's results page carries an **Explore (experimental)** button that opens it.
 
 ## The workspace
 
@@ -44,7 +44,7 @@ Link width is traffic, in calls per second on a log scale, and busy links pull t
 
 - **Traffic** sizes links by calls per second.
 - **Moves together** marks, with dotted links, the queries that move as one unit (a table's writes and the queries co-dependent with them); select one to see its whole unit.
-- **Who writes** draws each table's writer (the query that writes or locks it, from the graph's `WRITES` edges, on the table's source of truth) solid, and its replica reads (served from a copy kept current by CDC) dashed. When the job's report was built from another assignment version than the graph (a reroute or an edit since, with the report not rebuilt yet), a read is drawn faint and dotted as "Reads, or reads a replica (report pending)", since the report's replica reads may no longer hold.
+- **Who writes** draws each table's writer (the query that writes or locks it, from the graph's `WRITES` edges, on the table's source of truth) solid, and its replica reads (served from a copy kept current by CDC) dashed. When the assessment's report was built from another assignment version than the graph (a reroute or an edit since, with the report not rebuilt yet), a read is drawn faint and dotted as "Reads, or reads a replica (report pending)", since the report's replica reads may no longer hold.
 - **Cost** sizes engines by their projected monthly cost.
 
 ## Waves
@@ -88,7 +88,7 @@ Drag a node and its neighbours follow. When you let go, it stays where you dropp
 - The data is incomplete (see the warning above and [#306](https://github.com/aws-samples/sample-aws-genai-db-modernizer/issues/306)).
 - The view draws at most 150 nodes and links together. An expansion that would go over it is refused, or keeps some bundles bundled, and says so; remove nodes or fold bundles to make room.
 - An expansion adds at most the 60 busiest table-to-engine links, and says how many there are in all. The table picker lists at most 1,000 tables (the first by name) and says so when there are more; find a query by search instead. A query search returns the 20 busiest matches.
-- The explorer reads only the job's artifacts and graph, never changes them, and does not change the deliverables. Its API routes may change or go away when it moves onto the graph query catalog ([#307](https://github.com/aws-samples/sample-aws-genai-db-modernizer/issues/307)).
+- The explorer reads only the assessment's artifacts and graph, never changes them, and does not change the deliverables. Its API routes may change or go away when it moves onto the graph query catalog ([#307](https://github.com/aws-samples/sample-aws-genai-db-modernizer/issues/307)).
 
 ## Where the icons come from
 

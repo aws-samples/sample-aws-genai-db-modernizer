@@ -197,8 +197,9 @@ def check_in_scope(
         noun = "1 query" if len(outside) == 1 else f"{len(outside)} queries"
         raise error(
             f"{writer}: {noun} would be placed outside the customer's engine scope "
-            f"({scope_text(allowed)}), so nothing was written. {listed}. A job's scope is "
-            "fixed once it starts: to use another engine, start a new job whose scope adds it; "
+            f"({scope_text(allowed)}), so nothing was written. {listed}. An assessment's scope "
+            "is fixed once it starts: to use another engine, start a new assessment whose scope "
+            "adds it; "
             "a query is never forced onto an engine outside the scope."
         )
 

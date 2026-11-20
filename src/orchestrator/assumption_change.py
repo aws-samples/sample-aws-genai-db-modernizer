@@ -63,7 +63,7 @@ NO_MODEL = "this local server runs without a model (llm-mode none)"
 NEW_RUN = "To use a different value, start a new run with these assumptions."
 SCHEMA_DESIGN_SKIPPED_NOTE = (
     "Schema design needs a model, and " + NO_MODEL + ": no design was written, as in the "
-    "job's own run. The deliverables state the new peak, and the designs take it on a run "
+    "assessment's own run. The deliverables state the new peak, and the designs take it on a run "
     "with a model."
 )
 
@@ -141,7 +141,7 @@ def change_plan(
             phases,
             refusal_kind="no_results",
             refusal=(
-                "The job has no results yet, so there is nothing to re-run. Nothing was "
+                "The assessment has no results yet, so there is nothing to re-run. Nothing was "
                 "changed. " + NEW_RUN
             ),
         )
@@ -150,7 +150,7 @@ def change_plan(
             phases,
             refusal_kind="not_finished",
             refusal=(
-                f"The job is not finished (its status is {job_status.lower()}), so its "
+                f"The assessment is not finished (its status is {job_status.lower()}), so its "
                 "assumptions can't change now. Nothing was changed."
             ),
         )
@@ -167,9 +167,9 @@ def change_plan(
     summary_source = report.get("summary_source") or "deterministic"
     if without_model and "synthesis" in phases and summary_source != "deterministic":
         why = (
-            "this job's executive summary was written with a model"
+            "this assessment's executive summary was written with a model"
             if summary_source == "llm"
-            else "this job's synthesis asked a model for its executive summary (the model's "
+            else "this assessment's synthesis asked a model for its executive summary (the model's "
             "summary was set aside and the deterministic one kept)"
         )
         return ChangePlan(
@@ -227,7 +227,7 @@ class _Snapshot:
         base = os.path.realpath(root)
         job_dir = os.path.realpath(os.path.join(base, db, job_id))
         if not job_dir.startswith(base + os.sep):
-            raise ValueError("the job's folder is outside the artifact root")
+            raise ValueError("the assessment's folder is outside the artifact root")
         self.root = Path(base)
         self.paths = [
             Path(db, job_id, ASSUMPTIONS_FILE),
@@ -301,7 +301,7 @@ def apply_assumption_change(
             met = getattr(orchestrator, "prerequisites_met", None)
             if met is not None and not met(job_id, Phase.SYNTHESIS):
                 raise AssumptionChangeRefused(
-                    "The job's phases before synthesis are not all done, so synthesis can't "
+                    "The assessment's phases before synthesis are not all done, so synthesis can't "
                     "re-run now. Nothing was changed."
                 )
             record = record_assumptions(store, db, job_id, dict(values), via="ui")
@@ -325,8 +325,8 @@ def apply_assumption_change(
             raise AssumptionRerunFailed(
                 phase,
                 f"Re-running {_PHASE_NAMES[phase]} failed ({type(exc).__name__}; the API log "
-                f"has the detail), so the {_names(list(values))} change was undone: the job "
-                "is as it was. Apply the change again to retry.",
+                f"has the detail), so the {_names(list(values))} change was undone: the "
+                "assessment is as it was. Apply the change again to retry.",
             ) from exc
         finally:
             snapshot.discard()

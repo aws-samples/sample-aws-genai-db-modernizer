@@ -372,8 +372,8 @@ class OutOfScopeOverride(AssignmentOverrideError):
         what = "cache this query" if cache else "move this query there"
         super().__init__(
             f"Query {query_id}: {display_engine(engine)} is not in the customer's engine "
-            f"scope ({scope_text(self.scope)}), and a job's scope is fixed once it starts. "
-            f"Start a new job whose scope adds {display_engine(engine)} to {what}."
+            f"scope ({scope_text(self.scope)}), and an assessment's scope is fixed once it "
+            f"starts. Start a new assessment whose scope adds {display_engine(engine)} to {what}."
         )
 
 
@@ -390,14 +390,14 @@ class UnservableQueryOverride(AssignmentOverrideError):
         self.closest_engine = closest_engine
         self.scope = sorted(scope)
         widen = (
-            f"start a new job whose scope adds {display_engine(closest_engine)}"
+            f"start a new assessment whose scope adds {display_engine(closest_engine)}"
             if closest_engine
-            else "start a new job with a wider scope"
+            else "start a new assessment with a wider scope"
         )
         super().__init__(
             f"Query {query_id} has no engine: no engine in the customer's engine scope "
-            f"({scope_text(self.scope)}) can serve it, so it cannot be edited here. A job's "
-            f"scope is fixed once it starts: to serve it, {widen}."
+            f"({scope_text(self.scope)}) can serve it, so it cannot be edited here. An "
+            f"assessment's scope is fixed once it starts: to serve it, {widen}."
         )
 
 

@@ -15,7 +15,7 @@ Give this tool the schema and queries of a monolithic relational database. It te
 
 The input is one collection file. For your own database, you make it with the read-only collection script for your engine (`scripts/collect-postgresql.sql`, `collect-mysql.sql`, `collect-sqlserver.sql` or `collect-oracle.sql`), run with your own credentials; no row value goes into the file. The bundled WordPress and Discourse samples are synthetic collections. [Get started](get-started.md#4-collect-your-own-database) says what the file holds.
 
-Run this command in [Claude Code](https://docs.anthropic.com/en/docs/claude-code) with the repository open. The chat reports each phase, and by default a local UI opens next to it: the chat links the job's summary page (the Sankey of queries to engines) at the approval gate and its results page (the headline, the deliverable downloads, the cost, the migration roadmap and the schema designs) at the end.
+Run this command in [Claude Code](https://docs.anthropic.com/en/docs/claude-code) with the repository open. The chat reports each phase, and by default a local UI opens next to it: the chat links the assessment's summary page (the Sankey of queries to engines) at the approval gate and its results page (the headline, the deliverable downloads, the cost, the migration roadmap and the schema designs) at the end.
 
 [Get started with Claude Code](get-started.md){ .md-button .md-button--primary }
 [See a sample report](sample.md){ .md-button }
@@ -24,7 +24,7 @@ Run this command in [Claude Code](https://docs.anthropic.com/en/docs/claude-code
 
 ![Animated demo of one /modernize run in Claude Code on the synthetic WordPress sample: the approval gate places 108 queries on Aurora MySQL and 55 on DynamoDB with an ElastiCache cache layer, schema design and reviews play as a time-lapse, the run ends with three waves at $1,300.45 per month and 9 medium risks, then the results UI and four pages of the executive report.](assets/modernizer-demo.gif)
 
-*A full `/modernize` run on the WordPress sample (about 21 minutes, time-lapsed to 76 seconds) with its one approval gate and final summary, then the job's results and summary pages in the local UI and four pages of the executive report PDF.*
+*A full `/modernize` run on the WordPress sample (about 21 minutes, time-lapsed to 76 seconds) with its one approval gate and final summary, then the assessment's results and summary pages in the local UI and four pages of the executive report PDF.*
 
 ## What it answers
 

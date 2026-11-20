@@ -56,7 +56,7 @@ def test_the_lock_is_reentrant_in_one_thread_and_released() -> None:
 
 def test_another_thread_is_refused_while_the_lock_is_held() -> None:
     with _held_elsewhere("j"):
-        with pytest.raises(JobBusyError, match="Another change to job j"):
+        with pytest.raises(JobBusyError, match="Another change to assessment j"):
             with job_lock("j"):
                 pass
         with job_lock("other"):  # another job is free

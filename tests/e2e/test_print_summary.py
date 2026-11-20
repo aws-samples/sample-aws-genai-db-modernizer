@@ -84,8 +84,8 @@ def job(request: pytest.FixtureRequest) -> PipelineResult:
 def test_every_deterministic_sample_prints_both_blocks(run: PipelineResult) -> None:
     gate = _print(run, "--gate")
     final = _print(run, "--final")
-    assert gate.startswith(f"## Assignment for approval: {run.db} (job {run.job_id})\n")
-    assert final.startswith(f"## Assessment: {run.db} (job {run.job_id})\n")
+    assert gate.startswith(f"## Assignment for approval: {run.db} (assessment id {run.job_id})\n")
+    assert final.startswith(f"## Assessment: {run.db} (assessment id {run.job_id})\n")
     facts = report_facts(_report(run))
     assert f"- Projected monthly cost: ${facts['projected_monthly_cost_usd']:,.2f}" in final
 

@@ -29,7 +29,7 @@ DESIGN_AURORA = (
     f"uv run python scripts/run_schema_design.py --job-id {JOB} --db wordpress "
     "--engine aurora_mysql --llm-mode external"
 )
-HEADING = f"## Assignment for approval: wordpress (job {JOB})"
+HEADING = f"## Assignment for approval: wordpress (assessment id {JOB})"
 BLOCK = (
     f"{HEADING}\n\nRecommended architecture: Aurora MySQL, DynamoDB and ElastiCache\n\n"
     "| Engine | Queries before | Queries final | Share of final | Outcome |\n\n"

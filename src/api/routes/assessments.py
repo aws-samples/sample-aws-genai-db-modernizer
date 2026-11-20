@@ -60,7 +60,7 @@ _TERMINAL_STATUSES = frozenset({"SUCCEEDED", "CANCELLED", "FAILED"})
 # so this only fires if a symlink was planted directly on disk; the
 # message deliberately carries no detail about which check failed or
 # where.
-_PATH_ERROR_DETAIL = "Could not safely resolve the job's artifact paths."
+_PATH_ERROR_DETAIL = "Could not safely resolve the assessment's artifact paths."
 
 # Services injected by main.py at startup
 sfn_service: LocalExecutionService | None = None
@@ -529,7 +529,7 @@ async def delete_assessment_artifacts(
         raise HTTPException(
             status_code=400,
             detail=(
-                "Deleting job artifacts is only supported in local mode; "
+                "Deleting an assessment's artifacts is only supported in local mode; "
                 "S3_BUCKET is configured."
             ),
         )

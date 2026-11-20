@@ -108,5 +108,5 @@ def test_explore_quotes_values_in_double_backticks() -> None:
 
 def test_explore_reports_an_unknown_value_as_not_found_not_as_no_rows() -> None:
     flat = _flat()
-    assert "is not a known table on this job's graph" in flat
+    assert "is not a known table on this assessment's graph" in flat
     assert "never that nothing matched" in flat

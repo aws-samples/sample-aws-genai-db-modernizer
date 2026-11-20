@@ -211,7 +211,7 @@ def test_the_customer_gate_refuses_a_pick_onto_an_engine_outside_the_scope(
     query_id = _first_query_on(scoped, "dynamodb")
     message = _refused(scoped, QueryOverrideInput(query_id=query_id, assigned_engine=engine))
     assert "Aurora PostgreSQL, DynamoDB" in message
-    assert f"Start a new job whose scope adds {display_engine(engine)}" in message
+    assert f"Start a new assessment whose scope adds {display_engine(engine)}" in message
 
 
 @pytest.mark.deterministic
@@ -225,7 +225,7 @@ def test_the_customer_gate_refuses_a_cache_pin_when_the_scope_leaves_out_elastic
     query_id = _first_query_on(scoped, "dynamodb")
     message = _refused(scoped, QueryOverrideInput(query_id=query_id, cached=True))
     assert "ElastiCache is not in the customer's engine scope" in message
-    assert "Start a new job whose scope adds ElastiCache to cache this query" in message
+    assert "Start a new assessment whose scope adds ElastiCache to cache this query" in message
 
 
 def _route(db: str, base: Path, scope: list[str] | None) -> list[dict]:

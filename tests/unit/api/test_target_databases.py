@@ -155,7 +155,7 @@ class TestAStartedJobKeepsItsScope:
         again = client.post("/api/v1/assessments", json=_body(target_databases=["opensearch"]))
         assert again.status_code == 409, again.text
         assert "already started" in again.json()["detail"]
-        assert "Start a new job" in again.json()["detail"]
+        assert "Start a new assessment" in again.json()["detail"]
         assert self._decision(root)["engines"] == ["dynamodb"]
         assert _job(root).read_json("wordpress/job-1/_meta.json") == meta
 

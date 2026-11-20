@@ -13,8 +13,10 @@ from scripts.hooks import remind_quote_printed_summary as hook
 
 GATE = "uv run python scripts/print_summary.py --job-id j1 --db wordpress --gate --mode both"
 FINAL = "uv run python scripts/print_summary.py --job-id j1 --db wordpress --final --mode chat"
-GATE_BLOCK = "## Assignment for approval: wordpress (job j1)\n\n| Engine | Queries before |\n"
-FINAL_BLOCK = "## Assessment: wordpress (job j1)\n\n### At a glance\n"
+GATE_BLOCK = (
+    "## Assignment for approval: wordpress (assessment id j1)\n\n| Engine | Queries before |\n"
+)
+FINAL_BLOCK = "## Assessment: wordpress (assessment id j1)\n\n### At a glance\n"
 
 
 def _event(command: str, stdout: str, **extra: object) -> dict:

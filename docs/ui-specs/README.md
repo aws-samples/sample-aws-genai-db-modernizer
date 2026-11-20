@@ -47,7 +47,7 @@ The UI uses one word for each thing, and sentence case for headings, labels, but
 | engine | An AWS database the assessment can route queries to | target database, AWS service |
 | assessment id | The id of one assessment | Job ID, Assessment ID |
 
-"Query pattern" stays where it means a distinct query shape ("107 queries in 97 distinct query patterns"). The reports, the chat summary and the help site still say "job" for an assessment in places; #2505 brings them in line. `src/ui/src/__tests__/LocaleSentenceCase.test.js` checks that `src/ui/src/locales/en.json` never calls an assessment an analysis or a job, and that headings and buttons are in sentence case. <!-- claim: src/ui/src/__tests__/LocaleSentenceCase.test.js -->
+"Query pattern" stays where it means a distinct query shape ("107 queries in 97 distinct query patterns"). The reports, the chat summary, the API messages and the help site use the same word, and print the id as "Assessment id" (#2505). `tests/unit/report/test_assessment_wording.py` checks the executive report cover, the folder index, the deliverables' headings and both chat summary headings. <!-- claim: tests/unit/report/test_assessment_wording.py::test_the_cover_and_the_index_name_the_assessment_id, tests/unit/report/test_assessment_wording.py::test_no_deliverable_heading_says_job, tests/unit/report/test_assessment_wording.py::test_both_chat_summary_headings_name_the_assessment_id --> `src/ui/src/__tests__/LocaleSentenceCase.test.js` checks that `src/ui/src/locales/en.json` never calls an assessment an analysis or a job, and that headings and buttons are in sentence case. <!-- claim: src/ui/src/__tests__/LocaleSentenceCase.test.js -->
 
 ---
 

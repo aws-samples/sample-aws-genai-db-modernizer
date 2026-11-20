@@ -335,8 +335,8 @@ def main() -> None:
     if scope is not None and args.engine not in scope:
         _error(
             f"{args.engine} is outside the customer's engine scope ({scope_text(scope)}), "
-            "so it is not analysed. A job's scope is fixed once it starts: to use another "
-            "engine, start a new job whose scope adds it."
+            "so it is not analysed. An assessment's scope is fixed once it starts: to use "
+            "another engine, start a new assessment whose scope adds it."
         )
 
     # Engines without LLM support always run in "none" mode

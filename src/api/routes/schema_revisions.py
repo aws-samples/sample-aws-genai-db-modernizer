@@ -347,7 +347,7 @@ async def confirm_all_schemas(
     if sfn_service is not None and sfn_service.is_cancelled(job_id):
         raise HTTPException(
             status_code=409,
-            detail=f"Job {job_id} was cancelled; cannot confirm schema designs",
+            detail=f"Assessment {job_id} was cancelled; cannot confirm schema designs",
         )
 
     engines = _get_active_engines(store, database_name, job_id)
