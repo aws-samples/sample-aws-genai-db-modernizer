@@ -1,7 +1,7 @@
 # Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
 # SPDX-License-Identifier: MIT-0
 
-"""The typed request and result of :func:`src.assessment.assess` (contracts 1.3 and 1.4).
+"""The typed request and result of :func:`src.assessment.assess` (contracts 1.3 to 1.5).
 
 The stable surface is ``AssessmentRequest`` -> ``AssessmentResult`` with ``summary``,
 ``statements[]`` and ``groups[]``. It is versioned on its own (``contract_version``,
@@ -26,16 +26,18 @@ from __future__ import annotations
 import json
 from functools import cache
 from pathlib import Path
-from typing import TYPE_CHECKING, Annotated, Any, Literal, Self, cast
+from typing import TYPE_CHECKING, Annotated, Any, Literal, Self, cast, get_args
 
 from pydantic import (
     BaseModel,
     ConfigDict,
     Field,
     PrivateAttr,
+    SerializerFunctionWrapHandler,
     ValidationError,
     ValidationInfo,
     field_validator,
+    model_serializer,
     model_validator,
 )
 
@@ -45,15 +47,15 @@ from src.shared.target_databases import normalize_target_databases
 #: The newest version of this public surface (not of any internal contract) this code
 #: reads and writes. A request naming no version gets :func:`default_contract_version`,
 #: the newest one a release has recorded, which can be older.
-CONTRACT_VERSION: Literal["1.4"] = "1.4"
+CONTRACT_VERSION: Literal["1.5"] = "1.5"
 
 #: The ``contract_version`` values the models read and write. A result is written for its
 #: request's version. Any other value is refused; the retired ones
 #: (:data:`RETIRED_CONTRACT_VERSIONS`) with :class:`RetiredContractVersionError`.
-ContractVersion = Literal["1.3", "1.4"]
+ContractVersion = Literal["1.3", "1.4", "1.5"]
 
 #: :data:`ContractVersion`'s values, oldest first.
-SUPPORTED_CONTRACT_VERSIONS: tuple[str, ...] = ("1.3", "1.4")
+SUPPORTED_CONTRACT_VERSIONS: tuple[str, ...] = ("1.3", "1.4", "1.5")
 
 #: The newest contract version a release recorded: written by the release step with the
 #: released snapshot (``scripts/contract_schema_snapshot.py --write-released <tag>``,
@@ -102,11 +104,23 @@ def _versions_note() -> str:
         f"{v} (read only when pinned)" if v in pinned_only else v
         for v in SUPPORTED_CONTRACT_VERSIONS
     ]
-    return " and ".join(named)
+    return ", ".join(named[:-1]) + " and " + named[-1] if len(named) > 1 else named[0]
 
 
 #: The request fields 1.4 added: a request pinned to 1.3 that sets one is refused.
 REQUEST_FIELDS_ADDED_IN_1_4: tuple[str, ...] = ("routine_sources",)
+
+#: The result field 1.5 added (#2478): an Aurora design table's source schema. A 1.3 or
+#: 1.4 result leaves it out, and one that carries the key (even null) is refused.
+RESULT_FIELDS_ADDED_IN_1_5: tuple[str, ...] = ("designs[].tables[].schema_name",)
+
+
+def writes_table_schemas(version: str) -> bool:
+    """Whether a result for ``version`` carries an Aurora design table's ``schema_name``
+    (#2478): from 1.5 on. A 1.3 or 1.4 result leaves it out, as before 1.5. The gate names
+    the released versions only (ADR-008 Decision 8)."""
+    return version not in ("1.3", "1.4")
+
 
 #: The contract versions this release refuses by name (#1641): 1.0, 1.1 and 1.2 were
 #: initial development versions during the beta, removed in :data:`RETIRED_IN`.
@@ -119,10 +133,10 @@ RETIRED_IN = "v0.4.0-beta.3"
 class RetiredContractVersionError(ValueError):
     """A request or a result names a retired contract version (1.0, 1.1 or 1.2).
 
-    This code reads contracts 1.3 and 1.4 (a version newer than the release record's is
-    read only when pinned): the earlier versions were beta development versions, removed in
-    v0.4.0-beta.3. Pin ``contract_version`` "1.3" or "1.4" (or send none, for the newest
-    recorded version);
+    This code reads contracts 1.3, 1.4 and 1.5 (a version newer than the release record's
+    is read only when pinned): the earlier versions were beta development versions, removed
+    in v0.4.0-beta.3. Pin ``contract_version`` "1.3", "1.4" or "1.5" (or send none, for the
+    newest recorded version);
     docs/contracts/assess.md's "Removed: 1.0, 1.1 and 1.2" says how to migrate. An
     unknown version is refused as any invalid field is (``pydantic.ValidationError``)."""
 
@@ -549,7 +563,7 @@ class AssessmentRequest(_VersionChecked):
     contract_version: ContractVersion = Field(
         default_factory=default_contract_version,
         description=(
-            "The contract version the caller builds on: 1.3 or 1.4; the result is written "
+            "The contract version the caller builds on: 1.3, 1.4 or 1.5; the result is written "
             "for it. With none, the newest version a release recorded "
             "(src/assessment/released_contract.json, written after the release's tag, so "
             "the release that first ships a version still defaults to the one before): a "
@@ -1324,13 +1338,31 @@ class DynamoDBDesign(_Design):
     tables: list[DynamoDBTable] = Field(default_factory=list)
 
 
+def _schema_name_is_optional(schema: dict[str, Any]) -> None:
+    # A 1.3 or 1.4 result leaves ``schema_name`` out (1.5, #2478), so the published
+    # result schema, which describes every version this code writes, cannot require it.
+    schema["required"] = [name for name in schema.get("required", []) if name != "schema_name"]
+
+
 class AuroraTable(_Strict):
     """One target table."""
+
+    model_config = ConfigDict(**_Strict.model_config, json_schema_extra=_schema_name_is_optional)
 
     name: str
     primary_key: list[str] = Field(default_factory=list, description="Its primary key columns")
     indexes: list[str] = Field(
         default_factory=list, description="Its secondary indexes, as the design's CREATE INDEX DDL"
+    )
+    schema_name: str | None = Field(
+        None,
+        description=(
+            "Contract 1.5: the source schema the table is created in, when the design's "
+            "tables come from more than one schema (two schemas' tables of one name, such "
+            "as sales.orders and archive.orders, are two entries, each with its schema). "
+            "None for a design of one schema and a design saved before schema-qualified "
+            "designs. A 1.3 or 1.4 result leaves the field out"
+        ),
     )
 
 
@@ -1347,6 +1379,12 @@ class AuroraDesign(_Design):
             "'artifacts.schema_designs.aurora_mysql.generated_ddl'"
         ),
     )
+
+
+#: The engines whose design entry is an :class:`AuroraDesign`, read from its ``engine``.
+AURORA_DESIGN_ENGINES: frozenset[str] = frozenset(
+    get_args(AuroraDesign.model_fields["engine"].annotation)
+)
 
 
 class DocumentDBEmbed(_Strict):
@@ -1538,8 +1576,9 @@ class AssessmentResult(_VersionChecked):
         description=(
             "The contract version the result is written for: the request's "
             "contract_version (with none, the newest version a release recorded). This "
-            "code reads and writes 1.3 and 1.4. A result naming a retired version (1.0, 1.1 "
-            "or 1.2) is refused with RetiredContractVersionError"
+            "code reads and writes 1.3, 1.4 and 1.5. A result naming a retired version (1.0, "
+            "1.1 or 1.2) is refused with RetiredContractVersionError; a 1.3 or 1.4 result "
+            "that carries a field 1.5 added (designs[].tables[].schema_name) is refused"
         ),
     )
     label: ResultLabel = Field(
@@ -1586,6 +1625,37 @@ class AssessmentResult(_VersionChecked):
             return kept
         carried = getattr(self.artifacts, "collector_output", None) if self.artifacts else None
         return carried if isinstance(carried, dict) else None
+
+    # No return annotation: pydantic would publish an annotated return type as the
+    # result's serialization schema; with none, the schema stays the model's own.
+    @model_serializer(mode="wrap")
+    def _leave_out_the_fields_of_later_versions(  # type: ignore[no-untyped-def]
+        self, handler: SerializerFunctionWrapHandler
+    ):
+        """A 1.3 or 1.4 result is written as those versions wrote it: without the
+        Aurora design tables' ``schema_name`` (1.5, #2478)."""
+        written = handler(self)
+        if not writes_table_schemas(self.contract_version) and isinstance(written, dict):
+            for design in written.get("designs") or []:
+                if isinstance(design, dict) and design.get("engine") in AURORA_DESIGN_ENGINES:
+                    for table in design.get("tables") or []:
+                        if isinstance(table, dict):
+                            table.pop("schema_name", None)
+        return written
+
+    @model_validator(mode="after")
+    def _no_field_of_a_later_version(self) -> AssessmentResult:
+        if writes_table_schemas(self.contract_version):
+            return self
+        for design in self.designs or []:
+            if isinstance(design, AuroraDesign) and any(
+                "schema_name" in t.model_fields_set for t in design.tables
+            ):
+                raise ValueError(
+                    f"{RESULT_FIELDS_ADDED_IN_1_5[0]} is a field of contract 1.5: a "
+                    f"{self.contract_version} result leaves it out"
+                )
+        return self
 
     @model_validator(mode="after")
     def _label_matches_the_phase(self) -> AssessmentResult:

@@ -29,7 +29,7 @@ RECORD_PATH = REPO / "src" / "assessment" / "released_contract.json"
 
 #: The contract versions this code reads, oldest first. Kept here on purpose, not read
 #: from the models: a version added to the code needs its tests updated with it.
-SUPPORTED = ("1.3", "1.4")
+SUPPORTED = ("1.3", "1.4", "1.5")
 
 #: The version the record names (the default a request naming none gets).
 RECORDED_VERSION: str = json.loads(RECORD_PATH.read_text(encoding="utf-8"))["contract_version"]
@@ -41,11 +41,12 @@ def _tuple(version: str) -> tuple[int, ...]:
 
 
 def versions_note(recorded: str = RECORDED_VERSION) -> str:
-    """The versions a refusal names, as ``recorded`` leaves them: ``"1.3 and 1.4"``
-    once 1.4 is recorded, ``"1.3 and 1.4 (read only when pinned)"`` before."""
-    return " and ".join(
+    """The versions a refusal names, as ``recorded`` leaves them: ``"1.3, 1.4 and 1.5"``
+    once 1.5 is recorded, ``"1.3, 1.4 and 1.5 (read only when pinned)"`` before."""
+    named = [
         f"{v} (read only when pinned)" if _tuple(v) > _tuple(recorded) else v for v in SUPPORTED
-    )
+    ]
+    return ", ".join(named[:-1]) + " and " + named[-1]
 
 
 @contextmanager

@@ -1,6 +1,6 @@
 # The stable design block of `assess()`
 
-Status: **the published standard** of contract `1.3`, the released version (unchanged in `1.4`) for the design block of a designed `assess()` result, for every engine the pipeline designs: DynamoDB, Aurora MySQL, Aurora PostgreSQL, DocumentDB, OpenSearch and ElastiCache ([#1493](https://github.com/aws-samples/sample-aws-genai-db-modernizer/issues/1493), [#1513](https://github.com/aws-samples/sample-aws-genai-db-modernizer/issues/1513), [#1603](https://github.com/aws-samples/sample-aws-genai-db-modernizer/issues/1603)). We define it and library callers follow it. The reference is [assess.md, The design block](assess.md#the-design-block); the result's JSON Schema is [`schemas/assess_result.v1.schema.json`](schemas/assess_result.v1.schema.json).
+Status: **the published standard** of contract `1.3` (unchanged in `1.4`; `1.5` adds an Aurora table's `schema_name`) for the design block of a designed `assess()` result, for every engine the pipeline designs: DynamoDB, Aurora MySQL, Aurora PostgreSQL, DocumentDB, OpenSearch and ElastiCache ([#1493](https://github.com/aws-samples/sample-aws-genai-db-modernizer/issues/1493), [#1513](https://github.com/aws-samples/sample-aws-genai-db-modernizer/issues/1513), [#1603](https://github.com/aws-samples/sample-aws-genai-db-modernizer/issues/1603)). We define it and library callers follow it. The reference is [assess.md, The design block](assess.md#the-design-block); the result's JSON Schema is [`schemas/assess_result.v1.schema.json`](schemas/assess_result.v1.schema.json).
 
 ## What it is for
 
@@ -20,7 +20,7 @@ A caller that needs a data model runs `assess()` with `run_through: "schema_desi
 | `engine` | Per entry | Per item |
 |---|---|---|
 | `dynamodb` | `tables[]` | `name`, `source_tables`, `partition_key` `{name, type}`, `sort_key` (or `null`), `gsis[]` (`name`, ordered `partition_key[]` and `sort_key[]`, `projection`, `projected_attributes`, `query_ids`), `query_ids` (served from the table itself), `aggregate_pattern` and `entities[]` (`source_table`, `pk_template`, `sk_template`) |
-| `aurora_mysql`, `aurora_postgresql` | `tables[]`, `ddl_artifact_path` | `name`, `primary_key`, `indexes` (the design's `CREATE INDEX` statements) |
+| `aurora_mysql`, `aurora_postgresql` | `tables[]`, `ddl_artifact_path` | `name`, `primary_key`, `indexes` (the design's `CREATE INDEX` statements), `schema_name` (`1.5`: the source schema the table is created in, when the design's tables come from more than one schema; `null` otherwise) |
 | `documentdb` | `collections[]` | `name`, `source_tables`, `embedded[]` (`source_table`, `path`, `strategy` `embed`, `reference` or `hybrid`), `referenced_collections`, `indexes[]` (`name`, ordered `keys[]` `{field, direction}`, `type`, `query_ids`), `query_ids` |
 | `elasticache` | `keys[]` | `pattern`, `data_type`, `ttl_seconds` (or `null`), `source_tables`, `query_ids` |
 | `opensearch` | `indexes[]`, `data_streams[]` | indexes: `name`, `source_tables`, `fields[]` (`name`, `type`), `aliases`, `query_ids`; data streams: `name`, `source_tables`, `fields[]` (its index template's), `query_ids` |
@@ -49,7 +49,7 @@ A field of a `nested` or `object` field can be listed under its dotted path (`us
 
 Guaranteed (contract `1.3`):
 
-- every field listed above is present with the type the JSON Schema gives it; a list with nothing in it is `[]`, never missing;
+- every field listed above is present with the type the JSON Schema gives it; a list with nothing in it is `[]`, never missing. The one exception is an Aurora table's `schema_name`, which a `1.3` or `1.4` result leaves out; <!-- claim: tests/contract/test_assess_contract_1_5.py::test_a_1_5_result_writes_the_schema_and_a_1_4_result_leaves_it_out, tests/contract/test_assess_contract_1_5.py::test_a_1_3_or_1_4_result_that_carries_a_schema_is_refused -->
 - `designs` has one entry per engine of `summary.designed_engines`, in that order, and `validation_passed` says whether the design passed its own checks. The result model enforces it (`AssessmentResult` refuses one without it), and a test keeps a reader for every engine the pipeline designs;
 - every value is copied from the engine's schema design: a name, key, type or index statement is the design's own, and each `query_ids` lists the statements the design's access patterns name for that item, first seen first, each once (a DocumentDB index's `query_ids` is the index's own list, as the design wrote it);
 - an access pattern the design marks out of scope (`in_scope: false`) adds no statement to any `query_ids`.
@@ -110,7 +110,8 @@ A designed WordPress run (no engine scope) designed Aurora MySQL (20 tables), Dy
       {
         "name": "wp_actionscheduler_groups",
         "primary_key": ["group_id"],
-        "indexes": ["CREATE INDEX `slug` ON `wp_actionscheduler_groups` (`slug`);"]
+        "indexes": ["CREATE INDEX `slug` ON `wp_actionscheduler_groups` (`slug`);"],
+        "schema_name": null
       }
     ],
     "ddl_artifact_path": "artifacts.schema_designs.aurora_mysql.generated_ddl"
@@ -146,7 +147,8 @@ A real run: the TrailGear sample (synthetic, SQL Server, no engine scope), desig
     {
       "name": "Customer",
       "primary_key": ["CustomerID"],
-      "indexes": ["CREATE UNIQUE INDEX \"UX_Customer_Email\" ON \"Customer\" (\"Email\");"]
+      "indexes": ["CREATE UNIQUE INDEX \"UX_Customer_Email\" ON \"Customer\" (\"Email\");"],
+      "schema_name": null
     },
     {
       "name": "SalesOrder",
@@ -156,12 +158,15 @@ A real run: the TrailGear sample (synthetic, SQL Server, no engine scope), desig
         "CREATE INDEX \"IX_SalesOrder_CustomerID_OrderDate\" ON \"SalesOrder\" (\"CustomerID\", \"OrderDate\");",
         "CREATE INDEX \"IX_SalesOrder_Status\" ON \"SalesOrder\" (\"Status\");",
         "CREATE INDEX \"IX_SalesOrder_OrderDate\" ON \"SalesOrder\" (\"OrderDate\") INCLUDE (\"TotalDue\");"
-      ]
+      ],
+      "schema_name": null
     }
   ],
   "ddl_artifact_path": "artifacts.schema_designs.aurora_postgresql.generated_ddl"
 }
 ```
+
+That design is of one schema, so each `schema_name` is `null`. In a `1.5` result for a design whose tables come from more than one schema, each table carries its schema, so two schemas' tables of one name are two entries you can tell apart: `{"name": "orders", "schema_name": "sales", ...}` and `{"name": "orders", "schema_name": "archive", ...}`. <!-- claim: tests/contract/test_assess_contract_1_5.py::test_a_two_schema_design_gives_each_table_with_its_schema, tests/contract/test_assess_contract_1_5.py::test_a_design_the_generator_writes_for_two_schemas_gives_each_table_its_schema, tests/contract/test_assess_contract_1_5.py::test_a_one_schema_design_keeps_its_tables_with_no_schema -->
 
 ### OpenSearch
 

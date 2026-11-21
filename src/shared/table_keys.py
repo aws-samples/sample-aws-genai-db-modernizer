@@ -11,7 +11,8 @@ A design whose tables come from more than one schema keys each table by its sche
 from __future__ import annotations
 
 from collections import defaultdict
-from collections.abc import Iterable
+from collections.abc import Iterable, Mapping
+from typing import Any
 
 
 def _cleaned(name: str) -> str:
@@ -57,6 +58,13 @@ def is_system_schema(schema: str | None, source_engine: str | None) -> bool:
     return name in SYSTEM_SCHEMAS.get(engine, frozenset()) or (
         engine == "postgresql" and name.startswith("pg_")
     )
+
+
+def table_schema(table: Mapping[str, Any]) -> str | None:
+    """A design table definition's ``schema_name`` (#2455): a non-empty string, or None
+    (a design of one schema, or one saved before #2455, names none)."""
+    schema = table.get("schema_name")
+    return schema if isinstance(schema, str) and schema else None
 
 
 def spans_schemas(schemas: Iterable[str | None], source_engine: str | None) -> bool:
