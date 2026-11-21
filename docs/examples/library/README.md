@@ -9,7 +9,7 @@ uv run python docs/examples/library/demo_assess.py
 That run calls no model: it is free, works offline and takes a few seconds. Try these too:
 
 ```bash
-# The larger sample (1,654 statements; about half a minute)
+# The larger sample (2,859 statements; one to two minutes)
 uv run python docs/examples/library/demo_assess.py --sample discourse
 
 # An engine scope: statements no engine in it can serve come back unservable, with the reason

@@ -1,7 +1,7 @@
 # Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
 # SPDX-License-Identifier: MIT-0
 
-"""The 14 maintenance writes #1359 found carried onto DynamoDB, on the bundled samples (#1362).
+"""The maintenance writes carried onto DynamoDB on the bundled samples (#1359, #1362).
 
 Their write groups keep them on DynamoDB (ADR-031 Decision 1 Amendment 9; the maintainer
 kept that routing, #1359 option (c)). The DynamoDB designer is told each one's intent and
@@ -28,23 +28,19 @@ pytestmark = pytest.mark.deterministic
 RETENTION = "Retention delete"
 ORPHAN = "Orphan clean-up"
 REPAIR = "Consistency repair sweep"
+MAINTENANCE = "Set-based maintenance write"
 
 # query id -> (table, intent name), as the classifier reads them from the parsed facts.
 EXPECTED = {
+    # The discourse sample refreshed in #2378: 5 carried writes on 4 tables. The 12 others
+    # the 1,654-statement sample carried (its retention and orphan deletes among them) are
+    # not in the new collection.
     "discourse": {
-        "-805676668594973927": ("public.email_tokens", RETENTION),
-        "5139002051034385017": ("public.scheduler_stats", RETENTION),
-        "3022359024859565856": ("public.search_logs", RETENTION),
-        "-5145007055741204478": ("public.skipped_email_logs", RETENTION),
-        "-6072012279523579697": ("public.stylesheet_cache", RETENTION),
-        "-1857846980601328420": ("public.topic_search_data", ORPHAN),
-        "9113575919552827162": ("public.unsubscribe_keys", RETENTION),
-        "-2784383380355662666": ("public.user_actions", "Duplicate clean-up"),
-        "-8208700262275714237": ("public.user_actions", REPAIR),
+        "-5620159827174241351": ("public.category_featured_topics", MAINTENANCE),
+        "-8264995370519191426": ("public.group_users", MAINTENANCE),
+        "-8358867557853740191": ("public.group_users", REPAIR),
         "3015126576501116248": ("public.user_actions", "Delete by any of several references"),
-        "2539559289466738950": ("public.user_profiles", REPAIR),
-        "2150880814507944816": ("public.users", REPAIR),
-        "8321624443266976557": ("public.users", ORPHAN),
+        "8620879760636696006": ("public.user_auth_tokens", "Bulk status flip"),
     },
     "trailgear": {"0x9D11480F1E01B771": ("trailgear.UserSession", RETENTION)},
 }
@@ -93,9 +89,12 @@ def test_the_risk_register_lists_each_carried_write_with_its_intent(sample):
         for line in risk["details"]
     )
     assert found == by_line
-    assert all(line.startswith(("DELETE of ", "UPDATE of ")) for line in risk["details"])
+    assert all(
+        line.startswith(("DELETE of ", "UPDATE of ", "INSERT of ")) for line in risk["details"]
+    )
     retention = [d for d in risk["details"] if "retention delete" in d]
-    assert retention and all("Time to Live" in d for d in retention)
+    assert len(retention) == names.count(RETENTION.lower())
+    assert all("Time to Live" in d for d in retention)
 
 
 def test_the_summary_input_counts_the_details(sample):
@@ -143,6 +142,7 @@ def test_the_engineering_report_shows_each_statements_approach(sample):
 
 
 def test_each_sample_carries_exactly_its_statements(run):
-    """wordpress carries none; discourse 13 and trailgear 1 (the 14 of #1359)."""
+    """wordpress carries none; discourse 5 and trailgear 1 (14 of #1359 before #2378
+    refreshed the discourse sample)."""
     found = {q for r in _carried_risks(run) for q in r["query_ids"]}
     assert found == set(EXPECTED.get(run.db, {})), run.db

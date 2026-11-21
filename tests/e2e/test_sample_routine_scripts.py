@@ -40,7 +40,7 @@ from typing import Any
 import pytest
 
 from tests.e2e.pipeline import REPO, PipelineResult, _env
-from tests.e2e.test_sample_routines import EXPECTED, FAILED
+from tests.e2e.test_sample_routines import EXPECTED, FAILED, all_routines
 
 pytestmark = [pytest.mark.e2e, pytest.mark.deterministic]
 
@@ -51,9 +51,10 @@ TARGET_DATABASE = {"wordpress": "wordpress", "discourse": "discourse"}
 DEFERRED_KINDS = {"wordpress": {"trigger", "event"}, "discourse": set()}
 # A line of each sample's refused routine's body: it never reaches a step 1 script.
 REFUSED_BODY = {"wordpress": "innodb_flush_log_at_trx_commit", "discourse": "pg_backup_start("}
-# The tables the discourse routine set names, created on the stand-in target from
-# step-1.ddl.sql before the deploy (a SQL function's body is checked when it is created).
-DISCOURSE_TABLES = ("notifications", "posts", "topics")
+# The tables the discourse routines name, created on the stand-in target from
+# step-1.ddl.sql before the deploy (a SQL function's body is checked when it is created,
+# a trigger needs its table): the synthetic set's and the collection's own (#2378).
+DISCOURSE_TABLES = ("category_settings", "notifications", "posts", "topic_timers", "topics")
 
 
 @dataclass
@@ -187,11 +188,11 @@ def test_each_routine_lands_in_its_step_1_bucket(step1: Step1) -> None:
     sample = step1.run.db
     section = step1.contract["routines"]
     rows = {(r["kind"], r["routine_id"]): r for r in section["routines"]}
-    for (kind, rid), status in EXPECTED[sample].items():
+    for (kind, rid), status in all_routines(sample).items():
         row = rows.pop((kind, rid))
         assert row["carry"] == _bucket(sample, kind, status), (kind, rid, row)
         assert row["reasons"] == ([FAILED[sample]] if status == "needs_attention" else [])
-    assert rows == {}  # discourse's 3 old triggers are names only here (#2425)
+    assert rows == {}
     carried = sum(r["carry"] == "carried" for r in section["routines"])
     deferred = sum(r["carry"] == "deferred_to_cutover" for r in section["routines"])
     assert (section["carried"], section["deferred"]) == (carried, deferred)
@@ -227,7 +228,7 @@ def test_the_deploy_script_creates_the_carried_routines_in_order(step1: Step1) -
     sql = step1.code("routines-deploy.sql")
     carried = [
         (kind, _name(rid))
-        for (kind, rid), status in EXPECTED[sample].items()
+        for (kind, rid), status in all_routines(sample).items()
         if _bucket(sample, kind, status) == "carried"
     ]
     made = _creates(sql)
@@ -244,6 +245,15 @@ def test_the_deploy_script_creates_the_carried_routines_in_order(step1: Step1) -
         assert made.index(("function", "posts_bump_topic")) < made.index(
             ("trigger", "posts_bump_topic")
         )
+        # The collection's own triggers follow the guard functions they call (#2378).
+        for table, column in (
+            ("category_settings", "require_reply_approval"),
+            ("category_settings", "require_topic_approval"),
+            ("topic_timers", "topic_id"),
+        ):
+            assert made.index(("function", f"raise_{table}_{column}_readonly")) < made.index(
+                ("trigger", f"{table}_{column}_readonly")
+            )
         # One transaction; the trigger is created disabled in it (DMS applies its effects).
         assert sql.count("BEGIN;") == 1 and sql.rstrip().endswith("COMMIT;")
         trigger = sql.index("CREATE TRIGGER posts_bump_topic")
@@ -251,7 +261,7 @@ def test_the_deploy_script_creates_the_carried_routines_in_order(step1: Step1) -
         assert trigger < disable < sql.index("COMMIT;")
     # Nothing that is not carried reaches the deploy, and the routine left out keeps its body.
     assert REFUSED_BODY[sample] not in step1.text("routines-deploy.sql")
-    for (kind, rid), status in EXPECTED[sample].items():
+    for (kind, rid), status in all_routines(sample).items():
         if _bucket(sample, kind, status) != "carried":
             assert (kind, _name(rid)) not in made, (kind, rid)
 
@@ -272,13 +282,19 @@ def test_the_triggers_enable_script_turns_on_what_step_1_left_off(step1: Step1) 
         assert (line["expected"], line["in_script"], line["events_enabled"]) == (2, 2, 1)
         assert line["excluded"] == 0
     else:
-        # The trigger the deploy created disabled is enabled, in one transaction.
+        # The triggers the deploy created disabled are enabled, in one transaction: the
+        # synthetic set's and the collection's own 3 (#2378).
         assert _creates(sql) == []
-        assert re.findall(r"^ALTER TABLE .*$", sql, re.M) == [
-            'ALTER TABLE "public"."posts" ENABLE TRIGGER "posts_bump_topic";'
+        assert sorted(re.findall(r"^ALTER TABLE .*$", sql, re.M)) == [
+            'ALTER TABLE "public"."category_settings" ENABLE TRIGGER '
+            '"category_settings_require_reply_approval_readonly";',
+            'ALTER TABLE "public"."category_settings" ENABLE TRIGGER '
+            '"category_settings_require_topic_approval_readonly";',
+            'ALTER TABLE "public"."posts" ENABLE TRIGGER "posts_bump_topic";',
+            'ALTER TABLE "public"."topic_timers" ENABLE TRIGGER "topic_timers_topic_id_readonly";',
         ]
         assert sql.count("BEGIN;") == 1 and sql.rstrip().endswith("COMMIT;")
-        assert (line["expected"], line["in_script"], line["excluded"]) == (1, 1, 0)
+        assert (line["expected"], line["in_script"], line["excluded"]) == (4, 4, 0)
     assert REFUSED_BODY[sample] not in step1.text("triggers-enable.sql")
 
 
@@ -395,7 +411,7 @@ def test_the_postgresql_scripts_deploy_and_check_on_a_stand_in_target(
     assert ran.returncode == 0, ran.stderr
     check = _script("scripts/run_dms_step.py", "routines-check", *step1.common)
     carried = step1.contract["routines"]["carried"]
-    assert (check["confirmed"], check["carried"], check["mismatches"]) == (carried, 4, []), check
+    assert (check["confirmed"], check["carried"], check["mismatches"]) == (carried, 13, []), check
     # Every carried routine is confirmed; the gate still fails on the ones not carried.
     from src.contracts.routine_check import RoutineCheckResult
     from src.storage.local_store import LocalArtifactStore
@@ -407,7 +423,7 @@ def test_the_postgresql_scripts_deploy_and_check_on_a_stand_in_target(
     gate = routines_check(load_step1(store, "discourse", step1.run.job_id, with_ddl=False), result)
     assert gate is not None and gate.status == "fail"
     said = json.dumps(gate.model_dump(mode="json"))
-    assert "4 of 4 carried routines confirmed" in said, said
+    assert "13 of 13 carried routines confirmed" in said, said
     assert "procedure public.begin_upload_snapshot(text): not carried" in said
 
     enabled = _psql(server, "-f", str(step1.step / "triggers-enable.sql"))
@@ -420,8 +436,8 @@ def test_the_postgresql_scripts_deploy_and_check_on_a_stand_in_target(
                 str(step1.step / "triggers-enable-check.tsv"))  # fmt: skip
     assert ran.returncode == 0, ran.stderr
     triggers = _script("scripts/run_dms_step.py", "triggers-check", *step1.common)
-    # The carried trigger is confirmed in its source state, and no trigger is left out.
-    assert (triggers["expected"], triggers["confirmed"], triggers["mismatches"]) == (1, 1, [])
+    # The carried triggers are confirmed in their source state, and none is left out.
+    assert (triggers["expected"], triggers["confirmed"], triggers["mismatches"]) == (4, 4, [])
     assert triggers["status"] == "pass" and triggers["not_carried"] == 0, triggers
     # The check output holds no routine text.
     for name in ("routines-check.tsv", "triggers-enable-check.tsv"):
@@ -554,10 +570,10 @@ def test_after_the_test_every_report_states_its_result(tested: Tested) -> None:
         assert "not tested yet" not in text and "/test-routines command" not in text
     if tested.run.db == "discourse":
         assert facts["line"].endswith(
-            "On a test Aurora, of 4 carried routines: 4 showed no difference on the calls made."
+            "On a test Aurora, of 13 carried routines: 13 showed no difference on the calls made."
         )
         assert facts["executive_line"].endswith(
-            "Tested on a throwaway Aurora: step 1 deploys all 4."
+            "Tested on a throwaway Aurora: step 1 deploys all 13."
         )
     else:
         assert facts["line"].endswith(
@@ -573,7 +589,7 @@ def test_after_the_test_the_risk_and_the_gate_ask_only_for_what_is_held(tested: 
     risks = _carried_risks(tested.report)
     gate = tested.report["migration_waves"][0]["gate"]
     assert "Test the carried routines on a throwaway Aurora" not in tested.engineering
-    if tested.run.db == "discourse":  # all 4 showed no difference: nothing left to close
+    if tested.run.db == "discourse":  # all 13 showed no difference: nothing left to close
         assert risks == [] and "carried routines to check" not in gate
         return
     [risk] = risks
@@ -609,7 +625,7 @@ def test_after_the_test_a_held_routine_is_listed_once(tested: Tested) -> None:
     held = [(r["routine_id"], r["reason"]) for r in line["held_back_routines"]]
     assert (line["refused"], line["refused_routines"]) == (0, [])
     if tested.run.db == "discourse":
-        assert (line["in_script"], held) == (4, [])
+        assert (line["in_script"], held) == (13, [])
     else:
         assert held == [("wordpress.wp_refresh_comment_count", "not_proved")]
         assert line["in_script"] == 1 and line["held_back"] == 1

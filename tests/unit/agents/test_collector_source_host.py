@@ -64,12 +64,14 @@ def test_the_hit_ratio_is_read_from_the_counts_not_the_rounded_percent() -> None
 
 def test_postgresql_shared_buffer_counts_give_the_ratio() -> None:
     # discourse (PostgreSQL): the script maps pg_stat_statements' shared blocks to
-    # the same keys: 24,886,463 reads, 2,680 from disk.
+    # the same keys. The sample refreshed in #2378 (a 0.53 GB database) read all of its
+    # 143,897,873 blocks from shared buffers, none from disk: a 100% ratio (24,886,463
+    # and 2,680 before).
     host = _build_source_host(parse_offline_collection(_sample("discourse")))
     assert host is not None
-    assert host.buffer_cache_hit_ratio_pct == pytest.approx(
-        (24_886_463 - 2_680) / 24_886_463 * 100, abs=1e-4
-    )
+    assert host.buffer_cache_read_requests == 143_897_873
+    assert host.buffer_cache_reads_from_disk == 0
+    assert host.buffer_cache_hit_ratio_pct == 100.0
 
 
 def test_sql_server_reports_the_host_cpu_and_memory() -> None:
@@ -122,6 +124,7 @@ def test_more_disk_reads_than_requests_is_not_a_ratio() -> None:
 # --- every raw-collection path carries it -------------------------------------------
 
 
+@pytest.mark.passes_on_main  # main reads the ratio; the refreshed sample's is 100% (#2378)
 @pytest.mark.parametrize("name", ["wordpress", "discourse", "trailgear"])
 def test_run_assessment_collect_writes_source_host(tmp_path: Path, name: str) -> None:
     store = LocalArtifactStore(base_dir=str(tmp_path / "art"))
@@ -130,7 +133,9 @@ def test_run_assessment_collect_writes_source_host(tmp_path: Path, name: str) ->
     assert stored["contract_version"] == current_version(CollectorOutputContract)
     host = stored["metrics"]["source_host"]
     assert host["buffer_cache_hit_ratio_pct"] is not None
-    assert 99.0 < host["buffer_cache_hit_ratio_pct"] < 100.0
+    # discourse's blocks all came from shared buffers (100.0); the others read a few
+    # from disk.
+    assert 99.0 < host["buffer_cache_hit_ratio_pct"] <= 100.0
 
 
 def test_run_collect_writes_source_host(tmp_path: Path) -> None:

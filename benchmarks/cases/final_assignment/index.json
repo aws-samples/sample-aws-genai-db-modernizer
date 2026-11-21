@@ -15,7 +15,7 @@
       "id": "discourse",
       "path": "discourse",
       "sample": "discourse",
-      "intent": "Full Discourse sample (PostgreSQL source, 1654 queries), through the reality check",
+      "intent": "Full Discourse sample (PostgreSQL source, 2859 queries), through the reality check",
       "tags": [
         "real",
         "postgresql",

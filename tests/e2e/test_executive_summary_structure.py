@@ -45,7 +45,11 @@ pytestmark = pytest.mark.deterministic
 # its ~27-minute window): $757.62 to $1,178.33. DynamoDB $75.78 to $496.49 (its sized load
 # rises to 923.7 calls/s with 191.0 writes/s, on-demand), Aurora MySQL unchanged at $497.25
 # (108 sized queries, 647.7 calls/s), ElastiCache unchanged at $184.59.
-WHOLE_DOLLARS = {"wordpress": 1178, "discourse": 535, "trailgear": 432}
+# #2378 refreshes the discourse sample (2,859 statements, rated from a 300-second sample
+# taken in the busiest phase of a seeded workload, which the costs assume runs all month):
+# $535.27 to $1,508.05 with its routine set added (Aurora PostgreSQL $497.25, DynamoDB
+# $631.12, DocumentDB $195.09, ElastiCache $184.59).
+WHOLE_DOLLARS = {"wordpress": 1178, "discourse": 1508, "trailgear": 432}
 
 
 def _report(run: PipelineResult) -> dict:

@@ -51,11 +51,12 @@ WIDE_WRITE = "wide-transaction"
 
 @pytest.fixture(scope="module")
 def discourse() -> dict:
-    """The bundled discourse sample, ingested as the collect step does."""
+    """The discourse collection bundled before #2378, ingested as the collect step does:
+    the refreshed sample has neither the sweep nor the color-scheme UPDATE below."""
     from src.agents.collector.offline_ingest import build_offline_collector_output
     from src.tools.database.offline_parser import parse_offline_collection
 
-    with zipfile.ZipFile(REPO / "docs/examples/discourse/discourse.zip") as z:
+    with zipfile.ZipFile(REPO / "tests/fixtures/discourse_pre_2378/discourse.zip") as z:
         raw = json.loads(z.read("discourse-collection.json"))
     return build_offline_collector_output(
         parse_offline_collection(raw), job_id="t", database_name="discourse", s3_key="t"

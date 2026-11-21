@@ -407,7 +407,7 @@ def test_a_column_of_a_table_not_collected_needs_no_column_name() -> None:
     raw = _discourse()
     raw["columns"].append({"table_name": "not_a_collected_table", "data_type": "int"})
 
-    assert len(_loads(raw, "discourse")["database_schema"]["tables"]) == 311
+    assert len(_loads(raw, "discourse")["database_schema"]["tables"]) == 312
 
     raw["columns"].append({"table_name": raw["tables"][0]["table_name"], "data_type": "int"})
     with pytest.raises(OfflineCollectionError) as err:

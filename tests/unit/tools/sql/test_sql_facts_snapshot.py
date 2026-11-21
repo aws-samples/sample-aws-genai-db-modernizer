@@ -52,19 +52,25 @@ _WORDPRESS_CORRECTIONS = {
 
 @pytest.mark.passes_on_main  # main's facade already reads these; #1955 changed the sample
 def test_every_regex_difference_on_the_samples_is_a_known_correction():
-    """Only the 21 discourse queries whose facts the regex misread (#796) and the two
-    wordpress ones above differ."""
+    """Only the 45 discourse queries whose facts the regex misreads (#796) and the two
+    wordpress ones above differ. On the discourse sample refreshed in #2378 (21 of 1,654
+    before) the regex misses a JOIN after a line break (36 queries), counts ``join`` in a
+    comment, a JOIN to ``unnest(...)``, a ``count`` column and ``select`` inside
+    ``user_selectable``."""
     differs = _differs(_FACTS_796)
     assert {sample for sample, _ in differs} == {"discourse", "wordpress"}
-    assert sum(1 for sample, _ in differs if sample == "discourse") == 21
+    assert sum(1 for sample, _ in differs if sample == "discourse") == 45
     assert {k: v for k, v in differs.items() if k[0] == "wordpress"} == _WORDPRESS_CORRECTIONS
 
 
+@pytest.mark.passes_on_main  # main's facade already reads these; #2378 changed the sample
 def test_the_facts_893_added_differ_from_their_fallback_only_where_it_misreads():
     """The regex aggregate count counts the words (a ``count`` column, ``COUNT``
-    in a comment); the regex timestamp column reads ``CAST(... AS date)`` or a word in
-    a literal as a column. No other fact #893 added differs from its fallback on the
-    samples."""
+    in a comment, a ``max`` alias); the regex timestamp column reads ``CAST(... AS date)``,
+    the ``date(...)`` function or a word in a literal as a column; the regex row limit
+    and top-N read Discourse's ``/*limit*/`` placeholder comment as a ``LIMIT`` (the
+    sample refreshed in #2378). No other fact #893 added differs from its fallback on
+    the samples."""
     added = _differs(None)
     names = {f for facts in added.values() for f in facts} - _FACTS_796
-    assert names == {"aggregate_function_count", "timestamp_column"}
+    assert names == {"aggregate_function_count", "row_limit", "timestamp_column", "top_n"}

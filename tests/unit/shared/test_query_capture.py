@@ -323,10 +323,11 @@ def _dropped_by_table(full: list[dict], kept: list[dict]) -> dict[str, int]:
 
 
 def test_a_cap_the_writes_fit_in_leaves_no_written_table_read_only(discourse_full, tmp_path):
-    # Discourse holds 362 writes and locking reads, on 127 tables, of 1,654 statements.
+    # Discourse holds 320 writes and locking reads, on 88 tables, of 2,859 statements (the
+    # sample refreshed in #2378; 362 on 127 tables of 1,654 before).
     src, full = discourse_full
     written_before, _ = _tables(full, "postgresql")
-    assert sum(1 for p in full if written_tables(p, "postgresql")) == 362
+    assert sum(1 for p in full if written_tables(p, "postgresql")) == 320
     code, status = _run_collect(src, tmp_path / "a", "--query-limit", "400")
     assert code == 0, status
     stored = _stored(tmp_path / "a")
@@ -335,12 +336,13 @@ def test_a_cap_the_writes_fit_in_leaves_no_written_table_read_only(discourse_ful
     assert written_after == written_before
     assert not (written_before & read_after) - written_after
     assert stored["metadata"]["query_capture"]["writes_dropped_by_table"] == {}
-    # The 38 places left over go to the costliest reads.
+    # The 80 places left over go to the costliest reads.
     assert len(kept) == 400
 
 
+@pytest.mark.passes_on_main  # comment-only change: the refreshed sample's counts (#2378)
 def test_a_cap_below_the_writes_lists_every_table_that_lost_its_writes(discourse_full, tmp_path):
-    # 100 places for 362 writes on 127 tables: some written tables keep none of their
+    # 100 places for 320 writes on 88 tables: some written tables keep none of their
     # writes, but none does so silently.
     src, full = discourse_full
     code, status = _run_collect(src, tmp_path / "a", "--query-limit", "100")

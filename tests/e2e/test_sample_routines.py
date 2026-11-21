@@ -50,6 +50,41 @@ EXPECTED: dict[str, dict[tuple[str, str], str]] = {
         ("procedure", "public.begin_upload_snapshot(text)"): "needs_attention",
     },
 }
+# The routines a sample's own collection holds with their code, and the status each gets.
+# The discourse sample refreshed in #2378 holds 6 PL/pgSQL functions that guard columns
+# Discourse marks read-only, and the 3 triggers that call them: the functions are
+# rewritten (their owner becomes the target user), the triggers carried as they are.
+COLLECTION_ROUTINES: dict[str, dict[tuple[str, str], str]] = {
+    "wordpress": {},
+    "discourse": {
+        **{
+            ("function", f"discourse_functions.raise_{name}_readonly()"): "rewritten"
+            for name in (
+                "category_settings_require_reply_approval",
+                "category_settings_require_topic_approval",
+                "discourse_voting_category_settings",
+                "discourse_voting_topic_vote_count",
+                "discourse_voting_votes",
+                "topic_timers_topic_id",
+            )
+        },
+        **{
+            ("trigger", f"public.{table}.{table}_{column}_readonly"): "as_is"
+            for table, column in (
+                ("category_settings", "require_reply_approval"),
+                ("category_settings", "require_topic_approval"),
+                ("topic_timers", "topic_id"),
+            )
+        },
+    },
+}
+
+
+def all_routines(sample: str) -> dict[tuple[str, str], str]:
+    """Every routine a sample's run carries or lists: its synthetic set and its own."""
+    return {**EXPECTED[sample], **COLLECTION_ROUTINES[sample]}
+
+
 # The rewrite each sample's rewritten routine gets, and the check that keeps the other
 # from being carried.
 REWRITE = {
@@ -110,6 +145,19 @@ def test_each_synthetic_routine_gets_its_outcome(sample_run: PipelineResult) -> 
             assert failed == [FAILED[sample]], (kind, rid, row)
 
 
+def test_each_collection_routine_gets_its_outcome(sample_run: PipelineResult) -> None:
+    """The routines the sample's own collection holds go through the same phase: on
+    discourse the 6 guard functions are rewritten and their 3 triggers carried as they
+    are (#2378)."""
+    sample = sample_run.db
+    migration = _migration(sample_run)
+    for (kind, rid), status in COLLECTION_ROUTINES[sample].items():
+        row = _of(migration["routines"], kind, rid)
+        assert row["status"] == status and row["reasons"] == [], (kind, rid, row)
+        rewrites = [w["rule_id"] for w in row["rewrites"]]
+        assert rewrites == ([REWRITE[sample]] if status == "rewritten" else []), (kind, rid)
+
+
 def test_only_the_deliberate_routine_needs_attention(sample_run: PipelineResult) -> None:
     """With the sample's routine set added, a trigger the collection lists with no source
     text (and a table it does not hold) is no routine to migrate: the one that needs
@@ -117,7 +165,7 @@ def test_only_the_deliberate_routine_needs_attention(sample_run: PipelineResult)
     migration = _migration(sample_run)
     needs = [r for r in migration["routines"] if r["status"] == "needs_attention"]
     assert [(r["kind"], r["routine_id"]) for r in needs] == [_key(sample_run.db, "needs_attention")]
-    assert migration["total"] == len(EXPECTED[sample_run.db])
+    assert migration["total"] == len(all_routines(sample_run.db))
 
 
 def _rewrite_record(run: PipelineResult, migration: dict[str, Any]) -> Any:
@@ -301,12 +349,12 @@ def test_no_routine_text_reaches_report_json_or_the_deliverables(
 
 
 def test_the_counts_hold_only_the_routines_with_code(sample_run: PipelineResult) -> None:
-    """#2124: discourse's collection lists 266 extension functions and aggregates by name
-    only (before #1652): none is a routine to carry or to migrate yourself. Its 3 old
-    triggers carry an action statement, not a CREATE, and the sample's routine sources
-    hold none for them: with those sources present they are names only too (#2425)."""
+    """The counts hold the routines with code: the synthetic set and the collection's own.
+    #2124: a collection that lists extension functions by name only (the discourse sample
+    bundled before #2378 listed 266) counts none of them, and #2425: a trigger with an
+    action statement but no ``CREATE`` is a name only too."""
     facts = _report(sample_run)["facts"]["routines"]
-    assert facts["routine_count"] == len(EXPECTED[sample_run.db])
+    assert facts["routine_count"] == len(all_routines(sample_run.db))
     assert facts["migrate_yourself_count"] == 1
     assert facts["migrate_yourself_line"] == (
         "we could not translate 1 routine automatically; migrate it yourself before wave 1"

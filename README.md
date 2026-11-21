@@ -39,7 +39,7 @@ The repository ships a WordPress + WooCommerce sample (50 tables, 163 queries). 
 
 The recorded run in the demo above took about 21 minutes, including the first build of the local UI and the wait at the approval gate. It stops once, after the engine assignment, for your approval. After you approve, it finishes on its own. Add `--mode chat` for a terminal-only run with no UI.
 
-The samples are synthetic: their data is generated test data, not customer data. The WordPress collection was taken after a seeded load of "16,071 HTTP requests in 1,643 seconds", and "each statement's call rate is its execution count over its own first-to-last-seen window, about 27 minutes of the workload" ([its README](https://github.com/aws-samples/sample-aws-genai-db-modernizer/blob/main/docs/examples/wordpress/README.md)). A larger PostgreSQL sample, Discourse (311 tables and 1,654 queries), is in `docs/examples/discourse/`.
+The samples are synthetic: their data is generated test data, not customer data. The WordPress collection was taken after a seeded load of "16,071 HTTP requests in 1,643 seconds", and "each statement's call rate is its execution count over its own first-to-last-seen window, about 27 minutes of the workload" ([its README](https://github.com/aws-samples/sample-aws-genai-db-modernizer/blob/main/docs/examples/wordpress/README.md)). A larger PostgreSQL sample, Discourse (312 tables and 2,859 queries), is in `docs/examples/discourse/`.
 
 ### 3. Read the results
 

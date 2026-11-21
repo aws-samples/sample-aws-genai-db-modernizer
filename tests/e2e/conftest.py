@@ -229,6 +229,24 @@ def dnn_run(e2e_root: Path) -> PipelineResult:
 
 
 @pytest.fixture(scope="session")
+def discourse_pre_2378_run(e2e_root: Path) -> PipelineResult:
+    """The deterministic discourse job on the collection bundled before #2378
+    (``pipeline.run_pre_2378_discourse``), cached once per session: the shapes the
+    refreshed sample lacks."""
+    if _external_env() is not None:
+        pytest.skip("external-job mode: no deterministic run")
+    cached = _PIPELINE_CACHE.get("discourse-pre-2378")
+    if cached is not None:
+        return cached
+    from tests.e2e.pipeline import run_pre_2378_discourse
+
+    result = run_pre_2378_discourse(e2e_root / "artifacts", "e2e-dpre")
+    _RESULTS.append(result)
+    _PIPELINE_CACHE["discourse-pre-2378"] = result
+    return result
+
+
+@pytest.fixture(scope="session")
 def designed_pre_1955(e2e_root: Path) -> PipelineResult:
     """The designed wordpress job on the collection bundled before #1955
     (``designed_run.run_pre_1955_designed_wordpress``), cached once per session: the

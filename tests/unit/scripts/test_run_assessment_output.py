@@ -121,7 +121,7 @@ def test_discourse_collect_line_reports_the_table_refs_parser(discourse_compact)
     collect = next(line for line in lines if line["phase"] == "collect")
     assert collect["table_refs"] == DISCOURSE_TABLE_REFS
     log = (tmp_path / lines[-1]["log"]).read_text(encoding="utf-8")
-    assert '"table_refs": {"regex_fallback": 13' in log
+    assert '"table_refs": {"regex_fallback": 4' in log
 
 
 def test_discourse_log_has_the_progress(discourse_compact):

@@ -309,11 +309,12 @@ class TestNormalisedTextIsUntouched:
     def test_postgresql_text_is_unchanged_but_where_literals_remain(self) -> None:
         texts = _sample_texts("discourse")
         changed = [t for t in texts if redact_literals(t, "postgresql") != t]
-        # pg_stat_statements normalises every statement but its utility ones; the sample
-        # also holds two statements written with literals. Only those four change.
-        assert len(changed) == 4, changed
-        assert sorted(t.split()[0] for t in changed) == ["SET", "SET", "UPDATE", "WITH"]
-        assert sum(redact_literals(t, "postgresql") == t for t in texts) == len(texts) - 4
+        # pg_stat_statements normalises every statement but its utility ones (three SETs
+        # in the sample refreshed in #2378, two before); the sample also holds two
+        # statements written with literals. Only those five change.
+        assert len(changed) == 5, changed
+        assert sorted(t.split()[0] for t in changed) == ["SET", "SET", "SET", "UPDATE", "WITH"]
+        assert sum(redact_literals(t, "postgresql") == t for t in texts) == len(texts) - 5
 
 
 # Statements of every source dialect whose literals carry what the routing parser reads:
