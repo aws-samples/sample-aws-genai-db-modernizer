@@ -134,23 +134,83 @@ def _same_named(wide_first: bool) -> list[AgentTable]:
                        indexes=indexes)]  # fmt: skip
 
 
+def _quoted_namesake() -> list[AgentTable]:
+    """#2353's falsifying shape: ``"zq9x`` (a leading double quote) next to ``zq9x``."""
+    column = AgentColumn(column_name="zq9x0", data_type="int", nullable=True)
+    return [AgentTable(table_id='s."zq9x', table_name='"zq9x', row_count=1, columns=[column])]
+
+
+def _zq9x(schema: str | None, *columns: str) -> AgentTable:
+    return AgentTable(table_id=f"{schema or 's'}.zq9x", table_name="zq9x", schema_name=schema,
+                      row_count=None, columns=[AgentColumn(column_name=c, nullable=False)
+                                               for c in columns])  # fmt: skip
+
+
 @settings(max_examples=scaled(150), deadline=None, suppress_health_check=[HealthCheck.too_slow])
 @given(
     tables=_tables(),
     more=_tables(),
     engine=st.sampled_from(sorted(MODELS)),
+    schema=st.one_of(st.none(), _hostile),
 )
-@example(tables=_same_named(True), more=[], engine="aurora_mysql")
-@example(tables=_same_named(False), more=[], engine="aurora_mysql")
+@example(tables=_same_named(True), more=[], engine="aurora_mysql", schema=None)
+@example(tables=_same_named(False), more=[], engine="aurora_mysql", schema=None)
+@example(tables=_quoted_namesake(), more=_same_named(True), engine="aurora_mysql", schema=None)
+@example(tables=[_zq9x(None, "zq9x0")], more=[_zq9x(None, "zq9x0", "zq9x1")],
+         engine="aurora_mysql", schema="zq9x")  # fmt: skip
+@example(tables=[_zq9x(None, "zq9x0")], more=[_zq9x(None, "zq9x0", "zq9x1")],
+         engine="aurora_postgresql", schema="zq9x")  # fmt: skip
 def test_every_design_the_generator_writes_loads_unchanged(
-    tmp_path_factory: pytest.TempPathFactory, tables, more, engine: str
+    tmp_path_factory: pytest.TempPathFactory, tables, more, engine: str, schema: str | None
 ) -> None:
     """Hostile collector text (quotes, backticks, newlines, comments, backslashes in
-    names, defaults and predicates) makes no design the generator writes unloadable."""
-    if more and tables[0].table_name == more[0].table_name:
-        more = []
+    names, defaults and predicates) makes no design the generator writes unloadable,
+    also when ``tables`` share one schema and ``more`` report none (#2353), and when two
+    tables have one name (both are left out)."""
+    if schema is not None:
+        tables = [t.model_copy(update={"schema_name": schema}) for t in tables]
     design = _merged(engine, tables + more)
     store, key = _store(tmp_path_factory.mktemp("d"), engine, design)
+    assert store.read_json(key) == json.loads(json.dumps(design))
+
+
+_ODD_NAMES = ["order items", "order-items", "we`ird", 'we"ird', "a``b", 'x""y', "`", '"zq9x',
+              "Mixed Case", "x;DROP TABLE y;--"]  # fmt: skip
+
+
+@pytest.mark.passes_on_main
+@pytest.mark.parametrize("engine", sorted(MODELS))
+@pytest.mark.parametrize("name", _ODD_NAMES)
+def test_a_design_of_an_oddly_named_table_generates_saves_and_reloads(
+    tmp_path: Path, engine: str, name: str
+) -> None:
+    """#2353: a table whose name holds a space, a hyphen, a backtick or a double quote is
+    created under the dialect's quoting (the quote character doubled inside), with its
+    index, and a foreign key on another table naming it; the saved design reads back
+    exactly as written."""
+    from src.contracts.schema_design_input import AgentForeignKey
+    from src.tools.schema.aurora_common.ddl_generator import quote_table
+
+    odd = AgentTable(table_id=f"s.{name}", table_name=name, row_count=1, primary_key=["id"],
+                     columns=[AgentColumn(column_name="id", data_type="int", nullable=False),
+                              AgentColumn(column_name=f"{name} col", data_type="int",
+                                          nullable=True)],
+                     indexes=[AgentIndex(index_name=f"{name} ix", columns=[f"{name} col"],
+                                         is_unique=False)])  # fmt: skip
+    ref = AgentTable(table_id="s.plain", table_name="plain", row_count=1, primary_key=["pid"],
+                     columns=[AgentColumn(column_name="pid", data_type="int", nullable=False),
+                              AgentColumn(column_name="ref", data_type="int", nullable=True)],
+                     foreign_keys=[AgentForeignKey(constraint_name=f"fk {name}", columns=["ref"],
+                                                   referenced_table=name,
+                                                   referenced_columns=["id"])])  # fmt: skip
+    design = _merged(engine, [odd, ref])
+    assert [t["table_name"] for t in design["table_definitions"]] == [name, "plain"]
+    dialect = AuroraDesignBase(engine=engine, job_id="j", source_database="d",
+                               source_engine="mysql", tables=[]).dialect  # fmt: skip
+    quoted = quote_table(dialect, name, None)
+    assert f"CREATE TABLE {quoted} (" in design["generated_ddl"]
+    assert f"REFERENCES {quoted} (" in design["generated_ddl"]
+    store, key = _store(tmp_path, engine, design)
     assert store.read_json(key) == json.loads(json.dumps(design))
 
 

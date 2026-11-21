@@ -36,7 +36,7 @@ from src.shared.sql_identifiers import (
     has_unprintable,
     quote_identifier,
 )
-from src.shared.table_keys import colliding_keys, is_system_schema, table_key
+from src.shared.table_keys import colliding_keys, is_system_schema, spans_schemas, table_key
 from src.tools.schema.aurora_common.constraint_translator import (
     DefaultTranslation,
     fk_on_delete_clause,
@@ -1650,17 +1650,26 @@ def quotable_tables(
     name (``table_keys.table_key``, case and quote marks folded) another table has is left
     out, in a design of one schema too (#2478, ``Orders`` and ``orders``); two schemas'
     tables whose names differ only by case are both kept, also in step 1's base, which
-    keys tables by their bare names. So is every table of a system
-    schema of ``source_engine`` (``table_keys.is_system_schema``, #2478: ``sys`` is one on
-    MySQL, a user schema on PostgreSQL)."""
+    keys tables by their bare names. A design of one schema creates a table the collector
+    reports with no schema under its bare name too, so it is keyed without a schema there,
+    and ``public.orders`` and a schemaless ``orders`` collide (#2353). Every table of a
+    system schema of ``source_engine`` is left out too (``table_keys.is_system_schema``,
+    #2478: ``sys`` is one on MySQL, a user schema on PostgreSQL)."""
     out: list[AgentTable] = []
     left_out: list[dict] = []
+    designable = [t for t in tables if not is_system_schema(t.schema_name, source_engine)]
+    one_schema = not qualified and not spans_schemas(
+        (t.schema_name for t in designable), source_engine
+    )
+
+    def created_in(t: AgentTable) -> str | None:
+        """The schema the key names: none in a design of one schema, which names none."""
+        return None if one_schema else t.schema_name
 
     def key(t: AgentTable) -> str:
-        return table_key(t.table_name, t.schema_name)
+        return table_key(t.table_name, created_in(t))
 
-    designable = [t for t in tables if not is_system_schema(t.schema_name, source_engine)]
-    shared = colliding_keys((t.table_name, t.schema_name) for t in designable)
+    shared = colliding_keys((t.table_name, created_in(t)) for t in designable)
     kept_tables = [t for t in designable if key(t) not in shared]
     # A key resolves against every user table, the ones left out included (#2525 review): its
     # own schema's table of the name wins even when that table is not designed, so the key
