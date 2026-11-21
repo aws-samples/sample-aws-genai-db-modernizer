@@ -9,12 +9,9 @@ lets both API tasks (and restarts) reuse it instead of each rebuilding.
 
 from __future__ import annotations
 
-import logging
 from pathlib import Path
 
 from src.storage.artifact_store import ArtifactStore
-
-logger = logging.getLogger(__name__)
 
 
 class GraphPersistence:
@@ -29,10 +26,6 @@ class GraphPersistence:
 
     def download_if_exists(self, db_name: str, job_id: str, local_path: str) -> bool:
         """Download the graph to local_path. Return False if it isn't stored yet."""
-        # `supports_bytes` is not on the ArtifactStore ABC: a JSON-only store
-        # sets it False; the True default preserves S3/local behavior.
-        if not getattr(self._store, "supports_bytes", True):
-            return False
         key = self.graph_key(db_name, job_id)
         if not self._store.exists(key):
             return False
@@ -44,12 +37,5 @@ class GraphPersistence:
 
     def upload(self, db_name: str, job_id: str, local_path: str) -> None:
         """Upload the freshly built graph file to the store."""
-        if not getattr(self._store, "supports_bytes", True):
-            logger.info(
-                "graph persistence skipped: backend %s does not support bytes; "
-                "the graph will be rebuilt on demand from STATE artifacts",
-                type(self._store).__name__,
-            )
-            return
         data = Path(local_path).read_bytes()
         self._store.write_bytes(self.graph_key(db_name, job_id), data)

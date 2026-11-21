@@ -4,8 +4,7 @@
 """Render every customer deliverable from one synthesis report.
 
 Single entry point for the local scripts and the API. It only renders; the caller decides where items go: every item is a file of the
-job's ``deliverables/`` folder (``FOLDER_ENTRIES``), and ``publish`` marks the ones
-handed to a delivery channel. No LLM calls; content is a pure function of the
+job's ``deliverables/`` folder (``FOLDER_ENTRIES``). No LLM calls; content is a pure function of the
 report apart from the provenance timestamp and the code commit of the render (#1166).
 """
 
@@ -76,8 +75,7 @@ class Deliverable:
     content: bytes
     file_type: FileType
     label: str  # human title, e.g. "Engineering Report: discourse"
-    filename: str  # download filename on the delivery channel
-    publish: bool  # hand to the delivery channel
+    filename: str  # versioned download name; the folder copy keeps the stable one
 
 
 @dataclass(frozen=True)
@@ -346,9 +344,8 @@ def render_deliverables(
             "MARKDOWN",
             f"Engineering Report: {database_name} (v{assignment_version})",
             engineering["filename"],
-            publish=True,
         ),
-        # The published JSON is wrapped with an identity envelope; the object at
+        # The JSON deliverable is wrapped with an identity envelope; the object at
         # report_key is NOT touched. That one is the system of record and is
         # validated against the synthesis contract on re-read, so injecting a key
         # into it would risk failing validation for the sake of a filename.
@@ -366,16 +363,14 @@ def render_deliverables(
             "JSON",
             f"Assessment Data (raw): {database_name} (v{assignment_version})",
             data["filename"],
-            publish=True,
         ),
     ]
 
     collector = _collector_output(store, report_key)
     try:
         # #1364: the routing record behind the reports, read from the job's saved
-        # assignments, access-pattern record and analyses (never scored again). In the
-        # folder, not handed to the delivery channel: it is an audit file, and runs to
-        # megabytes on a large workload.
+        # assignments, access-pattern record and analyses (never scored again). An audit
+        # file, and runs to megabytes on a large workload.
         detailed = prov("engineering-report-detailed", "md")
         detail = load_routing_detail(store, report_key, report, collector)
         out.items.append(
@@ -387,7 +382,6 @@ def render_deliverables(
                 "MARKDOWN",
                 f"Detailed Engineering Report: {database_name} (v{assignment_version})",
                 detailed["filename"],
-                publish=False,
             )
         )
     except Exception as e:  # noqa: BLE001 - optional deliverable
@@ -406,7 +400,7 @@ def render_deliverables(
             commit_line=build_commit_line(commit),
         )
         out.items.append(
-            # The folder copy keeps the stable name; the published download name
+            # The folder copy keeps the stable name; the versioned download name
             # and label state the round (#146, #147) so the flat panel tells
             # rounds apart.
             Deliverable(
@@ -415,7 +409,6 @@ def render_deliverables(
                 "PDF",
                 f"Executive Report: {database_name} (v{assignment_version})",
                 f"{executive_report.FILENAME.removesuffix('.pdf')}_v{assignment_version}.pdf",
-                publish=True,
             )
         )
     except Exception as e:  # noqa: BLE001 - optional deliverable

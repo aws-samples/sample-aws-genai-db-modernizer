@@ -99,34 +99,6 @@ def test_runs_all_selected_engines_and_writes_same_artifacts(prepared_store) -> 
         assert phase == f"analysis_{_ANALYSIS_ENGINES[engine].target_database}"
 
 
-def test_analysis_survives_json_only_store_rejecting_er_diagram(prepared_store) -> None:
-    """A JSON-only store raises NotImplementedError on write_text. dynamodb and
-    documentdb set mermaid_always=True, so they always write an er-diagram.mmd via
-    write_text. The write is tolerated: analysis succeeds with no ER diagram
-    artifact rather than failing the engine."""
-    store, job, db = prepared_store
-
-    class _JsonOnlyStore:
-        """Delegates to a real store but rejects write_text."""
-
-        def __init__(self, inner):
-            self._inner = inner
-
-        def write_text(self, *args, **kwargs):
-            raise NotImplementedError("this store is JSON-only")
-
-        def __getattr__(self, name):
-            return getattr(self._inner, name)
-
-    summary = run_all_analyses(job, db, engines=["dynamodb"], store=_JsonOnlyStore(store))
-
-    assert summary["engines_analyzed"] == ["dynamodb"]
-    assert summary["engines_failed"] == []
-    # The analysis JSON still lands; only the non-essential ER diagram is skipped.
-    assert store.exists(f"{db}/{job}/analysis-dynamodb/analysis.json")
-    assert not store.exists(f"{db}/{job}/analysis-dynamodb/er-diagram.mmd")
-
-
 @pytest.mark.passes_on_main  # existing behaviour the raise must keep
 def test_explicit_engines_override_triage(prepared_store) -> None:
     store, job, db = prepared_store

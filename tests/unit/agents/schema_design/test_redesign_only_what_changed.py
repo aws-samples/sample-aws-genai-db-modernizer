@@ -414,7 +414,7 @@ def test_a_retried_redesign_designs_nothing_again_and_keeps_the_carried_parts(ru
 
 
 class _NoDeleteStore(LocalArtifactStore):
-    """A store that cannot delete (S3 without delete rights, a JSON-only store)."""
+    """A store that cannot delete (S3 without delete rights)."""
 
     def delete(self, path: str) -> bool:
         return False

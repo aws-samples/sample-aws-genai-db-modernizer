@@ -544,12 +544,12 @@ def test_a_pre_ledger_assignment_renders(tmp_path):
     assert "No move ledger" in md
 
 
-def test_the_folder_lists_the_detailed_report_apart_and_does_not_publish_it(tmp_path):
+def test_the_folder_lists_the_detailed_report_apart(tmp_path):
     store = _store(tmp_path)
     store.write_json(REPORT_KEY, _report())
     rendered = deliverables.render_deliverables(store, JOB, DB, REPORT_KEY, assignment_version=2)
     item = next(d for d in rendered.items if d.name == "engineering-report-detailed")
-    assert item.file_type == "MARKDOWN" and not item.publish
+    assert item.file_type == "MARKDOWN"
     entry = next(e for e, _ in rendered.folder_files() if e.name == item.name)
     assert entry.filename == "engineering-report-detailed.md" and entry.audit
     index = deliverables.render_folder_index(DB, JOB, 2, [e for e, _ in rendered.folder_files()])
