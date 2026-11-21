@@ -74,6 +74,8 @@ from src.tools.data_movement.collations import (
     column_options,
     database_options,
     database_sentence,
+    database_target,
+    databases_sentence,
     table_options,
 )
 from src.tools.data_movement.dms_control import CONTROL_SCHEMA, control_tables_settings
@@ -593,7 +595,8 @@ def _step1_ddl(
         if not qualified:
             moves = bare in rules
         else:
-            found = referenced_table(bare, t.schema_name, schemas_of)
+            # #2531: the schema the collection reports for the key, else the bare-name rule.
+            found = referenced_table(bare, t.schema_name, schemas_of, fk.referenced_schema)
             moves = found is not None and (found[1], found[0].lower()) in pairs
         if moves:
             return True
@@ -1851,14 +1854,18 @@ def _lob_lines(inputs: Step1Inputs) -> list[str]:
     return ["", head]
 
 
-def _collation_sentence(target: Any) -> str:
+def _collation_sentence(inputs: Step1Inputs) -> str:
+    target = inputs.contract.target
+    if target.databases and keeps_schemas(inputs.contract):  # #2531: each its own
+        return databases_sentence(target, target_schemas(inputs.contract))
     return database_sentence(target.collation, target.engine_line, target.collation_note)
 
 
 def _collation_lines(inputs: Step1Inputs) -> list[str]:
     """The tables and columns that keep a collation of their own, and each one whose source
-    collation is not carried and why (#2276); none when the database's is not carried."""
-    if inputs.contract.target.collation is None:
+    collation is not carried and why (#2276); none when no database's is carried."""
+    target = inputs.contract.target
+    if target.collation is None and not any(d.collation for d in target.databases or []):
         return []
     rules = _selected(inputs.contract)
     own = [r.source_table for r in rules if r.collation is not None]
@@ -1968,7 +1975,7 @@ def render_ddl(inputs: Step1Inputs) -> str:
         "About this DDL:",
         "- Keep the declared column names: DMS matches columns by name, not by position, so the column "
         "order does not matter but a renamed column gets no data.",
-        f"- {_collation_sentence(inputs.contract.target)}",
+        f"- {_collation_sentence(inputs)}",
         "- The indexes of a saved schema design are not in this file: it creates the keys, the source's "
         "indexes and the foreign keys between moved tables only. Add the design's indexes when you choose."
         + (
@@ -2032,13 +2039,13 @@ def render_ddl(inputs: Step1Inputs) -> str:
             out += f"CREATE EXTENSION IF NOT EXISTS {_pg_ident(e.name)};\n"
     else:
         target = inputs.contract.target
-        options = database_options(target.collation, target.engine_line)
         out += f"\nCREATE DATABASE IF NOT EXISTS `{CONTROL_SCHEMA}`;\n"
         for name in schemas if several else [database]:
             db = name.replace("`", "``")
-            alter = "".join(
-                f"{line}\n" for line in alter_comment(name, target.collation, target.engine_line)
-            )
+            # #2531: each database its own source database's collation, when listed.
+            value = database_target(target, name)[0] if several else target.collation
+            options = database_options(value, target.engine_line)
+            alter = "".join(f"{line}\n" for line in alter_comment(name, value, target.engine_line))
             out += f"CREATE DATABASE IF NOT EXISTS `{db}`{options};\n{alter}"
         if not several:  # the tables name their database: no USE (#2494)
             out += f"USE `{database.replace('`', '``')}`;\n"

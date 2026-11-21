@@ -21,6 +21,7 @@ column its table's. A collection that records no database collation carries noth
 from __future__ import annotations
 
 import re
+from typing import Any
 
 from src.contracts.transformation_contract import CharacterSet
 
@@ -261,6 +262,30 @@ def database_sentence(
     return (f"It creates the database with {options}, the source's, when it does not exist yet, so "
             "the tables, the routines and their parameters compare text as the source does; a table "
             f"or column that differs on the source keeps its own. {EXISTING}")  # fmt: skip
+
+
+def database_target(target: Any, name: str | None) -> tuple[CharacterSet | None, str | None]:
+    """The character set and collation step 1 gives the database ``name``, and why not: its
+    own entry of ``target.databases`` on a step of several databases (#2531), else the
+    step's (``target.collation``, ``target.collation_note``)."""
+    for database in getattr(target, "databases", None) or []:
+        if database.name == name:
+            return database.collation, database.collation_note
+    return target.collation, target.collation_note
+
+
+def databases_sentence(target: Any, names: list[str]) -> str:
+    """:func:`database_sentence` for the databases ``names`` (#2531): the one sentence when
+    every one gets the same, else one per database, each after its name."""
+    picks = {name: database_target(target, name) for name in names}
+    seen = {(v.model_dump_json() if v else None, n) for v, n in picks.values()}
+    if len(seen) <= 1:
+        value, note = next(iter(picks.values()), (target.collation, target.collation_note))
+        return database_sentence(value, target.engine_line, note)
+    each = " ".join(
+        f"{name}: {database_sentence(v, target.engine_line, n)}" for name, (v, n) in picks.items()
+    )
+    return f"Each database gets its own source database's collation. {each}"
 
 
 def alter_comment(name: str, value: CharacterSet | None, line: str | None = None) -> list[str]:

@@ -82,6 +82,7 @@ from src.contracts.collector_output import (
     SourceEnumType,
     SourceExtension,
     SourceHost,
+    SourceSchema,
     SourceSettings,
     Table,
     Trigger,
@@ -950,6 +951,7 @@ def _build_tables(
                 constraint_name=fk["constraint_name"],
                 columns=fk["columns"],
                 referenced_table=fk["referenced_table"],
+                referenced_schema=fk.get("referenced_schema"),
                 referenced_columns=fk["referenced_columns"],
                 on_delete=fk.get("on_delete"),
                 on_update=fk.get("on_update"),
@@ -1023,6 +1025,7 @@ def _build_tables_from_ddl(raw_tables: list[dict], db_name: str) -> list[Table]:
                 constraint_name=fk["constraint_name"],
                 columns=fk["columns"],
                 referenced_table=fk["referenced_table"],
+                referenced_schema=fk.get("referenced_schema"),
                 referenced_columns=fk["referenced_columns"],
                 on_delete=fk.get("on_delete"),
                 on_update=fk.get("on_update"),
@@ -1119,14 +1122,42 @@ def _charset_name(value: Any) -> str | None:
     return text if text and text.upper() != "NULL" and len(text) <= 64 else None
 
 
-def source_charset(raw: object) -> dict[str, str | None]:
+def source_charset(raw: object) -> dict[str, Any]:
     """``SourceDatabase``'s default character set and collation from what a collection
     read (#2276): the offline script's metadata, a live stage's
-    :meth:`~src.tools.database.mysql_tools.MySQLRemoteCollector.get_database_charset`."""
+    :meth:`~src.tools.database.mysql_tools.MySQLRemoteCollector.get_database_charset`; and
+    each database's (``schemas``, #2531) when the offline script listed them."""
     if not isinstance(raw, Mapping):
         return {}
-    kept = {k: _charset_name(raw.get(k)) for k in ("default_character_set", "default_collation")}
+    kept: dict[str, Any] = {
+        k: _charset_name(raw.get(k)) for k in ("default_character_set", "default_collation")
+    }
+    schemas = source_schemas(raw.get("schemas"))
+    if schemas is not None:
+        kept["schemas"] = schemas
     return {k: v for k, v in kept.items() if v is not None}
+
+
+def source_schemas(raw: object) -> list[SourceSchema] | None:
+    """Each database's default character set and collation, as the MySQL script lists them
+    in ``metadata.schemas`` (#2531), sorted by name; None when the collection lists none (a
+    collection written before #2531). An entry with no usable name is skipped, and a name
+    listed twice keeps its first entry."""
+    if not isinstance(raw, list):
+        return None
+    schemas: dict[str, SourceSchema] = {}
+    for entry in raw:
+        if not isinstance(entry, Mapping):
+            continue
+        name = _text_or_none(entry.get("schema_name"))
+        if not name or name in schemas:
+            continue
+        schemas[name] = SourceSchema(
+            schema_name=name,
+            default_character_set=_charset_name(entry.get("default_character_set")),
+            default_collation=_charset_name(entry.get("default_collation")),
+        )
+    return [schemas[k] for k in sorted(schemas)] if schemas else None
 
 
 def _offline_query_log_source(engine: str) -> QueryLogSource:

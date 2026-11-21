@@ -305,9 +305,12 @@ foreign_keys_data AS (
   FROM (
     SELECT
       cl.relname AS table_name,
+      -- #2531: the key's own schema and its referenced table's, which may differ.
+      n.nspname AS schema_name,
       c.conname AS constraint_name,
       a.attname AS column_name,
       k.ordinal_position,
+      rn.nspname AS referenced_schema_name,
       rcl.relname AS referenced_table_name,
       ra.attname AS referenced_column_name,
       CASE c.confdeltype
@@ -320,6 +323,7 @@ foreign_keys_data AS (
     JOIN pg_catalog.pg_class cl ON cl.oid = c.conrelid
     JOIN pg_catalog.pg_namespace n ON n.oid = cl.relnamespace
     JOIN pg_catalog.pg_class rcl ON rcl.oid = c.confrelid
+    JOIN pg_catalog.pg_namespace rn ON rn.oid = rcl.relnamespace
     CROSS JOIN LATERAL unnest(c.conkey, c.confkey) WITH ORDINALITY AS k(attnum, rattnum, ordinal_position)
     JOIN pg_catalog.pg_attribute a ON a.attrelid = c.conrelid AND a.attnum = k.attnum
     JOIN pg_catalog.pg_attribute ra ON ra.attrelid = c.confrelid AND ra.attnum = k.rattnum

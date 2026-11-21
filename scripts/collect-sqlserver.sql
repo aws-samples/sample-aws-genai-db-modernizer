@@ -482,6 +482,7 @@ SET @foreign_keys = (
         s.name AS schema_name,
         fk.name AS constraint_name,
         col.name AS column_name,
+        rs.name AS referenced_schema_name,
         rt.name AS referenced_table_name,
         rcol.name AS referenced_column_name,
         REPLACE(fk.update_referential_action_desc, '_', ' ') AS on_update,
@@ -495,6 +496,8 @@ SET @foreign_keys = (
     INNER JOIN sys.columns col
         ON col.object_id = fkc.parent_object_id AND col.column_id = fkc.parent_column_id
     INNER JOIN sys.tables rt ON fk.referenced_object_id = rt.object_id
+    -- #2531: the referenced table's schema, which may differ from the key's own.
+    INNER JOIN sys.schemas rs ON rt.schema_id = rs.schema_id
     INNER JOIN sys.columns rcol
         ON rcol.object_id = fkc.referenced_object_id
         AND rcol.column_id = fkc.referenced_column_id

@@ -183,6 +183,9 @@ class AgentForeignKey(BaseModel):
     constraint_name: str
     columns: list[str]
     referenced_table: str
+    # #2531: the referenced table's schema when the collection reports it; left out of the
+    # dump when None, so a design input of an older collection keeps its bytes.
+    referenced_schema: str | None = Field(None, exclude_if=lambda value: value is None)
     referenced_columns: list[str]
     on_delete: ForeignKeyAction | None = None
 
@@ -714,6 +717,7 @@ def project_schema_design_tables(collector_output: CollectorOutputContract) -> l
                         constraint_name=fk.constraint_name,
                         columns=fk.columns,
                         referenced_table=fk.referenced_table,
+                        referenced_schema=fk.referenced_schema,
                         referenced_columns=fk.referenced_columns,
                         on_delete=(ForeignKeyAction(fk.on_delete.value) if fk.on_delete else None),
                     )

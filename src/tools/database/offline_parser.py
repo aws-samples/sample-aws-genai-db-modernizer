@@ -32,6 +32,7 @@ from src.shared.rate_window import (
 from src.shared.sample_rows import without_sample_rows
 from src.shared.server_counters import offline_server_counters
 from src.shared.sql_spans import span_dialect, span_settings_of, with_span_settings
+from src.tools.database.foreign_key_schema import referenced_schema
 from src.tools.database.index_keys import (
     add_index_key,
     expression_key_fields,
@@ -288,28 +289,33 @@ def _parse_offline_collection(
             if not any(n is not None for n in index["prefix_lengths"]):
                 index["prefix_lengths"] = None
 
-    fks_by_table: dict[str, dict[str, dict]] = {}
+    # Keyed by table name, then the key's own schema: a row that names its schema (#2531:
+    # PostgreSQL, SQL Server) goes to that schema's table only, so two schemas' tables of
+    # one name keep their own keys; a row with none (MySQL, Oracle, a collection written
+    # before #2531) goes under None, read by every table of its name (_table_fks).
+    fks_by_table: dict[str, dict[str | None, dict[str, dict]]] = {}
     # A foreign key's column order is its position in the constraint (``ordinal_position``;
     # SQL Server's ``constraint_column_id``), not the row order: MySQL's JSON_ARRAYAGG
     # drops the subquery's ORDER BY (#1868). The sort is stable and moves a row as a whole,
     # so ``columns`` and ``referenced_columns`` stay aligned, and rows without a position
     # keep their order.
     for fk in sorted(data.get("foreign_keys") or [], key=_fk_position):
-        tbl = fk["table_name"]
+        schema = str(fk.get("schema_name") or "") or None
+        by_name = fks_by_table.setdefault(fk["table_name"], {}).setdefault(schema, {})
         name = fk["constraint_name"]
-        if tbl not in fks_by_table:
-            fks_by_table[tbl] = {}
-        if name not in fks_by_table[tbl]:
-            fks_by_table[tbl][name] = {
+        if name not in by_name:
+            by_name[name] = {
                 "constraint_name": name,
                 "columns": [],
                 "referenced_table": fk["referenced_table_name"],
+                # #2531: the referenced table's schema, when the collection reports it.
+                **referenced_schema(fk),
                 "referenced_columns": [],
                 "on_delete": fk.get("on_delete"),
                 "on_update": fk.get("on_update"),
             }
-        fks_by_table[tbl][name]["columns"].append(fk["column_name"])
-        fks_by_table[tbl][name]["referenced_columns"].append(fk["referenced_column_name"])
+        by_name[name]["columns"].append(fk["column_name"])
+        by_name[name]["referenced_columns"].append(fk["referenced_column_name"])
 
     pks_by_table: dict[str, list[str]] = {}
     # The key's order is its ``ordinal_position``, not the row order: MySQL's
@@ -345,7 +351,7 @@ def _parse_offline_collection(
                 "table_id": table_id,
                 "columns": columns_by_table.get(tbl_name, []),
                 "indexes": list(indexes_by_table.get(tbl_name, {}).values()),
-                "foreign_keys": list(fks_by_table.get(tbl_name, {}).values()),
+                "foreign_keys": _table_fks(fks_by_table, t.get("schema_name"), tbl_name),
                 "primary_key": pks_by_table.get(tbl_name, []),
             }
         )
@@ -429,6 +435,21 @@ def _parse_offline_collection(
         # #1834: the PostgreSQL script's enum types and labels; None when not collected.
         "enum_types": data.get("enum_types"),
     }
+
+
+def _table_fks(
+    fks_by_table: dict[str, dict[str | None, dict[str, dict]]], schema: object, table: str
+) -> list[dict]:
+    """The foreign keys of the collected table ``table`` of ``schema`` (#2531): the rows
+    that name no schema, then those of its own schema. A table with no schema (a collection
+    written by hand) takes every row of its name, as before #2531."""
+    own = str(schema or "") or None
+    by_schema = fks_by_table.get(table, {})
+    keys = sorted(
+        (k for k in by_schema if own is None or k in (None, own)),
+        key=lambda k: (k is not None, k or ""),
+    )
+    return [fk for k in keys for fk in by_schema[k].values()]
 
 
 def _index_key_position(row: dict) -> tuple[bool, int]:

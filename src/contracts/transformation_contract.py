@@ -122,6 +122,23 @@ class CharacterSet(BaseModel):
     collation: str = Field(..., pattern=r"^[a-z0-9_]{1,64}$", description="e.g. utf8mb4_unicode_ci")
 
 
+class TargetDatabase(BaseModel):
+    """One Aurora MySQL database of a step of several databases, with the character set and
+    collation step 1 gives it: its own source database's (#2531)."""
+
+    name: str = Field(..., min_length=1, description="The database's name: its source database's")
+    collation: CharacterSet | None = Field(
+        None,
+        exclude_if=lambda value: value is None,
+        description="Its source database's character set and collation; None when not carried",
+    )
+    collation_note: str | None = Field(
+        None,
+        exclude_if=lambda value: value is None,
+        description="Why its source database's collation is not carried, and what to do",
+    )
+
+
 class TargetSpec(BaseModel):
     """The engine the step writes."""
 
@@ -150,6 +167,15 @@ class TargetSpec(BaseModel):
             "Aurora MySQL: the Aurora major line the carried collations were checked against "
             "(the plan's target_engine_line); the scripts check them against its list again "
             "(#2276). None: the oldest line"
+        ),
+    )
+    databases: list[TargetDatabase] | None = Field(
+        None,
+        exclude_if=lambda value: value is None,
+        description=(
+            "Aurora MySQL, a step of several databases whose collection lists each database's "
+            "collation (#2531): each database and the collation step-1.ddl.sql and the routine "
+            "scripts give it, by name. None: every database gets ``collation``"
         ),
     )
 

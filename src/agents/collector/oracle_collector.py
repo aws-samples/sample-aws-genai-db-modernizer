@@ -486,6 +486,7 @@ def _build_tables(schema_raw: dict) -> list[Table]:
                 constraint_name=fk["constraint_name"],
                 columns=fk["columns"],
                 referenced_table=fk["referenced_table"],
+                referenced_schema=fk.get("referenced_schema"),
                 referenced_columns=fk["referenced_columns"],
                 on_delete=fk.get("on_delete"),
                 on_update=fk.get("on_update"),

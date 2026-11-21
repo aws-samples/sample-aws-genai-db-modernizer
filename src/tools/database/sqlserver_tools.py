@@ -30,6 +30,7 @@ from src.shared.rate_window import (
 )
 from src.tools.aws.ssm_executor import SSMExecutor
 from src.tools.database import live_sql
+from src.tools.database.foreign_key_schema import referenced_schema
 from src.tools.database.index_keys import is_included_column, settle_included_columns
 from src.tools.database.live_sql import LiveQueryReader
 from src.tools.database.routine_links import routine_id
@@ -279,6 +280,7 @@ class SQLServerRemoteCollector:
             SELECT
                 fk.name AS constraint_name,
                 col.name AS column_name,
+                rs.name AS referenced_schema_name,
                 rt.name AS referenced_table_name,
                 rcol.name AS referenced_column_name,
                 fk.update_referential_action_desc AS on_update,
@@ -291,6 +293,7 @@ class SQLServerRemoteCollector:
             INNER JOIN sys.columns col
                 ON col.object_id = fkc.parent_object_id AND col.column_id = fkc.parent_column_id
             INNER JOIN sys.tables rt ON fk.referenced_object_id = rt.object_id
+            INNER JOIN sys.schemas rs ON rt.schema_id = rs.schema_id
             INNER JOIN sys.columns rcol
                 ON rcol.object_id = fkc.referenced_object_id
                 AND rcol.column_id = fkc.referenced_column_id
@@ -306,6 +309,7 @@ class SQLServerRemoteCollector:
                     "constraint_name": name,
                     "columns": [],
                     "referenced_table": r["referenced_table_name"],
+                    **referenced_schema(r),
                     "referenced_columns": [],
                     "on_delete": _normalize_fk_action(r.get("on_delete")),
                     "on_update": _normalize_fk_action(r.get("on_update")),
