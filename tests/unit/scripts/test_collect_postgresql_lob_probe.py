@@ -16,17 +16,19 @@ from pathlib import Path
 
 import pytest
 
+from tests.pg_server import PgServerUnavailable, start_pg_server
+
 pgserver = pytest.importorskip("pgserver")
 
 SCRIPT = Path(__file__).resolve().parents[3] / "scripts" / "collect-postgresql.sql"
 
 
 @pytest.fixture(scope="module")
-def server(tmp_path_factory):
+def server():
     try:
-        srv = pgserver.get_server(tmp_path_factory.mktemp("pgdata"), cleanup_mode="delete")
-    except Exception as exc:  # no bundled server for this platform, or it cannot start
-        pytest.skip(f"pgserver cannot start a PostgreSQL here: {exc}")
+        srv = start_pg_server()
+    except PgServerUnavailable as exc:  # the one failure that skips
+        pytest.skip(f"no pgserver PostgreSQL here: {exc}")
     srv.psql(
         "\\set ON_ERROR_STOP on\n"
         "CREATE TABLE public.pg_stat_statements (userid oid, dbid oid, queryid bigint,"

@@ -22,6 +22,7 @@ from src.agents.collector import postgres_collector
 from src.agents.collector.mysql_collector import NoopCheckpointStore
 from src.contracts.collector_input import CollectorInput
 from src.tools.database.ddl_parser import parse_ddl_routines
+from tests.pg_server import PgServerUnavailable, start_pg_server
 
 _ROOT = Path(__file__).resolve().parents[4]
 _DUMP = _ROOT / "tests/fixtures/routines/postgresql/pg_dump_trigger_modes.sql"
@@ -147,14 +148,14 @@ def test_the_other_dialects_give_no_mode(dialect):
     assert "enabled_mode" not in t
 
 
-def test_a_fresh_pg_dump_gives_what_the_server_holds(tmp_path):
+def test_a_fresh_pg_dump_gives_what_the_server_holds():
     """The fixture is pg_dump's own output: dump a server in each mode and compare with
-    pg_trigger.tgenabled. Skips when pgserver is not installed or cannot start."""
+    pg_trigger.tgenabled. Skips when pgserver is not installed."""
     pgserver = pytest.importorskip("pgserver")
     try:
-        srv = pgserver.get_server(tmp_path / "pgdata", cleanup_mode="delete")
-    except Exception as exc:  # no bundled server for this platform, or it cannot start
-        pytest.skip(f"pgserver cannot start a PostgreSQL here: {exc}")
+        srv = start_pg_server()
+    except PgServerUnavailable as exc:  # the one failure that skips
+        pytest.skip(f"no pgserver PostgreSQL here: {exc}")
     try:
         srv.psql(
             "\\set ON_ERROR_STOP on\n"

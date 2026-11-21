@@ -20,6 +20,7 @@ from scripts import run_dms_step as script
 from src.tools.data_movement.dms_control import CONTROL_SCHEMA, task_control_schema
 from src.tools.data_movement.dms_step import render_ddl, task_settings
 from src.tools.data_movement.table_errors import failures_check, failures_table
+from tests.pg_server import PgServerUnavailable, start_pg_server
 from tests.unit.scripts.test_run_dms_step import TASK, _job
 from tests.unit.scripts.test_run_dms_step_table_errors import _row, _running, _status
 from tests.unit.tools.aws.aws_stubs import StubbedCredMgr
@@ -299,14 +300,14 @@ def _uncommented_grants(ddl: str) -> str:
 
 
 @pytest.fixture
-def pg(tmp_path):
+def pg():
     """A PostgreSQL from ``pgserver`` on a Unix socket in a temp folder (no TCP listener),
     with an empty ``shop`` database; ``run`` sends SQL to it through psql."""
     pgserver = pytest.importorskip("pgserver")
     try:
-        srv = pgserver.get_server(tmp_path / "pgdata", cleanup_mode="delete")
-    except Exception as exc:  # no bundled server for this platform, or it cannot start
-        pytest.skip(f"pgserver cannot start a PostgreSQL here: {exc}")
+        srv = start_pg_server()
+    except PgServerUnavailable as exc:  # the one failure that skips
+        pytest.skip(f"no pgserver PostgreSQL here: {exc}")
     srv.psql('CREATE DATABASE "shop";')
     psql = Path(pgserver.__file__).parent / "pginstall" / "bin" / "psql"
     uri = srv.get_uri("shop")

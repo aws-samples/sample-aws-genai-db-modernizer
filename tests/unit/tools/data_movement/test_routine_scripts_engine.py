@@ -3,13 +3,13 @@
 
 """Step 1's routine scripts on a real PostgreSQL (#1947), run as the customer runs them.
 
-A PostgreSQL started by ``pgserver`` on a Unix socket in a temp folder (no TCP listener)
+A PostgreSQL from ``pgserver`` on a Unix socket in a temp folder (no TCP listener)
 plays the Aurora target. The routines' exact text is read from the server itself
 (``pg_get_functiondef``, ``pg_get_triggerdef``, as the collector reads it), the routines
 dropped, and then ``psql -X -f routines-deploy.sql`` and ``psql -X -f routines-check.sql
 -o routines-check.tsv`` run exactly as ``routines.md`` says. The check output must
 confirm every carried routine, with the trigger disabled; then each kind of drift is
-made by hand and named. The tests skip when ``pgserver`` is not installed or cannot start.
+made by hand and named. The tests skip when ``pgserver`` is not installed.
 The MySQL twin needs a local ``mysqld`` and ``mysql`` client, so it lives in
 ``tests/integration/test_routine_scripts_mysql.py``.
 """
@@ -24,6 +24,7 @@ import pytest
 from src.storage.local_store import LocalArtifactStore
 from src.tools.data_movement.routine_check import read_check
 from src.tools.data_movement.routine_scripts import CHECK_FILE, CHECK_OUTPUT, DEPLOY_FILE
+from tests.pg_server import PgServerUnavailable, start_pg_server
 from tests.unit.tools.data_movement.routine_fixtures import (
     SENTINEL,
     contract_with_routines,
@@ -58,11 +59,11 @@ DROP FUNCTION public.f(integer); DROP FUNCTION public.f(text); DROP FUNCTION pub
 
 
 @pytest.fixture(scope="module")
-def server(tmp_path_factory):
+def server():
     try:
-        srv = pgserver.get_server(tmp_path_factory.mktemp("pgdata"), cleanup_mode="delete")
-    except Exception as exc:  # no bundled server for this platform, or it cannot start
-        pytest.skip(f"pgserver cannot start a PostgreSQL here: {exc}")
+        srv = start_pg_server()
+    except PgServerUnavailable as exc:  # the one failure that skips
+        pytest.skip(f"no pgserver PostgreSQL here: {exc}")
     srv.psql("\\set ON_ERROR_STOP on\n" + _SETUP)
     yield srv
     srv.cleanup()

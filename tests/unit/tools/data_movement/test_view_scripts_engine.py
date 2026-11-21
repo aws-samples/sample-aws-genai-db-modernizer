@@ -3,7 +3,7 @@
 
 """Step 1's view scripts on a real PostgreSQL (#2082), run as the customer runs them.
 
-A PostgreSQL started by ``pgserver`` on a Unix socket in a temp folder (no TCP listener)
+A PostgreSQL from ``pgserver`` on a Unix socket in a temp folder (no TCP listener)
 plays the Aurora target. The views are read from the server as the collection script's
 section 7 reads them, their CREATE built (``view_sources``), the views dropped, and then
 ``psql -X -f views-deploy.sql`` runs twice and ``psql -X -f views-check.sql -o
@@ -24,6 +24,7 @@ import pytest
 from src.agents.collector.routine_sources import build_routine_sources
 from src.tools.data_movement.view_check import read_view_check
 from src.tools.data_movement.view_scripts import CHECK_FILE, CHECK_OUTPUT, DEPLOY_FILE
+from tests.pg_server import PgServerUnavailable, start_pg_server
 from tests.unit.tools.data_movement.view_fixtures import (
     SENTINEL,
     SHA,
@@ -46,11 +47,11 @@ CREATE VIEW reports.top (order_id, note) AS SELECT b.id, b.note FROM public.base
 
 
 @pytest.fixture(scope="module")
-def server(tmp_path_factory):
+def server():
     try:
-        srv = pgserver.get_server(tmp_path_factory.mktemp("pgdata"), cleanup_mode="delete")
-    except Exception as exc:  # no bundled server for this platform, or it cannot start
-        pytest.skip(f"pgserver cannot start a PostgreSQL here: {exc}")
+        srv = start_pg_server()
+    except PgServerUnavailable as exc:  # the one failure that skips
+        pytest.skip(f"no pgserver PostgreSQL here: {exc}")
     srv.psql("\\set ON_ERROR_STOP on\n" + _SETUP)
     yield srv
     srv.cleanup()

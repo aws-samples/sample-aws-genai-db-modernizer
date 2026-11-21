@@ -3,11 +3,11 @@
 
 """The live PostgreSQL collector reads routines from every user schema (#2268).
 
-Run against a PostgreSQL started by ``pgserver`` on a Unix socket in a temp folder (no
+Run against a PostgreSQL from ``pgserver`` on a Unix socket in a temp folder (no
 TCP listener): functions, procedures and triggers in two non-public schemas and in a
 schema with a quoted odd name are collected with their schema, the system schemas and an
 extension's routines are left out, and opting out still reads no body. The tests skip
-when ``pgserver`` is not installed or cannot start.
+when ``pgserver`` is not installed.
 """
 
 from __future__ import annotations
@@ -21,6 +21,7 @@ import pytest
 
 from src.agents.collector.routine_sources import build_routine_sources
 from src.tools.database.postgres_tools import PostgreSQLRemoteCollector
+from tests.pg_server import PgServerUnavailable, start_pg_server
 
 pgserver = pytest.importorskip("pgserver")
 
@@ -63,11 +64,11 @@ CREATE TRIGGER sc_tg_odd BEFORE INSERT ON "{_ODD.replace('"', '""')}".sc_odd
 
 
 @pytest.fixture(scope="module")
-def server(tmp_path_factory):
+def server():
     try:
-        srv = pgserver.get_server(tmp_path_factory.mktemp("pgdata"), cleanup_mode="delete")
-    except Exception as exc:
-        pytest.skip(f"pgserver cannot start a PostgreSQL here: {exc}")
+        srv = start_pg_server()
+    except PgServerUnavailable as exc:  # the one failure that skips
+        pytest.skip(f"no pgserver PostgreSQL here: {exc}")
     srv.psql("\\set ON_ERROR_STOP on\n" + _CORPUS)
     try:
         srv.psql("\\set ON_ERROR_STOP on\nCREATE EXTENSION vector SCHEMA ext_home;")

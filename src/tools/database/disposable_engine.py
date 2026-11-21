@@ -1155,9 +1155,17 @@ def _routine_kind(
 
 
 class _PgBinaryServer:
-    """PostgreSQL from a ``bin`` folder (``initdb`` and ``postgres``), on a Unix socket only."""
+    """PostgreSQL from a ``bin`` folder (``initdb`` and ``postgres``), on a Unix socket only.
 
-    def __init__(self, workdir: Path, bin_dir: Path, major: str) -> None:
+    ``run_as`` names the system user that runs ``initdb``, ``postgres`` and ``pg_ctl``
+    when the caller is root, which PostgreSQL refuses to run as. Only the tests' helper
+    passes it (``tests/pg_server.py``, one CI image runs as root); ``start`` refuses root.
+    """
+
+    def __init__(
+        self, workdir: Path, bin_dir: Path, major: str, *, run_as: str | None = None
+    ) -> None:
+        self._run_as = run_as
         self._proc: subprocess.Popen[bytes] | None = None
         self.pid: int | None = None
         self.socket_dir = workdir
@@ -1190,7 +1198,7 @@ class _PgBinaryServer:
         ]
         try:
             subprocess.run(  # nosec B603 - fixed arguments, no shell
-                args, check=True, capture_output=True, timeout=_INIT_TIMEOUT_S
+                args, check=True, capture_output=True, timeout=_INIT_TIMEOUT_S, user=self._run_as
             )
         except subprocess.CalledProcessError as exc:
             why = (exc.stderr or b"").decode("utf-8", "replace").strip().splitlines()
@@ -1216,7 +1224,7 @@ class _PgBinaryServer:
         try:
             with self._log.open("wb") as log:
                 self._proc = subprocess.Popen(  # nosec B603 - fixed arguments, no shell
-                    args, stdout=log, stderr=log, start_new_session=True
+                    args, stdout=log, stderr=log, start_new_session=True, user=self._run_as
                 )
         except OSError as exc:
             raise _start_failed("postgresql", major, f"postgres could not be run ({exc})") from exc
@@ -1265,6 +1273,7 @@ class _PgBinaryServer:
                     capture_output=True,
                     timeout=_SHUTDOWN_TIMEOUT_S + 5,
                     check=False,
+                    user=self._run_as,
                 )
         _reap(self._proc, signal.SIGINT)  # a backstop when pg_ctl is not there
         self._proc = None

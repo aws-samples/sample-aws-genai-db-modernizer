@@ -6,8 +6,7 @@
 The index query of ``scripts/collect-postgresql.sql`` runs against a PostgreSQL started by
 ``pgserver`` on a Unix socket in a temp folder (no TCP listener). A composite index whose
 key order differs from the column order must come out in key order after the rows are
-shuffled, as the parser sees them. The tests skip when ``pgserver`` is not installed or
-cannot start.
+shuffled, as the parser sees them. The tests skip when ``pgserver`` is not installed.
 """
 
 from __future__ import annotations
@@ -18,6 +17,7 @@ from pathlib import Path
 import pytest
 
 from src.tools.database.offline_parser import parse_offline_collection
+from tests.pg_server import PgServerUnavailable, start_pg_server
 
 pgserver = pytest.importorskip("pgserver")
 
@@ -32,11 +32,11 @@ CREATE INDEX idx_single ON orders (b);
 
 
 @pytest.fixture(scope="module")
-def server(tmp_path_factory):
+def server():
     try:
-        srv = pgserver.get_server(tmp_path_factory.mktemp("pgdata"), cleanup_mode="delete")
-    except Exception as exc:  # no bundled server for this platform, or it cannot start
-        pytest.skip(f"pgserver cannot start a PostgreSQL here: {exc}")
+        srv = start_pg_server()
+    except PgServerUnavailable as exc:  # the one failure that skips
+        pytest.skip(f"no pgserver PostgreSQL here: {exc}")
     srv.psql("\\set ON_ERROR_STOP on\n" + _SCHEMA)  # a bad schema fails, never skips
     yield srv
     srv.cleanup()
