@@ -121,6 +121,12 @@ OTHER_SQL_MODULES: dict[str, str] = {
         "the one query_type rule: a statement's first verb after its leading comments (#1178)"
     ),
     "src/tools/database/ddl_parser.py": "DDL, not a workload query",
+    "src/tools/database/migration_tool_statements.py": (
+        "the AWS DMS statement rules (#2375): psqlODBC's cursor names and DMS's full-load "
+        "cursor form, which tell DMS's own statements from the workload; it decides which "
+        "statements leave the collection, never a query fact of one that stays (its "
+        "statement type comes from query_type)"
+    ),
     "src/assessment/cut.py": (
         "cut_collection's check that a caller's part is in the source dialect (#1633): it "
         "refuses other dialects' syntax and decides no query fact"

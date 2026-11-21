@@ -23,6 +23,7 @@ import {
   priceListOf,
   rateWindowScenarioOf,
   rateWindowStatementOf,
+  excludedStatementsOf,
   rowCountStatementOf,
 } from '../utils/reportFacts';
 
@@ -49,6 +50,7 @@ function CostBreakdown({ synthesis, costBreakdown = [], projectedCost = null, ca
   const growth = growthScenarioLinesOf(synthesis);
   const rowCounts = rowCountStatementOf(synthesis);
   const rates = rateWindowStatementOf(synthesis);
+  const excluded = excludedStatementsOf(synthesis);
   const scenario = rateWindowScenarioOf(synthesis);
   const how = [
     price?.pricing_model && { label: t('analysis-results.cost-breakdown.how.pricing-model'), value: price.pricing_model },
@@ -65,6 +67,10 @@ function CostBreakdown({ synthesis, costBreakdown = [], projectedCost = null, ca
     rowCounts && {
       label: t('analysis-results.cost-breakdown.row-counts'),
       value: <span data-figure="row-counts">{rowCounts}.</span>,
+    },
+    excluded && {
+      label: t('analysis-results.cost-breakdown.excluded-statements'),
+      value: <span data-figure="excluded-statements">{excluded}.</span>,
     },
     rates && {
       label: t('analysis-results.cost-breakdown.rate-windows'),

@@ -593,6 +593,8 @@ class PostgreSQLRemoteCollector:
         statements_sql = f"""
             SELECT
                 queryid, query, calls,
+                -- #2375: the id of the role that ran it (never its name).
+                s.userid::text AS role_id,
                 {_SAMPLE_KEY} AS rate_sample_key,
                 total_exec_time AS total_time_ms,
                 mean_exec_time AS avg_time_ms,
@@ -646,6 +648,8 @@ class PostgreSQLRemoteCollector:
                     "query_id": query_id,
                     "query_text": query_text,
                     "query_type": statement_query_type(query_text, "postgresql"),
+                    # #2375: the role's id, read by the AWS DMS statement rules.
+                    "role_id": r.get("role_id"),
                     # #1652: PostgreSQL's toplevel read backwards; None when not reported.
                     "nested": _nested(r.get("toplevel")),
                     "execution_count": calls,

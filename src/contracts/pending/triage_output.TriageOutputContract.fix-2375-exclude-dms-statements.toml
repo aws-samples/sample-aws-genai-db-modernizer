@@ -1,0 +1,6 @@
+# A pending contract version bump (ADR-008 Decision 8). The number is assigned by
+# uv run python scripts/resolve_contract_versions.py --release at release (a MAJOR: in its pull request).
+contract = "triage_output.TriageOutputContract"
+kind = "minor"
+reason = "Added optional excluded_statements (ExcludedStatements): how many statements the collector left out because AWS DMS ran them, their executions, and per rule its reasons and statement ids. A triage.json written before reads as None."
+issue = 2375

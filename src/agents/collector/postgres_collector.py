@@ -85,6 +85,11 @@ from src.shared.server_counters import live_server_counters, server_counters_mod
 from src.shared.sql_spans import span_settings, use_span_settings, with_span_settings
 from src.tools.aws.s3_storage import init_storage
 from src.tools.aws.ssm_executor import SSMExecutor
+from src.tools.database.migration_tool_statements import (
+    merge_excluded,
+    record_excluded,
+    split_migration_tool_statements,
+)
 from src.tools.database.postgres_tools import PostgreSQLRemoteCollector
 from src.tools.sql.view_lineage import apply_view_lineage
 
@@ -225,10 +230,15 @@ def _collect_live_stages(inp: CollectorInput, ckpt) -> CollectorOutputContract:
     procs = _build_procedures(schema_raw.get("procedures", []))
     triggers = _build_triggers(schema_raw.get("triggers", []))
 
-    queries = _build_queries(queries_raw)
-    aws_queries = aws_raw.get("query_patterns", [])
+    # #2375: AWS DMS's own statements are left out of the workload, and recorded.
+    app_rows, excluded = split_migration_tool_statements(queries_raw, "postgresql")
+    aws_queries, aws_excluded = split_migration_tool_statements(
+        aws_raw.get("query_patterns", []), "postgresql"
+    )
+    queries = _build_queries(app_rows)
     if aws_queries:
         queries = _merge_queries(queries, aws_queries)
+    record_excluded(queries, merge_excluded(excluded, aws_excluded))
     _drop_unlisted_sequence_reads(queries, {t.table_name for t in tables})
 
     global_stats = schema_raw.get("global_stats", {})
@@ -320,7 +330,9 @@ def _collect_ddl(inp: CollectorInput, ckpt) -> CollectorOutputContract:
 
     tables = _build_tables_from_ddl(schema_raw, inp.database_name)
     aws_queries = aws_raw.get("query_patterns", [])
+    aws_queries, excluded = split_migration_tool_statements(aws_queries, "postgresql")
     queries = _build_queries_from_aws(aws_queries)
+    record_excluded(queries, excluded)
     _drop_unlisted_sequence_reads(queries, {t.table_name for t in tables})
     pi_counters = aws_raw.get("pi_counters", {})
     cw_raw = aws_raw.get("cloudwatch", {})

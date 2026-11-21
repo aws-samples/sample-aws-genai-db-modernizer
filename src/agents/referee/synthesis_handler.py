@@ -1636,6 +1636,8 @@ def _report_output_data(store: ArtifactStore, result: dict, assignment_version: 
     # 24-hour assumption when any rate rests on it. #1991: the window's length and dates,
     # and whether it is representative, from the collection's server counters.
     rate_windows = collection_rate_window_facts(data.collector)
+    from src.shared.excluded_statements import excluded_statement_facts
+
     # #1990: the growth synthesis priced its scenarios at (an older caller's result
     # without it reads the decision here).
     decision = _assumptions_decision(store, result["database_name"], result["job_id"])
@@ -1660,6 +1662,8 @@ def _report_output_data(store: ArtifactStore, result: dict, assignment_version: 
         hot_partitions=hot_partitions,
         busiest_partition_key=busiest_partition_key,
         rate_windows=rate_windows,
+        # #2375: the statements AWS DMS ran, which the collector left out of the workload.
+        excluded_statements=excluded_statement_facts(data.collector),
         # #1990: the one assumptions block (growth, peak, rate window, region and prices,
         # each with its origin) and the growth scenario lines.
         assumptions=(

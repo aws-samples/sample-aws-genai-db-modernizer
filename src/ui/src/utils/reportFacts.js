@@ -534,6 +534,15 @@ export function rateWindowStatementOf(synthesis) {
   return typeof statement === 'string' && statement ? statement : null;
 }
 
+// #2375: the sentence every deliverable prints about the statements AWS DMS ran on the
+// source, left out of the workload (facts.excluded_statements.statement). Null when none
+// were, and for a report written before the fact.
+export function excludedStatementsOf(synthesis) {
+  const fact = factsOf(synthesis) && factsOf(synthesis).excluded_statements;
+  const statement = fact && fact.statement;
+  return typeof statement === 'string' && statement ? statement : null;
+}
+
 // #1991: the label a rate window that is not representative puts on the costs and the
 // risks (facts.rate_windows.scenario_label): a scenario at the measured rate, with a
 // suggestion to collect over a longer window. Null for a representative window and for a

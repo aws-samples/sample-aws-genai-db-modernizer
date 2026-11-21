@@ -1422,6 +1422,10 @@ def render_engineering_report_md(
     rate_windows = (facts.get("rate_windows") or {}).get("statement")
     if rate_windows:
         out += [f"Call rates: {escaping.md_text(rate_windows)}.", ""]
+    # #2375: the statements AWS DMS ran, left out of the workload.
+    excluded = (facts.get("excluded_statements") or {}).get("statement")
+    if excluded:
+        out += [f"Statements left out: {escaping.md_text(excluded)}.", ""]
     trust = summary_trusted(report) if trust_generated_summary is None else trust_generated_summary
     out += _summary_md(report, trust)
     out += _target_engines_md(report)

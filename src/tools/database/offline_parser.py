@@ -38,6 +38,7 @@ from src.tools.database.index_keys import (
     expression_key_fields,
     settle_included_columns,
 )
+from src.tools.database.migration_tool_statements import split_migration_tool_statements
 from src.tools.database.offline_collection_check import (
     read_collection_text,
     validate_offline_collection,
@@ -373,6 +374,14 @@ def _parse_offline_collection(
         _with_routines(data.get("queries") or [], data), db_name
     )
     other_db_note = {"queries_dropped_other_database": dropped_other_db} if dropped_other_db else {}
+    # #2375: AWS DMS's own statements, recorded and left out of the workload.
+    raw_queries, excluded = split_migration_tool_statements(raw_queries, source_engine)
+    excluded_note = {"excluded_statements": excluded} if excluded else {}
+    if excluded:
+        logger.warning(
+            "offline_parser: left out %d statement(s) AWS DMS ran on the source (#2375)",
+            len(excluded),
+        )
     sample_rows_note: dict[str, int] = {}
     if sample_rows_dropped:
         logger.warning(
@@ -403,6 +412,7 @@ def _parse_offline_collection(
     routines = _routine_rows(data, metadata, source_engine)
     return {
         **other_db_note,
+        **excluded_note,
         **sample_rows_note,
         "metadata": metadata,
         # #384: the statement rows the collection script wrote, which its cap counts.

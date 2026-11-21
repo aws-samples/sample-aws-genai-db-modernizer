@@ -90,6 +90,8 @@ def test_ties_sort_by_engine_id_and_an_empty_gate_has_no_rows_and_zero_shares() 
         "query_total_count": 0,
         # #2326: no collector given, so no source table count.
         "source_table_count": None,
+        # #2375: nothing left out with no collection.
+        "excluded_statements": None,
     }
 
 

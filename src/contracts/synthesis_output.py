@@ -2562,6 +2562,15 @@ class DerivedCopySyncFacts(BaseModel):
     assumptions: list[str] = Field(default_factory=list)
 
 
+class ExcludedStatementFacts(BaseModel):
+    """The statements AWS DMS ran on the source, which the collector left out of the
+    workload (#2375), from ``src.tools.database.migration_tool_statements``."""
+
+    statement_count: int = Field(..., ge=0, description="How many statements were left out")
+    execution_count: int = Field(..., ge=0, description="Their executions in the collection")
+    statement: str = Field(..., description="The one sentence every deliverable prints")
+
+
 class RowCountFacts(BaseModel):
     """The collection's row counts by basis, and the sizing assumption for the unknown
     ones (#1636), from ``src.shared.row_counts.row_count_facts``."""
@@ -5661,6 +5670,13 @@ class ReportFacts(BaseModel):
             "How many collected statements' call rates used each window basis, stated in "
             "every deliverable (#1893); None in a report rebuilt without the collection, or "
             "written before"
+        ),
+    )
+    excluded_statements: ExcludedStatementFacts | None = Field(
+        None,
+        description=(
+            "The statements AWS DMS ran on the source, left out of the workload (#2375); "
+            "None when none were, in a report rebuilt without the collection, or written before"
         ),
     )
     row_counts: RowCountFacts | None = Field(

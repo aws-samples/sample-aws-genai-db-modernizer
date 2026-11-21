@@ -115,6 +115,11 @@ from src.tools.aws.s3_storage import init_storage, load_json, save_json
 from src.tools.aws.ssm_executor import SSMExecutor
 from src.tools.database import live_sql
 from src.tools.database.ddl_parser import fetch_ddl_from_s3, parse_ddl, parse_ddl_routines
+from src.tools.database.migration_tool_statements import (
+    merge_excluded,
+    record_excluded,
+    split_migration_tool_statements,
+)
 from src.tools.database.mysql_tools import MySQLRemoteCollector
 from src.tools.database.offline_parser import offline_table_qualifier
 from src.tools.sql.query_tags import QueryTags
@@ -462,9 +467,14 @@ def _collect_live_stages(inp: CollectorInput, ckpt) -> CollectorOutputContract:
     schema_triggers = (
         _build_triggers(schema_raw.get("triggers", [])) if isinstance(schema_raw, dict) else None
     )
-    live_queries = _build_queries(queries_raw)
-    aws_queries = aws_raw.get("query_patterns", [])
+    # #2375: AWS DMS's own statements are left out of the workload, and recorded.
+    app_rows, excluded = split_migration_tool_statements(queries_raw, "mysql")
+    aws_queries, aws_excluded = split_migration_tool_statements(
+        aws_raw.get("query_patterns", []), "mysql"
+    )
+    live_queries = _build_queries(app_rows)
     queries = _merge_into_queries(live_queries, aws_queries, source_engine="mysql")
+    record_excluded(queries, merge_excluded(excluded, aws_excluded))
     # Prefer DB-direct global_stats over PI counters (LIVE mode has DB access)
     global_stats = schema_raw.get("global_stats", {}) if isinstance(schema_raw, dict) else {}
     pi_counters = global_stats or aws_raw.get("pi_counters", {})
@@ -540,8 +550,11 @@ def _collect_ddl(inp: CollectorInput, ckpt) -> CollectorOutputContract:
     aws_raw = ckpt.load_or_run("aws_metrics", lambda: _collect_aws_raw(inp, cred_mgr))
 
     tables = _build_tables_from_ddl(schema_raw, inp.database_name)
-    aws_queries = aws_raw.get("query_patterns", [])
+    aws_queries, excluded = split_migration_tool_statements(
+        aws_raw.get("query_patterns", []), _engine_name(inp)
+    )
     queries = _build_queries_from_aws(aws_queries, source_engine=_engine_name(inp))
+    record_excluded(queries, excluded)
     pi_counters = aws_raw.get("pi_counters", {})
     cw_raw = aws_raw.get("cloudwatch", {})
     em_data = aws_raw.get("enhanced_monitoring")
