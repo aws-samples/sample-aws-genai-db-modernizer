@@ -126,10 +126,6 @@ def test_automation_secret_read_is_not_account_wide():
 @pytest.mark.parametrize(
     "name",
     [
-        # RDS-managed master user secrets, the form the API accepts by name
-        # (src/api/models/requests.py, src/api/README.md).
-        "rds!db-0a1b2c3d-1111-2222-3333-444455556666",
-        "rds!cluster-0a1b2c3d-1111-2222-3333-444455556666",
         # Secrets the project names under its own prefix.
         "modernizer/wordpress/collector",
     ],
@@ -139,9 +135,36 @@ def test_automation_reads_the_collection_secrets(name):
     assert _automation_can_read(name)
 
 
-@pytest.mark.parametrize("name", ["prod/payments/api-key", "other-app/db", "modernizerx/db"])
+@pytest.mark.parametrize(
+    "name",
+    [
+        "prod/payments/api-key",
+        "other-app/db",
+        "modernizerx/db",
+        # RDS-managed master user secrets are readable only when named in
+        # AdditionalSecretArns (#2508).
+        "rds!db-0a1b2c3d-1111-2222-3333-444455556666",
+        "rds!cluster-0a1b2c3d-1111-2222-3333-444455556666",
+    ],
+)
 def test_automation_cannot_read_unrelated_secrets(name):
     assert not _automation_can_read(name)
+
+
+def test_automation_names_no_rds_managed_secret_wildcard():
+    params = {"ProjectName": "modernizer", "S3BucketName": "bucket"}
+    for statement in _role_statements():
+        for resource in _as_list(statement["Resource"]):
+            if isinstance(resource, dict) and "Ref" in resource:
+                continue  # the optional AdditionalSecretArns parameter
+            assert "rds!" not in _render(resource, params), statement.get("Sid")
+
+
+@pytest.mark.passes_on_main
+def test_an_rds_managed_secret_arn_can_be_named_in_additional_secret_arns():
+    pattern = _template(AUTOMATION)["Parameters"]["AdditionalSecretArns"]["AllowedPattern"]
+    arn = f"arn:aws:secretsmanager:{REGION}:{ACCOUNT}:secret:rds!db-0a1b2c3d-1111-2222-3333-444455556666-AbCdEf"
+    assert re.fullmatch(pattern, arn)
 
 
 def test_automation_extra_secrets_are_opt_in():

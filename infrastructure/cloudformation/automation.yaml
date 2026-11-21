@@ -6,9 +6,10 @@ Description: >-
   Includes VPC endpoints for SSM, Secrets Manager, and S3 — works in
   private subnets without NAT gateway or internet access.
 
-  The instance reads database credentials only from RDS-managed master user
-  secrets (rds!db-... and rds!cluster-...) and from secrets named
-  <ProjectName>/...; list any other secret in AdditionalSecretArns.
+  The instance reads database credentials only from secrets named
+  <ProjectName>/... and from the secrets listed in AdditionalSecretArns. List
+  the ARN of each RDS-managed master user secret (rds!db-... or rds!cluster-...)
+  of the databases you collect from.
 
 Parameters:
   VpcId:
@@ -66,7 +67,9 @@ Parameters:
     ConstraintDescription: Each entry must be a Secrets Manager secret ARN (arn:aws:secretsmanager:<region>:<account>:secret:<name>)
     Description: >-
       Optional full ARNs of other Secrets Manager secrets the instance may read,
-      for credentials that are neither RDS-managed nor named <ProjectName>/...
+      for credentials not named <ProjectName>/..., such as the RDS-managed
+      master user secrets (rds!db-... or rds!cluster-...) of the databases you
+      collect from. No RDS-managed secret is readable unless it is listed here.
       (IAM wildcards allowed; a secret ARN ends in -XXXXXX, so end a name with -*).
 
 Conditions:
@@ -228,10 +231,11 @@ Resources:
         - arn:aws:iam::aws:policy/AmazonSSMManagedInstanceCore
       Policies:
         # The collector names one secret per database (src/tools/aws/ssm_executor.py
-        # fetches it on this instance). The API accepts an RDS-managed master user
-        # secret by name (rds!db-<id>, rds!cluster-<id>; src/api/README.md), and
-        # the project's own secrets live under <ProjectName>/. Secrets Manager
-        # appends -XXXXXX to every secret ARN, hence the trailing wildcard.
+        # fetches it on this instance). The project's own secrets live under
+        # <ProjectName>/. An RDS-managed master user secret (rds!db-<id>,
+        # rds!cluster-<id>) is readable only when its ARN is listed in
+        # AdditionalSecretArns (#2508). Secrets Manager appends -XXXXXX to every
+        # secret ARN, hence the trailing wildcard.
         - PolicyName: SecretsManagerRead
           PolicyDocument:
             Version: '2012-10-17'
@@ -241,7 +245,6 @@ Resources:
                 Action:
                   - secretsmanager:GetSecretValue  # pragma: allowlist secret
                 Resource:
-                  - !Sub 'arn:aws:secretsmanager:${AWS::Region}:${AWS::AccountId}:secret:rds!*'  # pragma: allowlist secret
                   - !Sub 'arn:aws:secretsmanager:${AWS::Region}:${AWS::AccountId}:secret:${ProjectName}/*'  # pragma: allowlist secret
         - !If
           - HasAdditionalSecrets
