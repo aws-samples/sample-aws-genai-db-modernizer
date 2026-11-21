@@ -1143,11 +1143,25 @@ def trigger_shape(text: str, engine: str) -> tuple[str, ...] | None:
     return tuple(shape)
 
 
+def _cast_syntax(tokens: Sequence[RoutineToken], i: int) -> bool:
+    """Whether ``tokens[i]`` is PostgreSQL's ``CAST`` keyword: written unquoted (the
+    tokenizer reads a quoted name as an ``IDENTIFIER``) and not after a dot, where any
+    word is a name. ``CAST`` is a reserved word, so nothing else reads that way."""
+    tok = tokens[i]
+    return (
+        tok.kind == "VAR"
+        and tok.text.casefold() == "cast"
+        and not (i >= 1 and tokens[i - 1].kind == "DOT")
+    )
+
+
 def called_functions(text: str, engine: str) -> frozenset[str] | None:
     """Every function or procedure ``text`` calls (a name before ``(``, or after
     ``CALL``), its body and strings included, as written: ``schema.name`` when qualified,
     else ``name``, lower case. The routine's own header name and its parameter types are
-    included too (the caller compares two texts with the same header). None when it does
+    included too (the caller compares two texts with the same header). On PostgreSQL an
+    unquoted, unqualified ``CAST(`` is the cast syntax, the same type cast as ``x::t``
+    (#2452), never a call: ``"cast"(x)`` and ``s.cast(x)`` stay calls. None when it does
     not tokenize."""
     levels = _deep_levels(text, engine)
     if levels is None:
@@ -1157,6 +1171,8 @@ def called_functions(text: str, engine: str) -> frozenset[str] | None:
         for i, tok in enumerate(tokens[:-1]):
             nxt = tokens[i + 1]
             called = tok.kind in _NAME and nxt.kind == "L_PAREN"
+            if called and engine == "postgresql" and _cast_syntax(tokens, i):
+                continue
             if tok.text.upper() == "CALL" and nxt.kind in _NAME and not nxt.command_rest:
                 called, tok, i = True, nxt, i + 1
                 while i + 2 < len(tokens) and tokens[i + 1].kind == "DOT":

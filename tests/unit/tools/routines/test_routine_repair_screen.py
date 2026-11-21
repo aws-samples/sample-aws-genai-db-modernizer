@@ -1022,3 +1022,122 @@ def test_a_default_string_compares_as_its_placeholder():
     whatever the exact values are (the rebuild and the proof see those)."""
     with_text = PG_DEFAULTS.replace("DEFAULT NULL", "DEFAULT '?'")
     assert _screen().refusal_of(_pg(_original(with_text)), with_text, "postgresql") is None
+
+
+# --------------------------------------------------------------------------- cast forms
+# #2452: PostgreSQL reads CAST(x AS t) and x::t as the same type cast (one TypeCast in the
+# parse tree). A repair that only rewrites the cast form keeps the routine's calls and its
+# signature; a cast whose type, array bounds, chain or operand differs stays different.
+
+#: The routine with a cast in a parameter default and one in the body.
+PG_CASTS = PG_PARAMS_FIXED.replace("(p integer,", "(p integer DEFAULT '?'::integer,").replace(
+    "INOUT q text", "INOUT q text DEFAULT NULL"
+)
+
+
+@pytest.mark.parametrize(
+    ("original", "candidate"),
+    [
+        ("DEFAULT '?'::integer", "DEFAULT CAST('?' AS integer)"),
+        ("DEFAULT '?'::integer", "DEFAULT cast('?' as integer)"),
+        ("DEFAULT '?'::integer", "DEFAULT CAST ( '?' AS integer )"),
+        ("DEFAULT '?'::integer", "DEFAULT CAST('?' AS pg_catalog.int4)"),
+        ("DEFAULT '?'::integer[]", "DEFAULT CAST('?' AS integer[])"),
+        ("DEFAULT '?'::numeric(10, 2)", "DEFAULT CAST('?' AS numeric(10, 2))"),
+        ("DEFAULT '?'::text::integer", "DEFAULT CAST(CAST('?' AS text) AS integer)"),
+        ("DEFAULT (-1)::integer", "DEFAULT CAST(-1 AS integer)"),
+        ("DEFAULT -1::integer", "DEFAULT -CAST(1 AS integer)"),
+    ],
+    ids=[
+        "string-literal", "lower-case", "spaced", "qualified-type", "array", "type-modifier",
+        "chained", "negated-operand", "negated-cast",
+    ],
+)  # fmt: skip
+def test_a_default_cast_in_either_form_is_the_same_cast(original, candidate):
+    base = PG_CASTS.replace("DEFAULT '?'::integer", original)
+    refusal = _screen().refusal_of(
+        _pg(_original(base)), base.replace(original, candidate), "postgresql"
+    )
+    assert refusal is None, refusal
+
+
+@pytest.mark.parametrize(
+    ("original", "candidate"),
+    [
+        ("DEFAULT CAST(0 AS integer)", "DEFAULT 0::integer"),
+        ("DEFAULT '?'::integer", "DEFAULT integer '?'"),
+    ],
+    ids=["cast-keyword-dropped", "typed-literal"],
+)
+@pytest.mark.passes_on_main  # the controls: neither candidate writes CAST(
+def test_a_default_cast_without_the_cast_keyword_is_the_same_cast(original, candidate):
+    base = PG_CASTS.replace("DEFAULT '?'::integer", original)
+    refusal = _screen().refusal_of(
+        _pg(_original(base)), base.replace(original, candidate), "postgresql"
+    )
+    assert refusal is None, refusal
+
+
+@pytest.mark.parametrize(
+    ("original", "candidate"),
+    [
+        ("DEFAULT '?'::integer", "DEFAULT CAST('?' AS bigint)"),
+        ("DEFAULT '?'::integer", "DEFAULT CAST('?' AS integer[])"),
+        ("DEFAULT '?'::integer[]", "DEFAULT CAST('?' AS integer)"),
+        ("DEFAULT '?'::numeric(10, 2)", "DEFAULT CAST('?' AS numeric(12, 2))"),
+        ("DEFAULT '?'::text::integer", "DEFAULT CAST('?' AS integer)"),
+        ("DEFAULT '?'::integer", "DEFAULT CAST(CAST('?' AS text) AS integer)"),
+        ("DEFAULT -1::integer", "DEFAULT CAST(-1 AS integer)"),
+        ("DEFAULT '?'::integer", "DEFAULT '?'"),
+        ("DEFAULT 1::integer", "DEFAULT CAST(2 AS integer)"),
+    ],
+    ids=[
+        "other-type", "array-added", "array-dropped", "other-modifier", "chain-dropped",
+        "chain-added", "precedence", "cast-dropped", "other-operand",
+    ],
+)  # fmt: skip
+@pytest.mark.passes_on_main  # main read every one of these as a change too
+def test_a_different_default_cast_stays_a_signature_change(original, candidate):
+    base = PG_CASTS.replace("DEFAULT '?'::integer", original)
+    refusal = _screen().refusal_of(
+        _pg(_original(base)), base.replace(original, candidate), "postgresql"
+    )
+    assert refusal is not None and refusal[0] == "signature_changed", refusal
+
+
+@pytest.mark.parametrize(
+    "candidate",
+    [
+        "CAST(pg_current_wal_lsn() AS text) || '?'",
+        "'?' || CAST(pg_current_wal_lsn() AS text)",
+    ],
+    ids=["cast-of-a-call", "after-a-literal"],
+)
+def test_a_body_cast_in_the_other_form_adds_no_call(candidate):
+    fixed = PG_SQL_FIXED.replace("pg_current_wal_lsn()::text || '?'", candidate)
+    assert _screen().refusal_of(_pg(PG_SQL), fixed, "postgresql") is None
+
+
+def test_a_body_cast_to_the_routines_own_user_type_in_the_other_form_passes():
+    original = PG_SQL.replace("::text || '?'", "::public.wal_text::text || '?'")
+    fixed = PG_SQL_FIXED.replace(
+        "pg_current_wal_lsn()::text", "CAST(CAST(pg_current_wal_lsn() AS public.wal_text) AS text)"
+    )
+    assert _screen().refusal_of(_pg(original), fixed, "postgresql") is None
+
+
+@pytest.mark.parametrize(
+    "candidate",
+    [
+        "CAST(CAST(pg_current_wal_lsn() AS public.other_text) AS text) || '?'",
+        "\"cast\"(pg_current_wal_lsn()) || '?'",
+        "public.cast(pg_current_wal_lsn()) || '?'",
+    ],
+    ids=["other-user-type", "quoted-function-named-cast", "qualified-function-named-cast"],
+)
+@pytest.mark.passes_on_main  # main refused these as well, by the calls or the types rule
+def test_a_cast_to_another_type_or_a_function_named_cast_is_refused(candidate):
+    original = PG_SQL.replace("::text || '?'", "::public.wal_text::text || '?'")
+    fixed = PG_SQL_FIXED.replace("pg_current_wal_lsn()::text || '?'", candidate)
+    refusal = _screen().refusal_of(_pg(original), fixed, "postgresql")
+    assert refusal is not None and refusal[0] == "adds_calls", refusal
