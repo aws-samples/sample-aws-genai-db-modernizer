@@ -11,6 +11,7 @@ import PropertyFilter from "@cloudscape-design/components/property-filter";
 import SpaceBetween from "@cloudscape-design/components/space-between";
 import Table from "@cloudscape-design/components/table";
 import EngineBadge from "./EngineBadge";
+import HelpInfoLink from "./HelpInfoLink";
 import { closeCallFilterOptions, closeCallRows, hasListedCloseCalls, unlistedCloseCalls } from "../utils/closeCalls";
 import { formatCount, formatFigure, formatShortId } from "../utils/format";
 import { propertyFilterStrings } from "../utils/propertyFilterStrings";
@@ -128,6 +129,7 @@ const CloseCallCallout = memo(({ synthesis, jobId, onOpen, queries, t }) => {
           <Header
             variant="h2"
             counter={counter}
+            info={<HelpInfoLink topic="close-calls" t={t} />}
             description={(
               <>
                 {t('analysis-results.close-calls.description', { margin: cc.margin_points })}

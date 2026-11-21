@@ -712,3 +712,11 @@ describe('a report without adoption facts', () => {
     expect(container.querySelectorAll('[data-wave]')).toHaveLength(3);
   });
 });
+
+// #2512: the step, stage, unit and pilot definitions moved into the roadmap's help panel
+// (utils/resultsHelp.js); the section keeps the paths and what this plan's intro says.
+test('the section states no step, stage and unit definitions: they are in the help panel', () => {
+  render(synthesis());
+  expect(container.textContent).not.toContain(en['analysis-results.adoption.definitions']);
+  expect(figure('adoption-paths').textContent).toContain('Each path is this plan stopped after one of its steps');
+});

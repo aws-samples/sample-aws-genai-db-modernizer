@@ -19,5 +19,9 @@ export default function useLayoutAriaLabels() {
     tools: t('common.layout.tools'),
     toolsToggle: t('common.layout.tools-toggle'),
     toolsClose: t('common.layout.tools-close'),
+    // #2512: the results page's drawers (On this page and the help panel).
+    drawers: t('common.layout.drawers'),
+    drawersOverflow: t('common.layout.drawers-overflow'),
+    drawersOverflowWithBadge: t('common.layout.drawers-overflow'),
   }), [t]);
 }

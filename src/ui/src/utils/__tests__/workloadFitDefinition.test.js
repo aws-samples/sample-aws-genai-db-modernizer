@@ -9,9 +9,9 @@
  * The engineering report and the executive report are covered by
  * `tests/unit/report/test_workload_fit_definition.py`; this file covers the
  * two UI surfaces: the approval gate (`AssignmentGate.js`, via its i18n
- * description), and the live React results page's query-journey detail
- * (`AnalysisResults.js`), which imports and renders the shared constant
- * directly.
+ * description), and the live React results page's Query routing help panel
+ * (`utils/resultsHelp.js`, #2512), which imports and renders the shared
+ * constant directly.
  */
 import { WORKLOAD_FIT_DEFINITION } from '../workloadFitLabels';
 import en from '../../locales/en.json';
@@ -22,15 +22,23 @@ describe('Approval gate states the definition (AssignmentGate.js, via i18n)', ()
   });
 });
 
-describe('React results page states the definition (QueryDetailPanel.js)', () => {
-  it('imports and renders the shared workload-fit definition', async () => {
+// #2512: the results page states it in the Query routing help panel, which the query
+// table's header and the query detail's workload fit open with their Info links.
+describe('React results page states the definition (the Query routing help panel)', () => {
+  it('the panel holds the shared workload-fit definition', () => {
+    const { helpPanelContent } = require('../resultsHelp');
+    const t = key => en[key];
+    expect(helpPanelContent('query-routing', t).paragraphs).toContain(WORKLOAD_FIT_DEFINITION);
+  });
+
+  it('the query detail links to it instead of repeating it', () => {
     const fs = require('fs');
     const path = require('path');
     const source = fs.readFileSync(
       path.join(__dirname, '..', '..', 'components', 'QueryDetailPanel.js'),
       'utf8',
     );
-    expect(source).toMatch(/import\s*{[^}]*WORKLOAD_FIT_DEFINITION[^}]*}\s*from\s*['"]\.\.\/utils\/workloadFitLabels['"]/);
-    expect(source).toMatch(/WORKLOAD_FIT_DEFINITION/);
+    expect(source).not.toMatch(/\{WORKLOAD_FIT_DEFINITION\}/);
+    expect(source).toMatch(/<HelpInfoLink topic="query-routing"/);
   });
 });

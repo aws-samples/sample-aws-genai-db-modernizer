@@ -14,6 +14,7 @@ import AdoptionPathPanel from "./AdoptionPathPanel";
 import WaveStages from "./WaveStages";
 import RoutineMigrationSection from "./RoutineMigrationSection";
 import EngineChoicesNote from "./EngineChoicesNote";
+import HelpInfoLink from "./HelpInfoLink";
 import {
   heterogeneousNote, migrationWaves, readinessText, readinessType, waveCount, waveGaps, waveHeadline,
   waveMovesNothing, waveReadiness, waveTitle,
@@ -191,6 +192,8 @@ const MigrationWavePlan = memo(({ synthesis, t, schemaSectionId }) => {
           <Header
             variant="h2"
             counter={count === null ? undefined : t('analysis-results.waves.counter', { count })}
+            // #2512: the step and unit definitions and the readiness rule are in its panel.
+            info={<HelpInfoLink topic="migration-roadmap" t={t} />}
             description={(
               <>
                 {adoption && adoption.one_step
@@ -226,11 +229,6 @@ const MigrationWavePlan = memo(({ synthesis, t, schemaSectionId }) => {
               schemaSectionId={schemaSectionId}
               t={t}
             />
-          )}
-          {waves.some(w => waveReadiness(synthesis, w)) && (
-            <Box fontSize="body-s" color="text-body-secondary">
-              <span data-figure="wave-readiness-rule">{t('analysis-results.waves.readiness-rule')}</span>
-            </Box>
           )}
           {waves.map((wave, index) => {
             const phase = wavePhase(plan, wave.wave);

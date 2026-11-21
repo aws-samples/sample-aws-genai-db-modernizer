@@ -53,6 +53,10 @@ import { engineFromSearch, linkedEngineTarget, linkedSectionId, activeDesignEngi
 import useResultsTabs, { ResultsSectionNav, useSectionsOnPage } from "../hooks/useResultsTabs";
 import { RESULTS_TABS, hashId, onThisPageAnchors, tabLabel } from "../utils/resultsTabs";
 import ResultsOnThisPage from "../components/ResultsOnThisPage";
+import ResultsHelpPanel from "../components/ResultsHelpPanel";
+import HelpInfoLink from "../components/HelpInfoLink";
+import useResultsDrawers, { ResultsHelp, resultsDrawers, shownDrawerId } from "../hooks/useResultsDrawers";
+import { resultsHelpContext } from "../utils/resultsHelp";
 import { designBodyState, explorerAvailability } from "../utils/sectionStates";
 import { failureError, failureFlash, failureKind, failureReason, reportFailure, upsertFlash } from "../utils/requestFailure";
 import { schemaDesignsRefused } from "../utils/schemaDesignsLoad";
@@ -135,11 +139,9 @@ const AnalysisResultsPage = memo(() => {
   const relatedPointers = unservedPointers(resultsData?.synthesis);
   // A tab with one section or none needs no navigation.
   const toolsHidden = onThisPage.length < 2;
-  // "On this page" opens with the page on a wide screen; on a narrow one it would cover it.
-  const [toolsOpen, setToolsOpen] = useState(
-    () => typeof window !== 'undefined' && typeof window.matchMedia === 'function'
-      && window.matchMedia('(min-width: 1400px)').matches,
-  );
+  // #2512: "On this page" and the help panel share the tools area as two drawers; a
+  // section header's Info link opens its topic in the help panel.
+  const { activeDrawerId, helpTopic, openHelp, onDrawerChange, layoutRef } = useResultsDrawers();
 
   // #2446: the property filter token a ?engine= link opens the query table with.
   const [linkedQueryFilter, setLinkedQueryFilter] = useState(null);
@@ -720,9 +722,10 @@ const AnalysisResultsPage = memo(() => {
             </Box>
           }
           // Controlled from the first render (Cloudscape decides that once, and the page
-          // keeps this layout when its results arrive), so On this page can open then.
-          toolsOpen={false}
-          toolsHide
+          // keeps this layout when its results arrive), so a drawer can open then.
+          drawers={[]}
+          activeDrawerId={null}
+          onDrawerChange={() => {}}
           // The query detail's split panel is controlled from the first render for the
           // same reason, so it can open once the results are in (#2319).
           splitPanelOpen={false}
@@ -821,7 +824,12 @@ const AnalysisResultsPage = memo(() => {
         {/* Query Flow (Sankey) */}
         {sankeyData && (
           <Container id="query-flow-section" header={
-            <Header variant="h2" description={t('analysis-results.query-flow.description')}>
+            <Header
+              variant="h2"
+              description={t('analysis-results.query-flow.description')}
+              // #2512: how to read the diagram and what the cache layer is, in its panel.
+              info={<HelpInfoLink topic="query-flow" t={t} />}
+            >
               {t('analysis-results.query-flow.title')}
             </Header>
           }>
@@ -1391,10 +1399,17 @@ const AnalysisResultsPage = memo(() => {
     ),
   };
 
+  const drawers = resultsDrawers({
+    t,
+    onThisPage: toolsHidden ? null : <ResultsOnThisPage anchors={onThisPage} onGo={goToSection} t={t} />,
+    help: <ResultsHelpPanel topic={helpTopic} context={resultsHelpContext(synthesis)} t={t} />,
+  });
+
   return (
-    <>
+    <ResultsHelp.Provider value={openHelp}>
       <AppHeader helpHref={RESULTS_HELP_URL} />
       <AppLayoutToolbar
+        ref={layoutRef}
         disableContentPaddings={false}
         navigationOpen={navigationOpen}
         onNavigationChange={({ detail }) => setNavigationOpen(detail.open)}
@@ -1463,10 +1478,9 @@ const AnalysisResultsPage = memo(() => {
           </ResultsSectionNav.Provider>
         }
         contentType="default"
-        tools={<ResultsOnThisPage anchors={onThisPage} onGo={goToSection} t={t} />}
-        toolsOpen={toolsOpen && !toolsHidden}
-        onToolsChange={({ detail }) => setToolsOpen(detail.open)}
-        toolsHide={toolsHidden}
+        drawers={drawers}
+        activeDrawerId={shownDrawerId(activeDrawerId, drawers)}
+        onDrawerChange={onDrawerChange}
         splitPanel={designTable ? (
           <AuroraTableDetailPanel table={designTable.table} engineName={designTable.engineName} t={t} />
         ) : selectedQueryId ? (
@@ -1489,9 +1503,7 @@ const AnalysisResultsPage = memo(() => {
           else handleCloseQueryDetail();
         }}
       />
-
-
-    </>
+    </ResultsHelp.Provider>
   );
 });
 

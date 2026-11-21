@@ -15,7 +15,7 @@ import { createRoot } from 'react-dom/client';
 import createWrapper from '@cloudscape-design/components/test-utils/dom';
 import i18n from '../../i18n';
 import en from '../../locales/en.json';
-import TableOwnersCallout from '../TableOwnersCallout';
+import TableOwnersCallout, { ruleKey } from '../TableOwnersCallout';
 import { ENGINE_LABELS } from '../../utils/engineNames';
 import oldWording from './fixtures/oldWordingTableSources.json';
 import unwrittenCdc from './fixtures/unwrittenCdcTableSources.json';
@@ -223,7 +223,8 @@ test('the consistency note sits behind an Info link, stating the risk once', () 
   expect(container.querySelector('[data-figure="consistency"]')).toBeNull();
   act(() => infoLink().click());
   const note = container.querySelector('[data-figure="consistency"]');
-  expect(note.textContent).toContain("Each table's writes land on one engine, its source of truth.");
+  // #2512: the CDC sentence that led the note is in the Table owners help panel.
+  expect(note.textContent).not.toContain(en['analysis-results.sources-of-truth.intro']);
   const shared = container.querySelector('[data-figure="shared-risk"]').textContent;
   expect(shared).toBe(SHARED_SENTENCE);
   expect(shared).not.toContain('Every table above');
@@ -352,20 +353,28 @@ test('renders nothing for a report that maps no table and writes none', () => {
   expect(container.innerHTML).toBe('');
 });
 
-test('states the relational-step rule for a report written since #2166', () => {
-  renderOpen({ table_owner_lines: { ...ownership, unwritten_owner_rule: 'relational_step' }, table_sources: sources });
-  const rule = container.querySelector('[data-figure="owner-rule"]').textContent;
-  expect(rule).toBe(en['analysis-results.table-owners.rule']);
-  expect(rule).toContain("a table no query writes stays on the plan's relational engine");
-  expect(rule).toContain('CDC to names those engines');
+// #2512: the owner rule moved into the Table owners help panel, which states the rule
+// this report's lines follow (ResultsHelp.test.js); ruleKey still names it.
+test('names the relational-step rule for a report written since #2166', () => {
+  expect(ruleKey({ unwritten_owner_rule: 'relational_step' })).toBe('analysis-results.table-owners.rule');
+  expect(en[ruleKey({})]).toContain("a table no query writes stays on the plan's relational engine");
+  expect(en[ruleKey({})]).toContain('CDC to names those engines');
 });
 
-test("states an older report's own rule above its most-queries rows", () => {
-  renderOpen({ table_owner_lines: { ...ownership, unwritten_owner_rule: 'most_queries' }, table_sources: sources });
-  const rule = container.querySelector('[data-figure="owner-rule"]').textContent;
+test("names an older report's own rule for its most-queries rows", () => {
+  const rule = en[ruleKey({ unwritten_owner_rule: 'most_queries' })];
   expect(rule).toBe(en['analysis-results.table-owners.rule-most-queries']);
   expect(rule).toContain('is owned by the engine that serves most of its queries');
   expect(rule).not.toContain("plan's relational engine");
+});
+
+test('the section states neither owner rule: they are in the help panel (#2512)', () => {
+  for (const rule of ['relational_step', 'most_queries']) {
+    renderOpen({ table_owner_lines: { ...ownership, unwritten_owner_rule: rule }, table_sources: sources });
+    expect(container.querySelector('[data-figure="owner-rule"]')).toBeNull();
+    expect(container.textContent).not.toContain(en['analysis-results.table-owners.rule']);
+    expect(container.textContent).not.toContain(en['analysis-results.table-owners.rule-most-queries']);
+  }
 });
 
 test('several CDC targets wrap inside their cell, one badge each, never under the next column', () => {
