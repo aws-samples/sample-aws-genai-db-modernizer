@@ -574,6 +574,19 @@ def _render_mysql(
     return _sequence(MYSQL_TARGET, base, identity_ok)
 
 
+def draws_from_sequence(default_value: str | int | float | bool | None, source_engine: str) -> bool:
+    """Whether ``default_value`` draws from a sequence in ``source_engine``'s grammar: the
+    default ``translate_default`` may turn into an identity column (#2547 reserves the
+    name of the sequence PostgreSQL then creates)."""
+    if not isinstance(default_value, str):
+        return False
+    try:
+        parsed = _parse(default_value, source_engine)
+    except _TooDeep:
+        return False
+    return parsed is not None and parsed.kind == "sequence"
+
+
 def translate_default(
     default_value: str | int | float | bool | None,
     *,
