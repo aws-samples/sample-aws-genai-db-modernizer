@@ -39,13 +39,17 @@ from src.shared.sql_identifiers import (
 from src.shared.table_keys import colliding_keys, is_system_schema, spans_schemas, table_key
 from src.tools.schema.aurora_common.constraint_translator import (
     DefaultTranslation,
+    draws_from_sequence,
     fk_on_delete_clause,
     identity_clause,
     mysql_auto_increment_clause,
     not_null_clause,
     translate_default,
 )
-from src.tools.schema.aurora_common.source_family import classify_type_family
+from src.tools.schema.aurora_common.source_family import (
+    classify_source_family,
+    classify_type_family,
+)
 from src.tools.schema.aurora_common.source_types import resolve_source_type
 from src.tools.schema.aurora_common.sql_safety import (
     SqlFragmentError,
@@ -1766,36 +1770,144 @@ def _pg_index_name(table: str, columns: list[str], suffix: str) -> str:
     return f"{head}{tail_part}_{suffix}"
 
 
-def _renamed_index(label: str, name: str, new: str, holder: str | None) -> dict:
+def pg_relation_name(name1: str, name2: str | None, label: str) -> str:
+    """The name PostgreSQL's ``makeObjectName`` builds: ``<name1>[_<name2>]_<label>``,
+    the longer part cut a byte at a time (``name2`` on a tie) until the name fits 63
+    bytes, then each part cut back to a character boundary."""
+    one = name1.encode()
+    two = name2.encode() if name2 is not None else b""
+    avail = PG_MAX_NAME_BYTES - len(label.encode()) - 1 - (1 if name2 is not None else 0)
+    n1, n2 = len(one), len(two)
+    while n1 + n2 > avail:
+        if n1 > n2:
+            n1 -= 1
+        else:
+            n2 -= 1
+    head = one[:n1].decode(errors="ignore")
+    if name2 is None:
+        return f"{head}_{label}"
+    return f"{head}_{two[:n2].decode(errors='ignore')}_{label}"
+
+
+@dataclass(frozen=True)
+class ImplicitName:
+    """A relation PostgreSQL names itself when the draft's CREATE TABLE runs (#2547): the
+    index of the table's PRIMARY KEY, or the sequence of an identity column."""
+
+    schema: str | None
+    name: str
+    table: str  # the design's name for the table (``design_table_name``)
+    kind: str  # "primary key index" or "identity sequence"
+    column: str | None = None
+
+
+def _may_be_identity(col: AgentColumn, source_engine: str) -> bool:
+    """Whether the Aurora PostgreSQL draft can declare ``col`` an identity column: an
+    auto-increment column, or a NOT NULL one whose default draws from a sequence (#156).
+    The second kind becomes one only on an integer type, which a type override can change,
+    so its sequence name is reserved either way."""
+    return bool(col.is_auto_increment) or (
+        not col.nullable and draws_from_sequence(col.default_value, source_engine)
+    )
+
+
+def pg_implicit_names(
+    tables: list[AgentTable], qualified: bool = False, source_engine: str = ""
+) -> list[ImplicitName]:
+    """The names PostgreSQL gives the relations the draft's CREATE TABLEs create without
+    naming them, in the order it creates them (#2547): for each table, each identity
+    column's ``<table>_<column>_seq`` and then its primary key's ``<table>_pkey``, the
+    choice ``ChooseRelationName`` makes (``pg_relation_name``, then ``seq1``, ``pkey1``...
+    while the name is taken). Taken means a table of the schema has it, or a name chosen
+    earlier: the script creates every table before any index, so no index is there yet.
+    Every table name counts, also one the script creates later, which PostgreSQL would
+    refuse anyway. The draft writes no UNIQUE constraint or SERIAL type, the other ways a
+    CREATE TABLE names a relation; a model's SERIAL override is checked by the merge."""
+
+    def schema(t: AgentTable) -> str | None:
+        return t.schema_name if qualified else None
+
+    taken = {(schema(t), pg_name(t.table_name)) for t in tables}
+    out: list[ImplicitName] = []
+
+    def choose(t: AgentTable, column: str | None, label: str, kind: str) -> None:
+        table, n = pg_name(t.table_name), 0
+        part = pg_name(column) if column is not None else None
+        name = pg_relation_name(table, part, label)
+        while (schema(t), name) in taken:
+            n += 1
+            name = pg_relation_name(table, part, f"{label}{n}")
+        taken.add((schema(t), name))
+        out.append(ImplicitName(schema(t), name, design_table_name(t, qualified), kind, column))
+
+    for t in tables:
+        for col in t.columns:
+            if _may_be_identity(col, source_engine):
+                choose(t, col.column_name, "seq", "identity sequence")
+        if t.primary_key:
+            choose(t, None, "pkey", "primary key index")
+    return out
+
+
+def implicit_name_holder(implicit: ImplicitName) -> str:
+    """Who holds ``implicit``'s name, as a merge error names it."""
+    if implicit.kind == "identity sequence":
+        return f"the identity sequence of column '{implicit.table}.{implicit.column}'"
+    return f"the primary key index of table '{implicit.table}'"
+
+
+_UNIQUE_INDEX_NAMES = "PostgreSQL index names are unique within a schema"
+
+
+def _held_by_index(holder: str, name: str) -> str:
+    return f"{holder} already has an index named {name} in this schema, and {_UNIQUE_INDEX_NAMES}"
+
+
+def _held_by_table(name: str) -> str:
+    return f"the schema already has a table named {name}, and {_UNIQUE_INDEX_NAMES}"
+
+
+def _held_implicitly(implicit: ImplicitName) -> str:
+    what = (
+        f"identity sequence of {implicit.table}.{implicit.column}"
+        if implicit.kind == "identity sequence"
+        else f"primary key index of {implicit.table}"
+    )
+    return (
+        f"PostgreSQL names the {what} {implicit.name}, and an index cannot take the name of "
+        "another index or sequence of the schema"
+    )
+
+
+def _renamed_index(label: str, idx: AgentIndex, new: str, held: str) -> dict:
     """An index the design creates under another name (#2410), with the reason the
-    customer reads in the design's note. ``holder`` is the table whose index keeps the
-    name, None when a table of the schema has it."""
-    held = (
-        f"the schema already has a table named {name}"
-        if holder is None
-        else f"{holder} already has an index named {name} in this schema"
-    )
-    reason = (
-        f"{held}, and PostgreSQL index names are unique within a schema; use the new name "
-        "wherever a script names this index"
-    )
-    return {"table": label, "kind": "index", "name": name, "new_name": new, "reason": reason,
-            "feature": "index_renamed"}  # fmt: skip
+    customer reads in the design's note: ``held`` says what already has the name. An
+    expression index is one only step 1 creates (#2547), so its note says so."""
+    reason = f"{held}; use the new name wherever a script names this index"
+    record = {"table": label, "kind": "index", "name": idx.index_name, "new_name": new,
+              "reason": reason, "feature": "index_renamed"}  # fmt: skip
+    if idx.has_expressions:
+        record["created_by"] = "step 1"
+    return record
 
 
 def unique_index_names(
-    tables: list[AgentTable], dialect: Dialect, qualified: bool = False
+    tables: list[AgentTable], dialect: Dialect, qualified: bool = False, source_engine: str = ""
 ) -> tuple[list[AgentTable], list[dict]]:
     """``tables`` with every index Aurora PostgreSQL creates named once in its schema (#2410).
 
     PostgreSQL keeps indexes in the schema's namespace, next to its tables, and compares
     names by their first 63 bytes, so a second index of a name (on any table of the schema)
     or an index named like a table fails with ``relation already exists``. MySQL scopes
-    index names per table, so a MySQL source repeats them. The first owner keeps the name
-    (tables first, as the script creates them, then indexes in table order); each later
-    index is renamed to ``<table>_<columns>_idx`` (``_idx1``, ``_idx2`` when that is
-    taken) and recorded for an app-layer note. Every name a collected index keeps is
-    reserved before any new name is chosen, so only an index that clashes is renamed. A
+    index names per table, so a MySQL source repeats them. The first owner keeps the name:
+    tables first, then the names PostgreSQL gives each table's primary key index and
+    identity sequences (``pg_implicit_names``, #2547), as the script creates them, then
+    indexes in table order; each later index is renamed to ``<table>_<columns>_idx``
+    (``_idx1``, ``_idx2`` when that is taken) and recorded for an app-layer note. Every
+    name a collected index keeps is reserved before any new name is chosen, so only an
+    index that clashes is renamed. On a PostgreSQL source (``source_engine``) the
+    expression indexes step 1 recreates under their source names (``dms_step``) take part
+    as the table's last indexes, as step 1 adds them; the draft itself creates none. A
     design of several schemas (``qualified``) checks each schema on its own; any other
     creates every table in one schema. Run after ``quotable_tables`` so a name repeated on
     one table is already left out. Aurora MySQL returns ``tables`` unchanged."""
@@ -1805,18 +1917,22 @@ def unique_index_names(
     def schema(t: AgentTable) -> str | None:
         return t.schema_name if qualified else None
 
-    # (schema, name as stored) -> the table whose index keeps it; None for a table's name.
-    holders: dict[tuple[str | None, str], str | None] = {}
+    recreated = classify_source_family(source_engine) == "postgresql"
+    # (schema, name as stored) -> what holds it, as the note says it.
+    holders: dict[tuple[str | None, str], str] = {}
     for t in tables:
-        holders.setdefault((schema(t), pg_name(t.table_name)), None)
-    clashing: dict[int, str | None] = {}  # id of each index to rename -> the name's holder
+        holders.setdefault((schema(t), pg_name(t.table_name)), _held_by_table(t.table_name))
+    for implicit in pg_implicit_names(tables, qualified, source_engine):
+        holders.setdefault((implicit.schema, implicit.name), _held_implicitly(implicit))
+    clashing: dict[int, str] = {}  # id of each index to rename -> what holds its name
     for t in tables:
-        for idx in carried_indexes(t, dialect):
+        named = [*carried_indexes(t, dialect), *(expression_indexes(t) if recreated else [])]
+        for idx in named:
             key = (schema(t), pg_name(idx.index_name))
             if key in holders:
                 clashing[id(idx)] = holders[key]
             else:
-                holders[key] = design_table_name(t, qualified)
+                holders[key] = _held_by_index(design_table_name(t, qualified), idx.index_name)
     out: list[AgentTable] = []
     renamed: list[dict] = []
     for t in tables:
@@ -1831,8 +1947,8 @@ def unique_index_names(
                     n += 1
                     new = _pg_index_name(t.table_name, idx.columns, f"idx{n}")
                 label = design_table_name(t, qualified)
-                holders[(schema(t), new)] = label
-                renamed.append(_renamed_index(label, idx.index_name, new, clashing[id(idx)]))
+                holders[(schema(t), new)] = _held_by_index(label, new)
+                renamed.append(_renamed_index(label, idx, new, clashing[id(idx)]))
                 idx = idx.model_copy(update={"index_name": new})
             indexes.append(idx)
         out.append(t.model_copy(update={"indexes": indexes}))

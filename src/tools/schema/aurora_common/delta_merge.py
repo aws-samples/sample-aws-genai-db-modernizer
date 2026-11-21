@@ -65,9 +65,12 @@ from src.tools.schema.aurora_common.ddl_generator import (
     design_table_name,
     generate_mysql_ddl,
     generate_pg_ddl,
+    implicit_name_holder,
     mysql_key_plan,
+    pg_implicit_names,
     pg_method_conflict,
     pg_name,
+    pg_relation_name,
     quotable_tables,
     render_index,
     rendered_method,
@@ -140,7 +143,9 @@ class AuroraDesignBase:
             self.tables, self.dialect, self.source_engine, self.qualified
         )
         self.left_out = [*self.left_out, *left_out]
-        self.tables, renamed = unique_index_names(self.tables, self.dialect, self.qualified)
+        self.tables, renamed = unique_index_names(
+            self.tables, self.dialect, self.qualified, self.source_engine
+        )
         self.renamed = [*self.renamed, *renamed]
 
     @property
@@ -541,6 +546,15 @@ def _apply_index_changes(
     # and the tables' own names; one schema holds a name once (#2410).
     owners: dict[tuple[str | None, str], str] = {}
     relations = {(schema, pg_name(bare)) for bare, schema in tables.refs.values()}
+    # The names PostgreSQL gives the tables' primary key indexes and sequences (#2547).
+    implicit = (
+        {
+            (n.schema, n.name): implicit_name_holder(n)
+            for n in pg_implicit_names(base.tables, base.qualified, base.source_engine)
+        }
+        if base.dialect is POSTGRES
+        else {}
+    )
     if base.dialect is POSTGRES:
         for draft, names in draft_indexes.items():
             schema = tables.refs[draft][1]
@@ -617,8 +631,14 @@ def _apply_index_changes(
                 continue
             key = (ref[1], pg_name(index.name))
             owner = owners.get(key, table.table_name)
-            if base.dialect is POSTGRES and (key in relations or owner != table.table_name):
-                by = "a table of that name" if key in relations else f"table '{owner}'"
+            if base.dialect is POSTGRES and (
+                key in relations or key in implicit or owner != table.table_name
+            ):
+                by = (
+                    "a table of that name"
+                    if key in relations
+                    else implicit.get(key) or f"table '{owner}'"
+                )
                 errors.append(
                     f"{where}: index name '{index.name}' is already used in the schema by "
                     f"{by} (PostgreSQL index names are unique within a schema); "
@@ -633,6 +653,56 @@ def _apply_index_changes(
         ddl.index_sql = list(current.values())
         draft_indexes[table.table_name] = list(current)
     return counts
+
+
+_SERIAL_TYPES = frozenset({"SMALLSERIAL", "SERIAL", "BIGSERIAL", "SERIAL2", "SERIAL4", "SERIAL8"})
+
+
+def _check_serial_sequences(
+    base: AuroraDesignBase,
+    delta: AuroraDesignDeltaContract,
+    tables: _Tables,
+    overrides: TypeOverrides,
+    draft_indexes: dict[str, list[str]],
+    errors: list[str],
+) -> None:
+    """Refuse a SERIAL type whose sequence name an index of the schema has (#2547).
+
+    A SERIAL column makes PostgreSQL create ``<table>_<column>_seq`` when the table is
+    created, before any index, so an index of that name then fails. The base reserves the
+    sequence names of the identity columns it can see (``pg_implicit_names``); a SERIAL
+    type only comes from the delta, so the merge checks it against the final indexes."""
+    if base.dialect is not POSTGRES:
+        return
+    owners: dict[tuple[str | None, str], str] = {}
+    for draft, names in draft_indexes.items():
+        schema = tables.refs[draft][1]
+        for n in names:
+            owners.setdefault((schema, pg_name(n)), draft)
+    where: dict[tuple[str, str], str] = {}
+    for i, change in enumerate(delta.tables):
+        table = tables.find(change.table_name)
+        if table is None:
+            continue
+        columns = [c.column_name for c in table.columns]
+        for col_change in change.column_types:
+            column = resolve_column(columns, col_change.column)
+            if column is not None:
+                where.setdefault((table.table_name, column), f"tables[{i}].column_types")
+    for (draft, column), override in overrides.items():
+        kind = override.aurora_type.strip().upper()
+        if kind not in _SERIAL_TYPES:
+            continue
+        bare, schema = tables.refs[draft]
+        seq = pg_relation_name(pg_name(bare), pg_name(column), "seq")
+        owner = owners.get((schema, seq))
+        if owner is not None:
+            errors.append(
+                f"{where.get((draft, column), 'type_rules')}: {draft}.{column} as {kind} makes "
+                f"PostgreSQL create the sequence '{seq}', and table '{owner}' has an index of "
+                "that name (PostgreSQL index and sequence names are unique within a schema); "
+                "choose another type or rename the index"
+            )
 
 
 def _renamed_hint(base: AuroraDesignBase, table: str, name: str) -> str:
@@ -675,12 +745,17 @@ def _left_out_notes(base: AuroraDesignBase) -> list[dict]:
 
 def _renamed_notes(base: AuroraDesignBase) -> list[dict]:
     """One app-layer note per index Aurora PostgreSQL creates under another name (#2410):
-    the collected name, ``table.index``, and the name the script gives it."""
+    the collected name, ``table.index``, and the name the script gives it; for an
+    expression index, which only step 1 recreates, the name step 1 gives it (#2547)."""
     return [
         {
             "feature": o["feature"],
             "source_object": comment_text(f"{o['table']}.{o['name']}"),
-            "recommendation": f"Created as {o['new_name']}: {o['reason']}.",
+            "recommendation": (
+                f"Step 1 recreates it as {o['new_name']}: {o['reason']}."
+                if o.get("created_by") == "step 1"
+                else f"Created as {o['new_name']}: {o['reason']}."
+            ),
         }
         for o in base.renamed
     ]
@@ -864,6 +939,7 @@ def merge_design_delta(
     index_counts = _apply_index_changes(
         base, contract, tables, table_ddls, draft_indexes, errors, ddl.index_notes
     )
+    _check_serial_sequences(base, contract, tables, overrides, draft_indexes, errors)
 
     for note in ddl.index_notes:
         warnings.append(f"index {note['table']}.{note['index']}: {note['reason']}")

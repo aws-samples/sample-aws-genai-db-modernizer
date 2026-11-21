@@ -445,3 +445,31 @@ def test_a_second_index_of_one_name_is_listed_for_the_customer(tmp_path):
         "orders_note, so this one was not created; create it under another name if the "
         "queries need it."
     )
+
+
+# ---------------------------------------------------------------------------
+# Names PostgreSQL chooses itself (#2547)
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize("name", ["orders_pkey", "orders_id_seq"])
+def test_a_recreated_index_never_takes_a_name_postgresql_gives_a_key_or_sequence(tmp_path, name):
+    """``orders`` has an identity key, so its CREATE TABLE creates ``orders_id_seq`` and
+    ``orders_pkey`` before any index: an expression index of either name is created under
+    another one."""
+    inputs = _pg(tmp_path, audit_log=[_ix(name, "lower((msg)::text)")])
+
+    assert _creates_index(inputs.ddl, name) == []
+    assert _creates_index(inputs.ddl, "audit_log_idx") == [
+        'CREATE INDEX "audit_log_idx" ON "audit_log" ((lower("msg")));'
+    ]
+
+
+def test_a_plain_index_never_takes_a_name_postgresql_gives_a_key(tmp_path):
+    ix = {"index_name": "orders_pkey", "columns": ["msg"], "is_unique": False}
+    inputs = _pg(tmp_path, audit_log=[ix])
+
+    assert _creates_index(inputs.ddl, "orders_pkey") == []
+    assert _creates_index(inputs.ddl, "audit_log_msg_idx") == [
+        'CREATE INDEX "audit_log_msg_idx" ON "audit_log" ("msg");'
+    ]
