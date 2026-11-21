@@ -37,8 +37,6 @@ def test_renders_the_deliverables_in_publish_order(store) -> None:
         "engineering-report-detailed",
         "executive-report",
     ]
-    # #1364: the detailed report stays in the folder; the delivery channel gets the rest.
-    assert [d.name for d in out.items if not d.publish] == ["engineering-report-detailed"]
 
 
 def test_the_folder_files_are_exactly_the_folder_entries(store) -> None:

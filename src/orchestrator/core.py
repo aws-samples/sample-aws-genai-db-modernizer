@@ -376,11 +376,11 @@ def run_analysis_core(engine: str, job_id: str, database_name: str, store=None) 
         try:
             store.write_text(mermaid_key, mermaid_diagram, content_type="text/x-mermaid")
         except NotImplementedError:
-            # A JSON-only store cannot hold the .mmd text. The ER diagram is
-            # rebuilt on demand from the analysis contract, so a store that cannot
-            # hold it does not fail the engine's analysis: drop the reference.
+            # assess(store=...) runs on a caller's store as given. One that cannot hold
+            # the .mmd text does not fail the engine's analysis: the ER diagram is rebuilt
+            # on demand from the analysis contract, so drop the reference.
             logger.debug(
-                "analysis-%s: store is JSON-only; skipping er-diagram.mmd durable write",
+                "analysis-%s: store cannot write text; skipping er-diagram.mmd",
                 spec.target_database,
             )
             mermaid_key = None

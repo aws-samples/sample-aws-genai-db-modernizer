@@ -24,7 +24,6 @@ import logging
 import os
 import tempfile
 from datetime import UTC, datetime
-from typing import Any
 
 from src.agents.interaction import read_answers, read_partial_output
 from src.agents.prompt_framing import with_untrusted_notice
@@ -252,9 +251,8 @@ def set_aside_refused_design(
     it. The refused file is kept: copied to :data:`REFUSED_SUFFIX` in the same folder
     (``.refused.2`` and on for another content; an identical earlier copy is reused), which
     no reader loads, and removed only once the copy is written. A store that can copy but
-    not delete (S3 without delete rights) keeps the copy and the original; one that cannot
-    copy raw content (a JSON-only store) keeps only the original. Either way this run
-    overwrites the original, its content being untrusted anyway, and the log says which
+    not delete (S3 without delete rights) keeps the copy and the original. Either way this
+    run overwrites the original, its content being untrusted anyway, and the log says which
     happened. Logs the path and the refused field's position, never the content. Never
     fails the run. Returns the new key when the original was moved, else ``None``."""
     from src.shared.contract_versioning import ContractVersionError
@@ -306,51 +304,28 @@ def set_aside_refused_design(
             where,
         )
         return aside
-    if aside is not None:
-        logger.warning(
-            "Schema design: copied the refused saved design %s to %s (field: %s); the "
-            "original stays until this run replaces it",
-            key,
-            aside,
-            where,
-        )
-        return None
     logger.warning(
-        "Schema design: the refused saved design %s (field: %s) stays until this run "
-        "replaces it; this store cannot copy it",
+        "Schema design: copied the refused saved design %s to %s (field: %s); the "
+        "original stays until this run replaces it",
         key,
+        aside,
         where,
     )
     return None
 
 
-def _copy_aside(store: ArtifactStore, key: str) -> tuple[str | None, bool]:
-    """Copy ``key``'s raw content (bytes, else text) next to it under a free ``.refused``
-    name, reusing an identical earlier copy, then remove the original. Returns the copy's
-    key (``None`` when the store cannot read or write raw content) and whether the
-    original is gone: a store that keeps the base class's delete, or whose delete does not
-    take effect, keeps both."""
-    try:
-        content = store.read_bytes(key)
-        write: Any = store.write_bytes
-    except NotImplementedError:
-        read_text = getattr(store, "read_text", None)
-        write = getattr(store, "write_text", None)
-        if read_text is None or write is None:
-            return None, False
-        try:
-            content = read_text(key)
-        except NotImplementedError:
-            return None, False
+def _copy_aside(store: ArtifactStore, key: str) -> tuple[str, bool]:
+    """Copy ``key``'s raw bytes next to it under a free ``.refused`` name, reusing an
+    identical earlier copy, then remove the original. Returns the copy's key and whether
+    the original is gone: a store that keeps the base class's delete, or whose delete does
+    not take effect, keeps both."""
+    content = store.read_bytes(key)
     aside, n = f"{key}{REFUSED_SUFFIX}", 1
     while store.exists(aside) and not _same_content(store, aside, content):
         n += 1
         aside = f"{key}{REFUSED_SUFFIX}.{n}"
     if not store.exists(aside):  # else an earlier run's copy of this very file
-        try:
-            write(aside, content)
-        except NotImplementedError:
-            return None, False
+        store.write_bytes(aside, content)
     if type(store).delete is ArtifactStore.delete:
         return aside, False  # the default deletes nothing
     try:
@@ -368,14 +343,14 @@ class _DeleteFailed(Exception):
         self.aside = aside
 
 
-def _same_content(store: ArtifactStore, key: str, content: bytes | str) -> bool:
+def _same_content(store: ArtifactStore, key: str, content: bytes) -> bool:
     try:
-        stored: bytes | str = (
-            store.read_bytes(key) if isinstance(content, bytes) else store.read_text(key)  # type: ignore[attr-defined]
-        )
-    except (NotImplementedError, OSError, AttributeError):
+        return store.read_bytes(key) == content
+    except OSError:  # a copy that vanished or cannot be read locally: not the same file
+        # A store's own errors (S3's ClientError, AccessDenied) are not caught here: the
+        # caller's "could not set aside" path logs them and keeps the original, which is
+        # safer than writing another copy past a store that is refusing reads.
         return False
-    return stored == content
 
 
 def clear_design_skip(

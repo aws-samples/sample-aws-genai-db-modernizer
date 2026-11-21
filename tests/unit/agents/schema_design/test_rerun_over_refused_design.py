@@ -111,7 +111,7 @@ def test_a_design_that_reads_is_left_where_it_is(tmp_path: Path) -> None:
     assert not (tmp_path / f"{KEY}.refused").exists()
 
 
-# --- Stores that cannot copy bytes or delete (S3, a JSON-only store) -------------------
+# --- Stores that cannot delete (S3) ---------------------------------------------------
 
 
 class _MemoryStore(ArtifactStore):
@@ -150,16 +150,6 @@ class _S3Like(_MemoryStore):
     delete = ArtifactStore.delete  # type: ignore[assignment]
 
 
-class _JsonOnlyLike(_S3Like):
-    """A JSON-only store's method set: no raw bytes, no delete."""
-
-    def read_bytes(self, path: str) -> bytes:
-        raise NotImplementedError("JSON only")
-
-    def write_bytes(self, path: str, data: bytes) -> None:
-        raise NotImplementedError("JSON only")
-
-
 class _DeleteDoesNothing(_MemoryStore):
     """A delete that reports success and leaves the file."""
 
@@ -182,10 +172,9 @@ class _DeleteRaises(_MemoryStore):
 
 
 _KEPT = {
-    _S3Like: ("copied the refused saved design", True),
-    _DeleteDoesNothing: ("copied the refused saved design", True),
-    _DeleteRaises: (f"copied it to {KEY}.refused, and the original stays", True),
-    _JsonOnlyLike: ("this store cannot copy it", False),
+    _S3Like: "copied the refused saved design",
+    _DeleteDoesNothing: "copied the refused saved design",
+    _DeleteRaises: f"copied it to {KEY}.refused, and the original stays",
 }
 
 
@@ -197,13 +186,13 @@ def test_a_store_that_cannot_move_the_file_keeps_one_copy_at_most_and_claims_no_
     the original stays for the rerun to overwrite, and no log line says it was set aside."""
     store = store_type()
     refused = _loaded(store, tmp_path)
-    wording, copied = _KEPT[store_type]
+    wording = _KEPT[store_type]
     with caplog.at_level(logging.WARNING, logger=handler.__name__):
         for _ in range(3):
             assert handler.set_aside_refused_design(store, DB, JOB, ENGINE, VERSION) is None
     assert store.files[KEY] == refused
     copies = [k for k in store.files if ".refused" in k]
-    assert copies == ([f"{KEY}.refused"] if copied else [])
+    assert copies == [f"{KEY}.refused"]
     assert all(store.files[k] == refused for k in copies)
     lines = [r.getMessage() for r in caplog.records if KEY in r.getMessage()]
     assert len(lines) == 3 and all(wording in line for line in lines)
@@ -212,11 +201,10 @@ def test_a_store_that_cannot_move_the_file_keeps_one_copy_at_most_and_claims_no_
 
 
 @pytest.mark.passes_on_main
-@pytest.mark.parametrize("store_type", [_S3Like, _JsonOnlyLike])
 def test_a_rerun_on_a_store_that_cannot_set_aside_replaces_the_refused_design(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, store_type: type[_MemoryStore]
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    store = store_type()
+    store = _S3Like()
     _loaded(store, tmp_path)
     clean = json.loads((RUN / f"schema-{ENGINE}/v{VERSION}/schema_output.json").read_text())
     handler.run_schema_design(JOB, DB, ENGINE, store, VERSION, llm_mode="external")
@@ -238,39 +226,52 @@ def test_a_run_without_a_model_sets_the_refused_design_aside_before_its_skip_rec
     assert store.read_json(KEY)["status"] == "skipped"
 
 
-class _TextOnly(_MemoryStore):
-    """A store that deletes and reads and writes text, but has no raw bytes."""
+class _ReadRaises(_S3Like):
+    """Reading the saved design's raw bytes is refused (S3's AccessDenied)."""
 
     def read_bytes(self, path: str) -> bytes:
-        raise NotImplementedError("text only")
+        if path == KEY:
+            raise RuntimeError("AccessDenied")
+        return super().read_bytes(path)
+
+
+class _WriteRaises(_S3Like):
+    """Writing the copy is refused (S3's AccessDenied)."""
 
     def write_bytes(self, path: str, data: bytes) -> None:
-        raise NotImplementedError("text only")
-
-    def read_text(self, path: str) -> str:
-        return self.files[path].decode("utf-8")
-
-    def write_text(self, path: str, content: str) -> None:
-        self.files[path] = content.encode("utf-8")
+        if handler.REFUSED_SUFFIX in path:
+            raise RuntimeError("AccessDenied")
+        super().write_bytes(path, data)
 
 
-class _NoRawRead(_TextOnly):
-    read_text = None  # type: ignore[assignment]
-
-
-def test_a_store_with_only_text_sets_aside_through_text(tmp_path: Path) -> None:
-    store = _TextOnly()
+@pytest.mark.passes_on_main  # the catch around the copy is main's; this pins it
+@pytest.mark.parametrize("store_type", [_ReadRaises, _WriteRaises], ids=lambda t: t.__name__)
+def test_a_store_whose_copy_raises_keeps_the_design_and_the_run_finishes(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+    store_type: type[_MemoryStore],
+) -> None:
+    """#2514: a read or write inside the copy that raises is logged as "could not set
+    aside"; the original stays, no copy is left, and the rerun still replaces it."""
+    store = store_type()
     refused = _loaded(store, tmp_path)
-    assert handler.set_aside_refused_design(store, DB, JOB, ENGINE, VERSION) == f"{KEY}.refused"
-    assert store.files[f"{KEY}.refused"] == refused and KEY not in store.files
-
-
-def test_a_store_with_no_raw_read_keeps_the_file_and_moves_nothing(tmp_path: Path) -> None:
-    store = _NoRawRead()
-    refused = _loaded(store, tmp_path)
-    assert handler.set_aside_refused_design(store, DB, JOB, ENGINE, VERSION) is None
+    with caplog.at_level(logging.WARNING, logger=handler.__name__):
+        assert handler.set_aside_refused_design(store, DB, JOB, ENGINE, VERSION) is None
     assert store.files[KEY] == refused
     assert not [k for k in store.files if ".refused" in k]
+    [line] = [r.getMessage() for r in caplog.records if KEY in r.getMessage()]
+    assert line.startswith("Schema design: could not set aside the refused saved design")
+    assert line.endswith("it stays until this run replaces it")
+    clean = json.loads((RUN / f"schema-{ENGINE}/v{VERSION}/schema_output.json").read_text())
+    handler.run_schema_design(JOB, DB, ENGINE, store, VERSION, llm_mode="external")
+    assert store.exists(f"{DB}/{JOB}/schema-{ENGINE}/v{VERSION}/llm_input.json")
+    monkeypatch.setattr(handler, "require_valid_guardrail_config", lambda: None)
+    monkeypatch.setattr(
+        handler, "_dispatch_schema_agent", lambda *a, **k: (json.dumps(clean), None)
+    )
+    handler.run_schema_design(JOB, DB, ENGINE, store, VERSION, llm_mode="bedrock")
+    assert store.read_json(KEY)["table_definitions"][0]["indexes"][0] != INJECTED
 
 
 class _Broken(_MemoryStore):

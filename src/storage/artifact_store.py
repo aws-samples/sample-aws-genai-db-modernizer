@@ -51,7 +51,7 @@ class ArtifactStore(ABC):
 
     def delete(self, path: str) -> bool:
         """Delete the artifact at *path* where the store supports it; returns whether it
-        did. Optional: a store that cannot delete (S3 without delete rights, AWS
-        Transform's artifact store) keeps the default, which deletes nothing, and a
-        caller must not rely on the file being gone (#1650)."""
+        did. Optional: a store that cannot delete (S3 without delete rights) keeps the
+        default, which deletes nothing, and a caller must not rely on the file being gone
+        (#1650)."""
         return False
