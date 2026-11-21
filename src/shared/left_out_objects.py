@@ -6,8 +6,8 @@
 The schema merge leaves an object out of the design when it cannot create it safely: a
 table whose name collides with another once case and quote marks are folded
 (``colliding_table_name``), a name SQL may not quote (``unsafe_name``), a foreign key
-whose referenced table two other schemas have (``ambiguous_reference``), a second
-index of one name (``duplicate_index_name``), or a table of a system schema such as
+whose referenced table two other schemas have, or whose own schema's table is not designed
+(``ambiguous_reference``), a second index of one name (``duplicate_index_name``), or a table of a system schema such as
 ``pg_catalog`` (``system_schema``, #2478). Each one becomes an app-layer note whose
 recommendation reads ``<Object> not created: <reason>.``
 (``delta_merge._left_out_notes``).

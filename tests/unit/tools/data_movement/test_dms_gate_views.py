@@ -163,3 +163,20 @@ def test_a_carried_view_the_script_leaves_out_says_why_in_its_exception(tmp_path
     views = next(c for c in gate.checks if c.id == "views")
     assert "2 views not created on Aurora by step 1: create each yourself" in views.summary
     assert {e.table: e.reason for e in view_exceptions(inputs, {})}["v_orders"] == VIEW_CARRIED
+
+
+def test_the_views_the_gate_names_use_the_checked_target_database(tmp_path, monkeypatch):
+    """#2530: a target database name in the inputs file is refused on a step that keeps each
+    source database, as in every script of step 1, not passed on to the view check."""
+    from src.storage.local_store import LocalArtifactStore
+    from src.tools.data_movement import dms_gate, dms_step
+
+    inputs = _inputs(_ROWS)
+    store = LocalArtifactStore(base_dir=str(tmp_path))
+    store.write_json(
+        "shop/job1/data-movement/step-1/inputs.json", {"target_database_name": "other"}
+    )
+    assert dms_gate._views_left_out(store, "shop", "job1", inputs) is not None
+    monkeypatch.setattr(dms_step, "keeps_schemas", lambda contract: True)
+    with pytest.raises(dms_step.DmsStepError, match="target database name does not apply"):
+        dms_gate._views_left_out(store, "shop", "job1", inputs)
