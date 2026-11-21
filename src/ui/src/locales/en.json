@@ -1269,6 +1269,8 @@
   "analysis-results.help.query-routing.body": "Each row is one query and the engine it is assigned to. Select a query to open its detail beside the table, with its history and why it ended on its engine.",
   "analysis-results.help.table-owners.title": "Table owners",
   "analysis-results.help.table-owners.body": "Each row is one table: its owner, the engines that read a copy of it and, when there is one, the cache in front of its reads.",
+  "analysis-results.help.unservable.title": "Queries that cannot be served",
+  "analysis-results.help.unservable.body": "The alert lists queries that no engine can serve as designed. These steps say how to re-run the assessment for them.",
   "analysis-results.related.to-risks": "The DynamoDB access patterns the merged design does not serve, and its merge-review decisions, are on the Risks and decisions tab.",
   "analysis-results.related.to-plan": "The queries that cannot be served as designed are on the Plan tab.",
   "analysis-results.query-routing.pagination": "Query routing pages",

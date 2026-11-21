@@ -31,7 +31,11 @@ export default function ResultsHelpPanel({ topic, context, t }) {
           </div>
         )}
       >
-        {content.paragraphs.map(text => <p key={text}>{text}</p>)}
+        {content.paragraphs.map((item, index) => {
+          // A paragraph is text, or a report sentence shown as written (#2521).
+          const { text, figure, own } = typeof item === 'string' ? { text: item } : item;
+          return <p key={`${index}:${own || ''}`} data-figure={figure} data-own-risk={own}>{text}</p>;
+        })}
       </HelpPanel>
     </div>
   );

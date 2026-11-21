@@ -14,6 +14,8 @@ import { createRoot } from 'react-dom/client';
 import { createInstance } from 'i18next';
 import en from '../../locales/en.json';
 import UnservableQueriesCallout from '../UnservableQueriesCallout';
+import { ResultsHelp } from '../../hooks/useResultsDrawers';
+import { helpPanelContent, resultsHelpContext } from '../../utils/resultsHelp';
 
 jest.mock('@cloudscape-design/components/alert', () => ({
   __esModule: true,
@@ -29,9 +31,9 @@ jest.mock('@cloudscape-design/components/space-between', () => ({
 }));
 jest.mock('@cloudscape-design/components/link', () => ({
   __esModule: true,
-  default: ({ children, onFollow, ariaLabel, href }) => (href
+  default: ({ children, onFollow, ariaLabel, href, nativeAttributes }) => (href
     ? <a className="mock-href" href={href}>{children}</a>
-    : <a role="button" tabIndex={0} aria-label={ariaLabel} onClick={() => onFollow({ preventDefault: () => {}, detail: {} })}>{children}</a>),
+    : <a role="button" tabIndex={0} aria-label={ariaLabel} {...nativeAttributes} onClick={() => onFollow({ preventDefault: () => {}, detail: {} })}>{children}</a>),
 }));
 
 global.IS_REACT_ACT_ENVIRONMENT = true;
@@ -53,6 +55,7 @@ beforeAll(async () => {
 });
 
 beforeEach(() => {
+  helpOpened = [];
   container = document.createElement('div');
   document.body.appendChild(container);
   root = createRoot(container);
@@ -96,9 +99,16 @@ const facts = {
 };
 const synthesis = { facts: { unservable: facts } };
 
+let helpOpened;
 const render = (props) => {
-  act(() => root.render(<UnservableQueriesCallout t={t} synthesis={synthesis} jobId="job-1" onOpen={() => {}} {...props} />));
+  act(() => root.render(
+    <ResultsHelp.Provider value={topic => helpOpened.push(topic)}>
+      <UnservableQueriesCallout t={t} synthesis={synthesis} jobId="job-1" onOpen={() => {}} {...props} />
+    </ResultsHelp.Provider>,
+  ));
 };
+// The re-run steps (#2521): what the alert's help panel holds for these facts.
+const panelText = syn => helpPanelContent('unservable', t, resultsHelpContext(syn || synthesis)).paragraphs.join('\n');
 
 test('flags each query with its engine, why, the gates and a redesign', () => {
   render();
@@ -123,11 +133,23 @@ test('a query opens its Why this engine trace', () => {
   expect(opened).toEqual(['q-count']);
 });
 
-test('points at the assignment review to re-run', () => {
+test('links to the assignment review and leaves the re-run steps to its help panel', () => {
   render();
   const link = container.querySelector('a.mock-href');
   expect(link.getAttribute('href')).toBe('/analysis/assignments/job-1');
-  expect(container.textContent).toContain('To re-run, open the assignment review');
+  expect(container.textContent).not.toContain('To re-run, open the assignment review');
+  expect(panelText()).toContain('To re-run, open the assignment review');
+});
+
+test('the alert header has an Info link that opens the unservable help panel', () => {
+  render();
+  const link = container.querySelector('[data-help-topic="unservable"]');
+  expect(link.getAttribute('aria-label')).toBe('Info about the Queries that cannot be served section');
+  expect(container.querySelector('h3').contains(link)).toBe(true);
+  act(() => link.click());
+  expect(helpOpened).toEqual(['unservable']);
+  // The alert's own message is unchanged.
+  expect(container.textContent).toContain(en['analysis-results.unservable.intro']);
 });
 
 test('a query id is text, never markup, and a query without gates states none', () => {
@@ -258,12 +280,26 @@ test('a query with no engine in the scope names the engine the scope left out', 
   expect(text).not.toContain(en['analysis-results.unservable.rerun']);
   expect(text).not.toContain(en['analysis-results.unservable.assignment-link']);
   expect(text).not.toContain("change a query's engine");
-  expect(text).toContain('To serve them, start a new assessment whose scope adds Aurora MySQL, or keep them on the source database.');
+  // The steps are in the help panel, with no assignment review step.
+  const steps = panelText({ facts: { unservable: { ...scopeFacts, no_engine_in_scope_closest_engines: ['aurora_mysql'] } } });
+  expect(steps).toContain('To serve them, start a new assessment whose scope adds Aurora MySQL, or keep them on the source database.');
+  expect(steps).not.toContain(en['analysis-results.unservable.rerun']);
   expect(container.querySelector('[data-figure="unservable-engine"]').textContent)
     .toBe('no engine (Aurora MySQL is outside the scope)');
   expect(text).toContain('Start a new assessment whose scope adds Aurora MySQL, or keep it on the source database.');
   expect(text).not.toContain('Keep it on');
   expect(text).not.toContain('on undefined');
+});
+
+test('a scope-only alert keeps its one action line and the Info link, with no assignment review link', () => {
+  render({ synthesis: { facts: { unservable: { ...scopeFacts, no_engine_in_scope_closest_engines: ['aurora_mysql'] } } } });
+  const text = container.textContent;
+  expect(text).toContain('To serve them, start a new assessment whose scope adds Aurora MySQL, or keep them on the source database.');
+  expect(container.querySelector('a.mock-href')).toBeNull();
+  expect(container.querySelector('[data-help-topic="unservable"]')).not.toBeNull();
+  // The other kinds keep their steps in the panel only.
+  render();
+  expect(container.textContent).not.toContain(en['analysis-results.unservable.rerun']);
 });
 
 test('the scope kind next to another kind uses the "Some" sentences', () => {
@@ -282,6 +318,8 @@ test('the scope kind next to another kind uses the "Some" sentences', () => {
   // Both ways to act: the assignment review for the queries on an engine, a new
   // assessment for the ones with no engine in the scope.
   expect(text).toContain(en['analysis-results.unservable.intro']);
-  expect(text).toContain(en['analysis-results.unservable.rerun']);
-  expect(text).toContain(en['analysis-results.unservable.rerun_scope_wider']);
+  const steps = panelText({ facts: { unservable: both } });
+  expect(steps).toContain(en['analysis-results.unservable.rerun']);
+  expect(steps).toContain(en['analysis-results.unservable.rerun_scope_wider']);
+  expect(text).not.toContain(en['analysis-results.unservable.rerun']);
 });

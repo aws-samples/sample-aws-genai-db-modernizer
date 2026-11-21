@@ -1628,17 +1628,27 @@ def test_results_page_states_each_tables_source_of_truth_and_replicas(
             ), (r.db, row["table"])
             assert row["shares_replica_risk"], (r.db, row["table"])  # a fresh report's rows
             assert row["risk"] not in text, (r.db, row["table"])
-        # The consistency note is behind the Info link, stated once.
+        # #2521: the consistency risk is in the Table owners help panel, which the Info
+        # link under the table opens, stated once in the report's own words.
         assert "Eventually consistent: " not in text, r.db
-        section.get_by_role("button", name="Info about the consistency of replica reads").click()
-        text = section.inner_text()
+        link = section.get_by_role("button", name="Info about the consistency of replica reads")
+        assert link.get_attribute("aria-expanded") is None, r.db
+        link.click()
+        panel = _help_panel(page)
+        expect(panel).to_have_attribute("data-help-topic", "table-owners", timeout=READY_MS)
+        expect(page.get_by_role("button", name="Close the help panel")).to_be_focused()
+        assert "Eventually consistent: " not in section.inner_text(), r.db
+        text = panel.inner_text()
         assert facts["shared_risk_sentence"].startswith("Every replicated table above"), r.db
         assert text.count(facts["shared_risk_sentence"]) == 1, r.db
         assert text.count("Eventually consistent: ") == 1, r.db
+        page.get_by_role("button", name="Close the help panel").click()
+        expect(link).to_be_focused()
         # #2321 review: the sentence sits under every row with a CDC to engine, also a
         # table nothing writes (owned by the relational step, CDC to DynamoDB), so it
         # names no source that disagrees with any such row's owner.
-        shared = section.locator('[data-figure="shared-risk"]').inner_text()
+        page.get_by_role("button", name="Info about the consistency of replica reads").click()
+        shared = _help_panel(page).locator('[data-figure="shared-risk"]').inner_text()
         assert shared == facts["shared_risk_sentence"], r.db
         named = {n for n in sources if n.casefold() in shared.casefold()}
         replicated = 0
@@ -2250,12 +2260,20 @@ def test_results_page_shows_the_headline_first(
         _show_tab(page, "data-model")
         owners = page.locator("#table-owners-section")
         report = json.loads((r.artifact_root / r.report["report"]).read_text())
-        # Closed: the section's toggle, and the Info link when a table has a replica.
+        # Closed: the section's toggle only. #2521: the consistency Info link, shown when a
+        # table has a replica, opens the help panel and discloses nothing in place.
         info = bool(
             ((report.get("facts") or {}).get("table_sources") or {}).get("replicated_tables")
         )
-        assert owners.locator('[aria-expanded="false"]').count() == 1 + info, r.db
+        assert owners.locator('[aria-expanded="false"]').count() == 1, r.db
         assert owners.locator('[aria-expanded="true"]').count() == 0, r.db
+        owners.locator('[aria-expanded="false"]').first.click()
+        link = owners.get_by_role("button", name="Info about the consistency of replica reads")
+        assert link.count() == int(info), r.db
+        if info:
+            assert link.get_attribute("aria-expanded") is None, r.db
+        owners.locator('[aria-expanded="true"]').first.click()
+        expect(owners.locator('[aria-expanded="false"]')).to_have_count(1)
         # #2321: its replicas are columns of that table; no second section lists them,
         # and an old link to that section lands inside Table owners.
         assert page.locator("#sources-of-truth-section").count() == 1, r.db
@@ -2362,6 +2380,7 @@ HELP_TOPICS = {
     "close-calls": ("plan", "Close calls", "close-calls"),
     "query-routing": ("queries", "Query routing", "how-to-read-an-assignment"),
     "table-owners": ("data-model", "Table owners", "sources-of-truth-and-replicas"),
+    "unservable": ("plan", "Queries that cannot be served", "queries-that-cannot-be-served"),
 }
 
 
@@ -2453,6 +2472,87 @@ def test_results_page_info_links_open_their_help_panels(
         assert ev == {"console": [], "pageerror": [], "failed": []}, (r.db, ev)
     # Every sample has a roadmap, a query table and table owners.
     assert {"migration-roadmap", "query-routing", "table-owners"} <= opened, opened
+
+
+UNSERVABLE_FACTS = {
+    "unservable_query_count": 1,
+    "fallback_query_count": 1,
+    "gated_everywhere_query_count": 0,
+    "no_fit_query_count": 1,
+    "more_unservable_count": 0,
+    "unservable_queries": [
+        {
+            "query_id": "q-e2e-unservable",
+            "engine": "aurora_mysql",
+            "kind": "fallback",
+            "rule": "fallback.no_score",
+            "explanation": "No engine could score this query, so it falls back to Aurora MySQL.",
+            "blocking_gates": [],
+            "required_capabilities": [],
+            "capability_labels": [],
+            "redesign_hints": ["Rewrite the query so a kept engine can serve it."],
+        }
+    ],
+}
+
+
+@pytest.mark.parametrize("scheme", COLOR_SCHEMES)
+def test_the_unservable_alert_opens_its_rerun_steps_in_a_help_panel(
+    page: Page, ui: str, all_runs: list[PipelineResult], scheme: ColorScheme
+) -> None:
+    """#2521: the alert for queries that cannot be served keeps its own message and has an
+    Info link in its header. It opens a help panel with the re-run steps, moves focus into
+    it and gets it back on close; the panel passes axe. The alert no longer states the steps."""
+    from axe_playwright_python.sync_playwright import Axe
+
+    from src.tools.validation.customer_text_guard import scan_text
+
+    r = all_runs[0]
+    job = re.escape(r.job_id)
+
+    def with_unservable(route: playwright.sync_api.Route) -> None:
+        response = route.fetch()
+        body = response.json()
+        body["synthesis"].setdefault("facts", {})["unservable"] = UNSERVABLE_FACTS
+        route.fulfill(response=response, json=body)
+
+    page.route(re.compile(rf"/api/v1/assessments/{job}/results$"), with_unservable)
+    page.set_viewport_size({"width": 1440, "height": 900})
+    page.emulate_media(color_scheme=scheme, reduced_motion="reduce")
+    ev = _watch(page)
+    _goto_results(page, ui, r, "plan")
+    alert = page.locator("#unservable-section")
+    alert.wait_for(timeout=READY_MS)
+    violations = Axe().run(page, context="#unservable-section").response["violations"]
+    blocking = [
+        (v["id"], [n.get("target") for n in v.get("nodes", [])][:3])
+        for v in violations
+        if v.get("impact") in BLOCKING_IMPACTS
+    ]
+    assert blocking == [], (scheme, blocking)
+    steps = "To re-run, open the assignment review"
+    assert "does not bring back an engine it removed" in alert.inner_text()
+    assert steps not in alert.inner_text()
+    assert alert.get_by_role("link", name="Open the assignment review").count() == 1
+    link = alert.locator('[data-help-topic="unservable"]')
+    expect(link).to_have_accessible_name("Info about the Queries that cannot be served section")
+    link.focus()
+    page.keyboard.press("Enter")
+    panel = _help_panel(page)
+    expect(panel).to_have_attribute("data-help-topic", "unservable", timeout=READY_MS)
+    expect(panel.get_by_role("heading", level=2)).to_have_text("Queries that cannot be served")
+    expect(page.get_by_role("button", name="Close the help panel")).to_be_focused()
+    text = panel.inner_text()
+    assert steps in text
+    assert _leaked_forbidden_text(text) == []
+    assert scan_text(text, "results-help:unservable") == []
+    violations = Axe().run(page, context="#results-help-panel").response["violations"]
+    blocking = [v["id"] for v in violations if v.get("impact") in BLOCKING_IMPACTS]
+    assert blocking == [], blocking
+    page.get_by_role("button", name="Close the help panel").click()
+    expect(_help_panel(page)).to_have_count(0)
+    expect(link).to_be_focused()
+    assert ev == {"console": [], "pageerror": [], "failed": []}, ev
 
 
 def test_results_page_drawers_work_on_a_phone(

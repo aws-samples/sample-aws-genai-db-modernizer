@@ -8,6 +8,8 @@ import SpaceBetween from "@cloudscape-design/components/space-between";
 import Link from "@cloudscape-design/components/link";
 import { displayEngine } from "../utils/engineNames";
 import { unservableOf } from "../utils/reportFacts";
+import { rerunLines, scopeOnly } from "../utils/unservable";
+import HelpInfoLink from "./HelpInfoLink";
 
 /**
  * "Queries that cannot be served as designed" (#729, #888): each query no analyzed engine could
@@ -15,10 +17,10 @@ import { unservableOf } from "../utils/reportFacts";
  * take, #888, which stays where it is, and each query no engine in the customer's
  * engine scope can serve, #1329, which has no engine), from report.json's facts.unservable -- the
  * same list the decision and engineering reports state -- with the gate that
- * ruled out each engine, a redesign hint for those engines and the way to
- * re-run (the
- * assignment review). Each query opens its "Why this engine" decision trace
- * (`onOpen`). It only formats the facts (ADR-032).
+ * ruled out each engine, a redesign hint for those engines and the link to the
+ * assignment review. The re-run steps are in the alert's help panel (#2521). Each
+ * query opens its "Why this engine" decision trace (`onOpen`). It only formats the
+ * facts (ADR-032).
  *
  * Callers pass `t` (the page's own `useTranslation` function), like
  * QueryRoutingTable.
@@ -50,32 +52,6 @@ function kindKeys(u) {
   return keys;
 }
 
-// #1329: every listed query has no engine in the customer's engine scope. The callout
-// then opens with their own intro and never points at the assignment review, which
-// refuses to edit them; the same rule as src/report/unservable.py.
-function scopeOnly(u) {
-  return (u.no_engine_in_scope_query_count || 0) > 0
-    && !(u.no_fit_query_count || u.flagged_query_count || u.held_query_count);
-}
-
-function engineList(engines) {
-  const names = engines.map(displayEngine);
-  if (names.length < 2) return names.join('');
-  return `${names.slice(0, -1).join(', ')} and ${names.slice(-1)[0]}`;
-}
-
-function rerunKeys(u, t) {
-  const lines = [];
-  if (!scopeOnly(u)) lines.push(t('analysis-results.unservable.rerun'));
-  if ((u.no_engine_in_scope_query_count || 0) > 0) {
-    const engines = u.no_engine_in_scope_closest_engines || [];
-    lines.push(engines.length > 0
-      ? t('analysis-results.unservable.rerun_scope', { engines: engineList(engines) })
-      : t('analysis-results.unservable.rerun_scope_wider'));
-  }
-  return lines;
-}
-
 // Where a query is (#1329: a query with no engine in the scope is on none, and names
 // the engine it would fall back to, which the scope leaves out).
 function engineText(q, t) {
@@ -105,7 +81,14 @@ const UnservableQueriesCallout = memo(({ synthesis, jobId, onOpen, t }) => {
     <div id="unservable-section">
       <Alert
         type="warning"
-        header={t('analysis-results.unservable.header', { count: u.unservable_query_count })}
+        // #2521: the re-run steps are in its help panel, behind the header's Info link.
+        header={(
+          <span>
+            {t('analysis-results.unservable.header', { count: u.unservable_query_count })}
+            {' '}
+            <HelpInfoLink topic="unservable" t={t} />
+          </span>
+        )}
       >
         <SpaceBetween size="s">
           <Box>{t(scopeOnly(u) ? 'analysis-results.unservable.scope_intro' : 'analysis-results.unservable.intro')}</Box>
@@ -131,7 +114,9 @@ const UnservableQueriesCallout = memo(({ synthesis, jobId, onOpen, t }) => {
           {u.more_unservable_count > 0 && (
             <Box>{t('analysis-results.unservable.more', { count: u.more_unservable_count })}</Box>
           )}
-          {rerunKeys(u, t).map(line => <Box key={line}>{line}</Box>)}
+          {/* #2521: a list of only no-engine-in-scope queries has no assignment review link,
+              so it keeps its one short action here; the Info link has the full steps. */}
+          {scopeOnly(u) && rerunLines(u, t).map(line => <Box key={line}>{line}</Box>)}
           {!scopeOnly(u) && (
             <Link href={`/analysis/assignments/${jobId}`}>{t('analysis-results.unservable.assignment-link')}</Link>
           )}

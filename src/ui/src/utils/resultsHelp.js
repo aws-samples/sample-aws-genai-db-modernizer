@@ -4,7 +4,8 @@
 import { helpPageUrl, RESULTS_HELP_URL } from './helpSite';
 import { adoptionOf } from './adoptionPaths';
 import { migrationWaves, waveReadiness } from './migrationWaves';
-import { tableOwnershipOf, tableSourcesOf } from './reportFacts';
+import { tableOwnershipOf, tableSourcesOf, unservableOf } from './reportFacts';
+import { rerunLines } from './unservable';
 import { WORKLOAD_FIT_DEFINITION } from './workloadFitLabels';
 
 /**
@@ -71,6 +72,19 @@ export const HELP_TOPICS = {
       t(key('table-owners', 'body')),
       context.ownerRuleKey ? t(context.ownerRuleKey) : null,
       context.cdcShown ? t('analysis-results.sources-of-truth.intro') : null,
+      // #2521: the eventual-consistency risk, in the sentence the report writes it
+      // (facts.table_sources.shared_risk_sentence), then an older report's own per-table
+      // risks. It was behind an in-place Info link under the table.
+      context.sharedRisk ? { text: context.sharedRisk, figure: 'shared-risk' } : null,
+      ...(context.ownRisks || []).map(risk => ({ text: `${risk.table} ${risk.risk}`, own: risk.table })),
+    ],
+  },
+  unservable: {
+    anchor: 'queries-that-cannot-be-served',
+    // #2521: the re-run steps the alert used to state under its queries.
+    paragraphs: (t, context) => [
+      t(key('unservable', 'body')),
+      ...(context.unservable ? rerunLines(context.unservable, t) : []),
     ],
   },
 };
@@ -92,7 +106,11 @@ export function helpTopicUrl(id) {
 export function resultsHelpContext(synthesis) {
   const ownership = tableOwnershipOf(synthesis);
   const sources = tableSourcesOf(synthesis);
+  const replicated = (sources && sources.replicated_tables) || [];
   return {
+    sharedRisk: (sources && sources.shared_risk_sentence) || null,
+    ownRisks: replicated.filter(row => row.shares_replica_risk !== true && row.risk),
+    unservable: unservableOf(synthesis),
     cdcShown: Boolean(sources && (((sources.replicated_tables || []).length > 0) || sources.shared_risk_sentence)),
     ownerRuleKey: ownership ? ownerRuleKey(ownership) : null,
     adoptionShown: Boolean(adoptionOf(synthesis)),

@@ -110,8 +110,9 @@ test('the table owners header has an Info link and the section states neither th
   const link = container.querySelector('[data-help-topic="table-owners"]');
   expect(link).not.toBeNull();
   act(() => container.querySelector('[aria-expanded="false"]').click());
-  act(() => container.querySelector('[aria-label="Info about the consistency of replica reads"]').click());
-  expect(container.textContent).toContain('Every replicated table above has this risk.');
+  // The in-place consistency link opens the help panel; it states nothing itself.
+  expect(container.querySelector('[aria-label="Info about the consistency of replica reads"]')).not.toBeNull();
+  expect(container.textContent).not.toContain('Every replicated table above has this risk.');
   expect(container.textContent).not.toContain(en['analysis-results.table-owners.rule']);
   expect(container.textContent).not.toContain(en['analysis-results.sources-of-truth.intro']);
   expectInfoLink('table-owners', 'Table owners', container.querySelector('#table-owners-section'));
