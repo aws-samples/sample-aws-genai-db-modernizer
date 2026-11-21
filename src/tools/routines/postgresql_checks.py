@@ -52,7 +52,8 @@ listed Aurora PostgreSQL line (``target_choice="newest"``, #1951).
 from __future__ import annotations
 
 import re
-from collections.abc import Callable, Iterable, Mapping
+from collections import Counter
+from collections.abc import Callable, Iterable, Mapping, Sequence
 from dataclasses import dataclass
 from typing import Any, Literal
 
@@ -405,6 +406,96 @@ def _plpgsql(create_sql: str) -> tuple[list[str], set[str], bool] | None:
         elif mode in _ASSIGN_MODES and (match := _ASSIGN.search(query)) is not None:
             out.append("SELECT " + query[match.end() :])
     return out, types, dynamic
+
+
+#: The PL/pgSQL statements whose own keyword the call scan has to tell from a function call,
+#: as the parse tree names them (#2549): ``IF``, ``ELSIF``, ``WHILE`` and ``RETURN``.
+_CONTROL_NODES = {
+    "IF": ("PLpgSQL_stmt_if",),
+    "ELSIF": ("PLpgSQL_if_elsif",),
+    "WHILE": ("PLpgSQL_stmt_while",),
+    "RETURN": ("PLpgSQL_stmt_return", "PLpgSQL_stmt_return_next", "PLpgSQL_stmt_return_query"),
+}
+#: The words after which PL/pgSQL starts a statement (``IF c THEN <here>``, ``LOOP <here>``).
+_STATEMENT_OPENERS = {"LOOP", "BEGIN", "DECLARE"}
+
+
+def plpgsql_control_flow_keywords(create_sql: str, toks: Sequence[Any]) -> frozenset[int]:
+    """The indexes in ``toks``, the tokens of ``create_sql``'s PL/pgSQL body, of the
+    keywords that open a statement or a condition and sit before ``(``: ``IF``, ``ELSIF``
+    (``ELSEIF``), ``WHILE``, ``RETURN``, and the ``QUERY`` or ``NEXT`` of ``RETURN QUERY (``
+    and ``RETURN NEXT (`` (#2549). They are syntax, never a call to a function of that
+    name. A name inside an expression (``x := if(1)``), a quoted name and a qualified one
+    are no statement start, so they are not here.
+
+    The scan walks the body's tokens and notes where a statement starts (the body's start,
+    after ``;``, ``THEN``, ``ELSE``, ``LOOP``, ``BEGIN``, ``DECLARE`` and a ``<<label>>``;
+    a ``CASE`` inside an expression keeps its own ``THEN`` and ``ELSE`` from counting). It
+    is checked against the parse tree: each of those keywords must be found at a statement
+    start as often as the tree has the statement, or nothing is returned. So is a body the
+    parser does not read. Empty then, which keeps every name before ``(`` a call. Never
+    raises."""
+    try:
+        tree = pgparse.parse_pgsql(create_sql)
+        wanted = {
+            word: sum(1 for key, _ in _nodes(tree) if key in nodes)
+            for word, nodes in _CONTROL_NODES.items()
+        }
+        return _statement_start_keywords(toks, wanted)
+    except Exception:  # noqa: BLE001 -- a body the reader cannot read has no keywords
+        return frozenset()
+
+
+def _statement_start_keywords(toks: Sequence[Any], wanted: Mapping[str, int]) -> frozenset[int]:
+    """The keyword indexes of :func:`plpgsql_control_flow_keywords`, or none when the
+    statement starts found do not match the parse tree's counts ``wanted``."""
+    found: Counter[str] = Counter()
+    marked: set[int] = set()
+    at_start, case_depth, i = True, 0, 0
+    while i < len(toks):
+        tok = toks[i]
+        word = tok.text.upper() if tok.kind == "VAR" else ""
+        word = "ELSIF" if word == "ELSEIF" else word
+        after = toks[i + 1] if i + 1 < len(toks) else None
+        if at_start and word in _CONTROL_NODES:
+            found[word] += 1
+            if after is not None and after.kind == "L_PAREN":
+                marked.add(i)
+            elif (
+                word == "RETURN"
+                and after is not None
+                and after.kind == "VAR"
+                and after.text.upper() in ("QUERY", "NEXT")
+                and i + 2 < len(toks)
+                and toks[i + 2].kind == "L_PAREN"
+            ):
+                marked.add(i + 1)
+        if at_start and tok.kind == "LT" and _label_at(toks, i):
+            i += 5  # ``<<name>>`` opens no statement of its own
+            continue
+        text = tok.text.upper()
+        if tok.kind == "CASE" and not at_start:
+            case_depth += 1
+        elif tok.kind == "END" and case_depth:
+            case_depth -= 1
+        at_start = (
+            tok.kind == "SEMICOLON"
+            or (text in ("THEN", "ELSE") and not case_depth)
+            or (word or text) in _STATEMENT_OPENERS
+        )
+        i += 1
+    if any(found[word] != wanted[word] for word in _CONTROL_NODES):
+        return frozenset()
+    return frozenset(marked)
+
+
+def _label_at(toks: Sequence[Any], i: int) -> bool:
+    """Whether ``toks[i:i + 5]`` is a ``<<name>>`` label."""
+    return (
+        i + 4 < len(toks)
+        and [t.kind for t in toks[i : i + 5]] == ["LT", "LT", toks[i + 2].kind, "GT", "GT"]
+        and toks[i + 2].kind in ("VAR", "IDENTIFIER")
+    )
 
 
 def _read_body(create_sql: str, kind: PostgresKind) -> _BodyRead | None:

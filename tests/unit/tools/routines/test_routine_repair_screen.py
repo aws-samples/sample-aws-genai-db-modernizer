@@ -1263,3 +1263,138 @@ def test_a_cast_to_another_type_or_a_function_named_cast_is_refused(candidate):
     fixed = PG_SQL_FIXED.replace("pg_current_wal_lsn()::text || '?'", candidate)
     refusal = _screen().refusal_of(_pg(original), fixed, "postgresql")
     assert refusal is not None and refusal[0] == "adds_calls", refusal
+
+
+# --------------------------------------------------------------------------- PL/pgSQL control flow
+# #2549: a PL/pgSQL statement's own keyword before ``(`` (``IF (c) THEN``, ``ELSIF (``,
+# ``WHILE (``, ``RETURN (``, ``RETURN QUERY (``) is syntax, not a call. A function of that
+# name in an expression, a quoted name and a qualified name stay calls.
+
+PLPGSQL_SET = (
+    "CREATE OR REPLACE FUNCTION public.report(p integer)\n RETURNS SETOF integer\n"
+    " LANGUAGE plpgsql\nAS $function$\nBEGIN\n  RETURN NEXT p;\n  RETURN;\nEND\n$function$\n"
+)
+
+
+def _plpgsql_candidate(added: str) -> str:
+    """The fixed routine with ``added`` ahead of its last statement."""
+    return PLPGSQL_FIXED.replace("  RETURN pg_current", added + "\n  RETURN pg_current")
+
+
+@pytest.mark.parametrize(
+    "added",
+    [
+        "  IF (p > 0) THEN\n    p := 1;\n  END IF;",
+        "  IF(p > 0) THEN\n    p := 1;\n  END IF;",
+        "  if (p > 0) then\n    p := 1;\n  end if;",
+        "  IF (p > 0) AND (p < 5) THEN\n    p := 1;\n  END IF;",
+        "  IF p > 0 THEN\n    p := 1;\n  ELSIF (p < 0) THEN\n    p := 2;\n  END IF;",
+        "  IF p > 0 THEN\n    p := 1;\n  ELSEIF (p < 0) THEN\n    p := 2;\n  END IF;",
+        "  IF (p > 0) THEN\n    IF (p > 1) THEN\n      p := 1;\n    END IF;\n  ELSE\n"
+        "    IF (p < 0) THEN\n      p := 2;\n    END IF;\n  END IF;",
+        "  WHILE (p > 0) LOOP\n    p := p - 1;\n  END LOOP;",
+        "  <<lp>>\n  WHILE (p > 0) LOOP\n    p := p - 1;\n  END LOOP lp;",
+        "  FOR i IN 1..3 LOOP\n    IF (i > p) THEN\n      p := i;\n    END IF;\n  END LOOP;",
+        "  CASE WHEN p > 0 THEN\n    IF (p > 1) THEN\n      p := 1;\n    END IF;\n"
+        "  ELSE\n    p := 2;\n  END CASE;",
+        "  BEGIN\n    p := 1;\n  EXCEPTION WHEN others THEN\n    IF (p > 0) THEN\n      p := 0;\n"
+        "    END IF;\n  END;",
+        "  IF (CASE WHEN p > 0 THEN true ELSE false END) THEN\n    p := 1;\n  END IF;",
+        "  IF (p > 0) THEN\n    RETURN (p);\n  END IF;",
+    ],
+    ids=[
+        "if", "if-unspaced", "lower-case", "if-two-conditions", "elsif", "elseif",
+        "nested-after-then-and-else", "while", "labelled-while", "if-in-a-for-loop",
+        "if-in-a-case-branch", "if-in-an-exception-handler", "if-after-a-case-expression",
+        "return-in-a-branch",
+    ],
+)  # fmt: skip
+def test_a_new_plpgsql_control_statement_with_a_parenthesised_condition_adds_no_call(added):
+    refusal = _screen().refusal_of(_pg(PLPGSQL), _plpgsql_candidate(added), "postgresql")
+    assert refusal is None, refusal
+
+
+def test_a_plpgsql_return_of_a_parenthesised_expression_adds_no_call():
+    original = PLPGSQL.replace("RETURN pg_current_xlog_location()::text", "RETURN 'a'")
+    candidate = original.replace("RETURN 'a' || '?'", "RETURN ('a' || '?')")
+    refusal = _screen().refusal_of(_pg(original), candidate, "postgresql")
+    assert refusal is None, refusal
+
+
+def test_a_plpgsql_return_next_or_query_of_a_parenthesised_value_adds_no_call():
+    candidate = PLPGSQL_SET.replace("RETURN NEXT p;", "RETURN NEXT (p);").replace(
+        "RETURN;", "RETURN QUERY (SELECT p);\n  RETURN;"
+    )
+    refusal = _screen().refusal_of(_pg(PLPGSQL_SET), candidate, "postgresql")
+    assert refusal is None, refusal
+
+
+@pytest.mark.passes_on_main  # main counted every one of these as a call too
+@pytest.mark.parametrize(
+    "added",
+    [
+        "  p := if(p > 0, 1, 2);",
+        "  p := if (p > 0, 1, 2);",
+        "  PERFORM if(p > 0);",
+        "  SELECT if(p > 0) INTO p;",
+        "  IF (if(p > 0)) THEN\n    p := 1;\n  END IF;",
+        "  IF (p > 0) THEN\n    p := if(p, 1, 2);\n  END IF;",
+        "  WHILE (p > 0) LOOP\n    p := while(p);\n  END LOOP;",
+        "  p := \"if\"(p);",
+        "  IF (p > 0) THEN\n    p := \"if\"(p);\n  END IF;",
+        "  p := public.if(p);",
+        "  p := public.\"while\"(p);",
+        "  p := return(p);",
+        "  p := 1 << 2 >> if(p);",
+        "  IF (p > 0) THEN\n    PERFORM purge_all();\n  END IF;",
+    ],
+    ids=[
+        "if-function-in-an-assignment", "if-function-spaced", "if-function-in-perform",
+        "if-function-in-select", "if-function-in-a-condition", "if-function-in-a-branch",
+        "while-function-in-a-loop", "quoted-if", "quoted-if-in-a-branch", "qualified-if",
+        "qualified-while", "return-function", "after-a-label-like-shift",
+        "other-call-in-a-branch",
+    ],
+)  # fmt: skip
+def test_a_plpgsql_function_call_in_an_expression_stays_a_call(added):
+    refusal = _screen().refusal_of(_pg(PLPGSQL), _plpgsql_candidate(added), "postgresql")
+    assert refusal is not None and refusal[0] == "adds_calls", refusal
+
+
+@pytest.mark.passes_on_main  # main had ``if`` among the original's calls, so it passed
+def test_a_new_plpgsql_if_statement_passes_when_the_routine_already_calls_the_if_function():
+    original = PLPGSQL.replace("  INSERT", "  PERFORM if(p > 0);\n  INSERT")
+    candidate = original.replace("pg_current_xlog_location", "pg_current_wal_lsn").replace(
+        "  INSERT", "  IF (p > 0) THEN\n    p := 1;\n  END IF;\n  INSERT"
+    )
+    assert _screen().refusal_of(_pg(original), candidate, "postgresql") is None
+
+
+def test_plpgsql_called_functions_reads_statement_keywords_as_syntax():
+    from src.tools.routines.proof_screen import called_functions
+
+    text = PLPGSQL_FIXED.replace(
+        "  RETURN pg_current",
+        "  IF (p > 0) THEN\n    p := if(p, 1, 2);\n  ELSIF (p < 0) THEN\n    p := 2;\n  END IF;\n"
+        "  WHILE (p > 0) LOOP\n    p := p - 1;\n  END LOOP;\n  RETURN (p)::text;\n"
+        "  RETURN pg_current",
+    )
+    assert called_functions(text, "postgresql") == frozenset(
+        {"public.report", "scratch", "pg_current_wal_lsn", "count", "if"}
+    )
+    alone = PLPGSQL_FIXED.replace(
+        "  RETURN pg_current", "  IF (p > 0) THEN\n    p := 1;\n  END IF;\n  RETURN pg_current"
+    )
+    assert called_functions(alone, "postgresql") == frozenset(
+        {"public.report", "scratch", "pg_current_wal_lsn", "count"}
+    )
+
+
+@pytest.mark.passes_on_main  # main kept every name a call
+def test_a_plpgsql_body_that_does_not_parse_keeps_every_name_a_call():
+    from src.tools.routines.proof_screen import called_functions
+
+    broken = PLPGSQL_FIXED.replace(
+        "  RETURN pg_current", "  IF (p > 0) THEN\n  RETURN (p);\n  RETURN pg_current"
+    )
+    assert {"if", "return"} <= called_functions(broken, "postgresql")

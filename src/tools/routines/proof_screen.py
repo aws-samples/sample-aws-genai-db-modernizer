@@ -87,6 +87,7 @@ from src.tools.routines.postgresql_checks import (
     RoutineParts,
     created_schemas,
     parse_routine,
+    plpgsql_control_flow_keywords,
     routine_parts,
     trigger_references,
 )
@@ -1174,6 +1175,8 @@ def called_functions(text: str, engine: str) -> frozenset[str] | None:
         return None
     if engine == "mysql" and levels:  # its control-flow keywords are syntax (#2406)
         levels[0] = _mysql_keywords_as_syntax(levels[0])
+    if engine == "postgresql":  # and so are a PL/pgSQL body's (#2549)
+        levels = _plpgsql_keywords_as_syntax(text, levels)
     found: set[str] = set()
     for tokens in levels:
         for i, tok in enumerate(tokens[:-1]):
@@ -1192,6 +1195,29 @@ def called_functions(text: str, engine: str) -> frozenset[str] | None:
                 name = f"{tokens[i - 2].text.casefold()}.{name}"
             found.add(name)
     return frozenset(found)
+
+
+def _plpgsql_keywords_as_syntax(
+    text: str, levels: list[list[RoutineToken]]
+) -> list[list[RoutineToken]]:
+    """``levels``, a PostgreSQL ``CREATE``'s tokens and its strings', with the PL/pgSQL
+    body's statement keywords before ``(`` (``IF (c) THEN``, ``ELSIF (``, ``WHILE (``,
+    ``RETURN (``, as :func:`plpgsql_control_flow_keywords` finds them where a statement
+    starts) given their own kind, so the call scan never reads them as names (#2549). A
+    function of that name in an expression, a quoted name and a qualified one stay names.
+    The levels as they are when the text is no PL/pgSQL routine or does not read."""
+    flagged = _levels_in_language(text, "postgresql")
+    if flagged is None or len(flagged) != len(levels):
+        return levels
+    out = list(levels)
+    for n, (_, plpgsql) in enumerate(flagged):
+        if plpgsql:
+            keywords = plpgsql_control_flow_keywords(text, levels[n])
+            out[n] = [
+                replace(t, kind=t.text.upper()) if i in keywords else t
+                for i, t in enumerate(levels[n])
+            ]
+    return out
 
 
 def _mysql_keywords_as_syntax(tokens: list[RoutineToken]) -> list[RoutineToken]:
