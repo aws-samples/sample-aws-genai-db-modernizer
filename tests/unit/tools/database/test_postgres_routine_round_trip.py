@@ -4,12 +4,12 @@
 """Each collected PostgreSQL CREATE loads back to the same routine (#1652).
 
 The live collector's routine reads, and the offline script's sections 8 and 9, run
-against a PostgreSQL started by ``pgserver`` on a Unix socket in a temp folder (no TCP
+against a PostgreSQL from ``pgserver`` on a Unix socket in a temp folder (no TCP
 listener). Every function, procedure and trigger of a small corpus is collected, its
 routine source built, the objects dropped and the sources loaded back; collecting again
 must give the same routines. A role with SELECT only must see every one of them, and a
 routine an extension owns is not listed. The tests skip when ``pgserver`` is not
-installed or cannot start.
+installed.
 """
 
 from __future__ import annotations
@@ -24,6 +24,7 @@ from src.agents.collector.routine_sources import (
     routine_sources_from_collection,
 )
 from src.tools.database.postgres_tools import PostgreSQLRemoteCollector
+from tests.pg_server import PgServerUnavailable, start_pg_server
 
 pgserver = pytest.importorskip("pgserver")
 
@@ -54,11 +55,11 @@ _NAMES = ["RtLogOrder", "rt_purge", "rt_set_status", "rt_set_status", "rt_total"
 
 
 @pytest.fixture(scope="module")
-def server(tmp_path_factory):
+def server():
     try:
-        srv = pgserver.get_server(tmp_path_factory.mktemp("pgdata"), cleanup_mode="delete")
-    except Exception as exc:  # no bundled server for this platform, or it cannot start
-        pytest.skip(f"pgserver cannot start a PostgreSQL here: {exc}")
+        srv = start_pg_server()
+    except PgServerUnavailable as exc:  # the one failure that skips
+        pytest.skip(f"no pgserver PostgreSQL here: {exc}")
     srv.psql("\\set ON_ERROR_STOP on\n" + _CORPUS)  # a bad corpus fails, never skips
     yield srv
     srv.cleanup()

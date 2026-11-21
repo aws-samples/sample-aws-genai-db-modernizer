@@ -8,9 +8,9 @@ PostgreSQL prints a literal for the collecting session's setting: with it off,
 pin the value the collection recorded, as ``pg_dump`` pins the value it printed under,
 so a view and a routine default that return ``C:\\temp`` on the source return exactly that
 on the target; the injection payloads stay refused under either pinned value. A
-PostgreSQL started by ``pgserver`` on a Unix socket in a temp folder (no TCP listener)
+PostgreSQL from ``pgserver`` on a Unix socket in a temp folder (no TCP listener)
 holds a source database set off and a target database left at the default; the tests
-skip when ``pgserver`` is not installed or cannot start.
+skip when ``pgserver`` is not installed.
 """
 
 from __future__ import annotations
@@ -24,6 +24,7 @@ import pytest
 from src.agents.collector.routine_sources import build_routine_sources
 from src.tools.data_movement.routine_scripts import DEPLOY_FILE as ROUTINES_DEPLOY
 from src.tools.data_movement.view_scripts import DEPLOY_FILE as VIEWS_DEPLOY
+from tests.pg_server import PgServerUnavailable, start_pg_server
 from tests.unit.tools.data_movement.routine_fixtures import (
     contract_with_routines,
     migration,
@@ -51,11 +52,11 @@ CREATE FUNCTION public.path_of(p text DEFAULT E'C:\\temp') RETURNS text LANGUAGE
 
 
 @pytest.fixture(scope="module")
-def server(tmp_path_factory):
+def server():
     try:
-        srv = pgserver.get_server(tmp_path_factory.mktemp("pgstrings"), cleanup_mode="delete")
-    except Exception as exc:  # no bundled server for this platform, or it cannot start
-        pytest.skip(f"pgserver cannot start a PostgreSQL here: {exc}")
+        srv = start_pg_server()
+    except PgServerUnavailable as exc:  # the one failure that skips
+        pytest.skip(f"no pgserver PostgreSQL here: {exc}")
     srv.psql("CREATE DATABASE src_off; CREATE DATABASE tgt;")
     srv.psql("ALTER DATABASE src_off SET standard_conforming_strings = off;")
     ran = _psql(srv, "src_off", "-v", "ON_ERROR_STOP=1", "-c", _SOURCE)

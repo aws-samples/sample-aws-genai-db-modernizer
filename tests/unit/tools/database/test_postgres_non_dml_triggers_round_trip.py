@@ -4,11 +4,11 @@
 """A TRUNCATE-only trigger and event triggers are collected, kept and load back (#2023).
 
 The live collector's reads and the offline script's sections run against a PostgreSQL
-started by ``pgserver`` on a Unix socket in a temp folder (no TCP listener), as in
+from ``pgserver`` on a Unix socket in a temp folder (no TCP listener), as in
 ``test_postgres_routine_round_trip.py``. Each trigger is collected, its routine source
 built, the triggers dropped and the sources loaded back; collecting again must give the
 same rows. A role with no privilege beyond the catalog must see them all. The tests skip
-when ``pgserver`` is not installed or cannot start.
+when ``pgserver`` is not installed.
 """
 
 from __future__ import annotations
@@ -23,6 +23,7 @@ from src.agents.collector.offline_ingest import build_offline_collector_output
 from src.agents.collector.routine_sources import build_routine_sources
 from src.tools.database.offline_parser import parse_offline_collection
 from src.tools.database.postgres_tools import PostgreSQLRemoteCollector
+from tests.pg_server import PgServerUnavailable, start_pg_server
 
 pgserver = pytest.importorskip("pgserver")
 
@@ -46,11 +47,11 @@ CREATE ROLE nd_ro;
 
 
 @pytest.fixture(scope="module")
-def server(tmp_path_factory):
+def server():
     try:
-        srv = pgserver.get_server(tmp_path_factory.mktemp("pgdata"), cleanup_mode="delete")
-    except Exception as exc:  # no bundled server for this platform, or it cannot start
-        pytest.skip(f"pgserver cannot start a PostgreSQL here: {exc}")
+        srv = start_pg_server()
+    except PgServerUnavailable as exc:  # the one failure that skips
+        pytest.skip(f"no pgserver PostgreSQL here: {exc}")
     srv.psql("\\set ON_ERROR_STOP on\n" + _CORPUS)  # a bad corpus fails, never skips
     yield srv
     srv.cleanup()

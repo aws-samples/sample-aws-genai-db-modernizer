@@ -4,11 +4,11 @@
 """PostgreSQL enum labels, read from a real server and created again (#1834).
 
 Both enum queries (``scripts/collect-postgresql.sql``'s ``enum_types_data`` and the live
-collector's ``collect_enum_types``) run against a PostgreSQL started by ``pgserver`` on a
+collector's ``collect_enum_types``) run against a PostgreSQL from ``pgserver`` on a
 Unix socket in a temp folder (no TCP listener): the labels come back in sort order, which
 ``ALTER TYPE ... ADD VALUE BEFORE`` makes differ from creation order. Step 1's
 ``CREATE TYPE`` for those labels (quotes and backslashes included) runs on the same server
-and gives the same labels back. The tests skip when ``pgserver`` cannot start.
+and gives the same labels back. The tests skip when ``pgserver`` is not installed.
 """
 
 from __future__ import annotations
@@ -17,6 +17,7 @@ import pytest
 
 from src.tools.database.postgres_tools import PostgreSQLRemoteCollector
 from src.tools.transformation_contract.pg_enums import EnumType, create_type_sql
+from tests.pg_server import PgServerUnavailable, start_pg_server
 from tests.unit.tools.database.test_postgres_foreign_keys_live_server import _ROOT, _run
 
 pgserver = pytest.importorskip("pgserver")
@@ -35,11 +36,11 @@ _EXPECTED = [
 
 
 @pytest.fixture(scope="module")
-def server(tmp_path_factory):
+def server():
     try:
-        srv = pgserver.get_server(tmp_path_factory.mktemp("pgdata"), cleanup_mode="delete")
-    except Exception as exc:  # no bundled server for this platform, or it cannot start
-        pytest.skip(f"pgserver cannot start a PostgreSQL here: {exc}")
+        srv = start_pg_server()
+    except PgServerUnavailable as exc:  # the one failure that skips
+        pytest.skip(f"no pgserver PostgreSQL here: {exc}")
     srv.psql("\\set ON_ERROR_STOP on\n" + _SCHEMA)
     yield srv
     srv.cleanup()

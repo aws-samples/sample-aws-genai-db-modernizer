@@ -415,6 +415,9 @@ run once for every PostgreSQL and MySQL major they find. `pgserver` (PostgreSQL 
 comes with the `dev` extra. Only its `bin` folder is used, started with `initdb` and
 `postgres` like any other, so a lock `pgserver` takes for every process of the user
 never holds a start up (#2518). <!-- claim: tests/unit/tools/database/test_disposable_engine.py::test_pgserver_s_own_major_starts_from_its_bin_folder_while_another_process_holds_its_lock -->
+A test that needs a PostgreSQL of its own starts it with `start_pg_server()` from
+`tests/pg_server.py`, which runs the same `bin` folder through the disposable engine's
+server class. No file under `src/`, `scripts/` or `tests/` calls `pgserver.get_server` (#2522). <!-- claim: tests/unit/test_no_pgserver_get_server.py::test_no_file_starts_postgresql_through_pgserver_get_server, tests/unit/test_pg_server.py::test_a_server_starts_while_another_process_holds_pgserver_s_lock -->
 Any other major comes from conda-forge: `conda install -c conda-forge
 postgresql=<major>` and `conda install -c conda-forge mysql-server=<major>` (or
 `micromamba`, one environment per major). Point `MODERNIZER_PG_BIN_<major>` (for

@@ -31,6 +31,7 @@ from src.tools.data_movement.triggers_scripts import (
     TRIGGERS_INSTRUCTIONS,
     write_triggers_scripts,
 )
+from tests.pg_server import start_pg_server
 from tests.unit.tools.data_movement import test_routine_scripts_engine as twin
 from tests.unit.tools.data_movement.dms_step_fixtures import make_contract
 from tests.unit.tools.data_movement.routine_fixtures import (
@@ -55,8 +56,8 @@ _DROP = "DROP FUNCTION public.audit() CASCADE;"
 
 
 @pytest.fixture(scope="module")
-def server(tmp_path_factory):
-    srv = pgserver.get_server(tmp_path_factory.mktemp("pgdata"), cleanup_mode="delete")
+def server():
+    srv = start_pg_server()
     srv.psql("\\set ON_ERROR_STOP on\n" + _TABLE)
     yield srv
     srv.cleanup()

@@ -15,7 +15,7 @@ gate's routines check must name them; and the counts must agree with ``facts.rou
 which the reports and the results page print.
 
 The PostgreSQL sample also runs the part of the proof that needs no AWS: a PostgreSQL
-started by ``pgserver`` on a Unix socket (no TCP listener) plays the Aurora target, with
+from ``pgserver`` on a Unix socket (no TCP listener) plays the Aurora target, with
 the tables the routines name created from ``step-1.ddl.sql``. The deploy, the read-only
 check, the triggers-enable script and its check run on it as ``routines.md`` and
 ``triggers.md`` say, and ``run_dms_step.py routines-check`` / ``triggers-check`` read the
@@ -41,6 +41,7 @@ import pytest
 
 from tests.e2e.pipeline import REPO, PipelineResult, _env
 from tests.e2e.test_sample_routines import EXPECTED, FAILED
+from tests.pg_server import start_pg_server
 
 pytestmark = [pytest.mark.e2e, pytest.mark.deterministic]
 
@@ -340,11 +341,11 @@ def test_the_facts_agree_with_step_1(step1: Step1) -> None:
 
 
 @pytest.fixture
-def stand_in_target(tmp_path: Path) -> Iterator[Any]:
-    """A PostgreSQL started by ``pgserver`` in a temp folder, on a Unix socket only, and
+def stand_in_target() -> Iterator[Any]:
+    """A PostgreSQL from ``pgserver`` in a temp folder, on a Unix socket only, and
     stopped (its data folder deleted) when the test ends."""
-    pgserver = pytest.importorskip("pgserver")
-    server = pgserver.get_server(tmp_path / "pgdata", cleanup_mode="delete")
+    pytest.importorskip("pgserver")
+    server = start_pg_server()
     try:
         yield server
     finally:

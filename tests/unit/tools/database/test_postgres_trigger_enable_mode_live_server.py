@@ -8,9 +8,9 @@
 ``session_replication_role = replica``) and ``A`` (ENABLE ALWAYS). ``is_enabled`` folds
 them into a boolean; ``enabled_mode`` keeps the letter, so a step that recreates a trigger
 on the target can set the same mode. A DML trigger, a TRUNCATE-only trigger and an event
-trigger in each mode run against a PostgreSQL started by ``pgserver`` on a Unix socket in a
+trigger in each mode run against a PostgreSQL from ``pgserver`` on a Unix socket in a
 temp folder (no TCP listener), through the live collector and the offline script, read
-only. The tests skip when ``pgserver`` is not installed or cannot start.
+only. The tests skip when ``pgserver`` is not installed.
 """
 
 from __future__ import annotations
@@ -26,6 +26,7 @@ from src.agents.collector.postgres_collector import _build_triggers as live_buil
 from src.agents.collector.routine_sources import non_dml_triggers
 from src.tools.database.offline_parser import parse_offline_collection
 from src.tools.database.postgres_tools import PostgreSQLRemoteCollector
+from tests.pg_server import PgServerUnavailable, start_pg_server
 
 pgserver = pytest.importorskip("pgserver")
 
@@ -69,11 +70,11 @@ def _expected(kind: str) -> dict[str, tuple[str, bool]]:
 
 
 @pytest.fixture(scope="module")
-def server(tmp_path_factory):
+def server():
     try:
-        srv = pgserver.get_server(tmp_path_factory.mktemp("pgdata"), cleanup_mode="delete")
-    except Exception as exc:  # no bundled server for this platform, or it cannot start
-        pytest.skip(f"pgserver cannot start a PostgreSQL here: {exc}")
+        srv = start_pg_server()
+    except PgServerUnavailable as exc:  # the one failure that skips
+        pytest.skip(f"no pgserver PostgreSQL here: {exc}")
     srv.psql("\\set ON_ERROR_STOP on\n" + _corpus())  # a bad corpus fails, never skips
     yield srv
     srv.cleanup()

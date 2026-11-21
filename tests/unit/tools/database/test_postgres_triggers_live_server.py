@@ -4,12 +4,12 @@
 """PostgreSQL triggers, read from a real server by a read-only user (#1651).
 
 Both trigger queries (``scripts/collect-postgresql.sql`` and the live collector's
-``collect_triggers``) run against a PostgreSQL started by ``pgserver`` on a Unix socket in
+``collect_triggers``) run against a PostgreSQL from ``pgserver`` on a Unix socket in
 a temp folder (no TCP listener), as the owner and as a role with SELECT only.
 ``information_schema.triggers`` lists only the triggers on tables the user owns or holds
 more than SELECT on, so a read-only collector saw none; both queries read ``pg_trigger``
 and must give every DML trigger once, with its timing and every event, whoever runs them.
-The tests skip when ``pgserver`` is not installed or cannot start.
+The tests skip when ``pgserver`` is not installed.
 """
 
 from __future__ import annotations
@@ -23,6 +23,7 @@ from src.agents.collector.mysql_collector import _build_triggers as offline_buil
 from src.agents.collector.postgres_collector import _build_triggers as live_build
 from src.tools.database.offline_parser import parse_offline_collection
 from src.tools.database.postgres_tools import PostgreSQLRemoteCollector
+from tests.pg_server import PgServerUnavailable, start_pg_server
 
 pgserver = pytest.importorskip("pgserver")
 
@@ -85,11 +86,11 @@ _ROLES = pytest.mark.parametrize("role", [None, "ro_collector"], ids=["owner", "
 
 
 @pytest.fixture(scope="module")
-def server(tmp_path_factory):
+def server():
     try:
-        srv = pgserver.get_server(tmp_path_factory.mktemp("pgdata"), cleanup_mode="delete")
-    except Exception as exc:  # no bundled server for this platform, or it cannot start
-        pytest.skip(f"pgserver cannot start a PostgreSQL here: {exc}")
+        srv = start_pg_server()
+    except PgServerUnavailable as exc:  # the one failure that skips
+        pytest.skip(f"no pgserver PostgreSQL here: {exc}")
     srv.psql("\\set ON_ERROR_STOP on\n" + _SCHEMA)  # a bad schema fails, never skips
     yield srv
     srv.cleanup()

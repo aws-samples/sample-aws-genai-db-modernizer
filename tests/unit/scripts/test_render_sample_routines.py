@@ -6,7 +6,7 @@
 ``scripts/render_sample_routines.py`` writes, from each sample's synthetic routine set,
 the script that installs the set on the sample's source database for the step 1
 rehearsal, and the script that removes it. The committed scripts must be the rendered
-ones; and installed on a PostgreSQL started by ``pgserver`` (a Unix socket, no TCP
+ones; and installed on a PostgreSQL from ``pgserver`` (a Unix socket, no TCP
 listener), the discourse set collects back to the same routine sources the bundled set
 gives the deterministic e2e, so the rehearsal carries what the e2e checks. The MySQL twin
 needs a ``mysqld``: ``tests/integration/test_sample_routine_install_mysql.py``.
@@ -23,6 +23,7 @@ import pytest
 import scripts.render_sample_routines as render
 from src.agents.collector.routine_sources import build_routine_sources
 from src.tools.database.postgres_tools import PostgreSQLRemoteCollector
+from tests.pg_server import PgServerUnavailable, start_pg_server
 
 EXAMPLES = Path(render.REPO_ROOT) / "docs" / "examples"
 
@@ -89,12 +90,12 @@ CREATE TABLE public.notifications (id integer PRIMARY KEY, read boolean, created
 
 
 @pytest.fixture
-def source(tmp_path: Path) -> Any:
-    pgserver = pytest.importorskip("pgserver")
+def source() -> Any:
+    pytest.importorskip("pgserver")
     try:
-        srv = pgserver.get_server(tmp_path / "pgdata", cleanup_mode="delete")
-    except Exception as exc:  # no bundled server for this platform, or it cannot start
-        pytest.skip(f"pgserver cannot start a PostgreSQL here: {exc}")
+        srv = start_pg_server()
+    except PgServerUnavailable as exc:  # the one failure that skips
+        pytest.skip(f"no pgserver PostgreSQL here: {exc}")
     try:
         srv.psql("\\set ON_ERROR_STOP on\n" + _SETUP)
         yield srv

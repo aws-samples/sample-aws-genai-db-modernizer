@@ -3,13 +3,13 @@
 
 """Step 1's verify scripts on real engines (#1998), run as ``verify.md`` says.
 
-PostgreSQL: one server started by ``pgserver`` on a Unix socket (no TCP listener), two
+PostgreSQL: one server from ``pgserver`` on a Unix socket (no TCP listener), two
 databases playing the source and Aurora. Each side gets the same data, written the way a copy
 may write it (another session time zone, another numeric scale, JSON with other whitespace and
 key order, another character set), and the target script runs under hostile session defaults:
 both scripts must print the same counts and checksums. Then one changed row is a difference, a
 source that changed between two runs is ``changing``, and a table missing on Aurora is
-``missing``. The tests skip when the server cannot start. The MySQL twins need a ``mysqld``
+``missing``. The tests skip when pgserver is not installed. The MySQL twins need a ``mysqld``
 and live in ``tests/integration/test_verify_scripts_mysql.py`` (#2091): the gated run has none.
 """
 
@@ -29,6 +29,7 @@ from src.tools.data_movement.verify_scripts import (
     render_script,
     verify_tables,
 )
+from tests.pg_server import PgServerUnavailable, start_pg_server
 from tests.unit.tools.data_movement.verify_fixtures import (
     HOSTILE_COLUMNS,
     HOSTILE_TABLE,
@@ -87,12 +88,12 @@ _HOSTILE = {
 
 
 @pytest.fixture(scope="module")
-def pg(tmp_path_factory):
+def pg():
     pgserver = pytest.importorskip("pgserver")
     try:
-        srv = pgserver.get_server(tmp_path_factory.mktemp("pgdata"), cleanup_mode="delete")
-    except Exception as exc:  # no bundled server for this platform, or it cannot start
-        pytest.skip(f"pgserver cannot start a PostgreSQL here: {exc}")
+        srv = start_pg_server()
+    except PgServerUnavailable as exc:  # the one failure that skips
+        pytest.skip(f"no pgserver PostgreSQL here: {exc}")
     srv.psql("CREATE DATABASE src;\nCREATE DATABASE tgt;\n")
     psql = Path(pgserver.__file__).parent / "pginstall" / "bin" / "psql"
 

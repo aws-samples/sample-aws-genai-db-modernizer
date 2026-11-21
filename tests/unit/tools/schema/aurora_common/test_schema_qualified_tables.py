@@ -35,6 +35,7 @@ from src.tools.schema.aurora_common.delta_merge import (
     full_contract_to_delta,
     merge_design_delta,
 )
+from tests.pg_server import PgServerUnavailable, start_pg_server
 
 REPO = Path(__file__).resolve().parents[5]
 LEGACY = REPO / "tests/fixtures/aurora_postgresql_two_schemas_pre_2455.json"
@@ -120,14 +121,14 @@ def test_two_schemas_tables_of_one_name_each_get_their_own_create_table() -> Non
     AuroraPostgresqlModelOutputContract.model_validate(design)
 
 
-def test_the_two_schema_script_applies_on_postgresql(tmp_path_factory) -> None:
+def test_the_two_schema_script_applies_on_postgresql() -> None:
     """Both CREATE TABLE statements, and both indexes of one name, apply."""
-    pgserver = pytest.importorskip("pgserver")
+    pytest.importorskip("pgserver")
     design = _merged("aurora_postgresql", _two_orders())
     try:
-        server = pgserver.get_server(tmp_path_factory.mktemp("pg2455"), cleanup_mode="delete")
-    except Exception as exc:  # no bundled server for this platform, or it cannot start
-        pytest.skip(f"pgserver cannot start a PostgreSQL here: {exc}")
+        server = start_pg_server()
+    except PgServerUnavailable as exc:  # the one failure that skips
+        pytest.skip(f"no pgserver PostgreSQL here: {exc}")
     try:
         server.psql("\\set ON_ERROR_STOP on\n" + design["generated_ddl"] + "\n")
         out = server.psql(
@@ -455,15 +456,13 @@ def test_a_foreign_key_finds_its_one_table_in_a_schema_of_another_case() -> None
     ]
 
 
-def test_the_script_without_an_ambiguous_foreign_key_applies_on_postgresql(
-    tmp_path_factory,
-) -> None:
-    pgserver = pytest.importorskip("pgserver")
+def test_the_script_without_an_ambiguous_foreign_key_applies_on_postgresql() -> None:
+    pytest.importorskip("pgserver")
     design = _merged("aurora_postgresql", _ambiguous_fk_tables())
     try:
-        server = pgserver.get_server(tmp_path_factory.mktemp("pg2479"), cleanup_mode="delete")
-    except Exception as exc:  # no bundled server for this platform, or it cannot start
-        pytest.skip(f"pgserver cannot start a PostgreSQL here: {exc}")
+        server = start_pg_server()
+    except PgServerUnavailable as exc:  # the one failure that skips
+        pytest.skip(f"no pgserver PostgreSQL here: {exc}")
     try:
         server.psql("\\set ON_ERROR_STOP on\n" + design["generated_ddl"] + "\n")
         out = server.psql(

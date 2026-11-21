@@ -10,11 +10,11 @@ default, set the way its client sets variables), and reads them again: psql
 carries its count at the first read (``sample_first_count``) and the metadata the wait
 and the seconds the server's clock measured (``metadata.rate_sample``).
 
-The PostgreSQL script runs whole against a PostgreSQL started by ``pgserver`` on a Unix
+The PostgreSQL script runs whole against a PostgreSQL from ``pgserver`` on a Unix
 socket in a temp folder (no TCP listener). Its bundle has no ``pg_stat_statements``, so
 the test gives the script tables of that name and a ``pg_sleep`` of its own, found
 first on the session's ``search_path``, that runs statements "during the wait". The
-other scripts are read as text. The pgserver tests skip when it cannot start.
+other scripts are read as text. The pgserver tests skip when it is not installed.
 """
 
 from __future__ import annotations
@@ -28,6 +28,7 @@ import pytest
 
 from src.shared import rate_window
 from src.tools.database.offline_parser import parse_offline_collection
+from tests.pg_server import PgServerUnavailable, start_pg_server
 
 SCRIPTS = Path(__file__).resolve().parents[3] / "scripts"
 
@@ -227,11 +228,11 @@ $$;
 
 
 @pytest.fixture(scope="module")
-def server(tmp_path_factory):
+def server():
     try:
-        srv = pgserver.get_server(tmp_path_factory.mktemp("pgdata"), cleanup_mode="delete")
-    except Exception as exc:  # no bundled server for this platform, or it cannot start
-        pytest.skip(f"pgserver cannot start a PostgreSQL here: {exc}")
+        srv = start_pg_server()
+    except PgServerUnavailable as exc:  # the one failure that skips
+        pytest.skip(f"no pgserver PostgreSQL here: {exc}")
     srv.psql(_FAKE)
     yield srv
     srv.cleanup()

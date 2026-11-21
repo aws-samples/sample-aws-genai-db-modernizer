@@ -4,13 +4,13 @@
 """PostgreSQL expression indexes, read from a real server and created again (#2381).
 
 Both index queries (``scripts/collect-postgresql.sql``'s ``indexes_data`` and the live
-collector's ``collect_indexes``) run against a PostgreSQL started by ``pgserver`` on a
+collector's ``collect_indexes``) run against a PostgreSQL from ``pgserver`` on a
 Unix socket in a temp folder (no TCP listener), and must read each expression index the
 same way: its expression text, its plain columns and its predicate. Step 1's DDL, built
 from what the live collector read, then runs on the same server in another schema: each
 index it recreates has the source's own expression and predicate, as PostgreSQL reports
 them. The server is stopped by its postmaster PID at the end. The tests skip when
-``pgserver`` cannot start.
+``pgserver`` is not installed.
 """
 
 from __future__ import annotations
@@ -26,6 +26,7 @@ import pytest
 from src.tools.data_movement.dms_step import load_step1
 from src.tools.database.offline_parser import parse_offline_collection
 from src.tools.database.postgres_tools import PostgreSQLRemoteCollector
+from tests.pg_server import PgServerUnavailable, start_pg_server
 from tests.unit.tools.data_movement.dms_step_fixtures import write_pg_job
 from tests.unit.tools.database.test_postgres_foreign_keys_live_server import _ROOT, _run
 
@@ -65,11 +66,11 @@ def _alive(pid: int) -> bool:
 
 
 @pytest.fixture(scope="module")
-def server(tmp_path_factory):
+def server():
     try:
-        srv = pgserver.get_server(tmp_path_factory.mktemp("pgdata"), cleanup_mode="delete")
-    except Exception as exc:  # no bundled server for this platform, or it cannot start
-        pytest.skip(f"pgserver cannot start a PostgreSQL here: {exc}")
+        srv = start_pg_server()
+    except PgServerUnavailable as exc:  # the one failure that skips
+        pytest.skip(f"no pgserver PostgreSQL here: {exc}")
     pid = srv.get_pid()
     try:
         srv.psql("\\set ON_ERROR_STOP on\n" + _SCHEMA)  # a bad schema fails, never skips
