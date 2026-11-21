@@ -1109,39 +1109,94 @@ def test_reap_escalates_to_sigkill_for_our_own_child(monkeypatch):
         os.kill(sibling, signal.SIGKILL)  # the group went with it, as documented
 
 
-@needs_pg
-def test_a_failure_inside_pgserver_after_its_server_is_up_leaves_no_process(monkeypatch):
-    """The path CI uses: ``pgserver.get_server`` can fail after its ``pg_ctl start``
-    (its own 10 s timeout under load, Ctrl-C in its readiness loop)."""
-    if _refused_as_root():
+# Another process holding pgserver's own lock: one lock for every process of the user,
+# which ``pgserver.get_server`` takes for initdb, start and stop and waits on forever.
+# It holds it until the test kills it, at most for the engine's whole start budget.
+_HOLD_PGSERVER_LOCK = """
+import sys, time
+import fasteners
+from pgserver.postgres_server import PostgresServer
+with fasteners.InterProcessLock(PostgresServer.lock_path):
+    print("held", flush=True)
+    time.sleep(float(sys.argv[1]))
+"""
+
+
+@pg_binary_path
+def test_pgserver_s_own_major_starts_from_its_bin_folder_while_another_process_holds_its_lock(
+    monkeypatch,
+):
+    """#2518: parallel full-suite runs queued on pgserver's user-wide lock until a test
+    ran past ci/test.sh's limit and pytest-timeout took the worker down. pgserver's own
+    major starts from its ``bin`` folder like any other: ``get_server`` is never called,
+    so another process holding the lock never holds the start up, and it trusts the
+    socket only."""
+    major = de._pg_bin_major(_PG_BIN)
+    if _refused_as_root("postgresql", major):
         return
+    import pgserver
     import pgserver.postgres_server as ps
 
-    pids: list[int] = []
-    real = ps.PostgresServer.ensure_postgres_running
+    def no_get_server(*args, **kwargs):  # a regression fails here at once, not after a wait
+        raise AssertionError("pgserver.get_server was called; it waits on a user-wide lock")
 
-    def up_then_fail(self):
-        real(self)  # the postmaster is really up now
-        pids.append(self.get_pid())
-        raise KeyboardInterrupt
+    monkeypatch.setattr(pgserver, "get_server", no_get_server)
+    monkeypatch.setattr(ps, "get_server", no_get_server)
+    for key in [k for k in os.environ if k.startswith(de.PG_BIN_ENV)]:
+        monkeypatch.delenv(key)
+    real_which = shutil.which
+    monkeypatch.setattr(
+        de.shutil,
+        "which",
+        lambda name, *a, **k: None if name == "postgres" else real_which(name, *a, **k),
+    )
+    assert de.pg_candidates()[major][0] == "pgserver"
+    budget = de._INIT_TIMEOUT_S + de._START_TIMEOUT_S
+    holder = subprocess.Popen(
+        [sys.executable, "-c", _HOLD_PGSERVER_LOCK, str(budget)],
+        stdout=subprocess.PIPE,
+        text=True,
+    )
+    try:
+        ready, _, _ = select.select([holder.stdout], [], [], budget)
+        assert ready and holder.stdout.readline().strip() == "held"
+        with de.running("postgresql", major) as h:
+            assert holder.poll() is None, "the start waited for pgserver's lock"
+            assert isinstance(h._backend._server, de._PgBinaryServer)
+            hba = (h.workdir / "pgdata" / "pg_hba.conf").read_text()
+            assert not re.search(r"^host\s+\S+\s+\S+\s+\S+\s+trust", hba, re.M)
+            assert re.search(r"^local\s+all\s+all\s+trust", hba, re.M)
+        assert not _leftovers()
+    finally:
+        holder.kill()
+        holder.wait()
 
-    monkeypatch.setattr(ps.PostgresServer, "ensure_postgres_running", up_then_fail)
-    with pytest.raises(KeyboardInterrupt):
-        de.start("postgresql", "16")
-    assert pids and _gone(pids[0])
-    assert not _leftovers()
-    assert not de._LIVE
 
-
-@needs_pg
-def test_pgserver_trusts_only_the_socket_after_start():
-    if _refused_as_root():
+@pg_binary_path
+def test_every_postgresql_cluster_is_utf8_whatever_the_locale(monkeypatch):
+    """Aurora PostgreSQL is UTF8. Under a C or POSIX locale initdb would pick SQL_ASCII,
+    and the source side of a proof would then count and case non-ASCII text differently
+    from Aurora, on both sides of a hermetic test at once."""
+    major = de._pg_bin_major(_PG_BIN)
+    if _refused_as_root("postgresql", major):
         return
-    with de.running("postgresql", "16") as h:
-        assert isinstance(h._backend._server, de._PgserverServer)
-        hba = (h.workdir / "pgdata" / "pg_hba.conf").read_text()
-        assert not re.search(r"^host", hba, re.M)
-        assert re.search(r"^local\s+all\s+all\s+trust", hba, re.M)
+    monkeypatch.setenv("LC_ALL", "C")
+    monkeypatch.setenv("LANG", "C")
+    runs: list[list[str]] = []
+    real_run = de.subprocess.run
+
+    def run_spy(args, **kwargs):
+        runs.append([str(a) for a in args])
+        return real_run(args, **kwargs)
+
+    monkeypatch.setattr(de.subprocess, "run", run_spy)
+    with de.running("postgresql", major, pg_bin_dir=str(_PG_BIN)) as h:
+        encoding = de.execute(
+            h, "SELECT current_setting('server_encoding'), length(%s)", ["\u00e9"]
+        )
+    (initdb,) = [a for a in runs if a[0].endswith("initdb")]
+    assert "--encoding=UTF8" in initdb
+    assert encoding.error is None and encoding.rows == [["UTF8", 1]]
 
 
 def test_the_timeouts_are_shorter_than_the_per_test_limit():

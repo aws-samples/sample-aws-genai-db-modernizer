@@ -47,11 +47,9 @@ Binding. The engine never listens on a network interface. PostgreSQL and MySQL
 both use a Unix socket inside a private (0700) temporary folder. Only where Unix
 sockets do not exist does MySQL fall back to ``127.0.0.1`` on a random free port.
 There is no wildcard bind. PostgreSQL runs with ``listen_addresses`` empty and a
-``pg_hba.conf`` that trusts the local socket only: the binary path writes it with
-``initdb --auth-local=trust --auth-host=reject``, and on the ``pgserver`` path
-(whose own ``initdb`` also writes ``127.0.0.1`` and ``::1`` trust lines) the file
-is rewritten to the single ``local`` line right after the server is up. MySQL runs
-with ``--skip-networking``.
+``pg_hba.conf`` that trusts the local socket only, written by
+``initdb --auth-local=trust --auth-host=reject``. MySQL runs with
+``--skip-networking``.
 
 Privileges. Customer routine text is untrusted, so it never runs as the engine
 superuser. Setup (the role, the database) uses the superuser; the ``ddl``, the
@@ -85,8 +83,7 @@ pattern matching it) is refused once its sign-in fails, and dropped. The runner'
 account loads as before. Every account still made is dropped when the engine stops.
 
 Not as root. ``start`` refuses when the process runs as root, because the 0700
-guarantee above cannot be kept: ``pgserver`` creates a user and widens the folder
-and its parents to ``o+rx``, and ``initdb`` and ``mysqld`` refuse root outright.
+guarantee above cannot be kept, and ``initdb`` and ``mysqld`` refuse root outright.
 The refusal is an ``EngineStartError`` ("running as root"), an environment failure
 and not a missing engine; it comes after the missing-version check, so a major no
 binary offers is still ``EngineUnavailable`` as root. Run these engines, and the tests that use them, as an
@@ -114,7 +111,9 @@ conda-forge mysql-server=<major>``, or the same with ``micromamba``).
   the ``pg_bin_dir`` argument, ``MODERNIZER_PG_BIN_<major>`` (for example
   ``MODERNIZER_PG_BIN_14``), ``MODERNIZER_PG_BIN``, or a ``postgres`` on
   ``PATH``. The ``pgserver`` package (a dev dependency) is the last resort for
-  its own major (16).
+  its own major (16), started from its ``bin`` folder like any other; its
+  ``get_server`` is not used, because it holds a user-wide lock with no wait limit
+  (#2518). Every cluster is initialised as ``UTF8``, as Aurora PostgreSQL is.
 * MySQL: a ``mysqld`` found through the ``mysqld_path`` argument,
   ``MODERNIZER_MYSQLD_<major>`` (``_8_0`` for 8.0), ``MODERNIZER_MYSQLD`` or
   ``PATH``.
@@ -128,7 +127,7 @@ fast shutdown, MySQL ``SIGTERM``) and only escalates to ``SIGKILL`` of that one
 pid when that does not finish, because a killed postmaster leaks its System V
 shared-memory segment, and removes the temporary folder. ``start`` does the same
 when it fails, including on Ctrl-C and including a server that is already up on
-either PostgreSQL path, and an ``atexit`` hook stops any engine a caller forgot.
+PostgreSQL, and an ``atexit`` hook stops any engine a caller forgot.
 
 Hard kills. No handler survives ``SIGKILL`` or a hard test timeout, so every folder
 gets an ``owner.txt`` the moment it is created, holding the creating process's pid
@@ -919,8 +918,8 @@ def _stop_workdir_servers(workdir: Path) -> None:
     """Stop every server still running from ``workdir``, whichever way it started.
 
     Reads the pids the owner record, ``pgdata/postmaster.pid`` and ``m.pid`` name, so a
-    server is found even when ``start`` failed before it could note it (``pgserver``
-    timing out after its ``pg_ctl start``, Ctrl-C in a wait loop).
+    server is found even when ``start`` failed before it could note it (Ctrl-C in a
+    wait loop).
     """
     found: dict[int, signal.Signals] = {}
     record = _read_owner(workdir) or {}
@@ -1129,61 +1128,6 @@ def _routine_kind(
     return routine, backend_routines.get(routine, "function")
 
 
-class _PgserverServer:
-    """PostgreSQL 16 from the ``pgserver`` package, on a Unix socket."""
-
-    def __init__(self, workdir: Path, major: str) -> None:
-        import pgserver  # dev dependency; the caller has checked it imports
-
-        self._server: Any = None
-        self._workdir = workdir
-        self.pid: int | None = None
-        try:
-            self._server = pgserver.get_server(workdir / "pgdata", cleanup_mode="delete")
-            info = self._server.get_postmaster_info()
-            self.pid = info.pid
-            _record_server(workdir, self.pid)
-            self.socket_dir = Path(info.socket_dir or workdir)
-            self._trust_the_socket_only(workdir)
-        except BaseException as exc:  # a server may already be up: never orphan it
-            self.stop()
-            if isinstance(exc, (EngineUnavailable, EngineError, KeyboardInterrupt, SystemExit)):
-                raise
-            raise _start_failed(
-                "postgresql", major, f"pgserver failed ({type(exc).__name__}: {exc})"
-            ) from exc
-
-    def _trust_the_socket_only(self, workdir: Path) -> None:
-        """Drop pgserver's ``127.0.0.1`` and ``::1`` trust lines (dormant, but not needed)."""
-        import psycopg2
-
-        (workdir / "pgdata" / "pg_hba.conf").write_text("local all all trust\n")
-        conn = psycopg2.connect(self.dsn("postgres", "postgres"))
-        try:
-            conn.autocommit = True
-            with conn.cursor() as cur:
-                cur.execute("SELECT pg_reload_conf()")
-        finally:
-            conn.close()
-
-    def dsn(self, user: str, dbname: str, password: str | None = None) -> str:
-        parts = [f"host={self.socket_dir}", f"dbname={dbname}", f"user={user}"]
-        if password:
-            parts.append(f"password={password}")
-        return " ".join(parts)
-
-    def stop(self) -> None:
-        if self._server is not None:
-            with contextlib.suppress(Exception):
-                self._server.cleanup()  # pg_ctl stop, so no shared-memory segment leaks
-            self._server = None
-        # A failure inside pgserver.get_server leaves the postmaster up with no
-        # handle here: find it through pgdata/postmaster.pid. This is the first line
-        # of defence; start()'s failure path calls the same cleanup as the backstop,
-        # and test_a_failure_inside_pgserver_... only fails when BOTH are removed.
-        _stop_workdir_servers(self._workdir)
-
-
 class _PgBinaryServer:
     """PostgreSQL from a ``bin`` folder (``initdb`` and ``postgres``), on a Unix socket only."""
 
@@ -1213,6 +1157,9 @@ class _PgBinaryServer:
             "postgres",
             "--auth-local=trust",
             "--auth-host=reject",
+            # UTF8 as Aurora PostgreSQL has it, whatever the locale says: under C or
+            # POSIX initdb would pick SQL_ASCII. The collation still follows the locale.
+            "--encoding=UTF8",
             "--no-sync",  # a throwaway cluster never has to survive a crash
         ]
         try:
@@ -1301,7 +1248,7 @@ class _PgBinaryServer:
 class _PostgresBackend(_Backend):
     """Routines run as a plain login role, never as the ``postgres`` superuser."""
 
-    def __init__(self, server: _PgserverServer | _PgBinaryServer) -> None:
+    def __init__(self, server: _PgBinaryServer) -> None:
         import psycopg2
 
         self._psycopg2 = psycopg2
@@ -2195,15 +2142,15 @@ def _check_claim(key: str, prefix: str, found: str, what: str) -> bool:
     return False
 
 
-def pg_candidates(pg_bin_dir: str | None = None) -> dict[str, tuple[str, Path | None]]:
+def pg_candidates(pg_bin_dir: str | None = None) -> dict[str, tuple[str, Path]]:
     """PostgreSQL majors present here: ``{major: (where from, bin dir)}``.
 
     In order, the first for a major winning: the ``pg_bin_dir`` argument,
     ``MODERNIZER_PG_BIN_<major>`` (whose binary must really be that major),
     ``MODERNIZER_PG_BIN``, a ``postgres`` on ``PATH``, and last the ``pgserver``
-    package (bin dir ``None``, because it starts through ``pgserver`` itself).
+    package's own ``bin`` folder.
     """
-    found: dict[str, tuple[str, Path | None]] = {}
+    found: dict[str, tuple[str, Path]] = {}
 
     def add(origin: str, folder: str | Path | None, claims: bool = False) -> None:
         if not folder:
@@ -2229,7 +2176,7 @@ def pg_candidates(pg_bin_dir: str | None = None) -> dict[str, tuple[str, Path | 
     if pgs is not None:
         major = _pg_bin_major(pgs)
         if major and major not in found:
-            found[major] = ("pgserver", None)
+            found[major] = ("pgserver", pgs)
     return found
 
 
@@ -2375,11 +2322,7 @@ def start(
         if engine == "postgresql":
             origin, bin_dir = pg_candidates(pg_bin_dir)[want]
             logger.info("disposable postgresql %s from %s", want, origin)
-            server = (
-                _PgserverServer(workdir, want)
-                if bin_dir is None
-                else _PgBinaryServer(workdir, bin_dir, want)
-            )
+            server = _PgBinaryServer(workdir, bin_dir, want)
             backend = _PostgresBackend(server)
             endpoint = f"unix:{workdir}"
         else:
@@ -2401,9 +2344,8 @@ def start(
                 backend.close()
             elif server is not None:
                 server.stop()
-        # The backstop for any server a constructor could not stop itself (the
-        # pgserver path in particular); do not remove it as a duplicate of
-        # _PgserverServer.stop, because the injection test relies on the pair.
+        # The backstop for any server a constructor could not stop itself; do not
+        # remove it as a duplicate of the servers' own stop.
         _stop_workdir_servers(workdir)
         shutil.rmtree(workdir, ignore_errors=True)
         _release_watcher(workdir)
