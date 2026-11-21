@@ -187,6 +187,39 @@ class TestEnsureAutomationMachine:
         waiter.wait.assert_called_once()
         mock_wait_for_ssm.assert_called_once_with("i-new", "us-east-1")
 
+    @patch("src.tools.aws.automation._wait_for_ssm")
+    @patch("src.tools.aws.automation.boto3")
+    def test_passes_the_ddl_prefix_when_given(self, mock_boto3, mock_wait_for_ssm):
+        cfn = MagicMock()
+        mock_boto3.client.return_value = cfn
+        cfn.exceptions.ClientError = ClientError
+        cfn.describe_stacks.side_effect = [
+            _client_error("ValidationError", "does not exist", "DescribeStacks"),
+            {
+                "Stacks": [
+                    {
+                        "Outputs": [
+                            {"OutputKey": "AutomationInstanceId", "OutputValue": "i-new"},
+                            {"OutputKey": "AutomationSecurityGroupId", "OutputValue": "sg-new"},
+                        ]
+                    }
+                ]
+            },
+        ]
+        cfn.get_waiter.return_value = MagicMock()
+
+        automation.ensure_automation_machine(
+            vpc_id="vpc-123",
+            subnet_id="subnet-1",
+            vpc_cidr="10.0.0.0/16",
+            route_table_id="rtb-1",
+            s3_bucket="my-bucket",
+            s3_ddl_prefix="ddl/",
+        )
+
+        params = cfn.create_stack.call_args.kwargs["Parameters"]
+        assert {"ParameterKey": "S3DdlPrefix", "ParameterValue": "ddl/"} in params
+
 
 class TestAddIngressRule:
     @patch("src.tools.aws.automation.boto3")

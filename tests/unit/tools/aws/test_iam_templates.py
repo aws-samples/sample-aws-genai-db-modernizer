@@ -51,9 +51,17 @@ def _as_list(value: Any) -> list[Any]:
     return value if isinstance(value, list) else [value]
 
 
+#: The template's conditions, as functions of the parameter values.
+_CONDITIONS = {"HasS3DdlPrefix": lambda params: params.get("S3DdlPrefix", "") != ""}
+
+
 def _render(value: Any, params: dict[str, str]) -> str:
     """Resolve a ``Fn::Sub`` string, a pseudo-parameter ``Ref`` or a literal to a concrete value."""
     subs = {"AWS::Region": REGION, "AWS::AccountId": ACCOUNT, **params}
+    if isinstance(value, dict) and "Fn::If" in value:
+        condition, if_true, if_false = value["Fn::If"]
+        chosen = if_true if _CONDITIONS[condition](params) else if_false
+        return _render(chosen, params)
     if isinstance(value, dict) and "Ref" in value:
         return subs[value["Ref"]]
     if isinstance(value, dict) and "Fn::Sub" in value:
@@ -223,3 +231,63 @@ def test_additional_secret_arns_rejects_wildcards(value):
 def test_additional_secret_arns_accepts_secret_arns(value):
     pattern = _template(AUTOMATION)["Parameters"]["AdditionalSecretArns"]["AllowedPattern"]
     assert re.fullmatch(pattern, value)
+
+
+# ---------------------------------------------------------------------------
+# automation.yaml: S3 read scope (#2511)
+# ---------------------------------------------------------------------------
+
+
+def _s3_read_resources(params: dict[str, str]) -> list[str]:
+    out: list[str] = []
+    for statement in _role_statements():
+        if "s3:getobject" in _actions(statement):
+            out.extend(_resources(statement, params))
+    return out
+
+
+def test_a_ddl_prefix_scopes_the_s3_read_to_that_prefix():
+    params = {"S3BucketName": "my-bucket", "S3DdlPrefix": "ddl/"}
+    assert _s3_read_resources(params) == ["arn:aws:s3:::my-bucket/ddl/*"]
+
+
+@pytest.mark.passes_on_main
+def test_an_empty_ddl_prefix_keeps_the_whole_bucket_read():
+    params = {"S3BucketName": "my-bucket", "S3DdlPrefix": ""}
+    assert _s3_read_resources(params) == ["arn:aws:s3:::my-bucket/*"]
+
+
+def test_the_ddl_prefix_is_optional_and_empty_by_default():
+    param = _template(AUTOMATION)["Parameters"]["S3DdlPrefix"]
+    assert param["Type"] == "String"
+    assert param["Default"] == ""
+
+
+@pytest.mark.parametrize(
+    "value", ["", "ddl/", "ddl", "exports/ddl/v1/", "a.b/", "team=a/ddl_files/", "ddl-2026/"]
+)
+def test_ddl_prefix_accepts_plain_key_prefixes(value):
+    pattern = _template(AUTOMATION)["Parameters"]["S3DdlPrefix"]["AllowedPattern"]
+    assert re.fullmatch(pattern, value)
+
+
+@pytest.mark.parametrize(
+    "value",
+    [
+        "/ddl/",
+        "/",
+        "../",
+        "ddl/../other/",
+        "ddl/..",
+        "..",
+        "*",
+        "ddl/*",
+        "ddl?/",
+        "ddl/${Other}",
+        "ddl\n",
+        "d dl/",
+    ],
+)
+def test_ddl_prefix_rejects_unsafe_values(value):
+    pattern = _template(AUTOMATION)["Parameters"]["S3DdlPrefix"]["AllowedPattern"]
+    assert not re.fullmatch(pattern, value)
