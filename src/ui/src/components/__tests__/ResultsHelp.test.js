@@ -59,7 +59,7 @@ const DOC_ANCHORS = DOC.split('\n').filter(l => l.startsWith('## ')).map(l => sl
 describe('the help topics', () => {
   test('each topic has a title and text in en.json and links to a heading of the results help page', () => {
     expect(HELP_TOPIC_IDS).toEqual(expect.arrayContaining([
-      'results-page', 'migration-roadmap', 'close-calls', 'query-flow', 'query-routing', 'table-owners',
+      'results-page', 'migration-roadmap', 'close-calls', 'query-flow', 'query-routing', 'table-owners', 'unservable',
     ]));
     HELP_TOPIC_IDS.forEach((id) => {
       expect(en[`analysis-results.help.${id}.title`]).toBeTruthy();
@@ -98,7 +98,9 @@ describe('the help topics', () => {
     ]);
     // Only a shared risk sentence (a CDC copy of a table nothing writes, #2459) still has the note.
     const sharedOnly = { facts: { table_sources: { written_table_count: 1, replicated_tables: [], shared_risk_sentence: 'Every table another engine reads through CDC has this risk.' } } };
-    expect(helpPanelContent('table-owners', t, resultsHelpContext(sharedOnly)).paragraphs).toEqual([body, intro]);
+    expect(helpPanelContent('table-owners', t, resultsHelpContext(sharedOnly)).paragraphs).toEqual([
+      body, intro, { text: 'Every table another engine reads through CDC has this risk.', figure: 'shared-risk' },
+    ]);
     // A report with no owner lines states no owner rule on the page, so neither does the panel.
     expect(helpPanelContent('table-owners', t, resultsHelpContext({ facts: {} })).paragraphs).toEqual([body]);
   });
@@ -113,6 +115,40 @@ describe('the help topics', () => {
     const { paragraphs } = helpPanelContent('table-owners', t, resultsHelpContext(none));
     expect(paragraphs).not.toContain(en['analysis-results.sources-of-truth.intro']);
     expect(paragraphs).toContain(en['analysis-results.table-owners.rule']);
+  });
+
+  test('the table owners panel states the report\'s risk sentence as written, and an older report\'s own risks', () => {
+    const shared = 'Every replicated table above has this risk. Stored sentence, as the report writes it.';
+    const synthesis = { facts: { table_sources: {
+      written_table_count: 2,
+      replicated_tables: [
+        { table: 'app.a', risk: 'Eventually consistent: a.', shares_replica_risk: true },
+        { table: 'app.b', risk: 'Eventually consistent: b.', shares_replica_risk: false },
+      ],
+      shared_risk_sentence: shared,
+    } } };
+    const { paragraphs } = helpPanelContent('table-owners', t, resultsHelpContext(synthesis));
+    expect(paragraphs).toContainEqual({ text: shared, figure: 'shared-risk' });
+    expect(paragraphs).toContainEqual({ text: 'app.b Eventually consistent: b.', own: 'app.b' });
+    expect(JSON.stringify(paragraphs)).not.toContain('app.a Eventually');
+    // Paragraphs are keyed by position and table, never by their text.
+    act(() => root.render(<ResultsHelpPanel topic="table-owners" context={resultsHelpContext(synthesis)} t={t} />));
+    expect(container.querySelector('[data-own-risk="app.b"]').textContent).toBe('app.b Eventually consistent: b.');
+  });
+
+  test('the unservable panel holds the re-run steps for the kinds the alert lists', () => {
+    const base = { unservable_query_count: 1, unservable_queries: [{ query_id: 'q' }] };
+    const onEngine = { facts: { unservable: { ...base, no_fit_query_count: 1 } } };
+    const scoped = { facts: { unservable: { ...base, no_engine_in_scope_query_count: 1, no_engine_in_scope_closest_engines: ['dynamodb'] } } };
+    const body = en['analysis-results.help.unservable.body'];
+    expect(helpPanelContent('unservable', t, resultsHelpContext(onEngine)).paragraphs)
+      .toEqual([body, en['analysis-results.unservable.rerun']]);
+    expect(helpPanelContent('unservable', t, resultsHelpContext(scoped)).paragraphs)
+      .toEqual([body, 'To serve them, start a new assessment whose scope adds DynamoDB, or keep them on the source database.']);
+    expect(helpPanelContent('unservable', t, resultsHelpContext({ facts: {} })).paragraphs).toEqual([body]);
+    // True for a query on a fallback engine and for one on no engine alike.
+    expect(body).not.toMatch(/stays where it is/);
+    expect(body).toMatch(/no engine can serve/);
   });
 
   test('the query routing panel states the shared workload fit definition', () => {
@@ -144,6 +180,16 @@ describe('the help panel', () => {
 });
 
 describe('the Info link', () => {
+  test('a link can carry its own label and still opens its topic', () => {
+    act(() => root.render(
+      <ResultsHelp.Provider value={() => {}}>
+        <HelpInfoLink topic="table-owners" t={t} ariaLabel="Info about the consistency of replica reads" />
+      </ResultsHelp.Provider>,
+    ));
+    expect(container.querySelector('[data-help-topic="table-owners"]').getAttribute('aria-label'))
+      .toBe('Info about the consistency of replica reads');
+  });
+
   test('outside the results page it renders nothing', () => {
     act(() => root.render(<HelpInfoLink topic="close-calls" t={t} />));
     expect(container.innerHTML).toBe('');

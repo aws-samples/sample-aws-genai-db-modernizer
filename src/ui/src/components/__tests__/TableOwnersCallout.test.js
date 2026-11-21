@@ -10,12 +10,15 @@
  * own facts.table_owner_lines line, its replica reads included (#2321): the component
  * never counts and never joins the capped facts.table_sources list for a figure (ADR-032).
  */
-import { act } from 'react';
+import { act, useState } from 'react';
 import { createRoot } from 'react-dom/client';
 import createWrapper from '@cloudscape-design/components/test-utils/dom';
 import i18n from '../../i18n';
 import en from '../../locales/en.json';
 import TableOwnersCallout, { ruleKey } from '../TableOwnersCallout';
+import ResultsHelpPanel from '../ResultsHelpPanel';
+import { ResultsHelp } from '../../hooks/useResultsDrawers';
+import { resultsHelpContext } from '../../utils/resultsHelp';
 import { ENGINE_LABELS } from '../../utils/engineNames';
 import oldWording from './fixtures/oldWordingTableSources.json';
 import unwrittenCdc from './fixtures/unwrittenCdcTableSources.json';
@@ -86,8 +89,19 @@ const sources = {
   single_engine_table_count: 1,
 };
 
+// #2521: the risk is in the help panel an Info link opens, so the page's wiring is here:
+// the link opens the topic and the panel shows it, as the results page's drawer does.
+function Page({ facts }) {
+  const [topic, setTopic] = useState(null);
+  return (
+    <ResultsHelp.Provider value={setTopic}>
+      <TableOwnersCallout synthesis={{ facts }} t={t} />
+      {topic && <ResultsHelpPanel topic={topic} context={resultsHelpContext({ facts })} t={t} />}
+    </ResultsHelp.Provider>
+  );
+}
 function render(facts) {
-  act(() => root.render(<TableOwnersCallout synthesis={{ facts }} t={t} />));
+  act(() => root.render(<Page facts={facts} />));
 }
 function open() {
   const toggle = container.querySelector('[aria-expanded="false"]');
@@ -171,8 +185,8 @@ test('there is no second section, and an old Sources of truth link lands on Tabl
   expect(anchor).not.toBeNull();
   expect(anchor.closest('#table-owners-section')).not.toBeNull();
   expect(anchor.textContent).toContain('Table owners (4 mapped tables)');
-  // The section and the Info link are the only disclosures.
-  expect(container.querySelectorAll('[aria-expanded]').length).toBe(2);
+  // The section is the only disclosure; the Info link opens the help panel (#2521).
+  expect(container.querySelectorAll('[aria-expanded]').length).toBe(1);
 });
 
 test('is a container section collapsed when the page opens, headed by the mapped table count', () => {
@@ -180,8 +194,7 @@ test('is a container section collapsed when the page opens, headed by the mapped
   const header = container.querySelector('#table-owners-section');
   expect(header.textContent).toContain('Table owners (4 mapped tables)');
   expect(container.querySelector('[aria-expanded="false"]')).not.toBeNull();
-  // Collapsed: the section's toggle and the Info link, both closed.
-  expect(container.querySelectorAll('[aria-expanded="false"]').length).toBe(2);
+  expect(container.querySelectorAll('[aria-expanded="false"]').length).toBe(1);
   expect(container.querySelectorAll('[aria-expanded="true"]').length).toBe(0);
 });
 
@@ -218,18 +231,32 @@ test('the replica reads and owner columns sort, a table with no count after the 
   expect(owners).toEqual([...owners].sort());
 });
 
-test('the consistency note sits behind an Info link, stating the risk once', () => {
+test('the consistency risk is in the Table owners help panel the Info link opens, stating the risk once', () => {
   renderOpen({ table_owner_lines: ownership, table_sources: { ...sources, replicated_tables: [postmeta, options] } });
+  expect(container.querySelector('#results-help-panel')).toBeNull();
   expect(container.querySelector('[data-figure="consistency"]')).toBeNull();
   act(() => infoLink().click());
-  const note = container.querySelector('[data-figure="consistency"]');
-  // #2512: the CDC sentence that led the note is in the Table owners help panel.
-  expect(note.textContent).not.toContain(en['analysis-results.sources-of-truth.intro']);
+  const panel = container.querySelector('#results-help-panel');
+  expect(panel.getAttribute('data-help-topic')).toBe('table-owners');
+  // The CDC sentence that led the note is in the panel too, once.
+  expect(panel.textContent.split(en['analysis-results.sources-of-truth.intro']).length - 1).toBe(1);
   const shared = container.querySelector('[data-figure="shared-risk"]').textContent;
   expect(shared).toBe(SHARED_SENTENCE);
   expect(shared).not.toContain('Every table above');
   expect(container.textContent.split('Eventually consistent: ').length - 1).toBe(1);
   expect(container.textContent).not.toContain(RISK);
+});
+
+test('the Info link under the table keeps its label and opens the panel; nothing expands in place', () => {
+  renderOpen(both);
+  const link = infoLink();
+  expect(link.getAttribute('aria-label')).toBe('Info about the consistency of replica reads');
+  expect(link.getAttribute('aria-expanded')).toBeNull();
+  expect(link.getAttribute('aria-controls')).toBeNull();
+  act(() => link.click());
+  expect(container.querySelector('#results-help-panel [data-figure="shared-risk"]')).not.toBeNull();
+  // Not in the section: the risk sentence is only in the panel.
+  expect(container.querySelector('#table-owners-section [data-figure="shared-risk"]')).toBeNull();
 });
 
 // #2321 review: the note sits under every row with a CDC to engine, also wp_usermeta,
@@ -246,20 +273,6 @@ test('the shared risk names no source that disagrees with a replicated row\'s ow
     const owner = cell(line.table, 'owner');
     expect([line.table, named.filter(name => !owner.includes(name))]).toEqual([line.table, []]);
   });
-});
-
-test('the Info link says whether the note is open and which element it controls', () => {
-  renderOpen(both);
-  const link = infoLink();
-  expect(link.getAttribute('aria-expanded')).toBe('false');
-  const controlled = link.getAttribute('aria-controls');
-  expect(controlled).toBeTruthy();
-  expect(document.getElementById(controlled)).not.toBeNull();
-  act(() => link.click());
-  expect(infoLink().getAttribute('aria-expanded')).toBe('true');
-  expect(document.getElementById(controlled).querySelector('[data-figure="consistency"]')).not.toBeNull();
-  act(() => infoLink().click());
-  expect(infoLink().getAttribute('aria-expanded')).toBe('false');
 });
 
 test('prints the shared risk sentence the facts store, never its own wording', () => {
@@ -369,8 +382,9 @@ test("names an older report's own rule for its most-queries rows", () => {
 });
 
 test('the section states neither owner rule: they are in the help panel (#2512)', () => {
+  renderOpen(both);
   for (const rule of ['relational_step', 'most_queries']) {
-    renderOpen({ table_owner_lines: { ...ownership, unwritten_owner_rule: rule }, table_sources: sources });
+    render({ table_owner_lines: { ...ownership, unwritten_owner_rule: rule }, table_sources: sources });
     expect(container.querySelector('[data-figure="owner-rule"]')).toBeNull();
     expect(container.textContent).not.toContain(en['analysis-results.table-owners.rule']);
     expect(container.textContent).not.toContain(en['analysis-results.table-owners.rule-most-queries']);

@@ -4,7 +4,6 @@
 import { memo, useMemo, useState } from 'react';
 import Box from "@cloudscape-design/components/box";
 import ExpandableSection from "@cloudscape-design/components/expandable-section";
-import Link from "@cloudscape-design/components/link";
 import SpaceBetween from "@cloudscape-design/components/space-between";
 import Table from "@cloudscape-design/components/table";
 import TextFilter from "@cloudscape-design/components/text-filter";
@@ -24,8 +23,8 @@ import HelpInfoLink from "./HelpInfoLink";
  * writes, the plan's relational engine (#2166); never a cache), the engines that read
  * a CDC copy of it, the reads a replica serves and the cache in front of its reads.
  * The columns sort and a text filter narrows the rows. The eventual-consistency risk
- * is stated once behind an Info link, in the sentence the engineering report prints
- * (facts.table_sources.shared_risk_sentence; #1170, #1232, #2321). The counts are the
+ * is stated once in the help panel an Info link under the table opens, in the sentence the
+ * engineering report prints (facts.table_sources.shared_risk_sentence; #1170, #1232, #2321). The counts are the
  * facts layer's (ADR-032), each table's replica reads its own owner line's; this only
  * formats them.
  * Collapsed when the page opens.
@@ -34,7 +33,6 @@ import HelpInfoLink from "./HelpInfoLink";
  */
 
 const DASH = '—';
-const CONSISTENCY_ID = 'table-owners-consistency';
 
 function engineList(engines) {
   const shown = (engines || []).map(displayEngine);
@@ -82,47 +80,18 @@ function compareReads(a, b) {
 // unwritten_owner_rule). #2512: the Table owners help panel states it, not the section.
 export const ruleKey = ownerRuleKey;
 
-// The risk once for every replicated table that shares it, as
-// facts.table_sources.shared_risk_sentence words it (the engineering report prints the
-// same sentence, #2321), then any older report's own per-table risk. The Info link
-// discloses it in place, so it says whether it is open and what it controls.
+// #2521: the eventual-consistency risk is in the Table owners help panel, in the sentence
+// the report writes (facts.table_sources.shared_risk_sentence; #1170, #1232, #2321), and
+// this Info link under the table opens it. The sentence also covers a table nothing
+// writes that has a CDC copy (#2459), so it decides whether there is a link, with or
+// without a listed written replicated table.
 function ConsistencyNote({ sources, t }) {
-  const [open, setOpen] = useState(false);
   const all = (sources && sources.replicated_tables) || [];
-  const shared = sources && sources.shared_risk_sentence;
-  // The sentence also covers a table nothing writes that has a CDC copy (#2459), so it
-  // decides whether there is a note, with or without a listed written replicated table.
-  if (all.length === 0 && !shared) return null;
-  const own = all.filter(row => row.shares_replica_risk !== true);
+  if (all.length === 0 && !(sources && sources.shared_risk_sentence)) return null;
   return (
-    <SpaceBetween size="xs">
-      <span data-figure="consistency-info">
-        <Link
-          variant="info"
-          ariaLabel={t('analysis-results.table-owners.info-label')}
-          nativeAttributes={{ 'aria-expanded': open ? 'true' : 'false', 'aria-controls': CONSISTENCY_ID }}
-          onFollow={(e) => { e.preventDefault(); setOpen(value => !value); }}
-        >
-          {t('analysis-results.table-owners.info')}
-        </Link>
-      </span>
-      <div id={CONSISTENCY_ID}>
-        {open && (
-          <Box data-figure="consistency">
-            <SpaceBetween size="xs">
-              {shared && <div data-figure="shared-risk">{shared}</div>}
-              {own.map(row => (
-                <div key={row.table} data-own-risk={row.table}>
-                  <span style={{ fontFamily: 'monospace' }}>{row.table}</span>
-                  {' '}
-                  {row.risk}
-                </div>
-              ))}
-            </SpaceBetween>
-          </Box>
-        )}
-      </div>
-    </SpaceBetween>
+    <span data-figure="consistency-info">
+      <HelpInfoLink topic="table-owners" t={t} ariaLabel={t('analysis-results.table-owners.info-label')} />
+    </span>
   );
 }
 
