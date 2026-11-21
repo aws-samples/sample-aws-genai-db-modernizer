@@ -41,7 +41,10 @@ Outcomes, one :class:`RoutineComparison` per routine:
   42S02); an error came back without a SQLSTATE or a message (a harness error); it ends
   the transaction itself (class ``2D``), or ends the caller's transaction on both sides;
   every call failed on both sides; more than half failed on both sides ("mostly
-  errors"); a side failed.
+  errors"); a side failed. A side that fails names itself, the step (a restart after
+  a call that ended its transaction, say) and the failure's class, message and SQLSTATE
+  (#2523); an unexpected exception is named by its class only, since its message may
+  quote a routine.
 
 How a call is compared:
 
@@ -1204,6 +1207,34 @@ def _all(
     }
 
 
+def _failure(exc: BaseException) -> str:
+    """How a reason names a failure that stopped a routine or a batch (#2523): a
+    :class:`ProofTargetError` by its class, its message (fixed text that names the side and
+    the step, never customer text) and its SQLSTATE; any other exception by its class only,
+    since its message may quote a routine's text or a name from it."""
+    if isinstance(exc, ProofTargetError):
+        said = exc.sqlstate and f"SQLSTATE {exc.sqlstate}" in str(exc)  # never twice
+        state = f" (SQLSTATE {exc.sqlstate})" if exc.sqlstate and not said else ""
+        return f"{type(exc).__name__}: {exc}{state}"
+    return type(exc).__name__
+
+
+def _reopen(sides: Iterable[_Side], step: str) -> None:
+    """Start each side again; a side that does not start raises a
+    :class:`ProofTargetError` that says which side, at which ``step``, and why (#2523)."""
+    for side in sides:
+        try:
+            side.open()
+        except ProofTargetUnavailable as exc:
+            raise ProofTargetError(
+                f"the {side.which} side could not be started again {step}: {exc}"
+            ) from exc
+        except ProofTargetError as exc:
+            raise ProofTargetError(
+                f"the {side.which} side could not be started again {step}: {exc}", exc.sqlstate
+            ) from exc
+
+
 def _open(side: _Side) -> tuple[ReasonCode, str] | None:
     """Open one side; on failure, the reason every routine of the batch gets."""
     try:
@@ -1306,7 +1337,7 @@ def _compare_batch(
             except Exception as exc:  # noqa: BLE001 - one routine never stops the others
                 out[routine.routine_id] = RoutineComparison(
                     routine_id=routine.routine_id, outcome="could_not_compare",
-                    reason_code="engine_failed", reason=f"the comparison failed ({type(exc).__name__})",
+                    reason_code="engine_failed", reason=f"the comparison failed ({_failure(exc)})",
                     source=shared.names["source"], target=shared.names["target"],
                 )  # fmt: skip
         return out
@@ -1387,9 +1418,8 @@ def _compare_one(routine: ComparedRoutine, shared: _Batchwide) -> RoutineCompari
         return RoutineComparison(**base, outcome="could_not_compare", reason_code=code,
                                  reason=reason, calls_compared=compared, calls_succeeded=ok)  # fmt: skip
 
-    for side in sides.values():
-        if side.target is None:
-            side.open()  # failed earlier in its batch: a ProofTargetError fails this routine
+    # failed earlier in its batch: a ProofTargetError fails this routine
+    _reopen([side for side in sides.values() if side.target is None], "before its first call")
     problem = _load_problem(routine, shared)
     if problem is not None:
         return problem
@@ -1428,8 +1458,8 @@ def _compare_one(routine: ComparedRoutine, shared: _Batchwide) -> RoutineCompari
             return not_compared("call_refused", f"call {index} ({call.label}) was refused "
                                 "before it ran", done, succeeded)  # fmt: skip
         except RoleChanged:
-            for side in sides.values():
-                side.open()  # rolled back already; the next routine starts clean
+            # rolled back already; the next routine starts clean
+            _reopen(sides.values(), f"after call {index} changed its role")
             return not_compared("role_changed", f"call {index} ({call.label}) {ROLE_CHANGED}",
                                 done, succeeded)  # fmt: skip
         except ProofTargetError as exc:
@@ -1443,8 +1473,8 @@ def _compare_one(routine: ComparedRoutine, shared: _Batchwide) -> RoutineCompari
         if any(r.session is None for r in runs.values()):
             unread_session = True
         if any(r.timed_out or r.sqlstate in _TIMEOUTS for r in results):
-            for side in sides.values():
-                side.open()  # an interrupted call may leave its side anywhere
+            # an interrupted call may leave its side anywhere
+            _reopen(sides.values(), f"after call {index} ran past its time limit")
             return not_compared("timeout", f"call {index} ({call.label}) ran past its time limit "
                                 "on at least one side, which says nothing about its behaviour",
                                 done, succeeded)  # fmt: skip
@@ -1463,8 +1493,8 @@ def _compare_one(routine: ComparedRoutine, shared: _Batchwide) -> RoutineCompari
                                 "(SQLSTATE class 2D), so a call cannot be rolled back to the "
                                 "seeded rows", done, succeeded)  # fmt: skip
         ended = [which for which, r in runs.items() if r.committed]
-        for which in ended:
-            sides[which].open()  # its transaction, and maybe its rows, are not as seeded
+        # its transaction, and maybe its rows, are not as seeded
+        _reopen([sides[which] for which in ended], f"after call {index} ended its transaction")
         if len(ended) == 2:
             code: ReasonCode = (
                 "commits" if all(r.transaction == "committed" for r in runs.values())
@@ -1544,15 +1574,20 @@ def _run_side(side: _Side, call: ProofCall, index: int, seed: int) -> CallRun:
         return side.run(call, index, seed)
     except RoleChanged:
         raise  # the routine is refused: never run again
-    except (_Leaked, ProofTargetError):
-        try:
-            side.open()  # a ProofTargetError here fails this routine only
-        except ProofTargetUnavailable as exc:
-            raise ProofTargetError(f"the {side.which} side could not be started again") from exc
+    except (_Leaked, ProofTargetError) as first:
+        why = "its rows were not its seeded rows" if isinstance(first, _Leaked) else _failure(first)
+        # fails this routine only
+        _reopen([side], f"to run call {index} once more, after {why}")
         try:
             return side.run(call, index, seed)
+        except RoleChanged:
+            raise
         except _Leaked as exc:
             raise ProofTargetError(f"the {exc} side could not be reset to its seeded rows") from exc
+        except ProofTargetError as exc:
+            raise ProofTargetError(
+                f"the {side.which} side failed it again after a restart: {exc}", exc.sqlstate
+            ) from exc
 
 
 def compare_routines(
@@ -1596,7 +1631,7 @@ def compare_routines(
         except Exception as exc:  # noqa: BLE001 - one batch never stops the others
             results.update(
                 _all(batch, "could_not_compare", "engine_failed",
-                     f"the batch failed ({type(exc).__name__})")  # fmt: skip
+                     f"the batch failed ({_failure(exc)})")  # fmt: skip
             )
         if on_batch is not None:
             on_batch(done, len(batches))
@@ -1662,7 +1697,7 @@ def _run_one(
         return RoutineRun(**base, outcome="not_run", reason_code=code, reason=reason, **kw)
 
     if side.target is None:
-        side.open()
+        _reopen([side], "before its first call")
     if rid in side.refused:
         code: Any = side.refused_codes.get(rid, "outside_namespace")
         return not_run(code, f"it was not created on {where}: {side.refused[rid]}")
@@ -1691,16 +1726,19 @@ def _run_one(
             return not_run("call_refused", f"call {index} ({call.label}) was refused before it ran",
                            calls_run=ran, calls_succeeded=ok)  # fmt: skip
         except RoleChanged:
-            side.open()  # its transaction was rolled back; the next routine starts clean
+            # its transaction was rolled back; the next routine starts clean
+            _reopen([side], f"after call {index} changed its role")
             return not_run("role_changed", f"call {index} ({call.label}) {ROLE_CHANGED}",
                            calls_run=ran, calls_succeeded=ok)  # fmt: skip
         result = run.result
         ran += 1
         if result.timed_out or result.sqlstate in _TIMEOUTS:
             late += 1
-            side.open()  # an interrupted call may leave its side anywhere
+            # an interrupted call may leave its side anywhere
+            _reopen([side], f"after call {index} ran past its time limit")
         elif run.committed:
-            side.open()  # its transaction, and maybe its rows, are not as seeded
+            # its transaction, and maybe its rows, are not as seeded
+            _reopen([side], f"after call {index} ended its transaction")
         if result.error is None:
             ok += 1
         else:
@@ -1782,13 +1820,13 @@ def run_routines(
                 except Exception as exc:  # noqa: BLE001 - one routine never stops the others
                     out[routine.routine_id] = RoutineRun(
                         routine_id=routine.routine_id, outcome="not_run", reason_code="engine_failed",
-                        reason=f"the run failed ({type(exc).__name__})", target=where,
+                        reason=f"the run failed ({_failure(exc)})", target=where,
                     )  # fmt: skip
         except Exception as exc:  # noqa: BLE001 - one batch never stops the others
             for r in batch:
                 out.setdefault(r.routine_id, RoutineRun(
                     routine_id=r.routine_id, outcome="not_run", reason_code="engine_failed",
-                    reason=f"the batch failed ({type(exc).__name__})"))  # fmt: skip
+                    reason=f"the batch failed ({_failure(exc)})"))  # fmt: skip
         finally:
             if side is not None:
                 side.close()

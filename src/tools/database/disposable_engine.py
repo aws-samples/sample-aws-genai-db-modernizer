@@ -237,6 +237,32 @@ _MY_GRANT = f"GRANT ALL PRIVILEGES ON {grant_database(_DATABASE)}.* TO '{_RUNNER
 _MY_GRANT_USER_VARIABLES = (
     f"GRANT SELECT ON performance_schema.user_variables_by_thread TO '{_RUNNER}'@'localhost'"
 )
+#: A disposable mysqld's memory caps (#2523): one serves a few connections and a small
+#: synthetic data set, so the defaults (a 128 MB buffer pool, a 64 MB log buffer,
+#: Performance Schema tables sized for hundreds of accounts) cost about 500 MB a server.
+#: Performance Schema stays on, since the comparison reads each session's variables and
+#: user variables from it (``session_variables``, ``user_variables_by_thread``); only
+#: the per-account, per-host, per-user, per-error and digest summaries nothing reads are
+#: sized to zero. ``--loose-`` is for MySQL versions that lack an option (5.7 has no
+#: ``temptable_max_ram`` and no ``performance_schema_error_size``, and
+#: ``innodb_redo_log_capacity`` came in 8.0.30): they start anyway. MariaDB binaries are
+#: refused before any of these is passed. Passed to ``--initialize`` too, so the
+#: redo log starts small. Never sent to the Aurora test cluster.
+MYSQLD_MEMORY_CAPS = (
+    "--loose-innodb-buffer-pool-size=16M",
+    "--loose-innodb-log-buffer-size=1M",
+    "--loose-innodb-redo-log-capacity=8M",
+    "--loose-temptable-max-ram=16M",
+    "--loose-key-buffer-size=1M",
+    "--loose-max-connections=32",
+    "--loose-table-open-cache=200",
+    "--loose-table-definition-cache=400",
+    "--loose-performance-schema-accounts-size=0",
+    "--loose-performance-schema-hosts-size=0",
+    "--loose-performance-schema-users-size=0",
+    "--loose-performance-schema-digests-size=0",
+    "--loose-performance-schema-error-size=0",
+)
 _MY_ARG_VAR = "@modernizer_arg_%d"  # the session variable an OUT or INOUT argument uses
 # A DEFINER's account (#2426): looked up with bound values, never a name in the text.
 _MY_ACCOUNT_EXISTS = "SELECT COUNT(*) FROM mysql.user WHERE User = %s AND LOWER(Host) = LOWER(%s)"
@@ -1533,6 +1559,7 @@ class _MySQLServer:
             "--no-defaults",
             f"--datadir={workdir / 'data'}",
             f"--log-error={self._log}",
+            *MYSQLD_MEMORY_CAPS,
         ]
 
     def _initialize(self, workdir: Path, mysqld: str, major: str) -> None:

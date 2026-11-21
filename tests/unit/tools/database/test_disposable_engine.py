@@ -444,6 +444,81 @@ def test_mysqld_is_started_without_networking_and_without_file_access(monkeypatc
     assert not any("bind-address" in a and "127.0.0.1" not in a for a in args)
 
 
+# The caps a disposable mysqld runs with (#2523), and the value each reads back as.
+_MY_CAPS = {
+    "innodb_buffer_pool_size": ("16M", 16 * 1024 * 1024),
+    "innodb_log_buffer_size": ("1M", 1024 * 1024),
+    "innodb_redo_log_capacity": ("8M", 8 * 1024 * 1024),
+    "temptable_max_ram": ("16M", 16 * 1024 * 1024),
+    "key_buffer_size": ("1M", 1024 * 1024),
+    "max_connections": ("32", 32),
+    "table_open_cache": ("200", 200),
+    "table_definition_cache": ("400", 400),
+    "performance_schema_accounts_size": ("0", 0),
+    "performance_schema_hosts_size": ("0", 0),
+    "performance_schema_users_size": ("0", 0),
+    "performance_schema_digests_size": ("0", 0),
+    "performance_schema_error_size": ("0", 0),
+}
+
+
+def test_mysqld_is_initialised_and_started_with_its_memory_capped(monkeypatch, tmp_path):
+    """#2523: about 500 MB a server uncapped. Each cap is ``--loose-``, so a version
+    without the option still starts, and Performance Schema stays on, since the
+    comparison reads session and user variables from it."""
+    inits: list[list[str]] = []
+
+    def fake_run(args, **kwargs):
+        inits.append([str(a) for a in args])
+        return subprocess.CompletedProcess(args, 0, b"", b"")
+
+    monkeypatch.setattr(de.subprocess, "run", fake_run)
+    calls = _record_popen(monkeypatch)
+    with pytest.raises(de.EngineStartError):
+        de._MySQLServer(tmp_path, "/nowhere/mysqld", "8.0")
+    for args in (inits[0], calls[0]):
+        given = {a.removeprefix("--loose-").replace("-", "_"): a for a in args}
+        for name, (value, _) in _MY_CAPS.items():
+            assert given.get(f"{name}={value}") == f"--loose-{name.replace('_', '-')}={value}"
+        assert not any("performance_schema=" in k or "performance-schema=" in a
+                       for k, a in given.items())  # fmt: skip
+    assert "--initialize-insecure" in inits[0]
+
+
+@pytest.mark.integration
+@pytest.mark.skipif(not _MY, reason="no mysqld binary")
+def test_mysql_starts_with_its_memory_capped_and_still_reads_session_variables():
+    """The caps the server reads back (a cap this version lacks is left out), and the
+    runner still reads its session's user variables from Performance Schema."""
+    import mysql.connector
+
+    major = de.available_majors("mysql")[0]
+    if _refused_as_root("mysql", major):
+        return
+    with de.running("mysql", major) as h:
+        server = h._backend._server
+        conn = mysql.connector.connect(**server.connect_args("root", server.password))
+        try:
+            cur = conn.cursor()
+            cur.execute("SHOW GLOBAL VARIABLES")
+            have = {str(k).lower(): str(v) for k, v in cur.fetchall()}
+        finally:
+            conn.close()
+        assert have["performance_schema"] == "ON"
+        checked = {n for n in _MY_CAPS if n in have}
+        assert {"innodb_buffer_pool_size", "max_connections", "key_buffer_size"} <= checked
+        for name in checked:
+            assert int(have[name]) == _MY_CAPS[name][1], name
+        assert de.execute(h, "SET @kept = 5", []).error is None
+        seen = de.execute(
+            h,
+            "SELECT VARIABLE_NAME FROM performance_schema.user_variables_by_thread "
+            "WHERE THREAD_ID = PS_CURRENT_THREAD_ID()",
+            [],
+        )
+        assert seen.error is None and ["kept"] in seen.rows
+
+
 # --------------------------------------------------------------- the version is never guessed
 
 
@@ -1235,6 +1310,7 @@ def test_the_mysql_engine_tests_are_deselected_not_skipped_in_a_gated_run():
         test_mysql_routines_do_not_run_as_an_admin_user,
         test_mysql_cleanup_on_ctrl_c,
         test_mysql_out_and_inout_arguments_come_back_as_the_last_row,
+        test_mysql_starts_with_its_memory_capped_and_still_reads_session_variables,
     ):
         marks = {m.name for m in getattr(test, "pytestmark", [])}
         assert "integration" in marks, test.__name__
