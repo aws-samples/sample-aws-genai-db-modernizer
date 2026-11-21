@@ -918,6 +918,128 @@ def test_a_parenthesised_condition_keeps_the_blocks_variables_in_scope(compound)
     assert _screen().refusal_of(_my(original), candidate, "mysql") is None
 
 
+# --------------------------------------------------------------------------- MySQL control flow
+# #2406: a MySQL compound statement's own keyword before ``(`` (``IF (c) THEN``, ``ELSEIF (``,
+# ``WHILE (``, ``UNTIL (``, ``RETURN (``) is syntax, not a call. The ``IF()`` and
+# ``REPEAT()`` functions in an expression, and a quoted or qualified name, stay calls.
+
+MYSQL_FUNCTION = (
+    "CREATE DEFINER=`app`@`%` FUNCTION `score`(`p` INT) RETURNS int DETERMINISTIC\n"
+    "BEGIN\n  DECLARE rank INT DEFAULT 1;\n  RETURN rank + p;\nEND"
+)
+
+
+@pytest.mark.parametrize(
+    "added",
+    [
+        "  IF (p IS NULL) THEN\n    SET rnk = 0;\n  END IF;",
+        "  IF(p IS NULL) THEN\n    SET rnk = 0;\n  END IF;",
+        "  if (p IS NULL) then\n    SET rnk = 0;\n  end if;",
+        "  IF p IS NULL THEN\n    SET rnk = 0;\n  ELSEIF (rnk > 1) THEN\n    SET rnk = 1;\n"
+        "  END IF;",
+        "  IF (p IS NULL) THEN\n    IF (rnk > 1) THEN\n      SET rnk = 0;\n    END IF;\n"
+        "  ELSE\n    IF (rnk < 0) THEN\n      SET rnk = 1;\n    END IF;\n  END IF;",
+        "  WHILE (rnk > 0) DO\n    SET rnk = rnk - 1;\n  END WHILE;",
+        "  lp: WHILE (rnk > 0) DO\n    SET rnk = rnk - 1;\n  END WHILE lp;",
+        "  REPEAT\n    SET rnk = rnk + 1;\n  UNTIL (rnk > 3) END REPEAT;",
+        "  CASE WHEN (rnk > 1) THEN\n    IF (p IS NULL) THEN\n      SET rnk = 0;\n    END IF;\n"
+        "  ELSE\n    SET rnk = 2;\n  END CASE;",
+        "  BEGIN\n    DECLARE CONTINUE HANDLER FOR SQLEXCEPTION IF (rnk > 0) THEN SET rnk = 0; "
+        "END IF;\n    SET rnk = 1;\n  END;",
+    ],
+    ids=[
+        "if", "if-unspaced", "lower-case", "elseif", "nested-after-then-and-else", "while",
+        "labelled-while", "repeat-until", "if-in-a-case-branch", "if-as-a-handler-statement",
+    ],
+)  # fmt: skip
+def test_a_new_mysql_control_statement_with_a_parenthesised_condition_adds_no_call(added):
+    candidate = MYSQL_FIXED.replace("INTO r;", "INTO r;\n" + added)
+    refusal = _screen().refusal_of(_my(MYSQL), candidate, "mysql")
+    assert refusal is None, refusal
+
+
+def test_a_mysql_return_of_a_parenthesised_expression_adds_no_call():
+    candidate = MYSQL_FUNCTION.replace("rank", "rnk").replace("RETURN rnk + p", "RETURN (rnk + p)")
+    refusal = _screen().refusal_of(_my(MYSQL_FUNCTION, "score", "function"), candidate, "mysql")
+    assert refusal is None, refusal
+
+
+def test_a_mysql_trigger_body_that_becomes_an_if_statement_adds_no_call():
+    trigger = _my(MYSQL_TRIGGER, "audit_users", "trigger")
+    candidate = MYSQL_TRIGGER.replace(
+        "SET NEW.rank = 1", "IF (NEW.`rank` IS NULL) THEN SET NEW.`rank` = 1; END IF"
+    )
+    assert _screen().refusal_of(trigger, candidate, "mysql") is None
+
+
+@pytest.mark.passes_on_main  # the controls: neither writes a keyword the scan reads as a name
+@pytest.mark.parametrize(
+    "added",
+    [
+        "  CASE (rnk)\n    WHEN 1 THEN SET rnk = 0;\n    ELSE SET rnk = 2;\n  END CASE;",
+        "  CASE\n    WHEN (rnk > 1) THEN SET rnk = 0;\n    ELSE SET rnk = 2;\n  END CASE;",
+    ],
+    ids=["case-operand", "case-when"],
+)
+def test_a_new_mysql_case_statement_with_a_parenthesised_condition_adds_no_call(added):
+    candidate = MYSQL_FIXED.replace("INTO r;", "INTO r;\n" + added)
+    assert _screen().refusal_of(_my(MYSQL), candidate, "mysql") is None
+
+
+@pytest.mark.passes_on_main  # main counted every one of these as a call too
+@pytest.mark.parametrize(
+    "added",
+    [
+        "  SET rnk = IF(p IS NULL, 0, 1);",
+        "  SET rnk = IF (p IS NULL, 0, 1);",
+        "  SELECT IF(p IS NULL, 0, 1) INTO rnk;",
+        "  IF (IF(p IS NULL, 0, 1)) THEN\n    SET rnk = 0;\n  END IF;",
+        "  IF (p IS NULL) THEN\n    SET rnk = IF(rnk > 1, 0, 1);\n  END IF;",
+        "  WHILE (rnk > 0) DO\n    SET rnk = IF(rnk > 1, rnk - 1, 0);\n  END WHILE;",
+        "  REPEAT\n    SET rnk = rnk + 1;\n  UNTIL (IF(rnk > 3, 1, 0)) END REPEAT;",
+        "  SET r = REPEAT(p, 2);",
+        "  SET rnk = `if`(p IS NULL, 0, 1);",
+        "  SET rnk = shop.if(p IS NULL, 0, 1);",
+        "  SET rnk = `shop`.`while`(rnk);",
+        "  IF (p IS NULL) THEN\n    SET rnk = purge_all();\n  END IF;",
+    ],
+    ids=[
+        "if-function-in-set", "if-function-spaced", "if-function-in-select",
+        "if-function-in-a-condition", "if-function-in-a-branch", "if-function-in-a-loop",
+        "if-function-in-until", "repeat-function", "quoted-if", "qualified-if",
+        "qualified-while", "other-call-in-a-branch",
+    ],
+)  # fmt: skip
+def test_a_mysql_function_call_in_an_expression_stays_a_call(added):
+    candidate = MYSQL_FIXED.replace("INTO r;", "INTO r;\n" + added)
+    refusal = _screen().refusal_of(_my(MYSQL), candidate, "mysql")
+    assert refusal is not None and refusal[0] == "adds_calls", refusal
+
+
+@pytest.mark.passes_on_main  # main had ``if`` among the original's calls, so it passed
+def test_a_new_if_statement_passes_when_the_routine_already_calls_the_if_function():
+    original = MYSQL.replace("INTO r;", "INTO r;\n  SET rank = IF(p IS NULL, 0, 1);")
+    candidate = original.replace("rank", "rnk").replace(
+        "INTO r;", "INTO r;\n  IF (p IS NULL) THEN\n    SET rnk = 0;\n  END IF;"
+    )
+    assert _screen().refusal_of(_my(original), candidate, "mysql") is None
+
+
+def test_mysql_called_functions_reads_statement_keywords_as_syntax():
+    from src.tools.routines.proof_screen import called_functions
+
+    text = MYSQL.replace(
+        "INTO r;",
+        "INTO r;\n  IF (p IS NULL) THEN\n    SET rank = IF(rank, 0, 1);\n  ELSEIF (rank > 1) THEN\n"
+        "    SET rank = 2;\n  END IF;\n  WHILE (rank > 0) DO\n    SET rank = rank - 1;\n"
+        "  END WHILE;\n  REPEAT\n    SET r = REPEAT(p, 2);\n  UNTIL (rank > 3) END REPEAT;",
+    )
+    assert called_functions(text, "mysql") == frozenset({"hashpw", "concat", "if", "repeat"})
+    # With the IF statement alone, ``if`` is no call.
+    alone = MYSQL.replace("INTO r;", "INTO r;\n  IF (p IS NULL) THEN\n    SET rank = 0;\n  END IF;")
+    assert called_functions(alone, "mysql") == frozenset({"hashpw", "concat"})
+
+
 # --------------------------------------------------------------------------- signature
 # #2444: a repair keeps the routine's whole signature: its name, each parameter's name, mode
 # and type, and the return type. A parameter renamed in the header and the body alike, or
