@@ -187,6 +187,7 @@ from typing import Any, Literal
 
 from src.contracts.aurora_design_delta import validate_aurora_type
 from src.shared.sql_identifiers import has_unprintable, quote_identifier
+from src.tools.database import _shm_segments
 from src.tools.database.mysql_grants import grant_database
 
 logger = logging.getLogger(__name__)
@@ -948,6 +949,7 @@ def _stop_workdir_servers(workdir: Path) -> None:
     wait loop).
     """
     found: dict[int, signal.Signals] = {}
+    _shm_segments.note(workdir)  # while postmaster.pid still names its segment
     record = _read_owner(workdir) or {}
     for pid in record.get("servers", []):
         if isinstance(pid, int):
@@ -961,6 +963,7 @@ def _stop_workdir_servers(workdir: Path) -> None:
     for pid, sig in found.items():
         if pid != os.getpid():
             _stop_pid(pid, workdir, sig)
+    _shm_segments.reap(workdir)  # a server that did not exit cleanly leaves its segment
 
 
 def _owner_alive(record: dict[str, Any] | None) -> bool:
@@ -1237,15 +1240,27 @@ class _PgBinaryServer:
         deadline = time.monotonic() + _START_TIMEOUT_S
         while time.monotonic() < deadline:
             if self._proc is not None and self._proc.poll() is not None:
-                raise _start_failed(
-                    "postgresql", major, "postgres exited while starting", self._log
-                )
+                why = "postgres exited while starting"
+                if "could not create shared memory segment" in self._log_text():
+                    why = (
+                        "the System V shared memory table is full (macOS allows 32 segments, "
+                        "kern.sysv.shmmni); list them with `ipcs -m` and remove the unused "
+                        "ones of killed servers with `ipcrm -m <id>`"
+                    )
+                raise _start_failed("postgresql", major, why, self._log)
             try:
                 psycopg2.connect(self.dsn("postgres", "postgres")).close()
+                _shm_segments.note(self._workdir)  # for the stop or sweep after a hard kill
                 return
             except psycopg2.OperationalError:
                 time.sleep(0.2)
         raise _start_failed("postgresql", major, "postgres did not accept connections", self._log)
+
+    def _log_text(self) -> str:
+        try:
+            return self._log.read_text(errors="replace")
+        except OSError:
+            return ""
 
     def dsn(self, user: str, dbname: str, password: str | None = None) -> str:
         parts = [f"host={self.socket_dir}", f"dbname={dbname}", f"user={user}"]
