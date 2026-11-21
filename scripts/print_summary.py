@@ -65,15 +65,15 @@ def gate_text(store, job_id: str, db: str, mode: str = "chat") -> str:
     from src.shared.assumptions import gate_assumption_lines, read_assumptions
     from src.storage.collector_for_models import read_collector_for_models
 
-    gate["assumptions"] = gate_assumption_lines(
-        read_collector_for_models(store, db, job_id, missing_ok=True),
-        read_assumptions(store, db, job_id),
-    )
+    collector = read_collector_for_models(store, db, job_id, missing_ok=True)
+    gate["assumptions"] = gate_assumption_lines(collector, read_assumptions(store, db, job_id))
     return render_gate_block(
         gate,
         database_name=db,
         job_id=job_id,
         summary_url=_page_url(job_id, "summary", mode),
+        # #2375: the gate facts' statements left out come from the collection.
+        collector=collector,
     )
 
 

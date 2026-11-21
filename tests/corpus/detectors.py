@@ -60,6 +60,7 @@ from src.tools.database import (
     sqlserver_tools,
 )
 from src.tools.database.filter_columns import where_columns
+from src.tools.database.migration_tool_statements import _cursor, _full_load_shape
 from src.tools.sql import facade, redact, regex_facts
 from src.tools.sql.query_facts import QueryFacts
 from src.tools.sql.query_type import statement_query_type
@@ -507,6 +508,18 @@ OTHER_SQL_DETECTORS: tuple[SqlDetector, ...] = (
         expect=_REDACTION_EXPECT,
     ),
     SqlDetector("src/assessment/cut.py:foreign_syntax", cut.foreign_syntax),
+    # #2375: which statements are AWS DMS's psqlODBC cursors and its full-load reads; they
+    # read pg_stat_statements text, so PostgreSQL only.
+    SqlDetector(
+        "src/tools/database/migration_tool_statements.py:_cursor",
+        lambda sql, _dialect: _cursor(sql),
+        dialects=("postgresql",),
+    ),
+    SqlDetector(
+        "src/tools/database/migration_tool_statements.py:_full_load_shape",
+        lambda sql, _dialect: _full_load_shape(sql),
+        dialects=("postgresql",),
+    ),
     SqlDetector(
         "src/report/executive_report.py:without_table_names",
         _report_line,

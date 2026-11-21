@@ -10,11 +10,13 @@ from datetime import UTC, datetime
 from src.agents.referee.triage import triage
 from src.contracts.triage_output import (
     DeferredAgent,
+    ExcludedStatements,
     SelectedAgent,
     SkippedAgent,
     TriageOutputContract,
     TriageSignalRecord,
 )
+from src.shared.excluded_statements import excluded_statements_summary
 from src.shared.progress import say
 from src.storage.artifact_store import ArtifactStore
 from src.tools.sql.query_facts import remember_collected_facts
@@ -46,6 +48,12 @@ def run_triage(
     tables = collector_output.get("database_schema", {}).get("tables", [])
     queries = collector_output.get("queries", {}).get("query_patterns", [])
     say(f"[triage] Loaded collector: {len(tables)} tables, {len(queries)} queries")
+    # #2375: the statements AWS DMS ran, which the collector left out of the workload.
+    excluded = excluded_statements_summary(
+        collector_output.get("queries", {}).get("excluded_statements") or []
+    )
+    if excluded is not None:
+        say(f"[triage] {excluded['summary']}")
 
     if engine_scope is None:
         from src.agents.referee.engine_scope import recorded_engine_scope
@@ -88,6 +96,9 @@ def run_triage(
         confidence_score=_compute_triage_confidence(result),
         timestamp=datetime.now(UTC),
         engine_scope=result.engine_scope,
+        excluded_statements=(
+            ExcludedStatements.model_validate(excluded) if excluded is not None else None
+        ),
     )
 
     key = f"{database_name}/{job_id}/referee-triage/triage.json"

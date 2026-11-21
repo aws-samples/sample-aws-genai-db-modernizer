@@ -136,12 +136,13 @@ def render_gate_block(
     database_name: str,
     job_id: str,
     summary_url: str | None = None,
+    collector: Mapping[str, Any] | None = None,
 ) -> str:
     """The approval-gate block, as the assignment page presents it.
 
     ``summary_url`` (the job's summary page, given unless the run is chat only) ends the
     block, so quoting the block quotes the pointer the user follows before approving."""
-    facts = gate_block_facts(gate)
+    facts = gate_block_facts(gate, collector=collector)
     lines = [f"## Assignment for approval: {prose(database_name)} (assessment id {job_id})", ""]
     surviving = [display_engine(e) for e in facts["surviving"]]
     if surviving:
@@ -169,6 +170,10 @@ def render_gate_block(
         f"Total: {facts['total_after']} {plural_noun(facts['total_after'], 'query', 'queries')}.",
         "",
     ]
+    # #2375: the statements AWS DMS ran, which no engine was scored on.
+    excluded = facts["excluded_statements"]
+    if excluded:
+        lines += [f"{prose(excluded['statement'])}.", ""]
     # #1574: the customer's engine scope and the queries no engine in it can serve.
     if facts["engine_scope"]:
         lines += [engine_scope_statement(facts["engine_scope"], escaping.md_text) + ".", ""]

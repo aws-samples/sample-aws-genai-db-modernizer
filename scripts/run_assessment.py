@@ -648,6 +648,9 @@ def phase_collect(
 
     tables = collector_data.get("database_schema", {}).get("tables", [])
     queries = collector_data.get("queries", {}).get("query_patterns", [])
+    from src.shared.excluded_statements import excluded_statement_count
+
+    dms_rows = excluded_statement_count(collector_data)
 
     artifact = _path(store, collector_path)
     _log_artifact("collect", artifact)
@@ -668,6 +671,8 @@ def phase_collect(
             **({"query_capture": capped.capture} if capped.cut else {}),
             **({"query_merge": query_merge} if query_merge else {}),
             **({"queries_dropped_other_database": other_db_rows} if other_db_rows else {}),
+            # #2375: the statements AWS DMS ran, left out of the workload (triage names them).
+            **({"dms_statements_excluded": dms_rows} if dms_rows else {}),
         },
     )
     return job_id, db_name

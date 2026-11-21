@@ -17,6 +17,7 @@ from typing import Any
 
 from src.shared.cache_change import cache_change_sentence
 from src.shared.cache_engines import CACHE_ENGINES
+from src.shared.excluded_statements import excluded_statement_facts
 from src.shared.target_databases import engine_scope_display_order
 
 
@@ -177,4 +178,7 @@ def gate_block_facts(
             if isinstance(gate.get("source_table_count"), int)
             else source_table_count(collector) if collector is not None else None
         ),
+        # #2375: the statements AWS DMS ran, left out of the workload before routing;
+        # None with no collection or nothing left out.
+        "excluded_statements": excluded_statement_facts(collector),
     }

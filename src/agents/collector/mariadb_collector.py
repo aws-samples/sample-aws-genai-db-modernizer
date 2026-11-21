@@ -48,6 +48,11 @@ from src.shared.server_counters import live_server_counters
 from src.shared.sql_spans import span_settings, use_span_settings, with_span_settings
 from src.tools.aws.ssm_executor import SSMExecutor
 from src.tools.database.mariadb_tools import MariaDBRemoteCollector
+from src.tools.database.migration_tool_statements import (
+    merge_excluded,
+    record_excluded,
+    split_migration_tool_statements,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -140,9 +145,14 @@ def _collect_live_mariadb_stages(inp: CollectorInput, ckpt) -> CollectorOutputCo
     schema_triggers = (
         _build_triggers(schema_raw.get("triggers", [])) if isinstance(schema_raw, dict) else None
     )
-    live_queries = _build_queries(queries_raw)
-    aws_queries = aws_raw.get("query_patterns", [])
+    # #2375: AWS DMS's own statements are left out of the workload, and recorded.
+    app_rows, excluded = split_migration_tool_statements(queries_raw, "mariadb")
+    aws_queries, aws_excluded = split_migration_tool_statements(
+        aws_raw.get("query_patterns", []), "mariadb"
+    )
+    live_queries = _build_queries(app_rows)
     queries = _merge_into_queries(live_queries, aws_queries, source_engine="mariadb")
+    record_excluded(queries, merge_excluded(excluded, aws_excluded))
     global_stats = schema_raw.get("global_stats", {}) if isinstance(schema_raw, dict) else {}
     pi_counters = global_stats or aws_raw.get("pi_counters", {})
     cw_raw = aws_raw.get("cloudwatch", {})

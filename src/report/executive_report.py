@@ -246,6 +246,7 @@ L_DECISIONS_REALITY = "Reality-check decisions"
 L_COST_BREAKDOWN = "Cost by engine"
 L_ASSUMPTIONS = "Assumptions"
 L_ROW_COUNTS = "Row counts"
+L_EXCLUDED_STATEMENTS = "Statements left out"
 L_RATE_WINDOWS = "Call rates"
 L_ROUTINES_POINTER = "The engineering report lists each routine."
 L_TIED_BETWEEN = "Tied between"
@@ -1166,6 +1167,10 @@ def _numbers(report: dict[str, Any], st: dict[str, ParagraphStyle], names: Any) 
     rate_windows = (facts.get("rate_windows") or {}).get("statement")
     if rate_windows:
         flow += [_gap(6), _para(f"{L_RATE_WINDOWS}: {rate_windows}.", st["small"])]
+    # #2375: the statements AWS DMS ran, left out of the workload.
+    excluded = (facts.get("excluded_statements") or {}).get("statement")
+    if excluded:
+        flow += [_gap(6), _para(f"{L_EXCLUDED_STATEMENTS}: {excluded}.", st["small"])]
     # #1990: the assumptions block and the growth scenario, as the facts state them.
     # #1991 review: the rate window's detail stays in the engineering report and the UI;
     # the executive report prints its scenario label, which carries the short reason.

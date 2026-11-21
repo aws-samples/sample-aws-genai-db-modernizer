@@ -560,6 +560,9 @@ queries_data AS (
     SELECT
       queryid::text AS digest,
       query AS query_text,
+      -- #2375: the id of the role that ran it (never its name), so AWS DMS's slot reads
+      -- and cursor statements can be told apart.
+      s.userid::text AS role_id,
       current_database() AS schema_name,
       calls AS execution_count,
       round(total_exec_time::numeric, 3) AS total_time_ms,

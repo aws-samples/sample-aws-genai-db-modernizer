@@ -166,3 +166,19 @@ test('an API without gate facts shows no figures and no counted sentence', async
   expect(figures()).toBeNull();
   expect(container.querySelector('.gate-hero__summary').textContent).not.toMatch(/workload has/);
 });
+
+// #2375: the statements AWS DMS ran, which the collector left out, as gate_facts states them.
+const LEFT_OUT = '3 statements from AWS DMS, with 91 executions, were left out of the workload; referee-triage/triage.json lists them';
+
+test('the statements AWS DMS ran are stated once, before the cache candidates', async () => {
+  await render({ ...GATE_FACTS, excluded_statements: { statement_count: 3, execution_count: 91, statement: LEFT_OUT } });
+  expect(figures()).toEqual([
+    'Queries: 110',
+    'Source tables: 50',
+    'Engines kept: Aurora MySQL 68DynamoDB 39',
+    'Engines removed: DocumentDB (10 queries before)',
+    `Statements left out: ${LEFT_OUT}.`,
+    'Cache candidates: 1982.1% of calls',
+  ]);
+  expect(container.querySelectorAll('[data-figure="statements-left-out"]')).toHaveLength(1);
+});

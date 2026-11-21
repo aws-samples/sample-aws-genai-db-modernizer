@@ -491,6 +491,15 @@ const AssignmentGatePage = memo(() => {
         </SpaceBetween>
       ) : t('assignment-gate.figures.none'),
     });
+    // #2375: the statements AWS DMS ran, left out before routing (gate_facts' sentence).
+    const excluded = gateFacts.excluded_statements;
+    if (excluded && typeof excluded.statement === 'string' && excluded.statement) {
+      items.push({
+        id: 'statements-left-out',
+        label: t('assignment-gate.figures.statements-left-out'),
+        value: <span data-figure="statements-left-out">{excluded.statement}.</span>,
+      });
+    }
     if (cache) {
       items.push({
         id: 'cache-candidates',

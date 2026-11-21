@@ -57,3 +57,19 @@ test('the rows and the total are the facts the reports print, whatever the TCO s
   expect(rows[rows.length - 1][5]).toBe(formatMoney(facts.engine_cost_total_usd));
   expect(container.querySelector('[data-figure="cost-total-value"]').textContent).toBe(formatMoney(facts.engine_cost_total_usd));
 });
+
+// #2375: the statements AWS DMS ran, left out of the workload, as every deliverable prints them.
+test('the statements left out are the facts sentence, and nothing when the report has none', () => {
+  const statement = '3 statements from AWS DMS, with 91 executions, were left out of the workload; referee-triage/triage.json lists them';
+  const withFact = { ...report, facts: { ...report.facts, excluded_statements: { statement_count: 3, execution_count: 91, statement } } };
+  act(() => {
+    root.render(<CostBreakdown synthesis={withFact} costBreakdown={[]} projectedCost={2} t={t} />);
+  });
+  const shown = container.querySelectorAll('[data-figure="excluded-statements"]');
+  expect(shown).toHaveLength(1);
+  expect(shown[0].textContent).toBe(`${statement}.`);
+  act(() => {
+    root.render(<CostBreakdown synthesis={report} costBreakdown={[]} projectedCost={2} t={t} />);
+  });
+  expect(container.querySelector('[data-figure="excluded-statements"]')).toBeNull();
+});

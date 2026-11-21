@@ -1838,9 +1838,31 @@ class QueryPattern(BaseModel):
     )
 
 
+class ExcludedStatement(BaseModel):
+    """A collected statement left out of the workload (#2375): one AWS DMS ran on the
+    source while the collection was taken (``src.tools.database.migration_tool_statements``
+    holds the rules). Only its id, the rule and the reason are kept, never its text."""
+
+    query_id: str = Field(..., description="The id the statement would have had")
+    rule: Literal["dms_object", "dms_replication_slot", "dms_cursor"] = Field(
+        ..., description="The rule that matched it"
+    )
+    reason: str = Field(..., description="Why it was left out, in a sentence")
+    execution_count: int | None = Field(
+        None, ge=0, description="Its executions in the collection; None when not reported"
+    )
+
+
 class Queries(BaseModel):
     query_patterns: list[QueryPattern] = Field(
         ..., description="List of query patterns with performance metrics"
+    )
+    excluded_statements: list[ExcludedStatement] | None = Field(
+        None,
+        description=(
+            "The statements left out of query_patterns because AWS DMS ran them (#2375); "
+            "None when none were (also for an output written before #2375)"
+        ),
     )
     total_queries_analyzed: int | None = Field(
         None, ge=0, description="Total number of queries in log analyzed"

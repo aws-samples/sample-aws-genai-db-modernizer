@@ -115,6 +115,11 @@ def build_offline_contract(
     )
     from src.agents.collector.routine_sources import non_dml_triggers
     from src.shared.query_capture import offline_query_capture
+    from src.tools.database.migration_tool_statements import (
+        merge_excluded,
+        record_excluded,
+        split_migration_tool_statements,
+    )
     from src.tools.database.offline_parser import offline_version_label
 
     start = time.monotonic()
@@ -142,6 +147,8 @@ def build_offline_contract(
     queries = _build_queries(
         parsed.get("queries", []), query_log_source=_offline_query_log_source(inp.engine.value)
     )
+    # #2375: the statements AWS DMS ran, which the parser left out.
+    excluded = list(parsed.get("excluded_statements") or [])
     # #381: a short, human-readable version string (product_version, or the first
     # line only of version/version_full) -- the full @@VERSION banner (newlines,
     # tabs, build date) must never reach wave 1's user-visible rationale text.
@@ -152,9 +159,11 @@ def build_offline_contract(
         metrics = _build_metrics(queries, None, source_host=_build_source_host(parsed))
         rds_meta = None
     else:
-        queries = _merge_into_queries(
-            queries, aws_raw.get("query_patterns", []), source_engine=inp.engine.value
+        aws_patterns, aws_excluded = split_migration_tool_statements(
+            aws_raw.get("query_patterns", []), inp.engine.value
         )
+        excluded = merge_excluded(excluded, aws_excluded)
+        queries = _merge_into_queries(queries, aws_patterns, source_engine=inp.engine.value)
         cw_raw = aws_raw.get("cloudwatch", {})
         pi_counters = parsed.get("global_stats", {}) or aws_raw.get("pi_counters", {})
         _enrich_patterns_from_pi_and_cw(
@@ -174,6 +183,7 @@ def build_offline_contract(
         if version == "unknown":
             # The AWS-reported engine version when the collection itself has none.
             version = aws_raw.get("engine_version", "unknown")
+    record_excluded(queries, excluded)
 
     return _build_output(
         inp,

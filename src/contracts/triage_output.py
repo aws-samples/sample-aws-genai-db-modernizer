@@ -69,6 +69,26 @@ class DeferredAgent(BaseModel):
     reasons: list[str] = Field(..., description="Why this engine was deferred")
 
 
+class ExcludedStatementRule(BaseModel):
+    """The statements one rule left out of the workload (#2375)."""
+
+    rule: str = Field(..., description="The rule (dms_object, dms_replication_slot, dms_cursor)")
+    reasons: list[str] = Field(..., description="Why its statements were left out")
+    statement_count: int = Field(..., ge=0, description="How many statements it left out")
+    execution_count: int = Field(..., ge=0, description="Their executions in the collection")
+    query_ids: list[str] = Field(..., description="The ids the statements would have had")
+
+
+class ExcludedStatements(BaseModel):
+    """The statements the collector left out of the workload because AWS DMS ran them
+    (#2375, ``queries.excluded_statements`` in the collector output)."""
+
+    statement_count: int = Field(..., ge=0, description="How many statements were left out")
+    execution_count: int = Field(..., ge=0, description="Their executions in the collection")
+    summary: str = Field(..., description="One sentence: how many were left out and why")
+    rules: list[ExcludedStatementRule] = Field(..., description="Per rule, in a fixed order")
+
+
 class TriageOutputContract(BaseModel):
     """Output contract for the triage agent.
 
@@ -103,5 +123,12 @@ class TriageOutputContract(BaseModel):
             "The customer's engine scope, sorted engine ids (#1327, ADR-031 Decision 2 "
             "Amendment 14); None when every engine is in scope. Every engine it leaves out "
             "is in skipped_agents with the reason 'Not in the customer's engine scope'."
+        ),
+    )
+    excluded_statements: ExcludedStatements | None = Field(
+        default=None,
+        description=(
+            "The statements left out of the workload because AWS DMS ran them (#2375); "
+            "None when none were, and for a triage.json written before."
         ),
     )
