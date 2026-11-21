@@ -14,6 +14,7 @@ from pathlib import Path
 
 import pytest
 
+from src.shared.sql_spans import SpanSettings
 from src.tools.database.collection_text import extract_json_object
 from src.tools.sql.facade import read_sql
 from src.tools.sql.query_facts import QueryFacts, query_facts
@@ -292,6 +293,65 @@ class TestDefinitions:
 
     def test_the_quote_form_a_gap_rule_reads_is_kept(self) -> None:
         assert redact_definition('SELECT "Jane" FROM t', "mysql") == 'SELECT "?" FROM t'
+
+
+_NO_BACKSLASH_ESCAPES = SpanSettings(no_backslash_escapes=True)
+_BACKSLASH_STRINGS = SpanSettings(standard_conforming_strings=False)
+
+
+@pytest.mark.passes_on_main
+class TestEscapedQuotes:
+    """A backslash-escaped quote reads two ways, and neither reading is trusted to mask
+    less (#1482): what either reading puts in a string is masked (#2331)."""
+
+    @pytest.mark.parametrize("engine", ["mysql", "mariadb"])
+    @pytest.mark.parametrize("reported", [None, _NO_BACKSLASH_ESCAPES])
+    def test_the_sql_after_the_literals_is_kept_where_both_readings_agree_it_is_code(
+        self, engine: str, reported: SpanSettings | None
+    ) -> None:
+        # Read without escapes, the strings pair up again at the second literal's end.
+        text = "where (n <> 'it\\'s; x') and m = 'y\\'z') or k = 2"
+        assert redact_definition(text, engine, reported) == "where (n <> '?') or k = 2"
+        assert redact_literals(text, engine, reported) == "where (n <> ?) or k = ?"
+
+    @pytest.mark.parametrize("reported", [None, _NO_BACKSLASH_ESCAPES])
+    def test_a_parenthesis_one_reading_puts_in_a_string_stays_masked(
+        self, reported: SpanSettings | None
+    ) -> None:
+        # Read without escapes, the closing quote opens a string that runs to the end,
+        # so the ")" is masked with it (the case #2331 reports).
+        text = "select a from t where (t.n <> 'it\\'s; x')"
+        assert redact_definition(text, "mysql", reported) == "select a from t where (t.n <> '?'"
+
+    @pytest.mark.parametrize(
+        ("engine", "reported", "text"),
+        [
+            # A definition cut after an escaped quote.
+            ("mysql", None, "select a from t where b = '\\'Zeta and c = 1"),
+            ("mysql", _NO_BACKSLASH_ESCAPES, "select a from t where b = '\\'Zeta and c = 1"),
+            # An unterminated E'' string in a routine body.
+            (
+                "postgresql",
+                None,
+                "CREATE FUNCTION f() RETURNS text LANGUAGE plpgsql AS $function$ "
+                "BEGIN RETURN E'\\'Zeta Q 4111; END $function$",
+            ),
+            # An alias holding escaped quotes: one reading puts Zeta in a string.
+            ("mysql", _NO_BACKSLASH_ESCAPES, "select a AS 'p\\'q\\'Zeta\\'r\\'' from t"),
+            ("mysql", None, "select a AS 'p\\'q\\'Zeta\\'r\\'' from t"),
+            ("postgresql", _BACKSLASH_STRINGS, "select a AS 'p\\'q\\'Zeta\\'r\\'' from t"),
+            ("postgresql", None, "select a AS 'p\\'q\\'Zeta\\'r\\'' from t"),
+            # Under NO_BACKSLASH_ESCAPES ' and e = ' is a string; otherwise Jane is one.
+            ("mysql", None, "select a from t where n = 'C:\\' and e = 'Zeta' and k = 2"),
+        ],
+    )
+    def test_a_value_either_reading_puts_in_a_string_is_masked(
+        self, engine: str, reported: SpanSettings | None, text: str
+    ) -> None:
+        for redact in (redact_definition, redact_literals):
+            out = redact(text, engine, reported)
+            assert "Zeta" not in out, (redact.__name__, out)
+            assert redact(out, engine, reported) == out
 
 
 class TestSeededValues:
