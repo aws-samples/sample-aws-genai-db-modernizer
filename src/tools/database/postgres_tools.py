@@ -29,6 +29,7 @@ from src.shared.rate_window import (
 from src.tools.aws.ssm_executor import SSMExecutor
 from src.tools.database import live_sql
 from src.tools.database.filter_columns import where_columns
+from src.tools.database.foreign_key_schema import referenced_schema
 from src.tools.database.index_keys import add_index_key, expression_key_fields
 from src.tools.database.live_sql import LiveQueryReader
 from src.tools.sql.query_type import statement_query_type
@@ -411,6 +412,7 @@ class PostgreSQLRemoteCollector:
             SELECT
                 c.conname AS constraint_name, a.attname AS column_name,
                 k.ordinal_position,
+                rn.nspname AS referenced_schema_name,
                 rcl.relname AS referenced_table_name,
                 ra.attname AS referenced_column_name,
                 CASE c.confupdtype
@@ -423,6 +425,7 @@ class PostgreSQLRemoteCollector:
             JOIN pg_catalog.pg_class cl ON cl.oid = c.conrelid
             JOIN pg_catalog.pg_namespace n ON n.oid = cl.relnamespace
             JOIN pg_catalog.pg_class rcl ON rcl.oid = c.confrelid
+            JOIN pg_catalog.pg_namespace rn ON rn.oid = rcl.relnamespace
             CROSS JOIN LATERAL unnest(c.conkey, c.confkey)
                 WITH ORDINALITY AS k(attnum, rattnum, ordinal_position)
             JOIN pg_catalog.pg_attribute a ON a.attrelid = c.conrelid AND a.attnum = k.attnum
@@ -440,6 +443,7 @@ class PostgreSQLRemoteCollector:
                     "constraint_name": name,
                     "columns": [],
                     "referenced_table": r["referenced_table_name"],
+                    **referenced_schema(r),
                     "referenced_columns": [],
                     "on_delete": r.get("on_delete"),
                     "on_update": r.get("on_update"),

@@ -443,6 +443,31 @@ class SourceSettings(BaseModel):
     )
 
 
+class SourceSchema(BaseModel):
+    """One schema (MySQL family: one database) of the source and its defaults (#2531)."""
+
+    schema_name: str = Field(
+        ..., min_length=1, description="The schema's name, as the source spells it"
+    )
+    default_character_set: str | None = Field(
+        None,
+        max_length=64,
+        description=(
+            "MySQL family: the schema's default character set "
+            "(information_schema.SCHEMATA.DEFAULT_CHARACTER_SET_NAME); None when not read"
+        ),
+    )
+    default_collation: str | None = Field(
+        None,
+        max_length=64,
+        description=(
+            "MySQL family: the schema's default collation "
+            "(information_schema.SCHEMATA.DEFAULT_COLLATION_NAME), which step 1 gives that "
+            "database on Aurora MySQL; None when not read"
+        ),
+    )
+
+
 class SourceDatabase(BaseModel):
     engine: DatabaseEngine = Field(..., description="Database engine type")
     version: str = Field(..., description="Database engine version (e.g., '8.0.32', '14.7')")
@@ -480,6 +505,17 @@ class SourceDatabase(BaseModel):
             "MySQL family: the collected database's default collation "
             "(information_schema.SCHEMATA.DEFAULT_COLLATION_NAME, #2276), which step 1 gives the "
             "Aurora MySQL databases it creates; None when not read"
+        ),
+    )
+    # Left out of the dump when None, so a collection written before #2531 keeps its bytes.
+    schemas: list[SourceSchema] | None = Field(
+        None,
+        exclude_if=lambda value: value is None,
+        description=(
+            "MySQL family: each database the collection names (the collected one and every "
+            "one its foreign keys reference) with its default character set and collation "
+            "(#2531). Step 1 gives each Aurora MySQL database of a step of several databases "
+            "its own; None when not read, and every database gets default_collation"
         ),
     )
 
@@ -888,6 +924,16 @@ class ForeignKey(BaseModel):
     constraint_name: str = Field(..., description="Foreign key constraint name")
     columns: list[str] = Field(..., description="List of foreign key columns")
     referenced_table: str = Field(..., description="Referenced table name")
+    # Left out of the dump when None, so a collection written before #2531 keeps its bytes.
+    referenced_schema: str | None = Field(
+        None,
+        exclude_if=lambda value: value is None,
+        description=(
+            "The schema (MySQL family: the database) of the referenced table, as the source "
+            "spells it (#2531); None when the collection does not report it, and the key's "
+            "schema is then resolved from the bare table name"
+        ),
+    )
     referenced_columns: list[str] = Field(..., description="List of referenced columns")
     on_delete: ForeignKeyAction | None = Field(None, description="ON DELETE action")
     on_update: ForeignKeyAction | None = Field(None, description="ON UPDATE action")

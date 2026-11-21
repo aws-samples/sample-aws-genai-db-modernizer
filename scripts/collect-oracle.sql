@@ -482,6 +482,8 @@ BEGIN
             'constraint_name' VALUE LOWER(a.CONSTRAINT_NAME),
             'column_name' VALUE LOWER(ac.COLUMN_NAME),
             'ordinal_position' VALUE ac.POSITION,
+            -- #2531: the referenced table's owner (R_OWNER), which may be another schema.
+            'referenced_schema_name' VALUE LOWER(a.R_OWNER),
             'referenced_table_name' VALUE LOWER(rc.TABLE_NAME),
             'referenced_column_name' VALUE LOWER(rcc.COLUMN_NAME),
             'delete_rule' VALUE a.DELETE_RULE

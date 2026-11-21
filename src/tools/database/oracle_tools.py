@@ -30,6 +30,7 @@ from src.shared.rate_window import (
 )
 from src.tools.aws.ssm_executor import SSMExecutor
 from src.tools.database import live_sql
+from src.tools.database.foreign_key_schema import referenced_schema
 from src.tools.database.index_keys import add_index_key
 from src.tools.database.live_sql import LiveQueryReader
 from src.tools.database.routine_links import routine_id
@@ -253,6 +254,7 @@ class OracleRemoteCollector:
                 a.CONSTRAINT_NAME AS constraint_name,
                 ac.COLUMN_NAME AS column_name,
                 ac.POSITION AS ordinal,
+                a.R_OWNER AS referenced_schema_name,
                 rc.TABLE_NAME AS referenced_table_name,
                 rcc.COLUMN_NAME AS referenced_column_name,
                 a.DELETE_RULE AS on_delete
@@ -277,6 +279,7 @@ class OracleRemoteCollector:
                     "constraint_name": name,
                     "columns": [],
                     "referenced_table": str(r.get("referenced_table_name") or "").lower(),
+                    **referenced_schema(r, lower=True),
                     "referenced_columns": [],
                     "on_delete": _normalize_fk_action(r.get("on_delete")),
                     "on_update": "NO ACTION",  # Oracle doesn't support ON UPDATE

@@ -64,6 +64,11 @@ CREATE TABLE dup_child_a (d1 int, d2 int,
 CREATE TABLE dup_child_b (d1 int,
   CONSTRAINT fk_dup FOREIGN KEY (d1) REFERENCES dup_parent_b (b1));
 
+-- #2531: a table name in two schemas, each with its own key into its own schema
+CREATE TABLE other.dup_parent_b (b1 int PRIMARY KEY);
+CREATE TABLE other.dup_child_b (d1 int,
+  CONSTRAINT fk_dup_other FOREIGN KEY (d1) REFERENCES other.dup_parent_b (b1));
+
 -- a partitioned table with two partitions carrying the foreign key
 CREATE TABLE part_ref (tenant int, region int, PRIMARY KEY (tenant, region));
 CREATE TABLE part_child (tenant int, region int, v int)
@@ -97,11 +102,18 @@ _EXPECTED = {
     ("tree", "fk_tree"): ("tree", [("pb", "b"), ("pa", "a")]),
     ("dup_child_a", "fk_dup"): ("dup_parent_a", [("d2", "a1"), ("d1", "a2")]),
     ("dup_child_b", "fk_dup"): ("dup_parent_b", [("d1", "b1")]),
+    ("dup_child_b", "fk_dup_other"): ("dup_parent_b", [("d1", "b1")]),
     ("part_child", "fk_part"): ("part_ref", [("region", "region"), ("tenant", "tenant")]),
     ("refs_part", "fk_refs_part"): ("part_target", [("r2", "k2"), ("r1", "k1")]),
 }
+# (table, constraint) -> (the key's own schema, its referenced table's schema), #2531.
+_SCHEMAS = {key: ("public", "public") for key in _EXPECTED} | {
+    ("xs_child", "fk_xs"): ("public", "other"),
+    ("xs_child2", "fk_xs2"): ("other", "public"),
+    ("dup_child_b", "fk_dup_other"): ("other", "other"),
+}
 # The live collector reads one table of the public schema at a time.
-_PUBLIC = {k: v for k, v in _EXPECTED.items() if k[0] != "xs_child2"}
+_PUBLIC = {k: v for k, v in _EXPECTED.items() if _SCHEMAS[k][0] == "public"}
 
 
 @pytest.fixture(scope="module")
@@ -185,3 +197,54 @@ def test_the_parser_keeps_the_pairs_from_the_real_rows_when_shuffled(server):
         [fk] = [f for f in parsed[table]["foreign_keys"] if f["constraint_name"] == name]
         assert fk["referenced_table"] == parent
         assert list(zip(fk["columns"], fk["referenced_columns"], strict=True)) == pairs
+
+
+@pytest.mark.parametrize("role", [None, "ro_collector"], ids=["owner", "select-only"])
+def test_the_offline_query_reports_each_keys_schema_and_its_referenced_schema(server, role):
+    """#2531: from pg_namespace, of the key's table and of ``confrelid``."""
+    got = {
+        (r["table_name"], r["constraint_name"]): (r["schema_name"], r["referenced_schema_name"])
+        for r in _offline_rows(server, role)
+    }
+    assert got == _SCHEMAS
+
+
+@pytest.mark.parametrize("role", [None, "ro_collector"], ids=["owner", "select-only"])
+def test_the_live_collector_reports_the_referenced_schema(server, role):
+    class Live(PostgreSQLRemoteCollector):
+        def _query(self, sql):
+            return _run(server, sql.strip().rstrip(";"), role)
+
+    collector = Live.__new__(Live)
+    got = {
+        (table, fk["constraint_name"]): fk.get("referenced_schema")
+        for table in sorted({t for t, _ in _PUBLIC})
+        for fk in collector.collect_foreign_keys(table)
+    }
+    assert got == {k: _SCHEMAS[k][1] for k in _PUBLIC}
+
+
+def test_the_parser_gives_each_schemas_table_its_own_keys_from_the_real_rows(server):
+    """``public.dup_child_b`` and ``other.dup_child_b`` share a name: each keeps its own key,
+    with the schema of the table it references."""
+    rows = _offline_rows(server, None)
+    data = {
+        "metadata": {"database_name": "db", "engine": "postgresql"},
+        "tables": [
+            {"table_name": t, "schema_name": s, "row_count": 1}
+            for s, t in sorted({(r["schema_name"], r["table_name"]) for r in rows})
+        ],
+        "columns": [],
+        "indexes": [],
+        "primary_keys": [],
+        "foreign_keys": rows[::-1],
+    }
+
+    parsed = parse_offline_collection(data)["tables"]
+
+    got = {
+        (t["schema_name"], t["table_name"], fk["constraint_name"]): fk.get("referenced_schema")
+        for t in parsed
+        for fk in t["foreign_keys"]
+    }
+    assert got == {(s[0], k[0], k[1]): s[1] for k, s in _SCHEMAS.items()}

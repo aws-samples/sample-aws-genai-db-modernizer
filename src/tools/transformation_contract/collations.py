@@ -17,8 +17,16 @@ from __future__ import annotations
 
 from src.contracts.collector_output import CollectorOutputContract, Table
 from src.contracts.lineage_ops import UnsupportedOp
-from src.contracts.transformation_contract import CharacterSet, FieldRule, Finding, Rule, TargetSpec
-from src.tools.data_movement.collations import NOT_CARRIED, carry, is_text_type
+from src.contracts.transformation_contract import (
+    CharacterSet,
+    FieldRule,
+    Finding,
+    Rule,
+    TargetDatabase,
+    TargetSpec,
+)
+from src.shared.table_keys import is_system_schema, spans_schemas
+from src.tools.data_movement.collations import NOT_CARRIED, carry, database_target, is_text_type
 
 _SOURCES = ("mysql", "mariadb")
 
@@ -26,14 +34,44 @@ _SOURCES = ("mysql", "mariadb")
 def database_collation(
     collector: CollectorOutputContract, engine: str, line: str | None
 ) -> TargetSpec:
-    """The step's target: ``engine`` with the source database's collation, or why not."""
+    """The step's target: ``engine`` with the source database's collation, or why not. A
+    collection of several databases that lists each one's (``SourceDatabase.schemas``,
+    #2531) gives each its own, in ``databases``; a database it does not list gets the
+    source database's."""
     source = collector.metadata.source_database
     if engine != "aurora_mysql" or source.engine.value not in _SOURCES:
         return TargetSpec(engine=engine)
     value, note = carry(source.default_collation, source.default_character_set, line,
                         "the database", "the cluster's server default")  # fmt: skip
+    databases = _databases(collector, line, value, note)
+    carried = value is not None or any(d.collation is not None for d in databases or [])
     return TargetSpec(engine=engine, collation=value, collation_note=note,
-                      engine_line=line if value is not None else None)  # fmt: skip
+                      engine_line=line if carried else None, databases=databases)  # fmt: skip
+
+
+def _databases(
+    collector: CollectorOutputContract,
+    line: str | None,
+    value: CharacterSet | None,
+    note: str | None,
+) -> list[TargetDatabase] | None:
+    """Each database of a collection of several, with its own collation (#2531); None for a
+    collection of one, or one that lists no database's."""
+    source = collector.metadata.source_database
+    names = {t.schema_name for t in collector.database_schema.tables}
+    if not source.schemas or not spans_schemas(names, source.engine.value):
+        return None
+    listed = {s.schema_name: s for s in source.schemas}
+    out = []
+    for name in sorted(n for n in names if n and not is_system_schema(n, source.engine.value)):
+        own = listed.get(name)
+        if own is not None and own.default_collation:
+            v, n = carry(own.default_collation, own.default_character_set, line,
+                         "the database", "the cluster's server default")  # fmt: skip
+        else:
+            v, n = value, note
+        out.append(TargetDatabase(name=name, collation=v, collation_note=n))
+    return out
 
 
 def _same(value: CharacterSet, name: str) -> bool:
@@ -69,8 +107,9 @@ def rule_collations(
     carried. Earlier ``collation_not_carried`` findings are replaced, so it runs again
     unchanged."""
     findings = [f for f in rule.findings if f.code != NOT_CARRIED]
-    database = target.collation
     table = tables.get(rule.source_table)
+    # #2531: the table's own database's, on a step of several databases.
+    database = database_target(target, table.schema_name if table else None)[0]
     if database is None or table is None or rule.status == "blocked":
         fields = [f.model_copy(update={"collation": None}) for f in rule.fields]
         return rule.model_copy(update={"collation": None, "fields": fields, "findings": findings})

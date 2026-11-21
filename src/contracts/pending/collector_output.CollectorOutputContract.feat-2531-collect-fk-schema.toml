@@ -1,0 +1,6 @@
+# A pending contract version bump (ADR-008 Decision 8). The number is assigned by
+# uv run python scripts/resolve_contract_versions.py --release at release (a MAJOR: in its pull request).
+contract = "collector_output.CollectorOutputContract"
+kind = "minor"
+reason = "Added optional ForeignKey.referenced_schema (the referenced table's schema, MySQL family: database) and SourceDatabase.schemas (SourceSchema: each database's default character set and collation, MySQL family), read by every collection script and live collector; left out of the dump when None, so an older collection keeps its bytes and its bare-name and one-collation reading"
+issue = 2531

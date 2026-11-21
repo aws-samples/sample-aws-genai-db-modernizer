@@ -1298,7 +1298,9 @@ def _fk_sql(
     statements: list[str] = []
     name, schema = ref or (table.table_name, None)
     for fk in table.foreign_keys or []:
-        resolved = referenced_table(fk.referenced_table, schema, schemas_of or {})
+        resolved = referenced_table(
+            fk.referenced_table, schema, schemas_of or {}, fk.referenced_schema
+        )
         if resolved is None:
             # quotable_tables leaves such a key out of the base; never guess a schema.
             if left_out is not None:
@@ -1327,23 +1329,77 @@ def _fk_sql(
 
 
 def referenced_table(
-    referenced: str, schema: str | None, schemas_of: dict[str, list[str]]
+    referenced: str,
+    schema: str | None,
+    schemas_of: dict[str, list[str]],
+    referenced_schema: str | None = None,
 ) -> tuple[str, str | None] | None:
-    """The (table, schema) a foreign key of a table in ``schema`` references (#2455). The
-    collectors report the referenced table by its bare name, so it is the table of that
-    name in the key's own schema (as spelled), else the one other schema of the design
-    that has it, else the key's own schema when no schema has it. None when two other
-    schemas have it and the key's own does not: the reference is ambiguous (#2479 review),
-    and the key is left out rather than guessed. With no schema (one-schema design) it is
-    the name as is."""
+    """The (table, schema) a foreign key of a table in ``schema`` references (#2455). With
+    the referenced table's schema the collection reports (``referenced_schema``, #2531) it
+    is that schema's table. A collection written before #2531 reports the referenced table
+    by its bare name only, so it is the table of that name in the key's own schema (as
+    spelled), else the one other schema of the design that has it, else the key's own
+    schema when no schema has it. None when two other schemas have it and the key's own
+    does not: the reference is ambiguous (#2479 review), and the key is left out rather
+    than guessed. With no schema (one-schema design) it is the name as is."""
     if schema is None:
         return referenced, None
+    if referenced_schema:
+        return referenced, referenced_schema
     found = schemas_of.get(referenced.lower(), [])
     if not found or schema in found:
         return referenced, schema
     if len(found) == 1:
         return referenced, found[0]
     return None
+
+
+_CASE_FOLDED_SCHEMAS = frozenset({"mysql", "mariadb"})
+
+
+def with_design_schema(
+    fk: AgentForeignKey, own: str | None, schemas: list[str], source_engine: str | None
+) -> AgentForeignKey:
+    """``fk`` with its reported schema spelled as the design spells it (#2531 review): a
+    MySQL or MariaDB host with ``lower_case_table_names=2`` reports a key's
+    ``REFERENCED_TABLE_SCHEMA`` as its DDL spelled it (``CASEDB``) and the table's schema as
+    stored (``casedb``), and both name one database. On the MySQL family a reported name
+    that matches the key's own schema, or one schema of the design, once case is folded,
+    takes that spelling (the own schema first). Every other engine compares schema names as
+    spelled, as ``table_keys.spans_schemas`` does, so PostgreSQL's ``Sales`` and ``sales``
+    stay two schemas."""
+    reported = fk.referenced_schema
+    if not reported or reported == own or reported in schemas:
+        return fk
+    if (source_engine or "").strip().lower() not in _CASE_FOLDED_SCHEMAS:
+        return fk
+    folded = reported.casefold()
+    if own and own.casefold() == folded:
+        return fk.model_copy(update={"referenced_schema": own})
+    matches = [s for s in schemas if s.casefold() == folded]
+    if len(matches) == 1:
+        return fk.model_copy(update={"referenced_schema": matches[0]})
+    return fk
+
+
+def _other_schema_reference(table: str, fk: AgentForeignKey, schema: str) -> dict:
+    """A foreign key of a one-schema design onto another schema (#2531): kept, it would
+    reference this schema's table of the same name."""
+    reason = (
+        f"it references {fk.referenced_table} in schema {fk.referenced_schema}, which this "
+        f"design of schema {schema} does not hold, so the key would point at {schema}'s own "
+        f"table of that name; add it by hand once you place that table"
+    )
+    return {"table": table, "kind": "foreign key", "name": fk.constraint_name,
+            "reason": reason, "feature": "ambiguous_reference"}  # fmt: skip
+
+
+def other_schema(fk: AgentForeignKey, table: AgentTable) -> bool:
+    """Whether ``fk`` of ``table`` references a table of another schema, as the collection
+    reports it (#2531); False when it reports no schema for either."""
+    return bool(
+        fk.referenced_schema and table.schema_name and fk.referenced_schema != table.schema_name
+    )
 
 
 def schemas_by_name(tables: list[AgentTable]) -> dict[str, list[str]]:
@@ -1611,6 +1667,7 @@ def quotable_tables(
     # never lands on another schema's table of the same name.
     schemas_of = schemas_by_name(designable) if qualified else {}
     kept_pairs = {(t.schema_name, t.table_name.lower()) for t in kept_tables}
+    design_schemas = sorted({t.schema_name for t in designable if t.schema_name})
     for source in tables:
         label = design_table_name(source, qualified)
         if is_system_schema(source.schema_name, source_engine):
@@ -1644,14 +1701,20 @@ def quotable_tables(
                 indexes.append(idx)
         fks = []
         for fk in table.foreign_keys or []:
-            names = [fk.constraint_name, *fk.columns, fk.referenced_table, *fk.referenced_columns]
+            fk = with_design_schema(fk, source.schema_name, design_schemas, source_engine)
+            names = [fk.constraint_name, *fk.columns, fk.referenced_table, *fk.referenced_columns,
+                     *([fk.referenced_schema] if fk.referenced_schema else [])]  # fmt: skip
             if any(has_unprintable(n) for n in names):
                 left_out.append(_unsafe(label, "foreign key", fk.constraint_name))
+            elif not qualified and other_schema(fk, source):
+                # A one-schema design holds no table of another schema (#2531): the key
+                # would point at a table of this schema that happens to share the name.
+                left_out.append(_other_schema_reference(label, fk, str(source.schema_name)))
             elif (
                 qualified
                 and (
                     resolved := referenced_table(
-                        fk.referenced_table, source.schema_name, schemas_of
+                        fk.referenced_table, source.schema_name, schemas_of, fk.referenced_schema
                     )
                 )
                 is None
@@ -1662,7 +1725,7 @@ def quotable_tables(
                 left_out.append(_unresolved_reference(label, fk, str(resolved[1])))
             else:
                 fks.append(fk)
-        if len(indexes) != len(table.indexes or []) or len(fks) != len(table.foreign_keys or []):
+        if len(indexes) != len(table.indexes or []) or fks != (table.foreign_keys or []):
             table = table.model_copy(
                 update={"indexes": indexes if table.indexes is not None else None,
                         "foreign_keys": fks or None}

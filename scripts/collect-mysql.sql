@@ -157,6 +157,19 @@ SELECT JSON_OBJECT(
   -- Aurora MySQL databases it creates.
   'default_character_set', (SELECT DEFAULT_CHARACTER_SET_NAME FROM information_schema.SCHEMATA WHERE SCHEMA_NAME = @db),
   'default_collation', (SELECT DEFAULT_COLLATION_NAME FROM information_schema.SCHEMATA WHERE SCHEMA_NAME = @db),
+  -- #2531: each database's default character set and collation, for the collected database
+  -- and every database one of its foreign keys references (a key may cross databases).
+  'schemas', (
+    SELECT JSON_ARRAYAGG(JSON_OBJECT(
+      'schema_name', s.SCHEMA_NAME,
+      'default_character_set', s.DEFAULT_CHARACTER_SET_NAME,
+      'default_collation', s.DEFAULT_COLLATION_NAME))
+    FROM information_schema.SCHEMATA s
+    WHERE s.SCHEMA_NAME = @db
+       OR s.SCHEMA_NAME IN (
+         SELECT k.REFERENCED_TABLE_SCHEMA FROM information_schema.KEY_COLUMN_USAGE k
+         WHERE k.TABLE_SCHEMA = @db AND k.REFERENCED_TABLE_NAME IS NOT NULL)
+  ),
   -- The capture settings (#384): no cap (null) unless @query_limit is set.
   'query_capture', JSON_OBJECT('query_limit', @query_limit, 'min_executions', @min_executions)
 ) INTO @metadata;
@@ -234,6 +247,8 @@ SELECT JSON_ARRAYAGG(fk_obj) INTO @foreign_keys FROM (
     'constraint_name', kcu.constraint_name,
     'column_name', kcu.column_name,
     'ordinal_position', kcu.ordinal_position,
+    -- #2531: the referenced table's database, which may be another than @db.
+    'referenced_schema_name', kcu.referenced_table_schema,
     'referenced_table_name', kcu.referenced_table_name,
     'referenced_column_name', kcu.referenced_column_name,
     'on_delete', rc.delete_rule,

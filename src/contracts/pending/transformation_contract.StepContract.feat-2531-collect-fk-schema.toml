@@ -1,0 +1,6 @@
+# A pending contract version bump (ADR-008 Decision 8). The number is assigned by
+# uv run python scripts/resolve_contract_versions.py --release at release (a MAJOR: in its pull request).
+contract = "transformation_contract.StepContract"
+kind = "minor"
+reason = "Added optional TargetSpec.databases (TargetDatabase): on an Aurora MySQL step of several databases whose collection lists each database's collation, the collation step-1.ddl.sql and the routine scripts give each database; left out of the dump when None, so an older contract keeps its bytes"
+issue = 2531

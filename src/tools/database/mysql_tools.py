@@ -27,6 +27,7 @@ from src.shared.rate_window import (
 from src.tools.aws.ssm_executor import SSMExecutor
 from src.tools.database import live_sql
 from src.tools.database.filter_columns import where_columns
+from src.tools.database.foreign_key_schema import referenced_schema
 from src.tools.database.index_keys import add_index_key
 from src.tools.database.live_sql import LiveQueryReader
 from src.tools.sql.query_type import statement_query_type
@@ -492,6 +493,7 @@ class MySQLRemoteCollector:
         raw = self._query(f"""
             SELECT
                 kcu.constraint_name, kcu.column_name,
+                kcu.referenced_table_schema AS referenced_schema_name,
                 kcu.referenced_table_name, kcu.referenced_column_name,
                 rc.delete_rule AS on_delete, rc.update_rule AS on_update
             FROM information_schema.key_column_usage kcu
@@ -511,6 +513,7 @@ class MySQLRemoteCollector:
                     "constraint_name": name,
                     "columns": [],
                     "referenced_table": r["referenced_table_name"],
+                    **referenced_schema(r),
                     "referenced_columns": [],
                     "on_delete": r["on_delete"],
                     "on_update": r["on_update"],
