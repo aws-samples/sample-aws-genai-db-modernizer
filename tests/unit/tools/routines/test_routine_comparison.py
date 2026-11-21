@@ -1298,3 +1298,124 @@ def test_an_unlisted_table_the_setup_left_empty_is_reported_as_unseeded():
                             target=lambda: FakeTarget(routines=routines),
                             dialect="postgresql").results  # fmt: skip
     assert (r.outcome, r.reason_code) == ("could_not_compare", "table_unseeded"), r
+
+
+# ------------------------------------------- a failure names its side, step and cause (#2523)
+
+_NO_START = "mysql 8.0 is installed but did not start: mysqld did not accept connections"
+
+
+def _starts_once(factory):
+    """A factory whose first target opens and whose every later one fails to start, as a
+    disposable engine started again under load did in #2523."""
+    opened = [0]
+
+    def open_target():
+        opened[0] += 1
+        if opened[0] > 1:
+            raise ProofTargetError(_NO_START)
+        return factory()
+
+    return open_target
+
+
+def test_a_side_that_does_not_start_again_after_a_commit_says_which_side_step_and_why():
+    """#2523: the carried routine commits, so its side is started again after the call; the
+    restart fails, and the reason names the side, the step, the class and the message
+    instead of only ``the comparison failed (ProofTargetError)``."""
+    pairs = [_pair("c", _writes, _writes)]
+    source, target, _ = _factories(pairs, target={"commits": {"c"}})
+    report = compare_routines([p for p, _ in pairs], TABLES, source=source,
+                              target=_starts_once(target), dialect="postgresql")  # fmt: skip
+    (r,) = report.results
+    assert (r.outcome, r.reason_code) == ("could_not_compare", "engine_failed")
+    assert r.reason == (
+        "the comparison failed (ProofTargetError: the target side could not be started again "
+        f"after call 1 ended its transaction: {_NO_START})"
+    )
+
+
+def test_a_side_that_fails_a_call_and_then_does_not_start_again_names_both_failures():
+    """The first failure, and the restart that followed it, are both in the reason, with
+    the SQLSTATE the target gave."""
+
+    def drops(tables, call):
+        raise ProofTargetError("the connection dropped", "08S01")
+
+    pairs = [_pair("d", _returns(lambda n: n), drops)]
+    source, target, _ = _factories(pairs)
+    (r,) = compare_routines([p for p, _ in pairs], TABLES, source=source,
+                            target=_starts_once(target), dialect="postgresql").results  # fmt: skip
+    assert (r.outcome, r.reason_code) == ("could_not_compare", "engine_failed")
+    assert "the target side could not be started again to run call 1 once more, after " in r.reason
+    assert "ProofTargetError: the connection dropped (SQLSTATE 08S01)" in r.reason
+    assert _NO_START in r.reason
+
+
+def test_a_target_that_does_not_start_again_after_a_commit_says_so_in_a_run():
+    """The load-and-run path (the routines carried as they are) names the restart too."""
+    pairs = [_pair("c", _writes, _writes)]
+    _, target, _ = _factories(pairs, target={"commits": {"c"}})
+    (run,) = run_routines([p for p, _ in pairs], TABLES, target=_starts_once(target),
+                          dialect="postgresql")  # fmt: skip
+    assert (run.outcome, run.reason_code) == ("not_run", "engine_failed")
+    assert run.reason == (
+        "the run failed (ProofTargetError: the target side could not be started again after "
+        f"call 1 ended its transaction: {_NO_START})"
+    )
+
+
+@pytest.mark.parametrize("path", ["compare", "run"])
+def test_a_batch_that_fails_names_the_target_failure_and_only_the_class_of_any_other(
+    monkeypatch, path
+):
+    """A :class:`ProofTargetError` message is fixed text and is kept; any other exception
+    may quote a routine, so only its class is named."""
+    from src.tools.routines import comparison
+
+    pairs = [_pair("b", _returns(lambda n: n), _returns(lambda n: n))]
+    source, target, _ = _factories(pairs)
+
+    def outcome(exc):
+        def boom(*a, **k):
+            raise exc
+
+        monkeypatch.setattr(comparison, "build_proof_inputs", boom)
+        if path == "compare":
+            (r,) = compare_routines([p for p, _ in pairs], TABLES, source=source, target=target,
+                                    dialect="postgresql").results  # fmt: skip
+        else:
+            (r,) = run_routines([p for p, _ in pairs], TABLES, target=target,
+                                dialect="postgresql")  # fmt: skip
+        return r.reason
+
+    assert outcome(ProofTargetError("the rows did not load", "42P01")) == (
+        "the batch failed (ProofTargetError: the rows did not load (SQLSTATE 42P01))"
+    )
+    assert outcome(KeyError("CREATE secret_table")) == "the batch failed (KeyError)"
+
+
+@pytest.mark.passes_on_main
+def test_an_unexpected_exception_is_named_by_its_class_only():
+    """An exception that is not the target's own may quote a routine's text: the reason
+    names its class and nothing of its message."""
+
+    def leaks(tables, call):
+        raise KeyError("SELECT * FROM secret_table")
+
+    pairs = [_pair("k", _returns(lambda n: n), leaks)]
+    (r,) = _compare(pairs)[0].results
+    assert r.reason == "the comparison failed (KeyError)"
+    (run,) = run_routines([ComparedRoutine(pairs[0][0].proof, pairs[0][0].carried,
+                                           pairs[0][0].carried)], TABLES,
+                          target=_factories(pairs)[1], dialect="postgresql")  # fmt: skip
+    assert run.reason == "the run failed (KeyError)"
+
+
+def test_a_sqlstate_the_message_already_carries_is_not_written_twice():
+    from src.tools.routines.comparison import _failure
+
+    once = ProofTargetError("the rows did not load (SQLSTATE 42P01)", "42P01")
+    assert _failure(once) == "ProofTargetError: the rows did not load (SQLSTATE 42P01)"
+    other = ProofTargetError("the rows did not load (SQLSTATE 42P01)", "08S01")
+    assert _failure(other).endswith("(SQLSTATE 42P01) (SQLSTATE 08S01)")
