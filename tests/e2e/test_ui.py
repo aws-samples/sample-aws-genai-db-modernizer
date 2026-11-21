@@ -21,6 +21,7 @@ import json
 import re
 from collections.abc import Callable, Iterator
 from pathlib import Path
+from typing import Literal
 
 import playwright.sync_api
 import pytest
@@ -61,6 +62,27 @@ ENGINE_LABELS = {
 # the content shows, so this is a ceiling for a slow runner and the large discourse
 # sample (about 10 s cold on CI), never a delay; Playwright's 5 s default is too tight.
 READY_MS = 60_000
+
+
+@pytest.fixture(scope="session")
+def browser_context_args(browser_context_args: dict) -> dict:
+    """Every page here opens with a dark system colour scheme (#2490). The UI follows
+    the OS setting until you choose a theme, so the tests pin one instead of taking the
+    machine's. Dark is the look these checks were written against; the axe scans run a
+    second pass in light (``COLOR_SCHEMES``), and the theme test sets its own. The pin
+    lives here, not in conftest.py, because this is the only file that opens the React
+    UI; test_docs_site.py opens the help site, which has its own palette and checks."""
+    return {**browser_context_args, "color_scheme": "dark"}
+
+
+# The two colour schemes an axe scan runs in (#2490).
+ColorScheme = Literal["dark", "light"]
+COLOR_SCHEMES: list[ColorScheme] = ["dark", "light"]
+
+
+def _is_dark(page: Page) -> bool:
+    """True when the page shows Cloudscape's dark mode."""
+    return bool(page.evaluate("document.body.classList.contains('awsui-dark-mode')"))
 
 
 def _watch(page: Page) -> dict[str, list[str]]:
@@ -1985,6 +2007,65 @@ def test_the_download_menu_works_from_the_keyboard(
     assert info.value.suggested_filename == entries[-2].filename
 
 
+def test_the_theme_follows_the_system_until_you_choose_one(
+    browser: Browser, browser_context_args: dict, ui: str, all_runs: list[PipelineResult]
+) -> None:
+    """#2490: with no saved choice the page takes the OS colour scheme, light or dark,
+    and follows it when it changes. The Theme menu in the top bar (System, Light, Dark)
+    saves Light or Dark in the browser, and that choice holds across a reload and over a
+    change of the OS setting; System clears it and the page follows the OS again. The
+    menu works from the keyboard."""
+    context = browser.new_context(**{**browser_context_args, "color_scheme": "light"})
+    try:
+        page = context.new_page()
+        ev = _watch(page)
+        r = all_runs[0]
+        page.goto(f"{ui}/analysis/results/{r.job_id}")
+        _loaded(page, r)
+        assert not _is_dark(page), "a light system opened the page in dark mode"
+        page.emulate_media(color_scheme="dark")
+        expect(page.locator("body")).to_have_class(re.compile(r"\bawsui-dark-mode\b"))
+        page.emulate_media(color_scheme="light")
+        expect(page.locator("body")).not_to_have_class(re.compile(r"\bawsui-dark-mode\b"))
+
+        def choose(label: str) -> None:
+            page.locator("header").get_by_role("button", name="Theme").click()
+            item = page.get_by_role("menuitemcheckbox", name=label)
+            item.click()
+
+        choose("Dark")
+        expect(page.locator("body")).to_have_class(re.compile(r"\bawsui-dark-mode\b"))
+        page.reload()
+        _loaded(page, r)
+        assert _is_dark(page), "the saved Dark choice did not survive a reload"
+        page.emulate_media(color_scheme="light")
+        assert _is_dark(page), "the OS setting overrode the saved Dark choice"
+
+        choose("System")
+        expect(page.locator("body")).not_to_have_class(re.compile(r"\bawsui-dark-mode\b"))
+        page.emulate_media(color_scheme="dark")
+        expect(page.locator("body")).to_have_class(re.compile(r"\bawsui-dark-mode\b"))
+        page.locator("header").get_by_role("button", name="Theme").click()
+        expect(page.get_by_role("menuitemcheckbox", name="System")).to_have_attribute(
+            "aria-checked", "true"
+        )
+        page.keyboard.press("Escape")
+
+        # From the keyboard: Enter opens the menu on its first item (System), the down
+        # arrow moves to Light, and Enter chooses it.
+        theme = page.locator("header").get_by_role("button", name="Theme")
+        theme.focus()
+        page.keyboard.press("Enter")
+        expect(page.get_by_role("menuitemcheckbox", name="System")).to_be_visible()
+        page.keyboard.press("ArrowDown")
+        page.keyboard.press("Enter")
+        expect(page.locator("body")).not_to_have_class(re.compile(r"\bawsui-dark-mode\b"))
+        assert page.evaluate("localStorage.getItem('dbm-theme')") == "light"
+        assert ev == {"console": [], "pageerror": [], "failed": []}, ev
+    finally:
+        context.close()
+
+
 def test_results_header_error_state_has_no_accessibility_violations_at_390(
     page: Page, ui: str, all_runs: list[PipelineResult]
 ) -> None:
@@ -2811,11 +2892,15 @@ def _expand_every_section(page: Page) -> None:
     assert still_closed == 0, f"{still_closed} visible sections did not open"
 
 
+@pytest.mark.parametrize("scheme", COLOR_SCHEMES)
 def test_results_page_has_no_moderate_or_worse_accessibility_violations(
-    page: Page, ui: str, all_runs: list[PipelineResult]
+    page: Page, ui: str, all_runs: list[PipelineResult], scheme: ColorScheme
 ) -> None:
+    """axe finds nothing blocking on any tab with every section open, in the dark and
+    the light theme (#2490: the page follows the OS colour scheme)."""
     from axe_playwright_python.sync_playwright import Axe
 
+    page.emulate_media(color_scheme=scheme)
     for r in all_runs:
         _open_results(page, ui, r)
         # #2313: every tab, each with all its sections open.
@@ -2825,14 +2910,17 @@ def test_results_page_has_no_moderate_or_worse_accessibility_violations(
             blocking = [v["id"] for v in violations if v.get("impact") in BLOCKING_IMPACTS]
             minor = [v["id"] for v in violations if v.get("impact") not in BLOCKING_IMPACTS]
             if minor:
-                print(f"\naxe minor findings on the results page for {r.db} ({tab}): {minor}")
+                print(
+                    f"\naxe minor findings on the results page for {r.db} ({tab}, {scheme}): {minor}"
+                )
             # Name the elements, so a failure on a headless run's job says what to fix.
             where = {
                 v["id"]: [n.get("target") for n in v.get("nodes", [])][:5]
                 for v in violations
                 if v.get("impact") in BLOCKING_IMPACTS
             }
-            assert blocking == [], (r.job_id, r.db, tab, blocking, where)
+            assert _is_dark(page) == (scheme == "dark"), (r.db, tab, scheme)
+            assert blocking == [], (r.job_id, r.db, tab, scheme, blocking, where)
 
 
 def _axe_blocking(page: Page) -> tuple[list[str], dict[str, list[tuple[str, str]]], list[str]]:
@@ -2853,9 +2941,10 @@ def _axe_blocking(page: Page) -> tuple[list[str], dict[str, list[tuple[str, str]
     return blocking, where, minor
 
 
+@pytest.mark.parametrize("scheme", COLOR_SCHEMES)
 @pytest.mark.parametrize("width", [1440, 390])
 def test_job_pages_have_no_accessibility_violations(
-    page: Page, ui: str, all_runs: list[PipelineResult], width: int
+    page: Page, ui: str, all_runs: list[PipelineResult], width: int, scheme: ColorScheme
 ) -> None:
     """#2312: the dashboard, the new-assessment form, the progress page and the per-query
     assignment review (with its first row expanded) have named navigation toggles, a
@@ -2864,8 +2953,8 @@ def test_job_pages_have_no_accessibility_violations(
     the chips axe sees here are the neutral grey ones; the engine-coloured pairs are
     checked on the rendered chips in src/ui/src/components/__tests__/SignalChips.test.js."""
     page.set_viewport_size({"width": width, "height": 900})
-    # An alert fades in; axe must not read its text mid-fade.
-    page.emulate_media(reduced_motion="reduce")
+    # An alert fades in; axe must not read its text mid-fade. #2490: in both themes.
+    page.emulate_media(reduced_motion="reduce", color_scheme=scheme)
     r = all_runs[0]
     page.goto(f"{ui}/dashboard")
     expect(page.get_by_text(r.job_id).or_(page.get_by_text(r.db)).first).to_be_visible(
@@ -2897,9 +2986,10 @@ def test_job_pages_have_no_accessibility_violations(
     # contrast failure that is not there once it settles. Wait for every animation.
     page.evaluate("Promise.all(document.getAnimations().map((a) => a.finished))")
     scans["assignments"] = _axe_blocking(page)
-    print(f"\naxe blocking at {width}px: " + str({k: v[0] for k, v in scans.items()}))
+    print(f"\naxe blocking at {width}px ({scheme}): " + str({k: v[0] for k, v in scans.items()}))
+    assert _is_dark(page) == (scheme == "dark"), scheme
     failures = {k: (v[0], v[1]) for k, v in scans.items() if v[0]}
-    assert failures == {}, (width, failures)
+    assert failures == {}, (width, scheme, failures)
     if width == 390:
         # The list scrolls inside its own region; the page is never wider than the screen.
         assert page.evaluate("document.documentElement.scrollWidth <= window.innerWidth + 1")

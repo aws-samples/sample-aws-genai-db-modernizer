@@ -62,3 +62,81 @@ test('the Help utility is one of the TopNavigation utilities', () => {
   const texts = nav.findUtilities().map(u => u.getElement().textContent);
   expect(texts.some(text => text.includes('Help'))).toBe(true);
 });
+
+// #2490: a Theme menu with a text label (System, Light, Dark) replaces the star icon.
+// System is the default; Light and Dark are saved in this browser.
+describe('the Theme menu', () => {
+  // The header is still mounted here, and Cloudscape re-reads the mode when <body>'s
+  // class changes, so the reset runs inside act.
+  afterEach(async () => {
+    localStorage.clear();
+    await act(async () => document.body.classList.remove('awsui-dark-mode'));
+  });
+
+  function themeMenu() {
+    act(() => {
+      root.render(<AppHeader />);
+    });
+    const menu = createWrapper(container).findTopNavigation().findUtility(2).findMenuDropdownType();
+    expect(menu).not.toBeNull();
+    return menu;
+  }
+
+  // The dropdown and Cloudscape's mode observer update after the event, so each step
+  // waits for them inside an async act.
+  async function open(menu) {
+    await act(async () => menu.openDropdown());
+  }
+
+  async function choose(menu, id) {
+    await open(menu);
+    await act(async () => menu.findItemById(id).click());
+  }
+
+  test('is a text menu named Theme with System, Light and Dark, and no star icon', async () => {
+    const menu = themeMenu();
+    expect(menu.findNativeButton().getElement().textContent.trim()).toBe('Theme');
+    // The old icon-only toggle ("Switch to light theme") is gone.
+    expect(container.querySelector('[aria-label*="Switch to"], [title*="Switch to"]')).toBeNull();
+    await open(menu);
+    expect(menu.findItemById('system').getElement().textContent).toBe('System');
+    expect(menu.findItemById('light').getElement().textContent).toBe('Light');
+    expect(menu.findItemById('dark').getElement().textContent).toBe('Dark');
+  });
+
+  test('checks System when nothing is saved', async () => {
+    const menu = themeMenu();
+    await open(menu);
+    expect(menu.findItemCheckedById('system')).toBe('true');
+    expect(menu.findItemCheckedById('light')).toBe('false');
+    expect(menu.findItemCheckedById('dark')).toBe('false');
+  });
+
+  test('choosing Dark saves it, applies it and checks it', async () => {
+    const menu = themeMenu();
+    await choose(menu, 'dark');
+    expect(localStorage.getItem('dbm-theme')).toBe('dark');
+    expect(document.body.classList.contains('awsui-dark-mode')).toBe(true);
+    await open(menu);
+    expect(menu.findItemCheckedById('dark')).toBe('true');
+    expect(menu.findItemCheckedById('system')).toBe('false');
+  });
+
+  test('choosing Light, then System, clears the saved choice', async () => {
+    const menu = themeMenu();
+    await choose(menu, 'light');
+    expect(localStorage.getItem('dbm-theme')).toBe('light');
+    expect(document.body.classList.contains('awsui-dark-mode')).toBe(false);
+    await choose(menu, 'system');
+    expect(localStorage.getItem('dbm-theme')).toBeNull();
+    await open(menu);
+    expect(menu.findItemCheckedById('system')).toBe('true');
+  });
+
+  test('opens on the saved choice', async () => {
+    localStorage.setItem('dbm-theme', 'light');
+    const menu = themeMenu();
+    await open(menu);
+    expect(menu.findItemCheckedById('light')).toBe('true');
+  });
+});

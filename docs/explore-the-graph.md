@@ -32,6 +32,8 @@ With the explorer on, an assessment's results page carries an **Explore (experim
 
 The query list and the graph follow each other: select a query in the list and its link is highlighted, select a link or a node in the graph and the list and the details follow.
 
+The graph draws its labels and links for the theme the page shows, and redraws them when the theme changes, whether you choose one in the **Theme** menu or your system setting changes while it is on System. <!-- claim: src/ui/src/components/__tests__/GraphExplorerCanvasTheme.test.js -->
+
 ## Nodes and links
 
 Source tables are small rectangles with a table icon. Destination engines are rounded squares with the engine's AWS service icon and its name. Statements the collector could not tie to a table (such as `SET SESSION` or `SELECT FOUND_ROWS()`, or a `SELECT` from a dummy table like `DUAL`) gather under a muted **No table** node; the graph flags that source table as a placeholder, and it is not a table of the source database.
