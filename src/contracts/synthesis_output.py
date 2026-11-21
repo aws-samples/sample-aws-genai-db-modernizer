@@ -1243,9 +1243,10 @@ class TableGroup(BaseModel):
         ...,
         ge=0,
         description=(
-            "Distinct DynamoDB-assigned query IDs touching this group's tables "
-            "(#225 — not every engine's query count, and not double-counted "
-            "for a multi-table query)"
+            "Distinct in-scope DynamoDB-assigned query IDs touching this group's "
+            "tables (#225, #2372: not every engine's query count, not a query "
+            "outside the customer's scope, and not double-counted for a "
+            "multi-table query)"
         ),
     )
     kind: Literal["co_dependency", "routine", "independent"] | None = Field(

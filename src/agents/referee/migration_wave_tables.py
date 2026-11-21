@@ -189,6 +189,12 @@ def _sync_pattern(owner_engine: str) -> str:
     return "CDC"
 
 
+def _in_scope_queries(query_assignments: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """The queries inside the customer's scope (#2372): every figure of a wave counts these,
+    as the engine's own counts do. A row with no ``in_scope`` flag is in scope."""
+    return [qa for qa in query_assignments if qa.get("in_scope", True)]
+
+
 def _dynamodb_table_groups(
     engine: str,
     rows: list[dict[str, Any]],
@@ -228,7 +234,8 @@ def _dynamodb_table_groups(
     dynamo_tables = {str(t["table_id"]) for t in rows if t.get("table_id")}
     if not dynamo_tables:
         return []
-    by_qid = {str(qa.get("query_id")): qa for qa in query_assignments}
+    # #2372: a query outside the customer's scope shapes no group and is counted in none.
+    by_qid = {str(qa.get("query_id")): qa for qa in _in_scope_queries(query_assignments)}
     dynamo_qids = {
         qid
         for qid, qa in by_qid.items()
@@ -370,6 +377,7 @@ def _table_group_coverage_parts(
     always wave 1) or has no wave at all, that engine's queries never move
     again, so the dual read is permanent and the clause says so instead.
     """
+    query_assignments = _in_scope_queries(query_assignments)  # #2372
     # Forward: this wave's own tables, still read by a query assigned elsewhere.
     forward: dict[str, set[str]] = {}
     for qa in query_assignments:
