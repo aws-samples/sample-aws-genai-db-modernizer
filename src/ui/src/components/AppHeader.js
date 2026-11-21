@@ -1,28 +1,26 @@
 // Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
 // SPDX-License-Identifier: MIT-0
 
-import React, { useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import TopNavigation from '@cloudscape-design/components/top-navigation';
-import { applyMode, Mode } from '@cloudscape-design/global-styles';
 import { LayoutConfigurations } from '../config/GlobalConfigurations';
 import { HELP_SITE_URL } from '../utils/helpSite';
+import { THEME_CHOICES, applyThemeChoice, onThemeChange, savedThemeChoice } from '../utils/theme';
+
+// The Theme menu's item labels, one locale key per choice.
+const THEME_LABEL_KEYS = {
+  system: 'common.header.theme-system',
+  light: 'common.header.theme-light',
+  dark: 'common.header.theme-dark',
+};
 
 // `helpHref`: the help page the Help link opens (#2314); the help site's home by default.
 function AppHeader({ helpHref = HELP_SITE_URL } = {}) {
   const { t } = useTranslation();
-  const [isDark, setIsDark] = useState(
-    (localStorage.getItem('dbm-theme') || 'dark') === 'dark'
-  );
-
-  const toggleTheme = () => {
-    const newTheme = isDark ? 'light' : 'dark';
-    localStorage.setItem('dbm-theme', newTheme);
-    applyMode(newTheme === 'light' ? Mode.Light : Mode.Dark);
-    setIsDark(!isDark);
-    // Notify components that read theme from localStorage (e.g. the query flow chart)
-    window.dispatchEvent(new Event('dbm-theme-change'));
-  };
+  // #2490: System (the default) follows the OS; Light and Dark are saved in this browser.
+  const [choice, setChoice] = useState(savedThemeChoice);
+  useEffect(() => onThemeChange(() => setChoice(savedThemeChoice())), []);
 
   return (
     <TopNavigation
@@ -47,12 +45,15 @@ function AppHeader({ helpHref = HELP_SITE_URL } = {}) {
           externalIconAriaLabel: t('common.header.opens-new-tab'),
         },
         {
-          type: 'button',
-          iconName: isDark ? 'star' : 'star-filled',
-          title: isDark ? 'Switch to light theme' : 'Switch to dark theme',
-          // An icon-only utility: the accessible name is the same text (axe: aria-command-name).
-          ariaLabel: isDark ? 'Switch to light theme' : 'Switch to dark theme',
-          onClick: toggleTheme,
+          type: 'menu-dropdown',
+          text: t('common.header.theme'),
+          items: THEME_CHOICES.map((id) => ({
+            id,
+            itemType: 'checkbox',
+            checked: choice === id,
+            text: t(THEME_LABEL_KEYS[id]),
+          })),
+          onItemClick: ({ detail }) => applyThemeChoice(detail.id),
         },
       ]}
     />

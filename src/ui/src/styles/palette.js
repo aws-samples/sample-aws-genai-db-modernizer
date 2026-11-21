@@ -44,3 +44,9 @@ export const GRAPH_CANVAS = {
   // token, so this one value serves both themes.
   selected: '#006ce0',
 };
+
+// The browser's own chrome colour (the <meta name="theme-color"> tag, #2490), per theme:
+// Cloudscape's colorBackgroundLayoutMain in each. A meta tag cannot read a CSS variable,
+// so utils/theme.js sets these real colours when the mode changes;
+// utils/__tests__/theme.test.js checks they match the token's two values.
+export const PAGE_THEME_COLOR = { light: '#ffffff', dark: '#161d26' };

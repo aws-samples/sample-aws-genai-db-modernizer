@@ -8,6 +8,7 @@ import { ENGINE_HEX } from '../utils/engineCatalog.generated';
 import { isCacheEngine } from '../utils/cacheLayer';
 import { DEFAULT_ENGINE_HEX } from '../utils/engineColors';
 import { colorTextBodyDefault } from '@cloudscape-design/design-tokens';
+import { isDarkMode, onThemeChange } from '../utils/theme';
 
 const MARGIN_Y = 25;
 const MARGIN_X = 5;
@@ -76,12 +77,8 @@ const ChartSankey = ({ width = 800, height = 400, data, onNodeClick, unavailable
   const compact = layoutWidth < COMPACT_LAYOUT_WIDTH;
 
   // The theme, for the links' opacity (a fainter link reads better on the dark page).
-  const [isDark, setIsDark] = useState(() => document.body.classList.contains('awsui-dark-mode'));
-  useEffect(() => {
-    const check = () => setIsDark(document.body.classList.contains('awsui-dark-mode'));
-    window.addEventListener('dbm-theme-change', check);
-    return () => window.removeEventListener('dbm-theme-change', check);
-  }, []);
+  const [isDark, setIsDark] = useState(isDarkMode);
+  useEffect(() => onThemeChange(() => setIsDark(isDarkMode())), []);
 
   // Compute nodes and links positions
   const { nodes, links } = useMemo(() => {

@@ -8,6 +8,7 @@ import { ringPositions } from '../utils/graphExplorer';
 import { DROP_PASS_MS, EXPAND_PASS_MS, TIDY_PASS_MS, colaOptions, dragGroup, isPinned, lockAllBut, pin, releaseLocks, settle, unpin } from './graphExplorerPhysics';
 import { colorBorderDividerDefault } from '@cloudscape-design/design-tokens';
 import { GRAPH_CANVAS } from '../styles/palette';
+import { isDarkMode, onThemeChange } from '../utils/theme';
 
 // Register the force-directed layout once (cytoscape.use warns on a second call).
 let colaRegistered = false;
@@ -204,11 +205,11 @@ export default function GraphExplorerCanvas({
 
   useEffect(() => {
     ensureCola();
-    const dark = (localStorage.getItem('dbm-theme') || 'dark') === 'dark';
+    // The mode the page applied (#2490): on System the OS decides, and nothing is saved.
     const instance = cytoscape({
       container: container.current,
       elements: [],
-      style: stylesheet(dark),
+      style: stylesheet(isDarkMode()),
       wheelSensitivity: 0.3,
       minZoom: 0.2,
       maxZoom: 3,
@@ -286,8 +287,11 @@ export default function GraphExplorerCanvas({
     // Keep the canvas sized to its pane (the help drawer and the list resize it).
     const observer = typeof ResizeObserver !== 'undefined' ? new ResizeObserver(() => instance.resize()) : null;
     if (observer) observer.observe(container.current);
+    // Redraw the labels and edges when the theme changes (a choice, or the OS on System).
+    const offTheme = onThemeChange(() => instance.style(stylesheet(isDarkMode())));
     cy.current = instance;
     return () => {
+      offTheme();
       if (observer) observer.disconnect();
       stopLayout();
       instance.destroy();
