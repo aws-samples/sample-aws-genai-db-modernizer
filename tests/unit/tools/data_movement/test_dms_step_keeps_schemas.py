@@ -234,3 +234,27 @@ def test_mysql_tables_of_one_moved_database_go_into_the_target_database(tmp_path
     assert "USE `sales`;" in files[DDL_FILE] and "CREATE TABLE `orders`" in files[DDL_FILE]
     params = yaml.safe_load(files[DMS_TEMPLATE])["Parameters"]
     assert params["TargetDatabaseName"]["Default"] == "sales"
+
+
+@pytest.mark.parametrize("engine,q", [("postgresql", '"'), ("mysql", "`")])
+def test_a_one_schema_step_lists_a_key_whose_table_does_not_move(tmp_path, engine, q):
+    """#2530: the design keeps ``fk_items_order`` (``orders`` and ``Orders`` are left out of
+    step 1 only), so step 1's own check drops it. A step of one schema lists it with the
+    reason a step of several schemas gives, and no ``REFERENCES`` is written."""
+    items = table("sales", "items", [col("id", "bigint", 1), col("order_id", "bigint", 2)],
+                  pk=["id"])  # fmt: skip
+    items["foreign_keys"] = [{"constraint_name": "fk_items_order", "columns": ["order_id"],
+                              "referenced_table": "orders", "referenced_columns": ["id"]}]  # fmt: skip
+    tables = [items, table("sales", "orders", [col("id", "bigint", 1)], pk=["id"]),
+              table("sales", "Orders", [col("id", "bigint", 1)], pk=["id"])]  # fmt: skip
+    inputs = load_step1(_job(tmp_path, engine, tables), "sales", "job1")
+    assert [s.table_id for s in inputs.skipped] == ["sales.Orders", "sales.orders"]
+    ddl = render_files(inputs)[DDL_FILE]
+    assert "REFERENCES" not in ddl
+    assert f"CREATE TABLE {q}items{q} (" in ddl
+    assert [(o.table_id, o.kind, o.name) for o in inputs.left_out_objects] == [
+        ("sales.items", "foreign key", "fk_items_order")
+    ]
+    header = " ".join(line.removeprefix("--").strip() for line in ddl.splitlines())
+    assert "foreign key sales.items.fk_items_order" in header
+    assert "the table it references does not move in step 1, so the key is left out" in header

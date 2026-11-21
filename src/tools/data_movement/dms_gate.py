@@ -62,6 +62,7 @@ from src.tools.data_movement.dms_step import (
     CONTRACT_TAG,
     DmsStepError,
     Step1Inputs,
+    checked_target_database,
     contract_tables,
     load_step1,
 )
@@ -788,7 +789,9 @@ def _views_left_out(store: Any, db: str, job_id: str, inputs: Step1Inputs) -> di
     key = f"{db}/{job_id}/data-movement/step-1/inputs.json"
     raw = store.read_json(key) if store.exists(key) else {}
     target = raw.get("target_database_name") if isinstance(raw, dict) else None
-    return left_out(store, db, job_id, inputs.contract, target if isinstance(target, str) else None)
+    # The same check every script of step 1 runs: no name on a step that keeps each database (#2530).
+    target = checked_target_database(inputs, target if isinstance(target, str) else None)
+    return left_out(store, db, job_id, inputs.contract, target)
 
 
 def _routines_held(

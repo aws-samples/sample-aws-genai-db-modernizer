@@ -591,9 +591,11 @@ def _step1_ddl(
     def references_a_moved_table(fk: Any, t: Any) -> bool:
         bare = fk.referenced_table.rsplit(".", 1)[-1]
         if not qualified:
-            return bare in rules
-        found = referenced_table(bare, t.schema_name, schemas_of)
-        if found is not None and (found[1], found[0].lower()) in pairs:
+            moves = bare in rules
+        else:
+            found = referenced_table(bare, t.schema_name, schemas_of)
+            moves = found is not None and (found[1], found[0].lower()) in pairs
+        if moves:
             return True
         dropped.append(LeftOutObject(
             table_id=t.table_id, kind="foreign key", name=fk.constraint_name,
