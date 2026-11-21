@@ -194,10 +194,9 @@ export default function AdoptionPathPanel({
           </span>
         </Box>
         <Box fontSize="body-s" color="text-body-secondary">
-          <SpaceBetween size="xxs">
-            <span>{t('analysis-results.adoption.definitions')}</span>
-            <span>{introText(t, plan)}</span>
-          </SpaceBetween>
+          {/* #2512: what a step, a stage, a unit and the pilot are is in the roadmap's
+              help panel (its header's Info link). */}
+          <span>{introText(t, plan)}</span>
         </Box>
         <div style={CHIPS_STYLE}>
           <span data-figure="adoption-path-selector">

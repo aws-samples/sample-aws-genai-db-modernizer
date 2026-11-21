@@ -201,8 +201,17 @@ async ([ids, unlisted, frames, quietMs, timeoutMs]) => {
     const nav = document.querySelector('nav[aria-labelledby="results-on-this-page-title"]');
     const hrefs = nav ? [...nav.querySelectorAll('a')].map(a => a.getAttribute('href')) : [];
     const want = listed.length < 2 ? [] : listed.map(id => '#' + id);
-    const same = hrefs.length === want.length && hrefs.every((h, i) => h === want[i]);
-    return { present, listed, same };
+    const listsWant = hrefs.length === want.length && hrefs.every((h, i) => h === want[i]);
+    // #2512: On this page is a drawer, in the page only while open. It is closed on a
+    // narrow screen (it opens by itself at 1400 px and wider), while the help panel is
+    // open in its place, or once the reader closed it (its trigger then shows it closed);
+    // then only the sections settle. Anywhere else it must list them.
+    const trigger = document.querySelector('button[aria-label="Open On this page"]');
+    const closedOnPurpose = !nav && (window.innerWidth < 1400
+      || Boolean(document.getElementById('results-help-panel'))
+      || Boolean(trigger && trigger.getAttribute('aria-expanded') !== 'true'));
+    const same = listsWant || closedOnPurpose;
+    return { present, listed, same, nav: Boolean(nav) };
   };
   const nextFrame = () => new Promise(resolve => requestAnimationFrame(resolve));
   const start = performance.now();
@@ -238,7 +247,10 @@ def _settled_sections(page: Page, tab: str) -> tuple[list[str], list[str]]:
     can still arrive after the two first agree. Both come from one DOM snapshot that is
     taken only after the page and the navigation have held the same sections for
     ``SETTLED_FRAMES`` animation frames and ``SETTLED_QUIET_MS``; a tab that never
-    settles fails."""
+    settles fails. #2512: On this page is a drawer, in the page only while open; on a
+    screen narrower than 1400 px, with the help panel open in its place, or after the
+    reader closed it, the snapshot waits on the sections alone. Otherwise the navigation
+    must still list the sections."""
     # A section that loads its own data (the assumptions panel) joins the page only when its
     # request returns, however long a loaded runner takes. A fixed quiet period cannot
     # tell that wait from a settled page, so the page's data requests must be idle first.
@@ -1244,8 +1256,9 @@ def test_results_page_shows_the_reports_wave_plan(
                 _assert_readiness_shown(shown_line, wave_facts[n], r.db, n)
             else:
                 assert shown_line.count() == 0, (r.db, n)
-        rules = section.locator("[data-figure=wave-readiness-rule]").count()
-        assert rules == (1 if any(line for _, line in readiness.values()) else 0), r.db
+        # #2512: the readiness rule is in the roadmap's help panel, not the section
+        # (test_results_page_info_links_open_their_help_panels opens it).
+        assert section.locator("[data-figure=wave-readiness-rule]").count() == 0, r.db
         # #2107: the cutover is the customer's, said once, in the facts layer's words.
         cutover = section.locator("[data-figure=cutover-responsibility]")
         assert cutover.count() == 1, r.db
@@ -2331,6 +2344,215 @@ def test_results_page_on_this_page_lists_the_open_tabs_sections(
             listed_any += 1
         assert ev == {"console": [], "pageerror": [], "failed": []}, (r.db, ev)
     assert listed_any, "no tab of any job lists two sections"
+
+
+# #2512: the help topics a section header's Info link opens, by the tab whose sections
+# carry them, with each panel's title and the help site section it links to
+# (src/ui/src/utils/resultsHelp.js). A section shows its link only when it is on the page.
+HELP_SITE = re.search(
+    r"^site_url:\s*(\S+)\s*$",
+    (Path(__file__).resolve().parents[2] / "mkdocs.yml").read_text(encoding="utf-8"),
+    re.M,
+).group(
+    1
+)  # type: ignore[union-attr]
+HELP_TOPICS = {
+    "query-flow": ("summary", "Query flow", "the-cache-layer"),
+    "migration-roadmap": ("plan", "Migration roadmap", "migration-waves"),
+    "close-calls": ("plan", "Close calls", "close-calls"),
+    "query-routing": ("queries", "Query routing", "how-to-read-an-assignment"),
+    "table-owners": ("data-model", "Table owners", "sources-of-truth-and-replicas"),
+}
+
+
+def _help_panel(page: Page) -> Locator:
+    return page.locator("#results-help-panel")
+
+
+def _open_help(page: Page, topic: str, keyboard: bool) -> Locator:
+    """Open ``topic`` from its section's Info link (a click, or Enter on the focused link)
+    and return the help panel once it shows the topic."""
+    title = HELP_TOPICS[topic][1]
+    link = page.locator(f'main [data-help-topic="{topic}"]').first
+    expect(link).to_have_accessible_name(f"Info about the {title} section")
+    if keyboard:
+        link.focus()
+        page.keyboard.press("Enter")
+    else:
+        link.click()
+    panel = _help_panel(page)
+    expect(panel).to_have_attribute("data-help-topic", topic, timeout=READY_MS)
+    expect(panel.get_by_role("heading", level=2)).to_have_text(title)
+    return panel
+
+
+@pytest.mark.parametrize("scheme", COLOR_SCHEMES)
+def test_results_page_info_links_open_their_help_panels(
+    page: Page, ui: str, all_runs: list[PipelineResult], scheme: ColorScheme
+) -> None:
+    """#2512: each section header's Info link opens its topic in the help drawer, which
+    takes the place of On this page, moves focus into the drawer and ends with a link to
+    the matching help site section. The open panel's text is clean and axe finds nothing
+    blocking in it, in the dark and the light theme. The first link of each tab opens
+    from the keyboard."""
+    from axe_playwright_python.sync_playwright import Axe
+
+    from src.tools.validation.customer_text_guard import scan_text
+
+    page.set_viewport_size({"width": 1440, "height": 900})
+    page.emulate_media(color_scheme=scheme, reduced_motion="reduce")
+    opened: set[str] = set()
+    for r in all_runs:
+        ev = _open_results(page, ui, r)
+        for tab in _each_tab(page):
+            _settled_sections(page, tab)
+            topics = [t for t, (on, _, _) in HELP_TOPICS.items() if on == tab]
+            last_link: Locator | None = None
+            for n, topic in enumerate(
+                t for t in topics if page.locator(f'main [data-help-topic="{t}"]').count()
+            ):
+                panel = _open_help(page, topic, keyboard=n == 0)
+                # One drawer at a time: On this page closed when the help panel opened.
+                expect(page.get_by_role("navigation", name="On this page")).to_have_count(0)
+                # Focus moved into the drawer.
+                expect(page.get_by_role("button", name="Close the help panel")).to_be_focused()
+                link = panel.get_by_role(
+                    "link", name=re.compile(f"^{re.escape(HELP_TOPICS[topic][1])} on the help site")
+                )
+                expect(link).to_have_attribute(
+                    "href", f"{HELP_SITE}understand-the-results/#{HELP_TOPICS[topic][2]}"
+                )
+                expect(link).to_have_attribute("target", "_blank")
+                text = panel.inner_text()
+                assert _leaked_forbidden_text(text) == [], (r.db, topic)
+                findings = scan_text(text, f"results-help:{r.db}:{topic}")
+                assert findings == [], (
+                    r.db,
+                    topic,
+                    [(f.kind, f.text, f.excerpt) for f in findings],
+                )
+                violations = Axe().run(page, context="#results-help-panel").response["violations"]
+                blocking = [
+                    (v["id"], [n.get("target") for n in v.get("nodes", [])][:3])
+                    for v in violations
+                    if v.get("impact") in BLOCKING_IMPACTS
+                ]
+                assert blocking == [], (r.db, topic, scheme, blocking)
+                opened.add(topic)
+                last_link = page.locator(f'main [data-help-topic="{topic}"]').first
+            if last_link is not None:
+                # Closing the panel returns focus to the Info link that opened it.
+                page.get_by_role("button", name="Close the help panel").click()
+                expect(_help_panel(page)).to_have_count(0)
+                expect(last_link).to_be_focused()
+            # On this page comes back from its own trigger.
+            if topics and page.get_by_role("button", name="Open On this page").count():
+                page.get_by_role("button", name="Open On this page").click()
+                expect(page.get_by_role("navigation", name="On this page")).to_be_visible()
+        assert _is_dark(page) == (scheme == "dark"), (r.db, scheme)
+        assert ev == {"console": [], "pageerror": [], "failed": []}, (r.db, ev)
+    # Every sample has a roadmap, a query table and table owners.
+    assert {"migration-roadmap", "query-routing", "table-owners"} <= opened, opened
+
+
+def test_results_page_drawers_work_on_a_phone(
+    page: Page, ui: str, all_runs: list[PipelineResult]
+) -> None:
+    """#2512 review: at 390 px On this page starts closed. An Info link opens its help
+    panel over the page with focus in it and no sideways scroll, and Close returns focus
+    to the link. On this page opens from its own trigger the same way, and closes."""
+    page.set_viewport_size({"width": 390, "height": 844})
+    page.emulate_media(reduced_motion="reduce")
+    for r in all_runs:
+        ev = _watch(page)
+        _goto_results(page, ui, r, "plan")
+        _, listed = _settled_sections(page, "plan")
+        expect(page.get_by_role("navigation", name="On this page")).to_have_count(0)
+        link = page.locator('main [data-help-topic="migration-roadmap"]').first
+        _open_help(page, "migration-roadmap", keyboard=True)
+        expect(page.get_by_role("button", name="Close the help panel")).to_be_focused()
+        assert page.evaluate("document.documentElement.scrollWidth <= window.innerWidth + 1"), r.db
+        page.get_by_role("button", name="Close the help panel").click()
+        expect(_help_panel(page)).to_have_count(0)
+        expect(link).to_be_focused()
+        if len(listed) >= 2:
+            page.get_by_role("button", name="Open On this page").click()
+            nav = page.get_by_role("navigation", name="On this page")
+            expect(nav).to_be_visible(timeout=READY_MS)
+            expect(nav.get_by_role("link")).to_have_count(len(listed))
+            assert page.evaluate(
+                "document.documentElement.scrollWidth <= window.innerWidth + 1"
+            ), r.db
+            page.get_by_role("button", name="Close On this page").click()
+            expect(nav).to_have_count(0)
+        assert ev == {"console": [], "pageerror": [], "failed": []}, (r.db, ev)
+
+
+def _axe_with_drawer(page: Page, width: int) -> tuple[list[str], dict[str, list[str]]]:
+    """Axe's blocking findings on the whole page with a drawer open. On a phone the open
+    drawer covers the page and Cloudscape hides the page under it from assistive
+    technology, h1 included, so "page-has-heading-one" cannot hold there; it is checked
+    with the drawer closed at 390 px (test_results_page_summary_figures_share_one_row_on_desktop)
+    and at every desktop width."""
+    from axe_playwright_python.sync_playwright import Axe
+
+    options: dict = {"resultTypes": ["violations"]}
+    if width < 688:
+        options["rules"] = {"page-has-heading-one": {"enabled": False}}
+    violations = Axe().run(page, options=options).response["violations"]
+    blocking = [v["id"] for v in violations if v.get("impact") in BLOCKING_IMPACTS]
+    where = {
+        v["id"]: [n.get("target") for n in v.get("nodes", [])][:5]
+        for v in violations
+        if v.get("impact") in BLOCKING_IMPACTS
+    }
+    return blocking, where
+
+
+@pytest.mark.parametrize("scheme", COLOR_SCHEMES)
+@pytest.mark.parametrize("width", [1440, 390])
+def test_results_page_with_a_drawer_open_has_no_accessibility_violations(
+    page: Page, ui: str, all_runs: list[PipelineResult], width: int, scheme: ColorScheme
+) -> None:
+    """#2512 review: axe scans the whole page, not only the panel, with the help panel
+    open and, where the tab lists two sections or more, with On this page open: the
+    drawer triggers, the close buttons and the page beside or under the drawer."""
+    page.set_viewport_size({"width": width, "height": 900})
+    page.emulate_media(color_scheme=scheme, reduced_motion="reduce")
+    for r in all_runs:
+        _goto_results(page, ui, r, "plan")
+        _, listed = _settled_sections(page, "plan")
+        _open_help(page, "migration-roadmap", keyboard=False)
+        page.evaluate("Promise.all(document.getAnimations().map((a) => a.finished))")
+        blocking, where = _axe_with_drawer(page, width)
+        assert blocking == [], (r.db, width, scheme, "help panel", blocking, where)
+        if len(listed) >= 2:
+            # On a phone the open panel covers the drawer triggers: close it first.
+            page.get_by_role("button", name="Close the help panel").click()
+            page.get_by_role("button", name="Open On this page").click()
+            expect(page.get_by_role("navigation", name="On this page")).to_be_visible()
+            page.evaluate("Promise.all(document.getAnimations().map((a) => a.finished))")
+            blocking, where = _axe_with_drawer(page, width)
+            assert blocking == [], (r.db, width, scheme, "on this page", blocking, where)
+        assert _is_dark(page) == (scheme == "dark"), (r.db, scheme)
+
+
+def test_the_roadmap_help_panel_states_the_readiness_rule_the_section_left_out(
+    page: Page, ui: str, all_runs: list[PipelineResult]
+) -> None:
+    """#2512: the wave readiness rule moved from the roadmap into its help panel, which
+    states it whenever a wave shows a readiness line, as the section did."""
+    from src.shared.wave_readiness import READINESS_RULE_NOTE
+
+    for r in all_runs:
+        report = json.loads((r.artifact_root / r.report["report"]).read_text())
+        readiness = any(w.get("readiness_line") for w in report["facts"].get("waves") or [])
+        _goto_results(page, ui, r, "plan")
+        panel = _open_help(page, "migration-roadmap", keyboard=False)
+        assert (f"{READINESS_RULE_NOTE}." in panel.inner_text()) == readiness, r.db
+        assert (
+            f"{READINESS_RULE_NOTE}." not in page.locator("#migration-roadmap-section").inner_text()
+        )
 
 
 def test_settled_sections_wait_for_a_slow_assumptions_request(

@@ -20,6 +20,7 @@ import { propertyFilterStrings } from '../utils/propertyFilterStrings';
 import { formatCount, formatShortId } from '../utils/format';
 import EngineBadge from './EngineBadge';
 import DestinationTables from './DestinationTables';
+import HelpInfoLink from './HelpInfoLink';
 
 /**
  * The Queries tab's one query table (#2319, ADR-031: the query is the unit).
@@ -239,6 +240,8 @@ const QueryRoutingTable = memo(({
           <Header
             variant="h2"
             counter={counter}
+            // #2512: what a row says and what the workload fit means, in its help panel.
+            info={<HelpInfoLink topic="query-routing" t={t} />}
             description={t('analysis-results.query-routing.description')}
           >
             {t('analysis-results.query-routing.title')}

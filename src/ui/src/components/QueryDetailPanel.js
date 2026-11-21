@@ -21,7 +21,8 @@ import { formatRate, formatShortId, NO_FIGURE } from '../utils/format';
 import { journeyWorkloadFit } from '../utils/queryRouting';
 import { targetDesignGap } from '../utils/accessPatterns';
 import { displayEngine } from '../utils/engineNames';
-import { WORKLOAD_FIT_DEFINITION, WORKLOAD_FIT_LABEL } from '../utils/workloadFitLabels';
+import { WORKLOAD_FIT_LABEL } from '../utils/workloadFitLabels';
+import HelpInfoLink from './HelpInfoLink';
 
 /**
  * One query's detail in the page's split panel (#2319): the query table stays
@@ -177,10 +178,12 @@ export function QueryDetailBody({ queryId, journey, loading, trace, patterns, sc
                       },
                       {
                         label: WORKLOAD_FIT_LABEL,
+                        // #2512: the definition (WORKLOAD_FIT_DEFINITION) is in the Query
+                        // routing help panel; the Info link after the figure opens it.
                         value: fit ? (
-                          <SpaceBetween size="xxxs">
+                          <SpaceBetween direction="horizontal" size="xs">
                             <Box>{fit}</Box>
-                            <Box fontSize="body-s" color="text-status-inactive">{WORKLOAD_FIT_DEFINITION}</Box>
+                            <HelpInfoLink topic="query-routing" t={t} />
                           </SpaceBetween>
                         ) : NO_FIGURE,
                       },

@@ -11,7 +11,9 @@ import TextFilter from "@cloudscape-design/components/text-filter";
 import { displayEngine } from "../utils/engineNames";
 import { tableOwnershipOf, tableSourcesOf } from "../utils/reportFacts";
 import { tableOwnerRows } from "../utils/tableOwnerRows";
+import { ownerRuleKey } from "../utils/resultsHelp";
 import EngineBadge from "./EngineBadge";
+import HelpInfoLink from "./HelpInfoLink";
 
 /**
  * "Table owners" (#212, ADR-031 Amendment 9; #2321 folded in "Sources of truth and
@@ -77,13 +79,8 @@ function compareReads(a, b) {
 }
 
 // #2166 review: the rule the report's own lines follow (facts.table_owner_lines.
-// unwritten_owner_rule): a report saved before #2166 gave a table nothing writes to
-// the engine serving most of its queries, so it states that rule above its rows.
-export function ruleKey(ownership) {
-  return ownership.unwritten_owner_rule === 'most_queries'
-    ? 'analysis-results.table-owners.rule-most-queries'
-    : 'analysis-results.table-owners.rule';
-}
+// unwritten_owner_rule). #2512: the Table owners help panel states it, not the section.
+export const ruleKey = ownerRuleKey;
 
 // The risk once for every replicated table that shares it, as
 // facts.table_sources.shared_risk_sentence words it (the engineering report prints the
@@ -113,7 +110,6 @@ function ConsistencyNote({ sources, t }) {
         {open && (
           <Box data-figure="consistency">
             <SpaceBetween size="xs">
-              <div>{t('analysis-results.sources-of-truth.intro')}</div>
               {shared && <div data-figure="shared-risk">{shared}</div>}
               {own.map(row => (
                 <div key={row.table} data-own-risk={row.table}>
@@ -198,9 +194,14 @@ const TableOwnersCallout = memo(({ synthesis, t }) => {
     <div id="table-owners-section">
       {/* #2321: where an old link to the removed Sources of truth section lands. */}
       <div id="sources-of-truth-section">
-      <ExpandableSection variant="container" defaultExpanded={false} headerText={headerText}>
+      <ExpandableSection
+        variant="container"
+        defaultExpanded={false}
+        headerText={headerText}
+        // #2512: the owner rule and the CDC sentence are in its help panel.
+        headerInfo={<HelpInfoLink topic="table-owners" t={t} />}
+      >
         <SpaceBetween size="s">
-          {ownership && <Box data-figure="owner-rule">{t(ruleKey(ownership))}</Box>}
           {ownership && (
             <Box data-figure="owned-tables">
               {owned.map(([engine, count]) => (

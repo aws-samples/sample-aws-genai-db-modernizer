@@ -370,7 +370,7 @@ function withReadiness(synthesis) {
   return out;
 }
 
-test('each card states the wave\'s readiness and the rule is stated once', () => {
+test('each card states the wave\'s readiness, and the rule is in the help panel (#2512), not the section', () => {
   render(withReadiness(fixture.synthesis));
   const held = container.querySelector('[data-wave="3"] [data-figure="wave-readiness"]');
   // #2318: a status ("Not suggested yet") under the label, with the facts' lists below it.
@@ -382,7 +382,8 @@ test('each card states the wave\'s readiness and the rule is stated once', () =>
   expect(held.getAttribute('data-readiness')).toBe('held');
   const one = container.querySelector('[data-wave="1"] [data-figure="wave-readiness"]');
   expect(one.textContent).toBe('ReadinessSuggestedSuggested: no check holds it.');
-  expect(container.querySelectorAll('[data-figure="wave-readiness-rule"]')).toHaveLength(1);
+  expect(container.querySelectorAll('[data-figure="wave-readiness-rule"]')).toHaveLength(0);
+  expect(container.textContent).not.toContain(en['analysis-results.waves.readiness-rule']);
 });
 
 test('a report written before the readiness check shows no readiness', () => {

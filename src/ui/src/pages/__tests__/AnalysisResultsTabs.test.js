@@ -33,7 +33,7 @@ const src = node => SOURCE.slice(node.start, node.end);
 const ELEMENTS = jsxElements(AST.program);
 const RESULTS_TABS_ELEMENT = ELEMENTS.filter(el => nameOf(el) === 'Tabs' && attr(el, 'ariaLabel'));
 // The AppLayout of the loaded page: the one that holds the tabs.
-const LOADED_LAYOUT = ELEMENTS.filter(el => nameOf(el) === 'AppLayoutToolbar' && src(el).includes('ResultsOnThisPage'));
+const LOADED_LAYOUT = ELEMENTS.filter(el => nameOf(el) === 'AppLayoutToolbar' && src(el).includes('RESULTS_TABS.map'));
 
 test('the tabs are the URL\'s: the active tab comes from useResultsTabs and a change goes back to it', () => {
   expect(SOURCE).toMatch(/import useResultsTabs, \{[^}]*\} from "\.\.\/hooks\/useResultsTabs"/);
@@ -58,29 +58,47 @@ test('each tab label carries the count the facts state, never one the page count
   expect(SOURCE).toMatch(/import \{[^}]*\btabLabel\b[^}]*\} from "\.\.\/utils\/resultsTabs"/);
 });
 
-test('On this page sits in the tools panel, listing the open tab\'s sections', () => {
+test('On this page and the help panel are the loaded layout\'s two drawers (#2512)', () => {
   expect(LOADED_LAYOUT).toHaveLength(1);
   const layout = LOADED_LAYOUT[0];
-  const tools = src(attr(layout, 'tools').value);
-  expect(tools).toMatch(/<ResultsOnThisPage[^>]*anchors=\{onThisPage\}/);
-  expect(tools).toMatch(/onGo=\{goToSection\}/);
+  // #2512: no tools panel any more; the drawers take its place.
+  expect(attr(layout, 'tools')).toBeUndefined();
+  expect(attr(layout, 'toolsOpen')).toBeUndefined();
+  expect(src(attr(layout, 'drawers').value)).toBe('{drawers}');
+  expect(src(attr(layout, 'activeDrawerId').value)).toBe('{shownDrawerId(activeDrawerId, drawers)}');
+  expect(src(attr(layout, 'onDrawerChange').value)).toBe('{onDrawerChange}');
+  // The layout's ref focuses the help drawer when an Info link opens it.
+  expect(src(attr(layout, 'ref').value)).toBe('{layoutRef}');
+  const built = SOURCE.slice(SOURCE.indexOf('const drawers = resultsDrawers({'));
+  const call = built.slice(0, built.indexOf('});') + 3);
+  // On this page lists the open tab's sections, only when there are two or more.
+  expect(call).toMatch(/onThisPage: toolsHidden \? null : <ResultsOnThisPage anchors=\{onThisPage\} onGo=\{goToSection\} t=\{t\} \/>/);
+  expect(call).toMatch(/help: <ResultsHelpPanel topic=\{helpTopic\} context=\{resultsHelpContext\(synthesis\)\} t=\{t\} \/>/);
   expect(SOURCE).toMatch(/const onThisPage = onThisPageAnchors\(activeTab, sectionsOnPage, t\)/);
   expect(SOURCE).toMatch(/useSectionsOnPage\(activeTab, tabsRoot\)/);
-  // The tools panel is no longer hidden outright: only when a tab has one section or none.
   expect(SOURCE).toMatch(/const toolsHidden = onThisPage\.length < 2;/);
-  const hide = attr(layout, 'toolsHide');
-  expect(hide && hide.value && src(hide.value)).toBe('{toolsHidden}');
-  expect(src(attr(layout, 'toolsOpen').value)).toBe('{toolsOpen && !toolsHidden}');
 });
 
-test('the loading layout controls its tools panel too, so it can open once the results arrive', () => {
+test('the Info links reach the help panel from the content and the split panel (#2512)', () => {
+  // The provider wraps the whole layout: the query detail's split panel is outside `content`.
+  const provider = ELEMENTS.filter(el => src(el.openingElement).startsWith('<ResultsHelp.Provider'));
+  expect(provider).toHaveLength(1);
+  expect(src(attr(provider[0], 'value').value)).toBe('{openHelp}');
+  expect(provider[0].start).toBeLessThan(LOADED_LAYOUT[0].start);
+  expect(provider[0].end).toBeGreaterThan(LOADED_LAYOUT[0].end);
+  // The query flow's header, the one section header the page renders itself.
+  expect(SOURCE).toMatch(/info=\{<HelpInfoLink topic="query-flow" t=\{t\} \/>\}/);
+});
+
+test('the loading layout controls its drawers too, so one can open once the results arrive', () => {
   // React keeps the loading state's AppLayout when the results arrive, and Cloudscape
-  // decides on its first render whether toolsOpen is controlled: left out there, the
-  // panel would never open.
-  const loading = ELEMENTS.filter(el => nameOf(el) === 'AppLayoutToolbar' && !src(el).includes('ResultsOnThisPage'));
+  // decides on its first render whether activeDrawerId is controlled: left out there,
+  // no drawer would open.
+  const loading = ELEMENTS.filter(el => nameOf(el) === 'AppLayoutToolbar' && el !== LOADED_LAYOUT[0]);
   expect(loading).toHaveLength(1);
-  expect(src(attr(loading[0], 'toolsOpen').value)).toBe('{false}');
-  expect(attr(loading[0], 'toolsHide')).toBeTruthy();
+  expect(src(attr(loading[0], 'activeDrawerId').value)).toBe('{null}');
+  expect(src(attr(loading[0], 'drawers').value)).toBe('{[]}');
+  expect(attr(loading[0], 'onDrawerChange')).toBeTruthy();
 });
 
 test('the linked engine (?engine=) lands on its section through the tabs (#2300)', () => {
