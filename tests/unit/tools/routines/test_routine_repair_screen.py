@@ -1398,3 +1398,74 @@ def test_a_plpgsql_body_that_does_not_parse_keeps_every_name_a_call():
         "  RETURN pg_current", "  IF (p > 0) THEN\n  RETURN (p);\n  RETURN pg_current"
     )
     assert {"if", "return"} <= called_functions(broken, "postgresql")
+
+
+# ------------------------------------------------------------ PostgreSQL type spellings (#2546)
+
+
+def _with_default(expression: str, *, fixed: bool = False) -> str:
+    text = (
+        "CREATE OR REPLACE FUNCTION public.wal_pos(p integer DEFAULT " + expression + ")\n"
+        " RETURNS text\n LANGUAGE sql\n"
+        "AS $function$SELECT pg_current_xlog_location()::text || '?'$function$\n"
+    )
+    return text.replace("pg_current_xlog_location()", "pg_current_wal_lsn()") if fixed else text
+
+
+def _default_refusal(was: str, now: str):
+    return _screen().refusal_of(
+        _pg(_with_default(was)), _with_default(now, fixed=True), "postgresql"
+    )
+
+
+@pytest.mark.parametrize(
+    ("was", "now"),
+    [
+        ("0::integer", "CAST(0 AS int4)"),
+        ("0::int", "0::int4"),
+        ("0::integer", "0::pg_catalog.int4"),
+        ("0::bigint", "0::int8"),
+        ("0::smallint", "CAST(0 AS int2)"),
+        ("0::double precision", "0::float8"),
+        ("0::float", "0::float8"),
+        ("0::real", "0::float4"),
+        ("0::boolean", "0::bool"),
+        ("'a'::character varying", "'a'::varchar"),
+        ("'a'::character varying(5)", "'a'::varchar(5)"),
+        ("'a'::character", "'a'::bpchar(1)"),
+        ("0::timestamp with time zone", "0::timestamptz"),
+        ("0::time with time zone", "0::timetz"),
+        ("0::decimal", "0::numeric"),
+        ("0::decimal(5,2)", "0::pg_catalog.numeric(5,2)"),
+        ("0::integer[]", "0::int4[]"),
+        ("coalesce(0::integer, 1::bigint)", "coalesce(CAST(0 AS int4), 1::int8)"),
+    ],
+)
+def test_a_postgresql_type_alias_is_the_same_type(was, now):
+    assert _default_refusal(was, now) is None
+
+
+@pytest.mark.parametrize(
+    ("was", "now"),
+    [
+        ("0::integer", "0::bigint"),
+        ("0::integer", "0::int2"),
+        ("0::real", "0::double precision"),
+        ("0::integer", "0::public.int4"),
+        ("0::integer", "0::mine.int4"),
+        ("0::integer", "0::pg_catalog.mine"),
+        ("0::numeric(5,2)", "0::numeric(6,2)"),
+        ("0::numeric(5,2)", "0::decimal"),
+        ("'a'::varchar(5)", "'a'::character varying(6)"),
+        ("'a'::character", "'a'::bpchar"),
+        ("0::integer", "0::integer[]"),
+        ("0::integer[]", "0::int4[][]"),
+        ("0::timestamptz", "0::timestamp"),
+        ("0::timetz", "0::time"),
+    ],
+)
+@pytest.mark.passes_on_main
+def test_a_different_postgresql_type_stays_a_signature_change(was, now):
+    refusal = _default_refusal(was, now)
+    assert refusal is not None
+    assert refusal[0] == "signature_changed", refusal

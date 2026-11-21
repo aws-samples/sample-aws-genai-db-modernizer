@@ -104,6 +104,7 @@ from src.tools.routines.postgresql_checks import (
     check_postgresql_routine,
     routine_target_line,
 )
+from src.tools.routines.proof_screen import CATALOG_TYPES
 from src.tools.routines.rewrites import rewrite_mysql_routine, rewrite_postgresql_routine
 from src.tools.routines.verdict import RoutineCheckResult, RoutineDependency, RoutineVerdict
 
@@ -989,10 +990,37 @@ def mysql_header_text(create_statement: str, kind: str, sql_mode: str | None) ->
     return head or None
 
 
+def _pg_type_name(node: Mapping[str, Any]) -> Mapping[str, Any]:
+    """A parse tree's ``TypeName`` with a built-in type written ``pg_catalog.X`` read as the
+    unqualified ``X`` (#2546). The parser already turns ``integer``, ``int``, ``bigint``,
+    ``double precision``, ``boolean``, ``character varying``, ``decimal`` and the like into
+    ``pg_catalog.<internal name>`` and keeps ``int4``, ``timestamptz`` as written, so the
+    two spellings of one type meet here. A name outside the built-in list (``public.int4``,
+    ``pg_catalog.mine``) is left as written: a user type that shadows a built-in name stays
+    a different type. Type modifiers and array bounds stay in the tree, so they still
+    count."""
+    names = node["names"]
+    if (
+        len(names) == 2
+        and (names[0].get("String") or {}).get("sval") == "pg_catalog"
+        and (names[1].get("String") or {}).get("sval") in CATALOG_TYPES
+    ):
+        return {**node, "names": [names[1]]}
+    return node
+
+
 def _pg_default(node: object) -> object:
-    """A PostgreSQL parameter default's parse tree with no positions and every string
-    constant ``?`` (literals compared as the redacted text has them), for comparison only."""
+    """A PostgreSQL parameter default's parse tree with no positions, every string
+    constant ``?`` (literals compared as the redacted text has them) and every built-in type
+    name in its canonical spelling (:func:`_pg_type_name`), for comparison only."""
     if isinstance(node, Mapping):
+        names = node.get("names")
+        if (
+            "typemod" in node
+            and isinstance(names, list | tuple)
+            and all(isinstance(n, Mapping) and "String" in n for n in names)
+        ):
+            node = _pg_type_name(node)
         const = node.get("A_Const")
         if isinstance(const, Mapping) and ("sval" in const or "bsval" in const):
             return {"A_Const": "?"}
