@@ -157,3 +157,40 @@ def test_no_digit_run_of_a_number_literal_survives(
         else:
             assert run not in out, (literal, after, out)
     assert redact_literals(out, engine) == out
+
+
+# A literal's content as MySQL prints it in a definition (``\\'`` for a quote, ``\\\\``
+# for a backslash), or with each quote doubled: the literal ends at its closing quote,
+# so its content goes and the SQL after it stays (#2331).
+_CONTENT = st.text(alphabet="ab9 '\\\";x", min_size=1, max_size=12)
+_MYSQL_ESCAPES = st.sampled_from(["backslash", "doubled"])
+_INTRODUCERS = st.sampled_from(["", "_utf8mb4", "_latin1"])
+_QUOTES = st.sampled_from(["'", '"'])
+_TAILS = st.sampled_from([")", ") and k = 2", ") and n = 'Jane'", "); select 1"])
+
+
+def _mysql_literal(content: str, escape: str, quote: str) -> str:
+    inner = content.replace("\\", "\\\\")
+    inner = inner.replace(quote, ("\\" if escape == "backslash" else quote) + quote)
+    return quote + inner + quote
+
+
+@_SETTINGS
+@given(_CONTENT, _MYSQL_ESCAPES, _INTRODUCERS, _QUOTES, _TAILS)
+@example("it's; x", "backslash", "", "'", ") and k = 2")
+@example('a "b"', "backslash", "", '"', ")")
+@example("a\\'b", "backslash", "", "'", ")")
+@example("\\", "backslash", "", "'", ") and k = 2")
+def test_a_mysql_definition_keeps_the_text_after_an_escaped_literal(
+    content: str, escape: str, introducer: str, quote: str, tail: str
+) -> None:
+    literal = introducer + _mysql_literal(content, escape, quote)
+    text = "select a from t where (t.n <> " + literal + tail
+    if any(ch.isalnum() for ch in content):
+        placeholder = introducer + quote + "?" + quote
+    else:
+        placeholder = literal  # no value in it: kept as it is
+    tail_out = tail.replace("'Jane'", "'?'")
+    assert redact_definition(text, "mysql") == (
+        "select a from t where (t.n <> " + placeholder + tail_out
+    )
