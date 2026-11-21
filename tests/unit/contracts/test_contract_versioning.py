@@ -440,7 +440,7 @@ def _collector_upload(version: str) -> dict:
 def test_ingest_refuses_an_uploaded_collector_output_at_another_major() -> None:
     """A collector output at another MAJOR was once taken for a raw collection
     (``startswith("3")``)."""
-    from src.atx_orchestrator import core
+    from src.orchestrator import core
 
     class _Store:
         def write_json(self, path: str, data: dict) -> None:

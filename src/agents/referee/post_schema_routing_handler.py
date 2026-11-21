@@ -5,8 +5,8 @@
 
 One implementation for every path (#1492): the local pipeline
 (``LocalOrchestrator``, the CLI) and the library ``assess()`` reach it through
-``src.atx_orchestrator.core.run_post_schema_routing_core`` (AWS Transform is to,
-#1498), the headless one-pass-at-a-time run through
+``src.orchestrator.core.run_post_schema_routing_core``, the headless
+one-pass-at-a-time run through
 :meth:`PostSchemaRouting.run_external_step`. Only the redesign differs between
 them: each caller passes the designer it runs schema design with.
 

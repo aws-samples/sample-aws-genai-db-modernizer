@@ -22,7 +22,7 @@ from pathlib import Path
 
 import pytest
 
-from src.atx_orchestrator import core
+from src.orchestrator import core
 from src.storage.local_store import LocalArtifactStore
 from src.tools.database.collection_text import extract_json_object
 

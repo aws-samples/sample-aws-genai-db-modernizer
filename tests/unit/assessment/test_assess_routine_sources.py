@@ -449,7 +449,7 @@ def test_a_body_that_looks_like_a_credential_is_flagged_by_the_scan(tmp_path: Pa
 
 def _ingested(tmp_path: Path, raw: dict[str, Any]) -> dict[str, Any]:
     """``raw`` as the ingest writes it: a collector output, as a caller may upload one."""
-    from src.atx_orchestrator.core import ingest_offline_collection
+    from src.orchestrator.core import ingest_offline_collection
 
     store = LocalArtifactStore(base_dir=str(tmp_path / "ingest"))
     uploaded: dict[str, Any] = json.loads(

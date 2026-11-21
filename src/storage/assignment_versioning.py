@@ -67,8 +67,8 @@ def resolve_effective_assignment_version(store: _Lister, database_name: str, job
     """Return the highest committed assignment version, or 0 when none exists.
 
     This is the one authoritative "which version is effective" rule (ADR-028).
-    Returns 0 rather than raising when no versioned assignment is present; the
-    ATX schema/synthesis path coerces that to 1 at its own call sites.
+    Returns 0 rather than raising when no versioned assignment is present;
+    ``resolve_downstream_assignment_version`` coerces that to 1.
     """
     versions = _existing_versions(store, database_name, job_id)
     return max(versions) if versions else 0
@@ -174,7 +174,7 @@ def is_reality_check_produced(assignment: dict) -> bool:
 def _is_override_edit(assignment: dict) -> bool:
     """Return True when an assignment version is an edit of an earlier version.
 
-    Override writers (the customer gate, REST and ATX) stamp
+    Override writers (the customer gate and REST) stamp
     ``source = customer_gate``, and the post-schema router stamps
     ``source = post_schema_routing`` (#629); both always set
     ``previous_version`` to the version they edited. Legacy artifacts without ``source`` are recognised by that int

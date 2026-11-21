@@ -524,7 +524,7 @@ def test_checker_accepts_by_design_only_with_a_reason() -> None:
 def test_checker_accepts_a_superseded_marker_only_when_the_target_decision_exists() -> None:
     assert cell_problems("superseded by ADR-031 Decision 6") == []
     assert cell_problems("Superseded by ADR-031 Decision 6 (one engine per source)") == []
-    assert cell_problems("superseded by ADR-028 Decision A") == []  # two ADR-028 files
+    assert cell_problems("superseded by ADR-028 Decision C") == []  # two ADR-028 files
     assert cell_problems("superseded by ADR-031 Decision 99")
     assert cell_problems("superseded by ADR-999 Decision 1")
     assert cell_problems("superseded by ADR-031")

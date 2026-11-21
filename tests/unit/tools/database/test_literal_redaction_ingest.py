@@ -27,13 +27,7 @@ from src.storage.local_store import LocalArtifactStore
 from src.tools.database.offline_parser import parse_offline_collection, rederive_query_facts
 from src.tools.sql.redact import redact_raw_collection
 from src.tools.sql.shadow import TableShadow, write_shadow_artifact
-from tests.fixtures.pii_collections import (
-    ENGINES,
-    keep_literals,
-    leaked,
-    pii_collection,
-    pii_texts,
-)
+from tests.fixtures.pii_collections import ENGINES, keep_literals, leaked, pii_collection, pii_texts
 
 DB = "trailgear"
 
@@ -145,7 +139,7 @@ class TestOlderOutputs:
     def test_a_collector_output_handed_in_is_ingested_redacted(
         self, engine: str, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        from src.atx_orchestrator.core import ingest_offline_collection
+        from src.orchestrator.core import ingest_offline_collection
 
         old = _old_collector_output(engine, monkeypatch)
         store = LocalArtifactStore(str(tmp_path))

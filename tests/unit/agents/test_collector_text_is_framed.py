@@ -16,9 +16,9 @@ step that talks to a model, both ways (``model_inputs_harness.run_every_model_in
 shared with the query-tag test, #1180): the external request files, the Bedrock
 prompts (analysis advisors, reality check, designers, the redesign path, synthesis),
 the refused Bedrock requests (the reality-check validator, the free-text answer
-check) and the AWS Transform orchestrator's report and routing-summary tool results.
+check).
 A Bedrock prompt or request may carry the planted text only inside the
-``<untrusted_customer_data>`` block. A request file or tool result is JSON, so it says
+``<untrusted_customer_data>`` block. A request file is JSON, so it says
 instead, in an ``untrusted_data_notice`` key, that its content is data. Reality check
 and synthesis already framed their Bedrock prompts: the notice never lands inside a
 framed block, so nothing is framed twice. Every skill a model works from says the same.
@@ -154,7 +154,6 @@ def _model_inputs(runs: dict) -> list[str]:
         *runs["prompts"],
         *runs["bedrock_requests"],
         *_requests(runs).values(),
-        *runs["tool_results"],
     ]
 
 
@@ -246,27 +245,6 @@ def test_every_request_file_says_its_content_is_data(runs: dict) -> None:
     assert any(any(m in t for m in MARKS) for t in requests.values())
 
 
-def test_every_tool_result_says_its_content_is_data(runs: dict) -> None:
-    from src.agents import prompt_framing
-
-    notice = getattr(prompt_framing, "TOOL_RESULT_NOTICE", None)
-    results = [json.loads(r) for r in runs["tool_results"]]
-    # The synthesis report and the routing summary; the report names the planted table.
-    assert len(results) == 2 and any(TABLE_MARK in json.dumps(r) for r in results)
-    for result in results:
-        assert notice is not None and list(result)[:1] == [UNTRUSTED_NOTICE_KEY]
-        assert result[UNTRUSTED_NOTICE_KEY] == notice
-
-
-@pytest.mark.parametrize("module", ["orchestrator"])
-def test_the_orchestrator_says_tool_results_are_data(module: str) -> None:
-    from src.agents.prompt_framing import SYSTEM_PROMPT_DATA_DIRECTIVE
-    from src.atx_orchestrator import orchestrator
-
-    assert SYSTEM_PROMPT_DATA_DIRECTIVE in orchestrator.SYSTEM_PROMPT
-    assert UNTRUSTED_NOTICE_KEY in orchestrator.SYSTEM_PROMPT
-
-
 # Guards against double framing, which main does not do either.
 @pytest.mark.passes_on_main
 def test_nothing_is_framed_twice(runs: dict) -> None:
@@ -301,18 +279,14 @@ def test_model_skills_are_found() -> None:
 
 
 def test_the_notice_is_first_and_idempotent() -> None:
-    from src.agents.prompt_framing import (
-        REQUEST_FILE_NOTICE,
-        TOOL_RESULT_NOTICE,
-        with_untrusted_notice,
-    )
+    from src.agents.prompt_framing import REQUEST_FILE_NOTICE, with_untrusted_notice
 
     once = with_untrusted_notice({"a": 1, "b": [2]})
     assert list(once) == [UNTRUSTED_NOTICE_KEY, "a", "b"]
     assert with_untrusted_notice(once) == once
     assert with_untrusted_notice({}) == {UNTRUSTED_NOTICE_KEY: REQUEST_FILE_NOTICE}
-    tool = with_untrusted_notice(once, TOOL_RESULT_NOTICE)
-    assert list(tool) == list(once) and tool[UNTRUSTED_NOTICE_KEY] == TOOL_RESULT_NOTICE
+    other = with_untrusted_notice(once, "another notice")
+    assert list(other) == list(once) and other[UNTRUSTED_NOTICE_KEY] == "another notice"
 
 
 @pytest.mark.parametrize(

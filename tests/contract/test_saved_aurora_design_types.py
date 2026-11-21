@@ -6,7 +6,7 @@
 Generation checks each column type with ``validate_aurora_type``; a saved
 ``schema-aurora_*/[v<N>/]schema_output.json`` is the other way in. Every store read
 (``check_artifact``: synthesis, the assess() result, revisions, the data movement step,
-the graph, ATX), an uploaded contract (``read_contract_payload``), the contract model
+the graph), an uploaded contract (``read_contract_payload``), the contract model
 itself (and so the API that feeds the UI, whose 409 is tested in
 ``tests/unit/api/test_contract_version_refusal_routes.py``) run the same allowlist for the design's own engine,
 and refuse the design, naming no collector text, when one type fails it.
@@ -181,7 +181,7 @@ def test_the_wordpress_saved_design_with_one_injected_type_is_refused(tmp_path: 
 
 @pytest.mark.parametrize("engine", sorted(MODELS))
 def test_an_uploaded_design_is_refused_like_a_stored_one(engine: str) -> None:
-    """ATX and the CLI read an uploaded contract through ``read_contract_payload``."""
+    """The CLI reads an uploaded contract through ``read_contract_payload``."""
     with pytest.raises(ContractVersionError):
         read_contract_payload(
             _design(engine, INJECTED), MODELS[engine], artifact=f"{DB}/{JOB} upload"

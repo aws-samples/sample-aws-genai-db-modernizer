@@ -16,11 +16,11 @@ from pathlib import Path
 import pytest
 
 from src.agents.analysis.handler import run_analysis
-from src.atx_orchestrator.core import _ANALYSIS_ENGINES, run_analysis_core
-from src.atx_orchestrator.runtime.store import upgrade_store
 from src.contracts.analysis_output import AnalysisOutputContract
+from src.orchestrator.core import _ANALYSIS_ENGINES, run_analysis_core
 from src.storage.artifact_store import ArtifactStore
 from src.storage.local_store import LocalArtifactStore
+from src.storage.text_store import upgrade_store
 from tests.fixtures.ecommerce_collector_output import get_ecommerce_collector_output
 from tests.fixtures.opensearch_pattern_fixtures import get_fulltext_search_fixture
 

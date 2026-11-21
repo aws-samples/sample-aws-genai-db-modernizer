@@ -26,8 +26,6 @@ from pydantic import BaseModel, ValidationError
 from src.agents.analysis.dynamodb_analysis_agent import analyze_for_dynamodb_deterministic
 from src.agents.analysis.handler import run_analysis
 from src.agents.referee import transaction_shape as shapes
-from src.atx_orchestrator.core import run_analysis_core
-from src.atx_orchestrator.runtime.store import upgrade_store
 from src.contracts.analysis_input import AnalysisInput, TargetDatabase
 from src.contracts.dynamodb_decision_trace import (
     AggregateTrace,
@@ -38,6 +36,7 @@ from src.contracts.dynamodb_decision_trace import (
     SecondaryIndexDominanceTrace,
     TransactionShapeKind,
 )
+from src.orchestrator.core import run_analysis_core
 from src.shared.contract_versioning import (
     ContractVersionError,
     contract_for_artifact,
@@ -45,6 +44,7 @@ from src.shared.contract_versioning import (
     load_contract,
 )
 from src.storage.local_store import LocalArtifactStore
+from src.storage.text_store import upgrade_store
 from src.tools.analysis import dynamodb_analysis_tools as tools
 from src.tools.analysis.scoring import Aggregate
 from tests.fixtures.ecommerce_collector_output import get_ecommerce_collector_output

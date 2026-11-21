@@ -626,10 +626,9 @@ class SchemaDesignRunner:
             except (json.JSONDecodeError, ValueError, TypeError):
                 logger.warning("Could not salvage partial output from last attempt")
 
-        # Name only the error's type, never its text: this propagates up to the
-        # ATX subagent wrapper's broad failure handler, which logs the raised
-        # exception's message at ERROR via logger.exception("Subagent FAILED")
-        # (base.py) -- the same leak shape as the ValueError fix in #143. Not
+        # Name only the error's type, never its text: this propagates up to a
+        # caller's broad failure handler, which may log the raised exception's
+        # message at ERROR -- the same leak shape as the ValueError fix in #143. Not
         # chained with ``from last_error``: that would still print the original
         # text in the traceback once something logs this with exc_info.
         logger.debug("%s Designer failed after %d attempts: %s", prefix, attempt, last_error)

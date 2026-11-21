@@ -1,9 +1,9 @@
 # Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
 # SPDX-License-Identifier: MIT-0
 
-"""The transform core's Reality Check LLM mode (ADR-026 Decision 4, #708).
+"""The pipeline core's Reality Check LLM mode (ADR-026 Decision 4, #708).
 
-ADR-026 Decision 4 keeps the external LLM mode out of the transform core: the core reads
+ADR-026 Decision 4 keeps the external LLM mode out of the pipeline core: the core reads
 ``REALITY_CHECK_LLM_MODE`` and defaults it to ``bedrock``. The model entry point is patched,
 so nothing here calls Bedrock.
 """
@@ -14,7 +14,7 @@ from unittest.mock import patch
 
 import pytest
 
-from src.atx_orchestrator.core import run_reality_check_core
+from src.orchestrator.core import run_reality_check_core
 from src.storage.local_store import LocalArtifactStore
 
 DB, JOB = "mydb", "job-1"

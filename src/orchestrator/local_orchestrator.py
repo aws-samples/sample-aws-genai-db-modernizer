@@ -446,9 +446,9 @@ class LocalOrchestrator(Orchestrator):
     def _run_post_schema_routing(self, job_id: str, database_name: str) -> None:
         """Run the post-schema routing after schema design (#1492: the one
         implementation, ``core.run_post_schema_routing_core``, which ``assess()``
-        calls too and AWS Transform is to call, #1498), redesigning with this
+        calls too), redesigning with this
         orchestrator's mode."""
-        from src.atx_orchestrator.core import run_post_schema_routing_core
+        from src.orchestrator.core import run_post_schema_routing_core
 
         run_post_schema_routing_core(
             job_id, database_name, store=self.store, llm_mode=self.llm_mode

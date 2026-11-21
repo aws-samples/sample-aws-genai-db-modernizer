@@ -208,7 +208,6 @@ The minimum viable input is one table with one column.
 The analysis is the first half. An engine that routes queries also needs:
 
 - **A schema designer** (`src/tools/schema/<engine>_schema_agent.py`, built on the shared `base_schema_agent.py`; read `opensearch_schema_agent.py` for the smallest), its model-output contract (`src/contracts/<engine>_model_output.py`), a `case` in `src/agents/schema_design/handler.py`, the engine in `scripts/run_schema_design.py` (engine list, skill path, contract class), a data-modelling prompt in `src/skills/`, and `.claude/commands/design-schema-<engine>.md` with its `Skill(design-schema-<engine>)` rule in `.claude/settings.ci.json`. See [strands-agent-development-guide.md](strands-agent-development-guide.md) for the seam pattern and the PE-review loop.
-- **The AWS Transform fleet**, if the engine should be designed there (`src/atx_orchestrator/subagents/schema.py` and `tools.py`). See [aws-transform-integration.md](aws-transform-integration.md).
 - **A load test**, optionally: [load-testing-new-engine.md](load-testing-new-engine.md).
 - **The library contract:** a designed engine appears in `assess()`'s design block, which is a MINOR change to that contract ([assess-design-block.md](../contracts/assess-design-block.md)).
 

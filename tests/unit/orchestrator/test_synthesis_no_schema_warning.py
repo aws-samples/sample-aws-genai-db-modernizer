@@ -18,15 +18,12 @@ import pytest
 
 
 def _run(report: dict) -> dict:
-    from src.atx_orchestrator import core
+    from src.orchestrator import core
 
     store = MagicMock()
     store.exists.return_value = True
     store.read_json.return_value = report
-    with (
-        patch("src.agents.referee.synthesis_handler.run_synthesis"),
-        patch("src.atx_orchestrator.core._build_graph"),
-    ):
+    with (patch("src.agents.referee.synthesis_handler.run_synthesis"),):
         return core.run_synthesis_core(
             job_id="job-1", database_name="mydb", assignment_version=1, store=store
         )

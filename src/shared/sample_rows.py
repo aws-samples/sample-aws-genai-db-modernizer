@@ -46,7 +46,7 @@ def raw_collection_without_sample_rows(
 
     The scripts call this before they keep their own copy of a raw collection
     (``uploads/collector-output.json``), so no copy the tool writes holds a row. A
-    file a customer uploads through the API or AWS Transform is kept as sent; the
+    file a customer uploads through the API is kept as sent; the
     parser drops its rows from everything derived from it. Returns a new dict.
     """
     out = dict(data)

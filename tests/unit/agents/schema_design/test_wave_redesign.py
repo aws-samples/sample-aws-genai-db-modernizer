@@ -509,7 +509,7 @@ def test_assess_runs_the_rounds_after_synthesis(
     monkeypatch.setattr(runner, "_design", lambda job, engine, version: calls.append(engine))
     monkeypatch.setattr(runner, "_record_kept_engines", lambda job: None)
     monkeypatch.setattr(
-        "src.atx_orchestrator.core.run_synthesis_core", lambda *a, **k: calls.append("synthesis")
+        "src.orchestrator.core.run_synthesis_core", lambda *a, **k: calls.append("synthesis")
     )
 
     def fake_rounds(store, db, job_id, **kw):  # type: ignore[no-untyped-def]

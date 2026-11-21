@@ -1,11 +1,13 @@
 # ADR-028: Customer Assignment-Review Gate Before Schema Design
 
-**Status:** Accepted
+**Status:** Partially superseded: Decisions A, B, D, E and F (the AWS Transform gate and its review document) were removed with the integration (#2509); Decision C holds
 **Date:** 2026-09-11
 **Deciders:** Database Modernizer Assessment Architecture Team
 **Related ADRs:** ADR-026 (Reality Check in the Assessment Core), ADR-027 (Consolidate the Schema-Design Fleet), ADR-018 (Assignment Resolution), ADR-016 (Compute and Orchestration Strategy)
 
 ---
+
+> *Removed (2026-11-20, #2509):* the AWS Transform integration (`src/atx_orchestrator/`, `pipeline/`) was removed. What this ADR says about it is history; the pipeline phase entry points it called now live in `src/orchestrator/core.py`.
 
 ## Context
 
@@ -64,6 +66,8 @@ behind **one provenance-aware resolver**. Three parts.
 
 ### A. The gate (hard interrupt)
 
+*Superseded (2026-11-20, #2509): the AWS Transform integration was removed, and with it this gate. The local pipeline's approval gate (ADR-018 Decision 2) is unchanged.*
+
 After Reality Check, the orchestrator renders the effective assignment to a
 review markdown, presents it, and **stops**. It must not call any schema-design
 tool until the review is approved.
@@ -86,6 +90,8 @@ tool until the review is approved.
      re-submits it. This is the path for bulk changes, where chat is impractical.
 
 ### B. The review document: free-form markdown with one embedded parseable table
+
+*Superseded (2026-11-20, #2509): the AWS Transform integration was removed, and with it this gate. The local pipeline's approval gate (ADR-018 Decision 2) is unchanged.*
 
 The document is **free-form markdown** for readability (grouped by target
 engine, showing the access pattern, the "why" from `assignment_reason`,
@@ -148,12 +154,12 @@ Each decision names the guard test that fails when the code stops following it. 
 
 | Decision | Enforced by |
 |---|---|
-| A. The gate (hard interrupt) | `tests/unit/atx_orchestrator/test_assignment_gate.py::TestGateBlocksSchemaDesign` |
-| B. The review document: free-form markdown with one embedded parseable table | `tests/unit/test_assignment_review.py::TestRoundTrip`<br>`tests/unit/test_assignment_review.py::TestStrictParsing`<br>`tests/unit/test_assignment_review.py::TestEdits` |
-| C. Versioning: one resolver + provenance + staleness detection | `tests/unit/test_assignment_versioning.py`<br>`tests/unit/atx_orchestrator/test_assignment_gate.py::TestApproveAsIs::test_continue_approves_without_new_version` |
-| D. Two-step gate | `tests/unit/atx_orchestrator/test_assignment_gate.py::TestGateBlocksSchemaDesign::test_present_offers_choice_without_approving`<br>`tests/unit/atx_orchestrator/test_assignment_gate.py::TestApproveAsIs`<br>`tests/unit/test_assignment_review.py::TestSummary` |
-| E. HITL editable `TableComponent` transport (raise-and-resume) | `tests/unit/atx_orchestrator/test_assignment_gate.py::TestDetailedReviewHitl`<br>`tests/unit/atx_orchestrator/test_hitl.py`<br>`tests/unit/atx_orchestrator/test_close_superseded_hitl.py`<br>`tests/unit/atx_orchestrator/test_hitl_gate_properties.py`<br>`tests/unit/test_assignment_review.py::TestStructuredTable` |
-| F. Chat fallback retained | `tests/unit/atx_orchestrator/test_assignment_gate.py::TestDetailedReviewChatFallback` |
+| A. The gate (hard interrupt) | superseded -- #2509 (the AWS Transform integration was removed) |
+| B. The review document: free-form markdown with one embedded parseable table | superseded -- #2509 (the AWS Transform integration was removed) |
+| C. Versioning: one resolver + provenance + staleness detection | `tests/unit/test_assignment_versioning.py` |
+| D. Two-step gate | superseded -- #2509 (the AWS Transform integration was removed) |
+| E. HITL editable `TableComponent` transport (raise-and-resume) | superseded -- #2509 (the AWS Transform integration was removed) |
+| F. Chat fallback retained | superseded -- #2509 (the AWS Transform integration was removed) |
 | Amendment 2026-10-02: Reality Check input/output versions | `tests/unit/test_assignment_versioning.py::TestIsRealityCheckProduced`<br>`tests/unit/test_assignment_versioning.py::TestResolveRealityCheckInputVersion`<br>`tests/unit/test_assignment_versioning.py::TestRealityCheckRunForLineage`<br>`tests/unit/agents/referee/test_reality_check_versioning_followups.py::TestForcedRunKeepsTheRecord`<br>`tests/unit/agents/referee/test_reality_check_versioning_followups.py::TestNoSameVersionOverwrite`<br>`tests/unit/agents/referee/test_reality_check_versioning_followups.py::TestRealityCheckBelongsToTheLineage`<br>`tests/unit/agents/referee/test_reality_check_versioning_followups.py::TestEveryReaderTakesTheLineageRecord`<br>`tests/unit/agents/referee/test_reality_check_versioning_followups.py::TestStaleAwaitingMarker`<br>`tests/unit/agents/referee/test_reality_check_versioning_followups.py::TestJobStatusWithAStaleMarker`<br>`tests/unit/agents/referee/test_reality_check_versioning_followups.py::TestCorruptLineage`<br>`tests/unit/agents/referee/test_reality_check_versioning_followups.py::TestChangedNothingGuard`<br>`tests/contract/test_reality_check_output_readers.py::test_no_reader_spells_out_the_flat_output_path` |
 
 ## Implementation surface
@@ -299,6 +305,8 @@ recommendation step in front of the detailed table.
 
 ### D. Two-step gate
 
+*Superseded (2026-11-20, #2509): the AWS Transform integration was removed, and with it this gate. The local pipeline's approval gate (ADR-018 Decision 2) is unchanged.*
+
 `present_assignment_review` no longer renders the full per-query table. It renders
 an **engine-level recommendation** (per engine: in-scope/total query counts and
 the main rationale, aggregated from `assignment_reason`) and asks the customer to
@@ -311,6 +319,8 @@ built.
 - Review in detail -> `open_detailed_routing_review` raises the editable table.
 
 ### E. HITL editable `TableComponent` transport (raise-and-resume)
+
+*Superseded (2026-11-20, #2509): the AWS Transform integration was removed, and with it this gate. The local pipeline's approval gate (ADR-018 Decision 2) is unchanged.*
 
 `open_detailed_routing_review` raises a **BLOCKING** platform HITL task rendered as
 an editable `TableComponent` (`src/atx_orchestrator/runtime/hitl.py`), over the
@@ -335,6 +345,8 @@ avoids parking a multi-hour human wait inside a single AgentCore turn.
 **Task lifecycle (#1742).** The gate closes a BLOCKING table it no longer waits on, so the job's Tasks tab shows only the task the customer still has to act on. Closing goes through the same client (`hitl.close_hitl_task` -> `CloseHitlTask`, closure type `CANCELLED`) and is best-effort. It closes a task only in an open status (`CREATED`, `AWAITING_HUMAN_INPUT`, `IN_PROGRESS`); a test reads the SDK's `HitlTaskStatus` from its service model and pins the open, submitted and closed groups. It sends an idempotency token derived from the task id, treats a missing task, `ConflictException` and `TerminalResourceException` as no longer open, and only logs any other client error, never failing the job. Every `pending_hitl.json` pointer belongs to one round of the review, the round that raised its table. Finalize marks it `answered` when it reads the task's submission. Each approval retires it (marks it `superseded`): a chat approval while a table is open, an approval through the table's own submission, and a reopen, which starts a new round (ADR-029); a new table replaces it. Only a pointer neither answered nor superseded has its task closed, so a task whose submission was read is never closed, and a retired pointer, which includes every pointer of an earlier round, is never read or waited on again. A pointer whose task reads as closed without a submission is retired too. A submission finalize reads that writes a version records it (`applied_version`), and a re-read of that pointer (the next finalize after an infeasible edit, with or without `accept_feasibility_risks`) diffs against that version, so the same edits are never applied again. When a retired table held a submission nobody read, its edits are not applied, and a tool result says so with `superseded_submission_ignored`. A submission the close itself finds (submitted before it, or between the status read and the close) is reported in the result of the step that retired the table: the chat approval, and any later `finalize_assignment_review` with no input in that round; the reopen; or the new table. A close that failed is retried by the next `finalize_assignment_review`, `reopen_assignment_review` or `open_detailed_routing_review`, both for the retired table and for an earlier table a new table replaced while its close was failing (`unclosed_tasks`, carried on the new pointer). A submission the retry finds is reported once, in that step's result. At the next reopen, a pointer retired in an earlier round is marked `stale`, and its chat report is not repeated. A reopen reports rather than finalizes such a submission, since applying edits as a side effect of reopening would approve something the agent never finalized. A pointer saved before this lifecycle (it has no `lifecycle` field) is closed and retired the same way but never reported, because whether its submission was read is unknown. Random sequences of these steps, derandomized and run against the real pointer logic with a stub client, check that no wait lasts forever, that no submission's edits are applied twice, and that no submission is read from a task of an earlier round.
 
 ### F. Chat fallback retained
+
+*Superseded (2026-11-20, #2509): the AWS Transform integration was removed, and with it this gate. The local pipeline's approval gate (ADR-018 Decision 2) is unchanged.*
 
 When the HITL transport is unavailable (outside the WebApp runtime, or any client
 failure), `open_detailed_routing_review` degrades to the original transport:

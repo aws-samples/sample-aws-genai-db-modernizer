@@ -4,7 +4,7 @@
 """Run the pipeline's phases for one :class:`AssessmentRequest`.
 
 The phases are the core entry points every other path uses
-(``src.atx_orchestrator.core``): ingest the collection, triage, analyse, then place
+(``src.orchestrator.core``): ingest the collection, triage, analyse, then place
 statements and run the reality check, then design the schema of every engine the
 effective assignment keeps and run the post-schema routing on the designs, then
 synthesise the report. No routing rule lives here. Each phase is one entry of
@@ -81,11 +81,7 @@ def _collector_input(collection: dict[str, Any]) -> dict[str, Any]:
 
 def _ingest_and_analyse(job: _Job) -> None:
     from src.agents.referee.engine_scope import record_engine_scope
-    from src.atx_orchestrator.core import (
-        ingest_offline_collection,
-        run_all_analyses,
-        run_triage_core,
-    )
+    from src.orchestrator.core import ingest_offline_collection, run_all_analyses, run_triage_core
 
     ingest_offline_collection(
         job.store,
@@ -123,7 +119,7 @@ def _ingest_and_analyse(job: _Job) -> None:
 
 
 def _place_and_reality_check(job: _Job) -> None:
-    from src.atx_orchestrator.core import run_assignment_core, run_reality_check_core
+    from src.orchestrator.core import run_assignment_core, run_reality_check_core
 
     run_assignment_core(job.job_id, job.database_name, store=job.store)
     run_reality_check_core(
@@ -159,7 +155,7 @@ def _effective_version(job: _Job) -> int:
 
 
 def _design(job: _Job, engine: str, version: int) -> None:
-    from src.atx_orchestrator.core import run_schema_design_core
+    from src.orchestrator.core import run_schema_design_core
 
     run_schema_design_core(
         job.job_id, job.database_name, engine, assignment_version=version, store=job.store
@@ -204,7 +200,7 @@ def _route_after_schema_design(job: _Job) -> None:
     engine scope, as a new assignment version, and only the engines the moves touch
     are designed again on it. The result is then read at that version. A failed
     redesign fails the run (the routing has written a rollback version first)."""
-    from src.atx_orchestrator.core import run_post_schema_routing_core
+    from src.orchestrator.core import run_post_schema_routing_core
 
     def redesign(job_id: str, database_name: str, engine: str, version: int) -> None:
         _design(job, engine, version)
@@ -224,7 +220,7 @@ def _synthesise(job: _Job) -> None:
     """Write the report for the effective assignment and its designs (the executive
     summary is written with a model), then run the bounded redesign rounds of held waves
     (#1992), synthesizing again after each."""
-    from src.atx_orchestrator.core import run_synthesis_core
+    from src.orchestrator.core import run_synthesis_core
 
     def synthesise() -> None:
         run_synthesis_core(
@@ -307,9 +303,9 @@ def assess(
     (``record.job_id``). ``sys.stdout`` is never replaced, so
     another thread's prints during a run still reach stdout.
     """
-    from src.atx_orchestrator.runtime.store import upgrade_store
     from src.shared.job_id import validate_job_id
     from src.storage.local_store import LocalArtifactStore
+    from src.storage.text_store import upgrade_store
 
     req = (
         request

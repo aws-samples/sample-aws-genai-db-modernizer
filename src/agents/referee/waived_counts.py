@@ -27,8 +27,9 @@ a pinned count, when the customer's own newer edit moved its table's writes (``p
 = "move"``: the Move is the customer's, and the pin is cleared with a warning). The two
 automatic reroutes hold a pinned count instead (``pinned = "hold"``): they keep its
 table's writes on its engine as they keep a pinned write's, and a count they still
-strand is left pinned and gated, for the feasibility review to block on
-(:func:`stranded_counts`, ``FindingKind.STRANDED_COUNT``).
+strand is left pinned, and :func:`stranded_counts` reports it as
+``FindingKind.STRANDED_COUNT`` to the feasibility review, which no gate runs since
+#2509 (#2519).
 """
 
 from __future__ import annotations

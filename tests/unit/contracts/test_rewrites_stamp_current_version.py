@@ -254,23 +254,6 @@ def test_the_dynamodb_finalize_scope_rewrite_writes_the_current_version(
     assert written["contract_version"] == version
 
 
-@pytest.mark.usefixtures("schema_contract_off")
-def test_the_transform_copy_forward_writes_the_current_version(tmp_path: Path) -> None:
-    from src.atx_orchestrator.tools import _copy_schema_forward
-
-    store = LocalArtifactStore(base_dir=str(tmp_path))
-    stored = {
-        "contract_version": current_version(DynamoDBModelOutputContract),
-        "assignment_version": 1,
-    }
-    store.write_json(_ddb_schema_key(1), stored)
-    with bumped(DynamoDBModelOutputContract) as version:
-        assert _copy_schema_forward(store, "mydb", "job-1", "dynamodb", 1, 2)
-        written = _stored(tmp_path, _ddb_schema_key(2))
-    assert written["assignment_version"] == 2
-    assert written["contract_version"] == version
-
-
 # --- uploaded collector outputs --------------------------------------------------
 
 
@@ -284,7 +267,7 @@ def _collector_upload() -> dict:
 
 
 def test_ingest_writes_an_uploaded_collector_output_at_the_current_version() -> None:
-    from src.atx_orchestrator import core
+    from src.orchestrator import core
 
     written: dict[str, dict] = {}
 

@@ -9,8 +9,7 @@ an edited collection, then every step that builds a model input runs both ways: 
 external session's request files (analysis for DynamoDB and DocumentDB, reality
 check, schema design, synthesis) and the Bedrock calls (the analysis advisors, the
 reality check and its boto3 validator, every schema designer, the redesign path,
-synthesis, the free-text answer check). The AWS Transform orchestrator's report and
-routing-summary tools run on the same job. The check sits at the model boundary, so
+synthesis, the free-text answer check). The check sits at the model boundary, so
 a builder of any name is covered: ``strands.Agent`` is a stand-in that records every
 prompt, every botocore call to a Bedrock service is recorded and refused (no request
 leaves the machine), and the designers' input files are recorded as they are handed
@@ -48,9 +47,8 @@ SAMPLE = "trailgear"
 _BUILDER_RE = re.compile(
     r"^\s*def ((?:prepare|build|render)_\w*(?:llm_input|input|request)"
     r"|\w*_prompt|_build_\w*prompt\w*|headless_text|_invoke_pe_reviewer|_try_\w*validator"
-    # The free-text answer check, and the AWS Transform orchestrator's tools whose
-    # results carry the report and the routing summary to its model (#1317).
-    r"|_bedrock_validate|get_synthesis_report|present_assignment_review)\s*\(",
+    # The free-text answer check.
+    r"|_bedrock_validate)\s*\(",
     re.MULTILINE,
 )
 
@@ -204,7 +202,7 @@ def run_every_model_input(
     request's note and new pattern, and the free-text question and answer the answer
     check sees. Returns the artifact files, the prompts and system prompts the
     stand-in model saw, the designers' handed inputs, the refused Bedrock requests,
-    the AWS Transform tool results, the collector reads and the functions that ran.
+    the collector reads and the functions that ran.
     """
     import scripts.run_analysis as run_analysis
     import scripts.run_assessment as run_assessment
@@ -213,8 +211,6 @@ def run_every_model_input(
     from src.agents.answer_validation import validate_answer
     from src.agents.schema_design import handler as schema_handler
     from src.agents.schema_design.revision_handler import _dispatch_llm_redesign
-    from src.atx_orchestrator import tools as atx_tools
-    from src.atx_orchestrator.runtime.store import upgrade_store
     from src.contracts.agent_interaction_models import AgentQuestion
     from src.contracts.schema_revision_models import (
         NewPattern,
@@ -222,8 +218,6 @@ def run_every_model_input(
         PatternModification,
         SchemaRevisionRequest,
     )
-
-    tool_results: list[str] = []
 
     called: set[tuple[str, str]] = set()
 
@@ -367,14 +361,6 @@ def run_every_model_input(
             question_id="q-free-text", category="design", question=free_text, options=None
         )
         _quietly(validate_answer, question, free_text)
-        # The AWS Transform orchestrator's tools, reading the Bedrock job's report
-        # and assignment from the same store.
-        mp.setattr(atx_tools, "_make_store", lambda: upgrade_store(bed_store))
-        for atx_tool in (atx_tools.get_synthesis_report, atx_tools.present_assignment_review):
-            try:
-                tool_results.append(str(atx_tool(bjob, bdb)))
-            except Exception:  # noqa: BLE001 -- recorded as missing by the caller's checks
-                pass
     finally:
         threading.setprofile_all_threads(None)  # type: ignore[arg-type]
         mp.undo()
@@ -395,7 +381,6 @@ def run_every_model_input(
         "prompts": list(_ModelStandIn.prompts),
         "system_prompts": list(_ModelStandIn.system_prompts),
         "handed": handed,
-        "tool_results": tool_results,
         "bedrock_requests": bedrock_requests,
         "collector_reads": [(str(Path(f).resolve()), n) for f, n in collector_reads],
         "called": {(str(Path(f).resolve()), n) for f, n in called},

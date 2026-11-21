@@ -26,11 +26,6 @@ uv run pytest tests/integration/ -v
 uv run pytest tests/contract/ -v
 ```
 
-`make test` runs the `atx_orchestrator` tests, which need the AWS Transform
-SDK (`uv pip install -r src/atx_orchestrator/requirements-sdk.txt`; see
-`tests/unit/atx_orchestrator/conftest.py`). Without it `ci/test.sh` stops
-before pytest with a one-line message. `uv sync` removes the SDK, so repeat the
-install after any `uv sync`.
 `make e2e` needs `uv sync --extra e2e` plus Node 22 and Playwright's browsers
 (`ci/e2e.sh` installs the browsers and builds the UI itself).
 

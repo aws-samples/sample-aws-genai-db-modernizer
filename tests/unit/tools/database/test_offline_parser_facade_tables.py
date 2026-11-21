@@ -8,8 +8,8 @@ scan. It now asks :func:`src.tools.sql.facade.table_references` (dialect from
 the collection's source engine), and the regex is only the facade's own
 fallback. These tests pin the regex misreads the shadow comparison found on
 the samples (#779), the fallback, and that every entry point that goes through
-the parser (local scripts, the S3 offline collector, the AWS Transform
-orchestrator) gets the same answer.
+the parser (local scripts, the S3 offline collector, the library ingest) gets
+the same answer.
 """
 
 from __future__ import annotations

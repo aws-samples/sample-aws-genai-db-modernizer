@@ -3,7 +3,7 @@
 
 """Unit tests for the consolidated analysis runner (ADR-024).
 
-``run_all_analyses`` replaces the six per-engine analysis subagents: it runs
+``run_all_analyses`` runs
 every triage-selected engine in one process via the unchanged
 ``run_analysis_core``, writing the same ``analysis-<target_database>/analysis.json``
 artifacts the Assign phase reads. These tests drive it end-to-end against the
@@ -11,14 +11,13 @@ bundled WordPress sample (deterministic, ~50ms, no LLM, no AWS) and assert:
 
   1. every selected engine's artifact lands under the same key as before,
   2. the per-engine progress callbacks fire once each with the
-     ``analysis_<target_database>`` label (what the WebApp sub-steps key on),
+     ``analysis_<target_database>`` label,
   3. an explicit engine list overrides triage; an unknown id in it raises, while
      an unknown triage token is skipped,
   4. a missing triage output raises when engines are not supplied,
   5. engines are keyed by catalog id (#1179).
 
-These stay SDK-free (import only ``core`` + the local store), so they run both
-locally and in CI where ``agent_builder_sdk`` is absent.
+They import only ``core`` and the local store.
 """
 
 from __future__ import annotations
@@ -30,9 +29,9 @@ from pathlib import Path
 import pytest
 
 from src.agents.referee.triage_handler import run_triage
-from src.atx_orchestrator.core import _ANALYSIS_ENGINES, ingest_offline_collection, run_all_analyses
-from src.atx_orchestrator.runtime.store import upgrade_store
+from src.orchestrator.core import _ANALYSIS_ENGINES, ingest_offline_collection, run_all_analyses
 from src.storage.local_store import LocalArtifactStore
+from src.storage.text_store import upgrade_store
 
 # Only the .zip is committed (the scripts extract the .json on first use, #331),
 # so read the sample straight from the archive — the .json is not present in a
@@ -56,8 +55,7 @@ def _load_sample() -> dict:
 @pytest.fixture
 def prepared_store(tmp_path):
     """A store seeded with collector + triage output for the WordPress sample."""
-    # Wrap the local store the same way the ATX runtime does (make_store ->
-    # upgrade_store), so it has the write_text capability run_analysis_core uses
+    # Wrap the local store the way ``make_store`` does (``upgrade_store``), so it has the write_text capability run_analysis_core uses
     # for ER diagrams.
     store = upgrade_store(LocalArtifactStore(base_dir=str(tmp_path)))
     raw = _load_sample()
@@ -102,23 +100,20 @@ def test_runs_all_selected_engines_and_writes_same_artifacts(prepared_store) -> 
 
 
 def test_analysis_survives_json_only_store_rejecting_er_diagram(prepared_store) -> None:
-    """Regression (merge): the ATX artifact store is JSON-only and raises
-    NotImplementedError on write_text. dynamodb and documentdb set
-    mermaid_always=True, so they always write an er-diagram.mmd via write_text —
-    on the ATX backend that raised and failed the whole engine's analysis (the
-    merge adopted main's JSON-only store while the ER-diagram write was
-    unguarded). The write must now be tolerated: analysis succeeds with no ER
-    diagram artifact rather than failing the engine."""
+    """A JSON-only store raises NotImplementedError on write_text. dynamodb and
+    documentdb set mermaid_always=True, so they always write an er-diagram.mmd via
+    write_text. The write is tolerated: analysis succeeds with no ER diagram
+    artifact rather than failing the engine."""
     store, job, db = prepared_store
 
     class _JsonOnlyStore:
-        """Delegates to a real store but rejects write_text, like TransformAtxStore."""
+        """Delegates to a real store but rejects write_text."""
 
         def __init__(self, inner):
             self._inner = inner
 
         def write_text(self, *args, **kwargs):
-            raise NotImplementedError("ATX artifact store is JSON-only")
+            raise NotImplementedError("this store is JSON-only")
 
         def __getattr__(self, name):
             return getattr(self._inner, name)

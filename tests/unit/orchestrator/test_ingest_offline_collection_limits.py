@@ -15,7 +15,7 @@ from __future__ import annotations
 
 import pytest
 
-from src.atx_orchestrator import core
+from src.orchestrator import core
 from src.tools.validation.ingestion_limits import IngestionLimitError
 
 

@@ -17,7 +17,6 @@ group, and the two groups merged by ``--merge``.
 
 from __future__ import annotations
 
-import copy
 import json
 from pathlib import Path
 from typing import Any
@@ -356,25 +355,6 @@ def test_a_failed_external_review_is_recorded_as_a_versioned_trace(
     assert trace["trace"][0]["type"] == "pe_error"
 
 
-def test_the_carry_forward_restamps_a_copied_trace_to_today(tmp_path: Path) -> None:
-    """ATX copies an unaffected engine's design forward; the trace is written at today's
-    version, not the one it was copied at."""
-    from src.atx_orchestrator.tools import _copy_schema_forward
-    from tests.unit.agents.schema_design.valid_designs import ddb_design, ddb_pattern, ddb_table
-
-    store_ = _fresh(tmp_path)
-    prev = f"{DB}/{JOB}/schema-dynamodb/v1"
-    design = ddb_design(
-        [ddb_table("Orders", "orders")], [ddb_pattern("DDB-AP-1", "Orders", "orders", "q1")]
-    )
-    store_.write_json(f"{prev}/schema_output.json", design)
-    old = copy.deepcopy(_fixture("single_bedrock"))
-    _put(tmp_path, f"{prev}/design_trace.json", old)  # saved before the contract
-    assert _copy_schema_forward(store_, DB, JOB, "dynamodb", 1, 2) is True
-    copied = _raw(tmp_path, f"{DB}/{JOB}/schema-dynamodb/v2/design_trace.json")
-    assert copied == {"contract_version": CURRENT, **old}
-
-
 def test_the_group_designer_writes_each_groups_trace_versioned(tmp_path: Path) -> None:
     from unittest.mock import patch
 
@@ -444,11 +424,8 @@ def test_the_shape_error_names_the_artifact_and_field_and_not_the_value() -> Non
 
 
 def test_every_reader_raises_the_same_error_on_a_bad_shape(tmp_path: Path) -> None:
-    """Router, store reader (the orchestrator's), synthesis and the AWS Transform
-    carry-forward: none reads a bad shape as no flags or no trace."""
-    from src.atx_orchestrator.tools import _copy_schema_forward
-    from tests.unit.agents.schema_design.valid_designs import ddb_design, ddb_pattern, ddb_table
-
+    """Router, store reader (the orchestrator's) and synthesis: none reads a bad shape
+    as no flags or no trace."""
     _put(tmp_path, SINGLE, BAD_SHAPE)
     store_ = _fresh(tmp_path)
     with pytest.raises(DesignTraceShapeError):
@@ -457,15 +434,6 @@ def test_every_reader_raises_the_same_error_on_a_bad_shape(tmp_path: Path) -> No
         read_design_trace(store_, SINGLE)
     with pytest.raises(DesignTraceShapeError):
         _read_design_trace(store_, SINGLE)
-    prev = f"{DB}/{JOB}/schema-dynamodb/v1"
-    design = ddb_design(
-        [ddb_table("Orders", "orders")], [ddb_pattern("DDB-AP-1", "Orders", "orders", "q1")]
-    )
-    store_.write_json(f"{prev}/schema_output.json", design)
-    _put(tmp_path, f"{prev}/design_trace.json", BAD_SHAPE)
-    with pytest.raises(DesignTraceShapeError):
-        _copy_schema_forward(store_, DB, JOB, "dynamodb", 1, 3)
-    assert not store_.exists(f"{DB}/{JOB}/schema-dynamodb/v3/design_trace.json")
 
 
 def test_a_model_answer_is_not_thrown_away_on_a_type_quirk() -> None:

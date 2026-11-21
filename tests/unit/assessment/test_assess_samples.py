@@ -380,7 +380,7 @@ def test_reality_check_record_follows_the_lineage(tmp_path: Path) -> None:
     """The result carries the reality-check run the effective assignment descends from:
     after the assignment is resolved again (a new lineage), the earlier run's record is
     not reported, and the new lineage's run is once it has one."""
-    from src.atx_orchestrator.core import run_assignment_core, run_reality_check_core
+    from src.orchestrator.core import run_assignment_core, run_reality_check_core
 
     store = LocalArtifactStore(str(tmp_path))
     first = assess(

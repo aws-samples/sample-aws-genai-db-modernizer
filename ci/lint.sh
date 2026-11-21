@@ -23,7 +23,6 @@ log "ci/README budget"; uv run python ci/readme_budget.py
 log "catalog"; uv run python scripts/render_catalog.py --check
 log "graph catalog"; uv run python scripts/render_graph_catalog.py --check
 log "contract schemas"; uv run python scripts/render_contract_schemas.py --check
-log "image requirements"; uv run python scripts/render_atx_requirements.py --check
 log "group draft agent"; uv run python scripts/render_group_draft_agent.py --check
 log "sample routines"; uv run python scripts/render_sample_routines.py --check
 log "prices"; uv run python scripts/refresh_prices.py --check-age

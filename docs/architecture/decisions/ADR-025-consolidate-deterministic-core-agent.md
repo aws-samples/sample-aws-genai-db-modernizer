@@ -7,6 +7,8 @@
 
 ---
 
+> *Removed (2026-11-20, #2509):* the AWS Transform integration (`src/atx_orchestrator/`, `pipeline/`) was removed. What this ADR says about it is history; the pipeline phase entry points it called now live in `src/orchestrator/core.py`.
+
 ## Context
 
 ADR-024 consolidated the six per-engine analysis agents into a single

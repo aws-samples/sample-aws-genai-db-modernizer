@@ -50,7 +50,7 @@ When filing an issue, please check existing open, or recently closed, issues to 
 - Git
 - uv (Python package manager)
 - Node.js 22 (for the local UI and UI development)
-- AWS CLI configured with credentials (for Bedrock, live-mode collection, or the AWS Transform integration)
+- AWS CLI configured with credentials (for Bedrock or live-mode collection)
 
 ### Quick Setup
 
@@ -282,12 +282,7 @@ A follow-up commit that leaves the issue open ends with `Refs #123` instead of `
    for review, run the full unit, contract and property suites (`make test`, or
    `./ci/test.sh -q`, which `./ci/pre_merge.sh` also runs) and make them green;
    they are not CI-only. Only the e2e and real-model tiers are left to CI unless
-   your change needs them. The suites include the `atx_orchestrator` tests, which
-   need the AWS Transform SDK: run
-   `uv pip install -r src/atx_orchestrator/requirements-sdk.txt` (see
-   `tests/unit/atx_orchestrator/conftest.py`; first-time `./scripts/setup_dev.sh`
-   does it too). `uv sync` removes it, so repeat the install after any `uv sync`.
-   Without it `ci/test.sh` stops before pytest with a one-line message.
+   your change needs them.
 
 3. **Verify linters pass** (pre-commit runs these automatically on commit, but you can run manually):
 
@@ -437,9 +432,7 @@ the server when its owner dies, even by `SIGKILL`.
 A folder a crashed run left behind is stopped and removed by the next start once its
 owning process is gone, whether or not the watcher ran. <!-- claim: tests/unit/tools/database/test_disposable_engine.py::test_a_dead_owners_folder_is_swept_and_a_live_one_is_left -->
 
-`make test` needs the AWS Transform SDK for the `atx_orchestrator` tests
-(`uv pip install -r src/atx_orchestrator/requirements-sdk.txt`; see
-`tests/unit/atx_orchestrator/conftest.py`) and `make e2e` needs the `e2e`
+`make e2e` needs the `e2e`
 extra (`uv sync --extra e2e`), the `docs` extra (`uv sync --extra docs`,
 needed to build the help site this suite also checks), Node 22, and
 Playwright's browsers (`ci/e2e.sh` installs the browsers and builds the UI

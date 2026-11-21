@@ -76,13 +76,8 @@ logger = logging.getLogger(__name__)
 #: model-access errors a ``us.`` profile gives outside its US source Regions.
 #: Every model here has a ``global.`` profile (Bedrock model cards, checked
 #: 2026-11-06); a model added without one keeps its ``us.`` ID, with a comment
-#: saying so. IAM coverage: ``pipeline/iam-roles.yaml`` grants exactly these
-#: profiles and the foundation models they route to (the profile in the
-#: source Region, the model in the source Region, and the Region-less model
-#: ARN), following AWS's documented pattern for global cross-Region inference;
-#: ``tests/unit/tools/aws/test_iam_templates.py`` keeps the two in step. An
-#: env override onto a geographic profile (``us.``, ``eu.``, ...) for data
-#: residency needs its own grant.
+#: saying so. An env override onto a geographic profile (``us.``, ``eu.``, ...)
+#: for data residency needs its own IAM grant.
 MODEL_IDS: dict[str, str] = {
     "opus-4.6": "global.anthropic.claude-opus-4-6-v1",
     "sonnet-4.6": "global.anthropic.claude-sonnet-4-6",
@@ -109,7 +104,6 @@ class Role(str, Enum):
     VALIDATOR = "validator"
     LIGHT_CHECK = "light_check"
     ANALYSIS_ADVISOR = "analysis_advisor"
-    ATX_AGENT = "atx_agent"
 
 
 @dataclass(frozen=True)
@@ -219,12 +213,6 @@ ROLE_SPECS: dict[Role, RoleSpec] = {
         effort="medium",
         structured_output=True,
         strict_tools=True,
-    ),
-    # AWS Transform orchestrator and subagents. The SDK builds the model from
-    # the ID alone (no sampling or thinking fields), so only the ID is ours.
-    Role.ATX_AGENT: RoleSpec(
-        env_vars=("MODEL_ID",),
-        default_model=MODEL_IDS["sonnet-5.5"],
     ),
 }
 

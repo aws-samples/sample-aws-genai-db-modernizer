@@ -19,7 +19,7 @@ from typing import Any
 import pytest
 
 from scripts import run_assessment, run_collect
-from src.atx_orchestrator import core
+from src.orchestrator import core
 from src.storage.local_store import LocalArtifactStore
 
 

@@ -228,13 +228,6 @@ BASELINES: tuple[Baseline, ...] = (
         lambda: _check_script_is_stale("render_contract_schemas.py"),
     ),
     Baseline(
-        "atx-requirements",
-        ("src/atx_orchestrator/requirements.txt",),
-        "uv run python scripts/render_atx_requirements.py --write",
-        lambda _reason: _python("scripts/render_atx_requirements.py", "--write"),
-        lambda: _check_script_is_stale("render_atx_requirements.py"),
-    ),
-    Baseline(
         "group-draft-agent",
         (".claude/agents/dynamodb-group-draft.md",),
         "uv run python scripts/render_group_draft_agent.py --write",

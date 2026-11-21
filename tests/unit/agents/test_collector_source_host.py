@@ -160,7 +160,7 @@ def test_run_collect_writes_source_host(tmp_path: Path) -> None:
 
 
 def test_the_transform_ingest_writes_source_host() -> None:
-    from src.atx_orchestrator import core
+    from src.orchestrator import core
 
     class _Store:
         def __init__(self) -> None:

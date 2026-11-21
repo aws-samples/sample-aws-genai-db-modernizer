@@ -61,8 +61,8 @@ if str(REPO) not in sys.path:
 
 # A test file that mentions any of these may pin a version.
 MENTIONS = re.compile(r"contract_version|_VERSION\b|current_version")
-# Suites the check does not run: they need the whole pipeline, a live stack or an SDK.
-SKIP_DIRS = ("tests/e2e/", "tests/integration/", "tests/unit/atx_orchestrator/")
+# Suites the check does not run: they need the whole pipeline or a live stack.
+SKIP_DIRS = ("tests/e2e/", "tests/integration/")
 SIMULATED_REASON = "Simulated bump (scripts/check_version_pins.py)."
 _CONTRACT_MODULE = re.compile(r"src/contracts/([A-Za-z_][A-Za-z0-9_]*)\.py")
 _PENDING_FILE = re.compile(r"src/contracts/pending/[^/]+\.toml")

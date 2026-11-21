@@ -54,7 +54,7 @@ graph LR
 
 ## Artifacts
 
-`job_id` is a UUID; the local scripts truncate it to 8 hex characters. `{database-name}` must match the real database name (the collection records it); a mismatch breaks table ids across phases. The default store is the local filesystem (`./artifacts/`); the AWS Transform integration uses the same layout in S3.
+`job_id` is a UUID; the local scripts truncate it to 8 hex characters. `{database-name}` must match the real database name (the collection records it); a mismatch breaks table ids across phases. The default store is the local filesystem (`./artifacts/`).
 
 ```text
 {artifact-root}/{database-name}/{job-id}/

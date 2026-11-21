@@ -26,7 +26,7 @@ from unittest.mock import patch
 
 import pytest
 
-from src.atx_orchestrator.core import run_schema_design_core
+from src.orchestrator.core import run_schema_design_core
 
 JOB, DB = "j1", "discourse"
 
@@ -260,32 +260,6 @@ class TestGroupingWiring:
         auto.assert_called_once()
         assert auto.call_args.kwargs["target_type"] == "dynamodb"
         assert auto.call_args.kwargs["assignment_version"] == 1
-
-
-class TestAgentTypeMapping:
-    """One `schema` agent designs for every target engine (ADR-027).
-
-    target_type arrives in the invocation payload, so the valid set is a flat
-    frozenset of engine identifiers, not a per-runtime AGENT_TYPE map.
-    """
-
-    def test_all_six_targets_present_and_correct(self) -> None:
-        from src.atx_orchestrator.subagents.schema import VALID_TARGET_TYPES
-
-        assert VALID_TARGET_TYPES == {
-            "dynamodb",
-            "documentdb",
-            "elasticache",
-            "opensearch",
-            "aurora_postgresql",
-            "aurora_mysql",
-        }
-
-    def test_schema_agent_is_in_the_entrypoint_table(self) -> None:
-        """The one schema runtime must have an _AGENTS row or it can't deploy."""
-        from src.atx_orchestrator.atx_entrypoint import _AGENTS
-
-        assert "schema" in _AGENTS
 
 
 class TestNonTabularEngineIsNotMistakenForNoDesign:

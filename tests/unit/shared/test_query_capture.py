@@ -439,7 +439,7 @@ def test_run_assessment_keeps_every_statement_by_default(tmp_path):
 
 
 def test_the_library_ingest_cuts_nothing_and_records_the_capture(tmp_path):
-    from src.atx_orchestrator.core import ingest_offline_collection
+    from src.orchestrator.core import ingest_offline_collection
     from src.storage.local_store import LocalArtifactStore
 
     text = _sample("wordpress", tmp_path / "in").read_text()

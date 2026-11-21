@@ -212,8 +212,6 @@ check_generated "graph query catalog" "docs/guides/context-graph-query-cookbook.
   uv run python scripts/render_graph_catalog.py --check
 check_generated "assess() JSON Schemas" "docs/contracts/schemas/assess_request.v1.schema.json|docs/contracts/schemas/assess_result.v1.schema.json" \
   uv run python scripts/render_contract_schemas.py --check
-check_generated "image requirements" "src/atx_orchestrator/requirements.txt" \
-  uv run python scripts/render_atx_requirements.py --check
 
 tmp="$(mktemp)"
 main_wt=""

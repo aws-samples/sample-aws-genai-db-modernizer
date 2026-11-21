@@ -23,8 +23,8 @@ from typing import Any
 import pytest
 
 from scripts import run_assessment, run_collect
-from src.atx_orchestrator.core import ingest_offline_collection
 from src.contracts.collector_output import CollectorOutputContract
+from src.orchestrator.core import ingest_offline_collection
 from src.shared.contract_versioning import current_version
 from src.storage.local_store import LocalArtifactStore
 

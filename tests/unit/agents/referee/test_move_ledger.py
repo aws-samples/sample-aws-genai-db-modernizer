@@ -181,11 +181,10 @@ class TestMoveContract:
         import re
         from pathlib import Path
 
-        root = Path(__file__).resolve().parents[4]
-        for path in (root / "pyproject.toml", root / "src/atx_orchestrator/requirements.in"):
-            match = re.search(r"pydantic>=(\d+)\.(\d+)", path.read_text())
-            assert match, f"{path}: no pydantic floor"
-            assert (int(match[1]), int(match[2])) >= (2, 11), f"{path}: pydantic floor below 2.11"
+        path = Path(__file__).resolve().parents[4] / "pyproject.toml"
+        match = re.search(r"pydantic>=(\d+)\.(\d+)", path.read_text())
+        assert match, f"{path}: no pydantic floor"
+        assert (int(match[1]), int(match[2])) >= (2, 11), f"{path}: pydantic floor below 2.11"
 
     def test_an_unknown_key_from_a_newer_file_is_kept(self):
         """Moves are read back across versions: a field a later MINOR adds is kept,

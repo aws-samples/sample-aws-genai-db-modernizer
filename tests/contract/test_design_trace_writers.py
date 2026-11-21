@@ -30,7 +30,6 @@ WRITER_FILES = (
     "src/agents/schema_design/handler.py",
     "src/agents/schema_design/group_merger.py",
     "src/agents/schema_design/pe_review_external.py",
-    "src/atx_orchestrator/tools.py",
 )
 # Not scanned for a stray write: the writer itself takes its key as a parameter. The
 # local orchestrator's verbatim copy of an engine's files to the next version builds its

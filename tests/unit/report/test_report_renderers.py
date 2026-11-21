@@ -9,11 +9,6 @@ exercised against a committed fixture — the real report from the deployed
 ``v2-e2e-09`` run — so the assertions check genuine reconciliation
 ($814.12 / 100% workload / 90 tables that migrate) and the executive/engineering
 content split, not a hand-built stub.
-
-The ATX orchestrator's publish wiring (``_publish_synthesis_deliverables`` /
-``run_synthesis_via_a2a``) is exercised separately in
-``tests/unit/atx_orchestrator/test_synthesis_deliverables.py`` — this module
-covers only the renderers themselves.
 """
 
 from __future__ import annotations

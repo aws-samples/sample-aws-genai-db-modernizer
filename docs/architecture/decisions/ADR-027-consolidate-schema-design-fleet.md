@@ -7,6 +7,8 @@
 
 ---
 
+> *Removed (2026-11-20, #2509):* the AWS Transform integration (`src/atx_orchestrator/`, `pipeline/`) was removed. What this ADR says about it is history; the pipeline phase entry points it called now live in `src/orchestrator/core.py`.
+
 ## Context
 
 After ADR-024/025/026 the ATX fleet is nine runtimes: `orchestrator`,
@@ -268,5 +270,5 @@ Each amendment names the guard test that fails when the code stops following it.
 
 | Decision | Enforced by |
 |---|---|
-| Amendment 2026-08-27: restore per-engine query grouping on the deployed path + co-dependency-aware clustering | `tests/unit/atx_orchestrator/test_schema_design_core.py::TestGroupingWiring`<br>`tests/unit/test_group_splitter.py::TestCoDependencyClustering`<br>`tests/unit/test_group_merger.py::TestMergeGroupDrafts`<br>`tests/unit/agents/test_schema_design_handler.py::TestRunSchemaDesignAutoRouting`<br>`tests/e2e/test_design_split_units.py::test_every_placement_unit_is_in_one_part_or_its_cut_is_recorded`<br>`tests/e2e/test_design_split_units.py::test_the_guard_fails_on_a_saved_split_that_cuts_a_unit_without_a_record`<br>`tests/unit/agents/schema_design/test_split_keeps_units_whole.py` |
+| Amendment 2026-08-27: restore per-engine query grouping on the deployed path + co-dependency-aware clustering | `tests/unit/orchestrator/test_schema_design_core.py::TestGroupingWiring`<br>`tests/unit/test_group_splitter.py::TestCoDependencyClustering`<br>`tests/unit/test_group_merger.py::TestMergeGroupDrafts`<br>`tests/unit/agents/test_schema_design_handler.py::TestRunSchemaDesignAutoRouting`<br>`tests/e2e/test_design_split_units.py::test_every_placement_unit_is_in_one_part_or_its_cut_is_recorded`<br>`tests/e2e/test_design_split_units.py::test_the_guard_fails_on_a_saved_split_that_cuts_a_unit_without_a_record`<br>`tests/unit/agents/schema_design/test_split_keeps_units_whole.py` |
 | Amendment 2026-10-27 (#1602): DynamoDB designs per access pattern, not per statement | `tests/unit/agents/schema_design/test_design_per_access_pattern.py::test_parts_are_capped_by_patterns`<br>`tests/unit/agents/schema_design/test_design_per_access_pattern.py::test_a_pattern_with_many_members_is_one_entry`<br>`tests/unit/agents/schema_design/test_design_per_access_pattern.py::test_an_access_pattern_serving_a_pattern_names_every_member`<br>`tests/unit/agents/schema_design/test_design_per_access_pattern.py::test_member_ids_survive_the_merge`<br>`tests/unit/agents/schema_design/test_design_coverage.py::test_a_merged_design_that_drops_a_one_statement_pattern_fails_coverage` |

@@ -2,7 +2,7 @@
 # SPDX-License-Identifier: MIT-0
 
 # tests/unit/graph/test_graph_persistence_capability.py
-"""GraphPersistence must not touch a backend that does not support bytes (ATX)."""
+"""GraphPersistence must not touch a backend that does not support bytes."""
 
 from __future__ import annotations
 
@@ -11,7 +11,7 @@ from src.storage.artifact_store import ArtifactStore
 
 
 class _NoBytesStore(ArtifactStore):
-    """Minimal ATX-like store: JSON-only, no byte support."""
+    """Minimal JSON-only store: no byte support."""
 
     supports_bytes = False
 

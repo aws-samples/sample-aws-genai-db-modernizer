@@ -33,7 +33,7 @@ Each engine-specific collector supports three modes
 | Mode | What it does | Used by |
 |------|--------------|---------|
 | `offline` | Parses the output of the read-only SQL scripts (`scripts/collect-mysql.sql`, `collect-postgresql.sql`, `collect-sqlserver.sql`, `collect-oracle.sql`) that a user runs themselves against their own database | `run_assessment.py --file <collection.json>` ([Analyzing your own database](../use-claude-code.md#analyzing-your-own-database)) |
-| `ddl` | Parses schema DDL fetched from S3 — no live connection | The AWS Transform integration |
+| `ddl` | Parses schema DDL fetched from S3 — no live connection | The collector handler's `ddl` mode (`src/agents/collector/handler.py`) |
 | `live` | Connects to a real database through an SSM Run Command on a per-VPC automation instance; credentials are resolved on the automation instance and never appear in SSM command history | The opt-in `automation.yaml` path, gated behind `MODERNIZER_ENABLE_AUTOMATION=1` (checked in `src/api/routes/assessments.py`, returns 501 when unset); tracked further in [#342](https://github.com/aws-samples/sample-aws-genai-db-modernizer/issues/342) |
 
 There is no direct-database-connection path anywhere in this codebase —

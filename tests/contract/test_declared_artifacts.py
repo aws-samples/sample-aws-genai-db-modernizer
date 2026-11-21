@@ -26,7 +26,7 @@ Blind spots: the scan sees only ``.write_json`` calls, so a JSON file written wi
 ``write_text``, ``write_bytes`` or ``json.dump`` (``collector/sql_shadow.json`` is),
 or one whose file name the scan cannot render (a constant from another module, a
 caller's parameter), is checked only when a run writes it; and a run covers only the
-paths it takes (no API, AWS Transform or load-test run here).
+paths it takes (no API or load-test run here).
 """
 
 from __future__ import annotations

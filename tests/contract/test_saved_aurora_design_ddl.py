@@ -429,7 +429,7 @@ def test_a_statement_that_is_not_a_string_is_refused(
 
 @pytest.mark.parametrize("engine", sorted(MODELS))
 def test_an_uploaded_design_is_refused_like_a_stored_one(engine: str) -> None:
-    """ATX and the CLI read an uploaded contract through ``read_contract_payload``."""
+    """The CLI reads an uploaded contract through ``read_contract_payload``."""
     saved = _load(WORDPRESS if engine == "aurora_mysql" else DISCOURSE[1])
     read_contract_payload(copy.deepcopy(saved), MODELS[engine], artifact="upload")
     saved["generated_ddl"] += "\n\nDROP TABLE x;"

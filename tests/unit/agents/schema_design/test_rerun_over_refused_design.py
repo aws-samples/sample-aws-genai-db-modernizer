@@ -111,7 +111,7 @@ def test_a_design_that_reads_is_left_where_it_is(tmp_path: Path) -> None:
     assert not (tmp_path / f"{KEY}.refused").exists()
 
 
-# --- Stores that cannot copy bytes or delete (S3, AWS Transform) -----------------------
+# --- Stores that cannot copy bytes or delete (S3, a JSON-only store) -------------------
 
 
 class _MemoryStore(ArtifactStore):
@@ -150,8 +150,8 @@ class _S3Like(_MemoryStore):
     delete = ArtifactStore.delete  # type: ignore[assignment]
 
 
-class _AtxLike(_S3Like):
-    """AWS Transform's method set: JSON only, no raw bytes, no delete."""
+class _JsonOnlyLike(_S3Like):
+    """A JSON-only store's method set: no raw bytes, no delete."""
 
     def read_bytes(self, path: str) -> bytes:
         raise NotImplementedError("JSON only")
@@ -185,7 +185,7 @@ _KEPT = {
     _S3Like: ("copied the refused saved design", True),
     _DeleteDoesNothing: ("copied the refused saved design", True),
     _DeleteRaises: (f"copied it to {KEY}.refused, and the original stays", True),
-    _AtxLike: ("this store cannot copy it", False),
+    _JsonOnlyLike: ("this store cannot copy it", False),
 }
 
 
@@ -212,7 +212,7 @@ def test_a_store_that_cannot_move_the_file_keeps_one_copy_at_most_and_claims_no_
 
 
 @pytest.mark.passes_on_main
-@pytest.mark.parametrize("store_type", [_S3Like, _AtxLike])
+@pytest.mark.parametrize("store_type", [_S3Like, _JsonOnlyLike])
 def test_a_rerun_on_a_store_that_cannot_set_aside_replaces_the_refused_design(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, store_type: type[_MemoryStore]
 ) -> None:

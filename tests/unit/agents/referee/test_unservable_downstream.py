@@ -76,7 +76,7 @@ class TestTheCustomerGate:
         store = _job(tmp_path, ["dynamodb"], [READ, W1, W2])
         with pytest.raises(UnservableQueryOverride) as refused:
             apply_assignment_overrides(store, DB, JOB, [override])
-        # The API and the AWS Transform tools report it as a refused edit.
+        # The API reports it as a refused edit.
         assert isinstance(refused.value, AssignmentOverrideError)
         message = str(refused.value)
         assert "Query w1 has no engine" in message

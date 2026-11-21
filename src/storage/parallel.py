@@ -3,8 +3,8 @@
 
 """Bounded thread-pool fan-out for independent per-item ArtifactStore IO.
 
-Under the ATX storage backend every ``read_json``/``write_json`` is a network
-round trip (create presigned URL + S3 transfer, ~0.3-0.5s each). A loop that
+On a remote storage backend every ``read_json``/``write_json`` is a network
+round trip (~0.3-0.5s each). A loop that
 does one such call per query/journey/artifact over hundreds or thousands of
 items — the reference "discourse" workload has ~1,654 queries — becomes minutes
 of pure serial latency. When the per-item work is independent (each item touches

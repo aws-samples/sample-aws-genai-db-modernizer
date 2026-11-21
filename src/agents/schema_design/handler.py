@@ -253,7 +253,7 @@ def set_aside_refused_design(
     (``.refused.2`` and on for another content; an identical earlier copy is reused), which
     no reader loads, and removed only once the copy is written. A store that can copy but
     not delete (S3 without delete rights) keeps the copy and the original; one that cannot
-    copy raw content (AWS Transform's) keeps only the original. Either way this run
+    copy raw content (a JSON-only store) keeps only the original. Either way this run
     overwrites the original, its content being untrusted anyway, and the log says which
     happened. Logs the path and the refused field's position, never the content. Never
     fails the run. Returns the new key when the original was moved, else ``None``."""
@@ -1451,8 +1451,8 @@ def run_schema_merge(
         )
     except SchemaContractError as exc:
         # Nothing was written (#1186). Re-raised so no caller can carry on as
-        # if the engine were designed: the local orchestrator, the schema-merge
-        # entrypoint and ATX fail the phase with these errors, and the external
+        # if the engine were designed: the local orchestrator and the schema-merge
+        # entrypoint fail the phase with these errors, and the external
         # --merge turns them into a correction turn.
         say(
             f"[schema-merge/{target_type}] ❌ merged design fails the output contract "
@@ -1937,10 +1937,8 @@ def _dispatch_schema_agent(
         context_tables_path: Optional path to a DynamoDB group's context tables
             (``group_context_tables``, #1243): tables another group owns.
     """
-    # The cases below are the implemented designers; keep them in sync with
-    # core.IMPLEMENTED_SCHEMA_DESIGNERS (the orchestrator skips engines absent
-    # from that set before dispatch). Anything else falls through to the
-    # not_implemented placeholder.
+    # The cases below are the implemented designers. Anything else falls through
+    # to the not_implemented placeholder.
     match target_type:
         case "dynamodb":
             from src.tools.schema.dynamodb_schema_agent import run_dynamodb_schema_agent
