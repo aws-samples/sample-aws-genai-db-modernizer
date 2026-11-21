@@ -71,6 +71,37 @@ def test_one_schemas_tables_whose_names_fold_to_one_are_left_out_with_a_note(eng
     assert result.output is None and "unknown table" in result.errors[0]
 
 
+@pytest.mark.parametrize("engine", ["aurora_postgresql", "aurora_mysql"])
+@pytest.mark.parametrize("names", [("orders", "orders"), ('"Orders', "orders")])
+def test_a_table_of_no_schema_and_its_namesake_in_the_one_schema_are_left_out(
+    engine, names
+) -> None:
+    """#2353: a design of one schema creates every table under its bare name, a table the
+    collector reports with no schema too, so ``public.orders`` and a schemaless ``orders``
+    (or ``"Orders``) would be two ``CREATE TABLE "orders"``, which no saved-design check
+    reads back. Both are left out with a note, and the design loads as written."""
+    tables = [_table(names[0], "public"), _table(names[1], None), _table("items", "public")]
+    assert not _base(engine, tables).qualified
+    design = _merged(engine, tables)
+    assert _names(design) == [(None, "items")]
+    assert design["generated_ddl"].count("CREATE TABLE ") == 1
+    notes = _notes(design, "colliding_table_name")
+    assert [n["source_object"] for n in notes] == list(names)
+    assert check_design_ddl(json.loads(json.dumps(design)), engine) == design
+
+
+@pytest.mark.passes_on_main
+def test_a_qualified_design_keeps_a_schemaless_table_apart_from_its_namesake() -> None:
+    """In a design of two schemas a schemaless ``orders`` is created bare, apart from
+    ``sales.orders``: both are designed and the design loads as written."""
+    tables = [_table("orders", "sales"), _table("orders", None), _table("items", "archive")]
+    assert _base("aurora_postgresql", tables).qualified
+    design = _merged("aurora_postgresql", tables)
+    assert _names(design) == [("sales", "orders"), (None, "orders"), ("archive", "items")]
+    assert _notes(design, "colliding_table_name") == []
+    assert check_design_ddl(json.loads(json.dumps(design)), "aurora_postgresql") == design
+
+
 @pytest.mark.passes_on_main
 def test_two_schemas_tables_whose_names_differ_only_in_case_stay_apart() -> None:
     """In a design of two schemas, ``sales.Orders`` and ``archive.orders`` have two keys:
