@@ -253,3 +253,22 @@ def test_a_design_saved_before_2478_still_loads_as_written(name) -> None:
     assert checked["generated_ddl"] == saved["generated_ddl"]
     assert len(checked["table_definitions"]) == 2
     AuroraPostgresqlModelOutputContract.model_validate(checked)
+
+
+@pytest.mark.parametrize("engine", ["aurora_postgresql", "aurora_mysql"])
+def test_a_key_whose_own_schemas_table_is_left_out_never_lands_on_another_schemas(engine) -> None:
+    """#2525 review: ``sales.items`` references ``orders``; ``sales.orders`` and
+    ``sales.Orders`` are left out (their names fold to one) and ``archive.orders`` is
+    designed. The key resolves to its own schema's table, so it is left out with a note,
+    never pointed at ``archive.orders``."""
+    from src.contracts.schema_design_input import AgentForeignKey
+
+    fk = AgentForeignKey(constraint_name="fk_items_order", columns=["id"],
+                         referenced_table="orders", referenced_columns=["id"])  # fmt: skip
+    tables = [_table("orders", "sales"), _table("Orders", "sales", index="by_note2"),
+              _table("orders", "archive"), _table("items", "sales", fks=[fk])]  # fmt: skip
+    design = _merged(engine, tables)
+    assert _names(design) == [("archive", "orders"), ("sales", "items")]
+    assert "REFERENCES" not in design["generated_ddl"]
+    notes = [n for n in _notes(design, "ambiguous_reference") if "fk_items_order" in str(n)]
+    assert notes and "in schema sales is not designed" in notes[0]["recommendation"]

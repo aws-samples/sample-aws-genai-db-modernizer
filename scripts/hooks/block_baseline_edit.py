@@ -74,6 +74,10 @@ PROTECTED: dict[str, str] = {
     ".claude/agents/dynamodb-group-draft.md": (
         "uv run python scripts/render_group_draft_agent.py --write"
     ),
+    # Every file step 1 writes for the one-schema samples, as SHA-256 digests (#2494).
+    "tests/fixtures/step1_one_schema_digests.json": (
+        "uv run python -m tests.unit.tools.data_movement.step1_samples --write"
+    ),
 }
 
 

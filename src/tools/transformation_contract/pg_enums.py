@@ -42,7 +42,8 @@ class EnumType:
 
 @dataclass(frozen=True)
 class EnumColumns:
-    # (table name, column) -> the enum the column keeps.
+    # (table id, column) -> the enum the column keeps (by id: two schemas' tables of one
+    # name each keep their own schema's type, #2494).
     types: dict[tuple[str, str], EnumType] = field(default_factory=dict)
     # (table id, column) -> (finding code, why the column stays TEXT).
     fallbacks: dict[tuple[str, str], tuple[str, str]] = field(default_factory=dict)
@@ -101,9 +102,7 @@ def enum_columns(collector: CollectorOutputContract, engine: str) -> EnumColumns
             if why:
                 out.fallbacks[where] = (REFUSED, f"{column.column_name}: {why}: it stays TEXT.")
                 continue
-            out.types[(table.table_name, column.column_name)] = EnumType(
-                enum.schema_name, enum.type_name, tuple(enum.labels)
-            )
+            out.types[where] = EnumType(enum.schema_name, enum.type_name, tuple(enum.labels))
     return out
 
 

@@ -612,7 +612,7 @@ def test_a_database_named_with_an_underscore_gives_the_runner_nothing_on_mysql_t
 def test_the_dms_user_grants_and_the_runner_grant_on_the_test_cluster_escape_the_wildcards():
     from src.tools.data_movement.dms_step import _dms_user_lines
 
-    lines = " ".join(_dms_user_lines("aurora_mysql", "8.0", "my_ql", "public"))
+    lines = " ".join(_dms_user_lines("aurora_mysql", "8.0", "my_ql", ["public"]))
     assert "`my\\_ql`.*" in lines and "`awsdms\\_control`.*" in lines
     assert "`my_ql`" not in lines and "`awsdms_control`" not in lines
     client = FakeDataApi("mysql")

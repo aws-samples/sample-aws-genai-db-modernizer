@@ -1,0 +1,26 @@
+{
+  "discourse": {
+    "aurora-target.yaml": "731e11dda06e2bf9bf01482f0f767c7eeb59dece5781030edda7fa39c4f22fe0",
+    "data-movement/step-1/plan.json": "3e1bf4a82d7f27880a809495e51df467a558d2f171fcbc08b263fbf80eda323d",
+    "dms-step-1.yaml": "a4e42297284b4c4d0169a25b16b201669f7c83cd320d3336a15933a7a82c0498",
+    "dms-step-1.yaml (rendered)": "eaf7cb8da5f9afcaf29a223acc873d363f539b6b44dd1148f2b0db78f9b04649",
+    "step-1.ddl.sql": "31ff488e1fe4c12c831080cdd221d0d6dc33f93df573d1b0c9ba379d3bc9712f",
+    "step-1.sequences.sql": "cdebee15c0b3221b045d3df9ac5acf88988c2586d338c121011d50854ce6240b",
+    "transformation-contract/v2/findings.json": "15bbf325750a195e4bc5383bbf5c2a1dbb8024510b469b06f72014d04a4ab7ba",
+    "transformation-contract/v2/step-1.json": "dabfcf636488f4242d44a407bf773229118662b219838b406d744ba72c3cfcbf",
+    "verify-source.sql": "6e85c053cb1a63e0b8e5e03a0d982e5ff0c4d05a2c1cf8257c6417f833698c9e",
+    "verify-target.sql": "3c6031bf3d31c01794c91bcc53f7e07cdac42f8a97369ef5061b12110598f5c4"
+  },
+  "wordpress": {
+    "aurora-target.yaml": "f96c47ceafa2046f6992bbce257e1aeb498c604b01d341fc90bf0258edf58a47",
+    "data-movement/step-1/plan.json": "b861fe71b99158f3c4c15082f061a48b9f573ddb1c33a888654d37bc822738e5",
+    "dms-step-1.yaml (rendered)": "ccc2b86a2e0b63db268ba7def59314e738d926b6c3179abf3ef90d46de7f882b",
+    "lob-sizes.md": "0f1ffd589cbcd933e0c22bd770c23775e17adc1905d67eaa5ab486bab10a421f",
+    "lob-sizes.sql": "2b9c72e6933221b21e839362a5459b706969644883aaba7be8904486f454df06",
+    "step-1.ddl.sql": "d1803f3520b02a505bc23d25e8c67b4476da5bfd0647c852a4f60624f4f694e0",
+    "transformation-contract/v2/findings.json": "dcf7637f86036fdf11869e5400343c88b53fa28e2821aa42d139e55419d65188",
+    "transformation-contract/v2/step-1.json": "5d4df7eeb50340d7e0778a36bf794219450a4aeba0b32f08760f510c74c416c9",
+    "verify-source.sql": "5caea233cbed7464188c1f80acfc566d210fe2ee4ec99cb49b889ba9071faa08",
+    "verify-target.sql": "3bef5a6356f3cb0be879da922df399537762a3c4bbb718412547c30a7863fc6b"
+  }
+}

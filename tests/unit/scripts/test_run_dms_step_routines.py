@@ -276,3 +276,24 @@ def test_the_routines_label_is_the_facts_words_for_the_test_state(tmp_path, caps
         code, line = base._run(tmp_path, "routines-check", capsys=capsys)
         stored = json.loads((tmp_path / STEP / "routines-check.json").read_text())
         assert (code, line["label"], stored["label"]) == (0, words, words), line
+
+
+def test_a_target_database_is_refused_on_a_step_that_keeps_each_database(tmp_path, capsys):
+    """#2494 review: a step of several Aurora MySQL databases puts each table in the database
+    of its own name, so a target_database_name in the inputs is refused on the routine path
+    too, never used to send the routines into one database."""
+    from src.contracts.transformation_contract import StepContract
+
+    _job(tmp_path, target_database="other")
+    store = LocalArtifactStore(base_dir=str(tmp_path))
+    key = "shop/job1/transformation-contract/v2/step-1.json"
+    contract = StepContract.model_validate_json(store.read_bytes(key))
+    moved = next(r for r in contract.rules if r.target_table == "orders")
+    fields = [f.model_copy(update={"op": f.op.model_copy(update={"column": f.op.column.model_copy(
+        update={"table_id": "archive.orders"})})}) for f in moved.fields]  # fmt: skip
+    extra = moved.model_copy(update={"source_table": "archive.orders", "fields": fields})
+    contract = contract.model_copy(update={"rules": [*contract.rules, extra]})
+    store.write_bytes(key, canonical_json(contract))
+    store.write_json(f"{STEP}/plan.json", make_plan(contract).model_dump(mode="json"))
+    code, line = base._run(tmp_path, "routines-check", capsys=capsys)
+    assert code == 1 and "its own database" in line["message"], line

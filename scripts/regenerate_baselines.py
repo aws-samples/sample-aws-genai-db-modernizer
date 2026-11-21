@@ -14,6 +14,8 @@ versions of the file:
 * the ``assess()`` JSON Schemas (``docs/contracts/schemas/``)
 * the rendered rule catalog (``docs/architecture/rule-catalog.md`` and the UI's
   ``engineCatalog.generated.js``)
+* the step 1 output digests of the one-schema samples
+  (``tests/fixtures/step1_one_schema_digests.json``, #2494)
 * the graph query catalog's generated section of
   ``docs/guides/context-graph-query-cookbook.md`` (#307). That page is only partly
   generated: on a rebase, the text outside its BEGIN/END block is merged by hand like
@@ -95,6 +97,16 @@ def _check_script_is_stale(script: str, flag: str = "--check") -> bool:
             cwd=REPO,
             capture_output=True,
             check=False,
+        ).returncode
+        != 0
+    )
+
+
+def _module_is_stale(module: str) -> bool:
+    """Whether ``python -m <module> --check`` exits non-zero (its baseline is stale)."""
+    return (
+        subprocess.run(  # nosec B603 -- fixed argv
+            _python("-m", module, "--check"), cwd=REPO, capture_output=True, check=False
         ).returncode
         != 0
     )
@@ -263,6 +275,13 @@ BASELINES: tuple[Baseline, ...] = (
         lambda reason: _python("-m", "tests.e2e.routing_snapshot", "--write", "--reason", reason),
         lambda: _routing_stale("routing-snapshot"),
         needs_reason=True,
+    ),
+    Baseline(
+        "step1-digests",
+        ("tests/fixtures/step1_one_schema_digests.json",),
+        "uv run python -m tests.unit.tools.data_movement.step1_samples --write",
+        lambda _reason: _python("-m", "tests.unit.tools.data_movement.step1_samples", "--write"),
+        lambda: _module_is_stale("tests.unit.tools.data_movement.step1_samples"),
     ),
 )
 

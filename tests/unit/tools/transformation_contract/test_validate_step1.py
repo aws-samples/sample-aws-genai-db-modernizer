@@ -8,6 +8,8 @@ from __future__ import annotations
 import copy
 from functools import partial
 
+import pytest
+
 from src.tools.transformation_contract import validate as validate_module
 from src.tools.transformation_contract.step1 import build_step1, target_tables
 from src.tools.transformation_contract.validate import validate_step1
@@ -142,13 +144,29 @@ def test_a_view_in_the_wave_is_not_a_missing_table():
     assert c.status == "valid" and "wp.v" in c.views and "missing_table" not in _codes(c, "wp.v")
 
 
-def test_ambiguous_target_findings_are_kept():
-    tables = [
-        {"table_id": f"{s}.users", "table_name": "users", "schema_name": s, "row_count": 1,
-         "primary_key": ["id"], "columns": [{"column_name": "id", "data_type": "int", "nullable": False}]}
-        for s in ("a", "b")
+def _users(*schemas):
+    return [
+        {"table_id": f"{s or 'legacy'}.users", "table_name": "users", "schema_name": s,
+         "row_count": 1, "primary_key": ["id"],
+         "columns": [{"column_name": "id", "data_type": "int", "nullable": False}]}
+        for s in schemas
     ]  # fmt: skip
-    inputs = step1_inputs(tables=tables)
+
+
+def test_two_schemas_tables_of_one_name_validate_against_their_own_targets():
+    """#2494: ``a.users`` and ``b.users`` are two targets, so each rule checks against its
+    own schema's table and both are valid."""
+    inputs = step1_inputs(tables=_users("a", "b"))
+    c = validate_step1(build_step1(inputs), inputs)
+    assert c.status == "valid" and c.blocked_rule_count == 0
+    assert _codes(c, "a.users") == [] and _codes(c, "b.users") == []
+
+
+@pytest.mark.passes_on_main  # the no-schema ambiguous case main had too (#2494)
+def test_ambiguous_target_findings_are_kept():
+    """A table the collector gives no schema and one of the same name in the source's one
+    schema share a bare target: ``ambiguous_target``, kept by the validator."""
+    inputs = step1_inputs(tables=_users(None, "a"))
     c = validate_step1(build_step1(inputs), inputs)
     assert c.blocked_rule_count == 2
     assert _codes(c, "a.users") == ["ambiguous_target"]
@@ -167,19 +185,15 @@ def test_validating_twice_gives_the_same_contract_and_leaves_inputs_alone():
     assert validate_step1(once, inputs) == once and inputs.collector == before
 
 
+@pytest.mark.passes_on_main  # the no-schema ambiguous case main had too (#2494)
 def test_a_kept_rule_still_gets_the_unknown_table_check_without_duplicates():
-    tables = [
-        {"table_id": f"{s}.users", "table_name": "users", "schema_name": s, "row_count": 1,
-         "primary_key": ["id"], "columns": [{"column_name": "id", "data_type": "int", "nullable": False}]}
-        for s in ("a", "b")
-    ]  # fmt: skip
-    inputs = step1_inputs(tables=tables)
+    inputs = step1_inputs(tables=_users(None, "a"))
     contract = build_step1(inputs)
-    inputs.collector["database_schema"]["tables"].pop()  # b.users leaves the collector
+    inputs.collector["database_schema"]["tables"].pop()  # a.users leaves the collector
     c = validate_step1(contract, inputs)
-    assert sorted(_codes(c, "b.users")) == ["ambiguous_target", "unknown_table"]
-    assert _rule(c, "b.users").status == "blocked"
-    assert _codes(validate_step1(c, inputs), "b.users") == _codes(c, "b.users")
+    assert sorted(_codes(c, "a.users")) == ["ambiguous_target", "unknown_table"]
+    assert _rule(c, "a.users").status == "blocked"
+    assert _codes(validate_step1(c, inputs), "a.users") == _codes(c, "a.users")
 
 
 def test_a_case_only_type_difference_is_not_a_mismatch():

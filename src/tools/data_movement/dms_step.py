@@ -24,9 +24,17 @@ as the contract's ``target_type`` (which carries the saved design's type where t
 It is never the saved design's ``generated_ddl`` alone: a saved design covers only the
 tables routed to Aurora, and step 1 moves every wave 1 table.
 
+Each table keeps its source schema in the target (#2494). A step whose tables come from one
+schema creates them unqualified in that schema (Aurora PostgreSQL) or in the target database
+(Aurora MySQL, ``TargetDatabaseName``), as before. A step of several creates each schema
+(Aurora MySQL: database) and each table in its own (``"sales"."orders"``), and DMS writes
+each table into the schema of its source schema's name: the PostgreSQL target endpoint keeps
+the source schema's name, and the MySQL one does with ``TargetDbType: multiple-databases``
+and no ``DatabaseName``.
+
 The contract compiles into table mappings with one explicit selection rule per rule (no
-wildcard: no source schema changes during the migration window in this release) and no
-transformation rule: the customer's DDL created the tables (``TargetTablePrepMode:
+wildcard: no source schema changes during the migration window in this release), each naming
+its table's source schema, and no transformation rule: the customer's DDL created the tables (``TargetTablePrepMode:
 DO_NOTHING``), so Aurora converts each value into the declared column type on insert, and a
 conversion it cannot do is an ``unsupported`` field in the contract. A blocked rule is not
 selected; ``Step1Inputs.skipped`` says which and why. Nothing here calls AWS, and nothing we
@@ -302,6 +310,44 @@ def unsupported_fields(contract: StepContract) -> tuple[UnsupportedField, ...]:
     )
 
 
+def target_schemas(contract: StepContract) -> list[str]:
+    """The source schemas (MySQL: databases) of the tables step 1's DDL creates, sorted: the
+    schemas the target keeps (#2494)."""
+    return sorted({r.source_table.rpartition(".")[0] for r in _selected(contract)})
+
+
+def keeps_schemas(contract: StepContract) -> bool:
+    """Whether step 1's tables come from more than one schema, so each is created in its
+    own schema on Aurora (#2494); a step of one schema keeps its one-schema form."""
+    return len(target_schemas(contract)) > 1
+
+
+def checked_target_database(inputs: Step1Inputs, requested: str | None) -> str | None:
+    """``requested`` (the customer's ``TargetDatabaseName``), for the scripts that put objects
+    on Aurora (routines, triggers, views and their checks): None puts each in its own schema.
+    Refused on an Aurora MySQL step that keeps each source database (#2494), where every
+    table is in the database of its own name, so no object may go into another."""
+    if (
+        requested
+        and inputs.contract.target.engine == "aurora_mysql"
+        and keeps_schemas(inputs.contract)
+    ):
+        raise DmsStepError("step 1 moves each source database into its own database of the "
+                           "same name on Aurora MySQL, so a target database name does not "
+                           "apply: leave target_database_name out")  # fmt: skip
+    return requested
+
+
+def step_target_database(inputs: Step1Inputs, requested: str | None) -> str | None:
+    """The Aurora MySQL database the step's tables are in, for the scripts that read them:
+    ``requested`` or the source database. None when each table keeps its own database
+    (#2494); a requested name is refused there (:func:`checked_target_database`)."""
+    requested = checked_target_database(inputs, requested)
+    if inputs.contract.target.engine == "aurora_mysql" and keeps_schemas(inputs.contract):
+        return None
+    return requested or inputs.plan.source.database
+
+
 def contract_tables(contract: StepContract) -> list[ContractTable]:
     """The tables step 1 moves: the contract's unblocked rules, sorted by table id, but not a
     rule that moves no rows (#1918, its table is still in the DDL). Views are never rules, so
@@ -373,6 +419,9 @@ def _checked(inputs: Step1Inputs) -> Step1Inputs:
             raise DmsStepError(f"the source database name {database!r} does not match "
                                f"{_DB_NAME_PATTERN[key]} ({key})")  # fmt: skip
     by_table = {r.source_table: r for r in contract.rules}
+    for schema in target_schemas(contract):  # each one is created and named in the grants
+        if not _NAME.fullmatch(schema):
+            raise DmsStepError(f"the schema {schema!r} is not a plain identifier")
     for table in contract_tables(contract):
         for value in (table.schema, table.name):
             if not _NAME.fullmatch(value):
@@ -481,24 +530,25 @@ def _expression_indexes(
     out = dict(generated)
     left_out: list[LeftOutObject] = []
     for source in base.tables:
-        table = out.get(source.table_name)
-        if table is None or source.table_name not in rules:
+        name = base.name_of(source)
+        table = out.get(name)
+        if table is None or name not in rules:
             continue
         added: list[str] = []
         for idx in expression_indexes(source):
             if same_engine:
-                statement, why = recreated_expression_index(table.table_name, idx, table.columns)
+                statement, why = recreated_expression_index(
+                    source.table_name, idx, table.columns, base.schema_of(source)
+                )
             else:
                 statement, why = None, "this release recreates PostgreSQL expression indexes only"
             if statement is not None:
                 added.append(statement)
             else:
-                left_out.append(LeftOutObject(table_id=rules[source.table_name].source_table,
+                left_out.append(LeftOutObject(table_id=rules[name].source_table,
                                              name=idx.index_name, reason=str(why)))  # fmt: skip
         if added:
-            out[source.table_name] = dataclasses.replace(
-                table, index_sql=[*table.index_sql, *added]
-            )
+            out[name] = dataclasses.replace(table, index_sql=[*table.index_sql, *added])
     return out, _sorted_left_out(left_out)
 
 
@@ -510,12 +560,47 @@ def _step1_ddl(
     ``target_type``, kept to the moved tables (and foreign keys between them), with the
     source's expression indexes it can recreate (``_expression_indexes``); the columns
     it declares identity (AUTO_INCREMENT on Aurora MySQL), as (table id, column); and the
-    source indexes it does not create."""
-    from src.tools.schema.aurora_common.ddl_generator import TypeOverride, assemble_full_ddl
+    source indexes it does not create. Tables of several schemas are each created in their
+    own (``keeps_schemas``, #2494), and keyed by the design's ``<schema>.<table>`` name."""
+    from src.tools.schema.aurora_common.ddl_generator import (
+        TypeOverride,
+        assemble_full_ddl,
+        referenced_table,
+        schemas_by_name,
+    )
     from src.tools.transformation_contract.step1 import _load_collector, design_base
 
     engine = contract.target.engine
-    rules = {r.target_table: r for r in _selected(contract)}
+    qualified = keeps_schemas(contract)
+    base = design_base(job, engine, _load_collector(job), qualified)
+    by_id = {r.source_table: r for r in _selected(contract)}
+    moved = [t for t in base.tables if t.table_id in by_id]
+    missing = sorted(set(by_id) - {t.table_id for t in moved})
+    if missing:
+        raise DmsStepError(
+            f"{missing[0]}: the {display_engine(engine)} DDL generator has no such table"
+        )
+    rules = {base.name_of(t): by_id[t.table_id] for t in moved}
+    # A key resolves as the design resolves it, against every designed table (the base
+    # already left out a key whose own schema's table is not designed, #2525 review), and is
+    # kept only when the table it resolves to moves: never another schema's of that name.
+    schemas_of = schemas_by_name(base.tables) if qualified else {}
+    pairs = {(t.schema_name, t.table_name.lower()) for t in moved}
+    dropped: list[LeftOutObject] = []
+
+    def references_a_moved_table(fk: Any, t: Any) -> bool:
+        bare = fk.referenced_table.rsplit(".", 1)[-1]
+        if not qualified:
+            return bare in rules
+        found = referenced_table(bare, t.schema_name, schemas_of)
+        if found is not None and (found[1], found[0].lower()) in pairs:
+            return True
+        dropped.append(LeftOutObject(
+            table_id=t.table_id, kind="foreign key", name=fk.constraint_name,
+            reason="the table it references does not move in step 1, so the "
+                   "key is left out; add it once that table moves"))  # fmt: skip
+        return False
+
     overrides = {
         (name, f.target_column): TypeOverride(
             f.target_type, "The step 1 contract's target type.", engine
@@ -524,15 +609,14 @@ def _step1_ddl(
         for f in rule.fields
         if not isinstance(f.op, UnsupportedOp)
     }
-    base = design_base(job, engine, _load_collector(job))
     tables = [
         t.model_copy(update={"foreign_keys": [
-            fk for fk in t.foreign_keys or [] if fk.referenced_table.rsplit(".", 1)[-1] in rules] or None})
-        for t in base.tables
-        if t.table_name in rules
+            fk for fk in t.foreign_keys or [] if references_a_moved_table(fk, t)] or None})
+        for t in moved
     ]  # fmt: skip
     result = dataclasses.replace(base, tables=tables).generate(overrides)
-    generated = {t.table_name: t for t in result.tables}
+    # One CREATE SCHEMA per schema: render_ddl writes each before the enum types (#2525 review).
+    generated = {t.table_name: dataclasses.replace(t, schema_sql=None) for t in result.tables}
     # The objects the generator leaves out: a name it cannot quote (#2381 review 2), or an
     # index whose name an earlier index of its table already has (#2402).
     unsafe = [LeftOutObject(table_id=rules[o["table"]].source_table, kind=o["kind"],
@@ -564,7 +648,7 @@ def _step1_ddl(
     return (
         assemble_full_ddl(ordered) + "\n",
         tuple(identity),
-        _sorted_left_out([*left_out, *unsafe]),
+        _sorted_left_out([*left_out, *unsafe, *dropped]),
     )
 
 
@@ -975,9 +1059,10 @@ def _dms_parameters(inputs: Step1Inputs) -> dict[str, Any]:
         params["SourceDatabaseName"] = _text(
             _DB_NAME_PATTERN[source_key], "Source database name", database
         )
-    params["TargetDatabaseName"] = _text(
-        _DB_NAME_PATTERN[target_key], "Aurora database the DDL created the tables in", database
-    )
+    if not _each_database(inputs):  # each source database keeps its name (#2494)
+        params["TargetDatabaseName"] = _text(
+            _DB_NAME_PATTERN[target_key], "Aurora database the DDL created the tables in", database
+        )
     params["TaskIdentifier"] = _text(_TASK_ID_PATTERN, "Replication task identifier",
                                      task_identifier(inputs.plan.job_id))  # fmt: skip
     params["TaskIdentifier"]["MaxLength"] = 255
@@ -1084,12 +1169,24 @@ def _source_endpoint(inputs: Step1Inputs, engine_name: str, settings_key: str) -
     return _endpoint(inputs, "Source", engine_name, settings_key, extra, attributes)
 
 
+def _each_database(inputs: Step1Inputs) -> bool:
+    """Whether the Aurora MySQL target takes each source database into its own (#2494)."""
+    return inputs.contract.target.engine == "aurora_mysql" and keeps_schemas(inputs.contract)
+
+
 def _target_endpoint(inputs: Step1Inputs, engine_name: str, settings_key: str) -> dict[str, Any]:
     extra: dict[str, Any] = {"AfterConnectScript": _TARGET_AFTER_CONNECT[settings_key]}
     if settings_key == "MySqlSettings":
-        # Into TargetDatabaseName, whatever the source schema is called.
-        extra["TargetDbType"] = "specific-database"
-    return _endpoint(inputs, "Target", engine_name, settings_key, extra, [])
+        # One source database: into TargetDatabaseName, whatever the source schema is called.
+        # Several (#2494): each into the database of its name, which needs no DatabaseName (the
+        # DMS API: a MySQL endpoint's DatabaseName replicates every table into that one).
+        extra["TargetDbType"] = (
+            "multiple-databases" if _each_database(inputs) else "specific-database"
+        )
+    endpoint = _endpoint(inputs, "Target", engine_name, settings_key, extra, [])
+    if _each_database(inputs):
+        del endpoint["Properties"]["DatabaseName"]
+    return endpoint
 
 
 def render_dms_template(inputs: Step1Inputs) -> dict[str, Any]:
@@ -1458,31 +1555,42 @@ def render_aurora_template(inputs: Step1Inputs) -> dict[str, Any]:
     }
 
 
-def _dms_user_lines(engine: str, line: str | None, database: str, schema: str) -> list[str]:
+def _dms_user_lines(engine: str, line: str | None, database: str, schemas: list[str]) -> list[str]:
     """The DMS user and its grants, commented out: the DMS guide's target prerequisites. On
     the 8.4 line the user names mysql_native_password (the DMS guide's Aurora MySQL 8.4 note:
-    a new user otherwise gets caching_sha2_password)."""
+    a new user otherwise gets caching_sha2_password). ``schemas``: the step's schemas
+    (``target_schemas``); with several (#2494), each one's grants, on Aurora MySQL each
+    database's instead of the target database's."""
     try:  # the grants are comment lines: a name that would end one is refused
-        check_comment_name(database)
-        check_comment_name(schema)
+        for name in (database, *schemas):
+            check_comment_name(name)
     except ValueError as e:
         raise DmsStepError(str(e)) from e
     if engine == "aurora_mysql":
         auth = "IDENTIFIED WITH mysql_native_password BY" if line == "8.4" else "IDENTIFIED BY"
         return [
             f"CREATE USER 'dms_user'@'%' {auth} '<password>';",
-            "GRANT ALTER, CREATE, DROP, INDEX, INSERT, UPDATE, DELETE, SELECT, CREATE TEMPORARY TABLES "
-            f"ON {grant_database(database)}.* TO 'dms_user'@'%';",
+            *("GRANT ALTER, CREATE, DROP, INDEX, INSERT, UPDATE, DELETE, SELECT, CREATE TEMPORARY TABLES "
+              f"ON {grant_database(d)}.* TO 'dms_user'@'%';"
+              for d in (schemas if len(schemas) > 1 else [database])),
             f"GRANT ALL PRIVILEGES ON {grant_database(CONTROL_SCHEMA)}.* TO 'dms_user'@'%';",
-        ]
+        ]  # fmt: skip
+    usage = [f'GRANT USAGE, CREATE ON SCHEMA "{s}" TO dms_user;' for s in schemas]
+    tables = [
+        line
+        for s in schemas
+        for line in (
+            f'GRANT UPDATE, INSERT, SELECT, DELETE, TRUNCATE ON ALL TABLES IN SCHEMA "{s}" TO dms_user;',
+            f'ALTER DEFAULT PRIVILEGES IN SCHEMA "{s}" GRANT UPDATE, INSERT, SELECT, DELETE, TRUNCATE '
+            "ON TABLES TO dms_user;",
+        )
+    ]
     return [
         "CREATE USER dms_user WITH PASSWORD '<password>';",
         f'GRANT CONNECT, CREATE ON DATABASE "{database}" TO dms_user;',
-        f'GRANT USAGE, CREATE ON SCHEMA "{schema}" TO dms_user;',
+        *usage,
         f'GRANT USAGE, CREATE ON SCHEMA "{CONTROL_SCHEMA}" TO dms_user;',
-        f'GRANT UPDATE, INSERT, SELECT, DELETE, TRUNCATE ON ALL TABLES IN SCHEMA "{schema}" TO dms_user;',
-        f'ALTER DEFAULT PRIVILEGES IN SCHEMA "{schema}" GRANT UPDATE, INSERT, SELECT, DELETE, TRUNCATE '
-        "ON TABLES TO dms_user;",
+        *tables,
         "GRANT rds_superuser TO dms_user;",
         "-- Narrower, if your Aurora version allows it (PostgreSQL 15 and later), instead of rds_superuser:",
         "GRANT SET ON PARAMETER session_replication_role TO dms_user;",
@@ -1797,13 +1905,31 @@ def render_ddl(inputs: Step1Inputs) -> str:
     plan = inputs.plan
     tables = contract_tables(inputs.contract)
     pg = engine == "aurora_postgresql"
-    schemas = sorted({t.schema for t in tables})
-    if pg and len(schemas) != 1:
-        raise DmsStepError(f"step 1 tables are in {len(schemas)} schemas ({', '.join(schemas)}); this release "
-                           "moves one PostgreSQL schema")  # fmt: skip
+    # The schemas the step keeps (#2494): one, as before, or several, each table in its own.
+    schemas = target_schemas(inputs.contract)
+    several = len(schemas) > 1
     database = plan.source.database
-    where = (f'the database {database}, schema {schemas[0]}' if pg
-             else f"the database {database} (the file creates it if it does not exist)")  # fmt: skip
+    if several:
+        where = (
+            f"the database {database} (the file creates the schemas {', '.join(schemas)})"
+            if pg
+            else f"the server (the file creates the databases {', '.join(schemas)} if they do not exist)"
+        )
+        target_sentence = (
+            "Each table is created in its source schema, and the DMS target endpoint writes each one into the "
+            f"schema of the same name in this database (TargetDatabaseName, default {database})."
+            if pg
+            else "Each table is created in the database of its source database's name, and the DMS target endpoint "
+            "writes each one there (TargetDbType multiple-databases)."
+        )
+    else:
+        where = (
+            f"the database {database}, schema {schemas[0]}"
+            if pg
+            else f"the database {database} (the file creates it if it does not exist)"
+        )
+        target_sentence = ("The table names are not qualified: the DMS target endpoint writes into this same "
+                           f"database (TargetDatabaseName, default {database}).")  # fmt: skip
     run = (f'psql "host=<writer endpoint> dbname={database} user=<admin user> sslmode=verify-full '
            'sslrootcert=<RDS CA bundle>" -f step-1.ddl.sql' if pg else
            "mysql --host=<writer endpoint> --user=<admin user> --password --ssl-mode=VERIFY_IDENTITY "
@@ -1822,9 +1948,7 @@ def render_ddl(inputs: Step1Inputs) -> str:
         "How to run it:",
         "1. Create the cluster with every setting aurora-target.yaml lists (that template is a suggestion).",
         f"2. Run this file on the writer endpoint as the administrator, in {where}: {run}. The administrator "
-        "password is in the secret of the cluster's MasterUserSecretArn output. The table names are not "
-        "qualified: the DMS target endpoint writes into this same database "
-        f"(TargetDatabaseName, default {database}).",
+        f"password is in the secret of the cluster's MasterUserSecretArn output. {target_sentence}",
         "3. Create the DMS user with the statements at the end of this file, after the tables (uncomment "
         "them, choose the password), and put its user name, password, the writer endpoint and the port in "
         "the secret you pass as TargetSecretArn.",
@@ -1895,23 +2019,27 @@ def render_ddl(inputs: Step1Inputs) -> str:
     head = [_comment_line(line) for line in head]
     out = with_header("", head, "--")
     if pg:
-        out += (
-            f'\nCREATE SCHEMA IF NOT EXISTS "{CONTROL_SCHEMA}";\n'
-            f'CREATE SCHEMA IF NOT EXISTS "{schemas[0]}";\nSET search_path TO "{schemas[0]}";\n'
-        )
+        out += f'\nCREATE SCHEMA IF NOT EXISTS "{CONTROL_SCHEMA}";\n'
+        if several:  # the tables name their schema: no search path (#2494)
+            out += "".join(f'CREATE SCHEMA IF NOT EXISTS "{s}";\n' for s in schemas)
+        else:
+            out += (
+                f'CREATE SCHEMA IF NOT EXISTS "{schemas[0]}";\nSET search_path TO "{schemas[0]}";\n'
+            )
         for e in required_extensions(inputs):
             out += f"CREATE EXTENSION IF NOT EXISTS {_pg_ident(e.name)};\n"
     else:
-        db = database.replace("`", "``")
         target = inputs.contract.target
         options = database_options(target.collation, target.engine_line)
-        alter = "".join(
-            f"{line}\n" for line in alter_comment(database, target.collation, target.engine_line)
-        )
-        out += (
-            f"\nCREATE DATABASE IF NOT EXISTS `{CONTROL_SCHEMA}`;\n"
-            f"CREATE DATABASE IF NOT EXISTS `{db}`{options};\n{alter}USE `{db}`;\n"
-        )
+        out += f"\nCREATE DATABASE IF NOT EXISTS `{CONTROL_SCHEMA}`;\n"
+        for name in schemas if several else [database]:
+            db = name.replace("`", "``")
+            alter = "".join(
+                f"{line}\n" for line in alter_comment(name, target.collation, target.engine_line)
+            )
+            out += f"CREATE DATABASE IF NOT EXISTS `{db}`{options};\n{alter}"
+        if not several:  # the tables name their database: no USE (#2494)
+            out += f"USE `{database.replace('`', '``')}`;\n"
     out += _enum_type_block(inputs)
     out += "\n" + inputs.ddl.strip() + "\n"
     replication = _replication(inputs)
@@ -1926,7 +2054,7 @@ def render_ddl(inputs: Step1Inputs) -> str:
                     "grant DMS cannot create its control tables there.")  # fmt: skip
     out += "\n" + with_header("", user, "--")
     out += "".join(f"-- {s}\n" for s in _dms_user_lines(engine, replication.target_engine_line,
-                                                        database, schemas[0]))  # fmt: skip
+                                                        database, schemas))  # fmt: skip
     if pg:
         advice = [
             "",
