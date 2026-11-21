@@ -1743,6 +1743,102 @@ def quotable_tables(
     return out, left_out
 
 
+#: PostgreSQL keeps the first 63 bytes of a name (NAMEDATALEN - 1) and drops the rest.
+PG_MAX_NAME_BYTES = 63
+
+
+def pg_name(name: str) -> str:
+    """``name`` as PostgreSQL stores it: cut to 63 bytes, never inside a character."""
+    return name.encode()[:PG_MAX_NAME_BYTES].decode(errors="ignore")
+
+
+def _pg_index_name(table: str, columns: list[str], suffix: str) -> str:
+    """``<table>_<columns>_<suffix>``, PostgreSQL's own pattern for an unnamed index: the
+    longer of the table and column parts is cut a character at a time until it fits."""
+    head, tail = table, "_".join(columns)
+    tail_part = f"_{tail}" if tail else ""
+    while len(f"{head}{tail_part}_{suffix}".encode()) > PG_MAX_NAME_BYTES:
+        if len(head.encode()) >= len(tail.encode()):
+            head = head[:-1]
+        else:
+            tail = tail[:-1]
+            tail_part = f"_{tail}" if tail else ""
+    return f"{head}{tail_part}_{suffix}"
+
+
+def _renamed_index(label: str, name: str, new: str, holder: str | None) -> dict:
+    """An index the design creates under another name (#2410), with the reason the
+    customer reads in the design's note. ``holder`` is the table whose index keeps the
+    name, None when a table of the schema has it."""
+    held = (
+        f"the schema already has a table named {name}"
+        if holder is None
+        else f"{holder} already has an index named {name} in this schema"
+    )
+    reason = (
+        f"{held}, and PostgreSQL index names are unique within a schema; use the new name "
+        "wherever a script names this index"
+    )
+    return {"table": label, "kind": "index", "name": name, "new_name": new, "reason": reason,
+            "feature": "index_renamed"}  # fmt: skip
+
+
+def unique_index_names(
+    tables: list[AgentTable], dialect: Dialect, qualified: bool = False
+) -> tuple[list[AgentTable], list[dict]]:
+    """``tables`` with every index Aurora PostgreSQL creates named once in its schema (#2410).
+
+    PostgreSQL keeps indexes in the schema's namespace, next to its tables, and compares
+    names by their first 63 bytes, so a second index of a name (on any table of the schema)
+    or an index named like a table fails with ``relation already exists``. MySQL scopes
+    index names per table, so a MySQL source repeats them. The first owner keeps the name
+    (tables first, as the script creates them, then indexes in table order); each later
+    index is renamed to ``<table>_<columns>_idx`` (``_idx1``, ``_idx2`` when that is
+    taken) and recorded for an app-layer note. Every name a collected index keeps is
+    reserved before any new name is chosen, so only an index that clashes is renamed. A
+    design of several schemas (``qualified``) checks each schema on its own; any other
+    creates every table in one schema. Run after ``quotable_tables`` so a name repeated on
+    one table is already left out. Aurora MySQL returns ``tables`` unchanged."""
+    if dialect is not POSTGRES:
+        return tables, []
+
+    def schema(t: AgentTable) -> str | None:
+        return t.schema_name if qualified else None
+
+    # (schema, name as stored) -> the table whose index keeps it; None for a table's name.
+    holders: dict[tuple[str | None, str], str | None] = {}
+    for t in tables:
+        holders.setdefault((schema(t), pg_name(t.table_name)), None)
+    clashing: dict[int, str | None] = {}  # id of each index to rename -> the name's holder
+    for t in tables:
+        for idx in carried_indexes(t, dialect):
+            key = (schema(t), pg_name(idx.index_name))
+            if key in holders:
+                clashing[id(idx)] = holders[key]
+            else:
+                holders[key] = design_table_name(t, qualified)
+    out: list[AgentTable] = []
+    renamed: list[dict] = []
+    for t in tables:
+        if not any(id(i) in clashing for i in t.indexes or []):
+            out.append(t)
+            continue
+        indexes: list[AgentIndex] = []
+        for idx in t.indexes or []:
+            if id(idx) in clashing:
+                new, n = _pg_index_name(t.table_name, idx.columns, "idx"), 0
+                while (schema(t), new) in holders:
+                    n += 1
+                    new = _pg_index_name(t.table_name, idx.columns, f"idx{n}")
+                label = design_table_name(t, qualified)
+                holders[(schema(t), new)] = label
+                renamed.append(_renamed_index(label, idx.index_name, new, clashing[id(idx)]))
+                idx = idx.model_copy(update={"index_name": new})
+            indexes.append(idx)
+        out.append(t.model_copy(update={"indexes": indexes}))
+    return out, renamed
+
+
 def _without_unsafe_columns(
     table: AgentTable, left_out: list[dict], label: str | None = None
 ) -> AgentTable:

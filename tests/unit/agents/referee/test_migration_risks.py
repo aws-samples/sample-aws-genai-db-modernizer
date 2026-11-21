@@ -1711,6 +1711,14 @@ def test_a_duplicate_index_name_note_raises_no_application_code_risk() -> None:
     assert "1 source object needs application code" in risk["description"]
 
 
+def test_a_renamed_index_note_raises_no_application_code_risk() -> None:
+    """An index Aurora PostgreSQL creates under another name (#2410) is no source logic."""
+    note = {"feature": "index_renamed", "source_object": "usermeta.meta_key",
+            "recommendation": "Index renamed to usermeta_b_idx: the schema already has one."}  # fmt: skip
+    risks = _build(migration_waves=WAVES, schema_designs={AURORA: {"app_layer_notes": [note]}})
+    assert [r for r in risks if r["rule"] == "design.app_layer"] == []
+
+
 def test_a_system_schema_note_raises_no_application_code_risk() -> None:
     """A table of a system schema left out of the design (#2478) is the database's own,
     not source logic: it raises no design.app_layer risk."""

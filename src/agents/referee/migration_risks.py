@@ -67,9 +67,10 @@ rule                       severity  raised when
                            LOW       every noted object is a trigger or routine on wave 1's
                                      engine for a homogeneous source: it carries over with
                                      the schema and is tested on the target (#1642)
-                                     (a note for an object the design leaves out, or on an index
-                                     key prefix, a column default or a time zone, is no source
-                                     logic and raises no risk, #2402, #2478, #2415)
+                                     (a note for an object the design leaves out, an index
+                                     renamed on Aurora PostgreSQL, or on an index key prefix,
+                                     a column default or a time zone, is no source logic and
+                                     raises no risk, #2402, #2478, #2415, #2410)
 ``design.hot_partition``   HIGH      a partition key value's estimated load is above its
                                      throughput limit at the collected traffic (#1989,
                                      ``partition_load``: every request on one key value, or the
@@ -881,11 +882,12 @@ def _cache_risks(
 _CARRIED_FEATURES = frozenset({"trigger", "function", "procedure", "stored procedure", "routine"})
 # Notes about no source logic, so no application code (#2402, #2478, #2415): every object the
 # design leaves out (a colliding or unsafe name, a duplicate index name, a system-schema
-# table, an ambiguous reference) and the schema notes on an index key prefix, a column
-# default and a time zone. The design's note and step 1's DDL file already say what to do
-# about each, so no risk repeats them.
+# table, an ambiguous reference), an index Aurora PostgreSQL creates under another name
+# (#2410), and the schema notes on an index key prefix, a column default and a time zone.
+# The design's note and step 1's DDL file already say what to do about each, so no risk
+# repeats them.
 _NO_LOGIC_FEATURES = LEFT_OUT_FEATURES | frozenset(
-    {"index_key_prefix", "column_default", "time_zone"}
+    {"index_renamed", "index_key_prefix", "column_default", "time_zone"}
 )
 
 
