@@ -20,6 +20,7 @@ depend on the owner's import path. Usage: ``_engine_watcher.py <folder>``.
 
 from __future__ import annotations
 
+import importlib.util
 import os
 import re
 import signal
@@ -109,6 +110,29 @@ def stop_folder_servers(folder: str) -> None:
             continue
 
 
+def _shm_module():  # noqa: ANN202
+    """The sibling ``_shm_segments.py``, loaded by path because this runs with ``-I``."""
+    path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "_shm_segments.py")
+    spec = importlib.util.spec_from_file_location("_shm_segments", path)
+    if spec is None or spec.loader is None:
+        return None
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
+def stop_and_reap(folder: str) -> None:
+    """Stop the folder's servers, then remove the segment a killed server left (#2400)."""
+    from pathlib import Path
+
+    shm = _shm_module()
+    if shm is not None:
+        shm.note(Path(folder))  # the server is still up, so postmaster.pid names it
+    stop_folder_servers(folder)
+    if shm is not None:
+        shm.reap(Path(folder))
+
+
 def main(argv: list[str]) -> int:
     if len(argv) != 2:
         return 2
@@ -123,7 +147,7 @@ def main(argv: list[str]) -> int:
         pass
     for attempt in range(_ATTEMPTS):
         try:
-            stop_folder_servers(argv[1])
+            stop_and_reap(argv[1])
             return 0
         except (OSError, subprocess.SubprocessError) as exc:  # no ps, ps timed out
             print(f"watcher: attempt {attempt + 1} failed: {exc!r}", file=sys.stderr, flush=True)
