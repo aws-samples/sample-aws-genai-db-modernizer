@@ -359,12 +359,12 @@ def test_a_database_name_that_would_end_a_comment_line_is_refused_in_each_commen
     with pytest.raises((DmsStepError, ValueError), match="not a name"):
         schema_statements("aurora_mysql", [name], target)
     with pytest.raises((DmsStepError, ValueError), match="not a name"):
-        _dms_user_lines("aurora_mysql", "8.0", name, "shop")
+        _dms_user_lines("aurora_mysql", "8.0", name, ["shop"])
     # A plain name, a backtick included, is written.
     assert "-- ALTER DATABASE `odd``db` CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;" in (
         schema_statements("aurora_mysql", ["odd`db"], target)
     )
     assert any(
         "ON `odd``db`.*" in line
-        for line in _dms_user_lines("aurora_mysql", "8.0", "odd`db", "shop")
+        for line in _dms_user_lines("aurora_mysql", "8.0", "odd`db", ["shop"])
     )

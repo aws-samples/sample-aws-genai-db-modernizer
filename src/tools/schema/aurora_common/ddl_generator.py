@@ -1298,7 +1298,7 @@ def _fk_sql(
     statements: list[str] = []
     name, schema = ref or (table.table_name, None)
     for fk in table.foreign_keys or []:
-        resolved = _referenced(fk.referenced_table, schema, schemas_of or {})
+        resolved = referenced_table(fk.referenced_table, schema, schemas_of or {})
         if resolved is None:
             # quotable_tables leaves such a key out of the base; never guess a schema.
             if left_out is not None:
@@ -1326,7 +1326,7 @@ def _fk_sql(
     return statements
 
 
-def _referenced(
+def referenced_table(
     referenced: str, schema: str | None, schemas_of: dict[str, list[str]]
 ) -> tuple[str, str | None] | None:
     """The (table, schema) a foreign key of a table in ``schema`` references (#2455). The
@@ -1346,7 +1346,7 @@ def _referenced(
     return None
 
 
-def _schemas_of(tables: list[AgentTable]) -> dict[str, list[str]]:
+def schemas_by_name(tables: list[AgentTable]) -> dict[str, list[str]]:
     """Each bare table name (lower case) of a qualified design to the schemas that have it,
     as spelled, in table order."""
     schemas_of: dict[str, list[str]] = {}
@@ -1364,6 +1364,18 @@ def _ambiguous_reference(table: str, fk: AgentForeignKey, schemas: list[str]) ->
         f"its referenced table {fk.referenced_table} is in more than one other schema "
         f"({', '.join(sorted(schemas))}) and not in this table's, so the design cannot tell "
         "which one it references; add it by hand once you know"
+    )
+    return {"table": table, "kind": "foreign key", "name": fk.constraint_name,
+            "reason": reason, "feature": "ambiguous_reference"}  # fmt: skip
+
+
+def _unresolved_reference(table: str, fk: AgentForeignKey, schema: str) -> dict:
+    """A foreign key whose referenced table, in the schema it resolves to, is not designed
+    (#2525 review): never another schema's table of that name. Its note kind is
+    ``ambiguous_reference``'s, so every deliverable that lists those names it too."""
+    reason = (
+        f"its referenced table {fk.referenced_table} in schema {schema} is not designed, so the "
+        "key would point at no table; add it by hand once that table exists"
     )
     return {"table": table, "kind": "foreign key", "name": fk.constraint_name,
             "reason": reason, "feature": "ambiguous_reference"}  # fmt: skip
@@ -1475,7 +1487,7 @@ def _generate(
     table_ddls: list[TableDDL] = []
     overrides = type_overrides or {}
     family = classify_type_family(source_engine)
-    schemas_of = _schemas_of(tables) if qualified else {}
+    schemas_of = schemas_by_name(tables) if qualified else {}
 
     left_out: list[dict] = []
     for unnamed in tables:
@@ -1594,7 +1606,11 @@ def quotable_tables(
     designable = [t for t in tables if not is_system_schema(t.schema_name, source_engine)]
     shared = colliding_keys((t.table_name, t.schema_name) for t in designable)
     kept_tables = [t for t in designable if key(t) not in shared]
-    schemas_of = _schemas_of(kept_tables) if qualified else {}
+    # A key resolves against every user table, the ones left out included (#2525 review): its
+    # own schema's table of the name wins even when that table is not designed, so the key
+    # never lands on another schema's table of the same name.
+    schemas_of = schemas_by_name(designable) if qualified else {}
+    kept_pairs = {(t.schema_name, t.table_name.lower()) for t in kept_tables}
     for source in tables:
         label = design_table_name(source, qualified)
         if is_system_schema(source.schema_name, source_engine):
@@ -1633,10 +1649,17 @@ def quotable_tables(
                 left_out.append(_unsafe(label, "foreign key", fk.constraint_name))
             elif (
                 qualified
-                and _referenced(fk.referenced_table, source.schema_name, schemas_of) is None
+                and (
+                    resolved := referenced_table(
+                        fk.referenced_table, source.schema_name, schemas_of
+                    )
+                )
+                is None
             ):
                 found = schemas_of.get(fk.referenced_table.lower(), [])
                 left_out.append(_ambiguous_reference(label, fk, found))
+            elif qualified and resolved and (resolved[1], resolved[0].lower()) not in kept_pairs:
+                left_out.append(_unresolved_reference(label, fk, str(resolved[1])))
             else:
                 fks.append(fk)
         if len(indexes) != len(table.indexes or []) or len(fks) != len(table.foreign_keys or []):

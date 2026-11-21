@@ -31,6 +31,7 @@ from hypothesis import HealthCheck, given, settings
 from hypothesis import strategies as st
 
 from src.contracts.aurora_design_delta import validate_aurora_type
+from src.contracts.lineage_ops import CopyOp
 from src.contracts.schema_design_input import (
     AgentColumn,
     AgentForeignKey,
@@ -497,6 +498,79 @@ def test_step1_ddl_takes_the_source_schema_and_database_only_as_plain_names(
     assert SENTINEL not in sql_code(ddl, engine).lower()
     uncommented = re.sub(r"(?m)^-- (?=CREATE USER|GRANT|ALTER )", "", ddl)
     assert SENTINEL not in sql_code(uncommented, engine).lower()
+
+
+def _moved_field(field, table_id: str):
+    """``field`` reading its column from ``table_id``: the fixture's fields are copies."""
+    op = field.op
+    assert isinstance(op, CopyOp)
+    column = op.column.model_copy(update={"table_id": table_id})
+    return field.model_copy(update={"op": op.model_copy(update={"column": column})})
+
+
+def _two_schema_bundle(engine: str, other: str) -> DmsStepBundle:
+    """The step 1 fixture with its ``audit_log`` moved into a second schema named ``other``
+    (#2494): a step of two schemas names each in its statements and its grants."""
+    bundle = make_bundle(engine)
+    rules = []
+    for r in bundle.contract.rules:
+        if r.target_table == "audit_log":
+            table_id = f"{other}.audit_log"
+            r = r.model_copy(
+                update={
+                    "source_table": table_id,
+                    "fields": [_moved_field(f, table_id) for f in r.fields],
+                    "findings": [x.model_copy(update={"table_id": table_id}) for x in r.findings],
+                }
+            )
+        rules.append(r)
+    contract = bundle.contract.model_copy(update={"rules": rules})
+    tables = [
+        t.model_copy(
+            update={
+                "table": t.table.replace(
+                    f"{dms_step_fixtures._schema(engine)}.audit_log", f"{other}.audit_log"
+                )
+            }
+        )
+        for t in bundle.plan.source.tables
+    ]
+    source = bundle.plan.source.model_copy(update={"tables": tables})
+    plan = bundle.plan.model_copy(
+        update={
+            "source": source,
+            "contract": bundle.plan.contract.model_copy(update={"sha256": None}),
+        }
+    )
+    return bundle.model_copy(update={"contract": contract, "plan": plan})  # fmt: skip
+
+
+@settings(max_examples=scaled(200), deadline=None)
+@given(engine=st.sampled_from(sorted(GENERATORS)), other=_name)
+def test_step1_ddl_takes_every_schema_of_a_step_of_several_only_as_a_plain_name(engine, other):
+    """#2494: a step of several schemas creates each one (``CREATE SCHEMA``, ``CREATE
+    DATABASE``) and names it in the commented grants. Step 1 refuses a schema name that is
+    not a plain identifier when it reads its inputs, as it does a table name; a name it
+    takes is never SQL code in the file, commented statements uncommented included."""
+    try:
+        inputs = bundle_inputs(_two_schema_bundle(engine, other))
+    except DmsStepError as exc:
+        assert "plain identifier" in str(exc)
+        return
+    ddl = render_files(inputs)[DDL_FILE]
+    assert SENTINEL not in sql_code(ddl, engine).lower()
+    uncommented = re.sub(r"(?m)^-- (?=CREATE USER|GRANT|ALTER )", "", ddl)
+    assert SENTINEL not in sql_code(uncommented, engine).lower()
+
+
+def test_step1_names_both_schemas_of_a_step_of_two():
+    """The property test's positive case: a plain second schema is created and granted."""
+    pg = render_files(bundle_inputs(_two_schema_bundle("aurora_postgresql", "audit")))[DDL_FILE]
+    assert 'CREATE SCHEMA IF NOT EXISTS "audit";' in pg
+    assert '-- GRANT USAGE, CREATE ON SCHEMA "audit" TO dms_user;' in pg
+    mysql = render_files(bundle_inputs(_two_schema_bundle("aurora_mysql", "audit")))[DDL_FILE]
+    assert "CREATE DATABASE IF NOT EXISTS `audit`;" in mysql
+    assert "ON `audit`.* TO 'dms_user'@'%';" in mysql
 
 
 @pytest.mark.parametrize("engine", sorted(GENERATORS))

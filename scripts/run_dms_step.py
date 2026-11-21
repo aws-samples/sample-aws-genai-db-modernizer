@@ -635,6 +635,14 @@ def _template(root: str, db: str, job_id: str) -> tuple[Path, str, dict[str, Any
     return path, body, params
 
 
+def _target_database(step: Any, inputs: MoveInputs) -> str | None:
+    """The inputs' ``target_database_name`` for the scripts that put objects on Aurora,
+    refused on an Aurora MySQL step that keeps each source database (#2494)."""
+    from src.tools.data_movement.dms_step import checked_target_database
+
+    return checked_target_database(step, inputs.target_database_name)
+
+
 _PARAMETERS: tuple[tuple[str, str], ...] = (
     ("SubnetIds", "subnet_ids"),
     ("SecurityGroupIds", "security_group_ids"),
@@ -2320,7 +2328,7 @@ def verify_step(
     gate."""
     from src.contracts.verify_result import VerifyResult
     from src.storage.local_store import LocalArtifactStore
-    from src.tools.data_movement.dms_step import load_step1
+    from src.tools.data_movement.dms_step import load_step1, step_target_database
     from src.tools.data_movement.verify_check import VerifyOutputError, read_verify
     from src.tools.data_movement.verify_scripts import OUTPUTS, write_verify_scripts
 
@@ -2333,7 +2341,7 @@ def verify_step(
         store.delete(key)  # a result read from the earlier scripts' files is stale
         for name in OUTPUTS.values():  # and so are those files: none may decide a result
             (step_dir / name).unlink(missing_ok=True)
-        target_db = inputs.target_database_name or step.plan.source.database
+        target_db = step_target_database(step, inputs.target_database_name)
         made = write_verify_scripts(step.contract, step.contract_sha256, step_dir,
                                     source_engine=step.plan.source.engine,
                                     target_database=target_db)  # fmt: skip
@@ -2411,11 +2419,11 @@ def routines(clients: MoveClients, root: str, db: str, job_id: str, inputs: Move
                         "status shows full_load_percent 100")  # fmt: skip
     scripts = write_routine_scripts(store, db, job_id, step.contract, step.contract_sha256,
                                     _step_dir(root, db, job_id),
-                                    target_database=inputs.target_database_name,
+                                    target_database=_target_database(step, inputs),
                                     target_user=target_user)  # fmt: skip
     # A routine left out for a case-only database clash, or for naming one, says why (#2148).
     clashes = case_differs_keys(step.contract, read_migration(store, db, job_id, section),
-                                inputs.target_database_name)  # fmt: skip
+                                _target_database(step, inputs))  # fmt: skip
     left_out = [{"routine_id": i, "kind": k, "reason": c,
                  **({"why": CASE_DIFFERS_WHY} if c in (CASE_DIFFERS, "depends_on_refused")
                     and (k, i) in clashes else {}),
@@ -2477,7 +2485,7 @@ def routines_check(root: str, db: str, job_id: str, inputs: MoveInputs) -> dict[
     try:
         result = read_check(output, step.contract, job_id=job_id, database_name=db,
                             contract_sha=step.contract_sha256,
-                            target_database=inputs.target_database_name, label=label)  # fmt: skip
+                            target_database=_target_database(step, inputs), label=label)  # fmt: skip
     except RoutineCheckOutputError as exc:
         store.delete(key)
         raise MoveError(f"{output}: refused: {exc}") from None
@@ -2491,7 +2499,7 @@ def routines_check(root: str, db: str, job_id: str, inputs: MoveInputs) -> dict[
     clashes: set[tuple[str, str]] = set()
     held: dict[tuple[str, str], str] = {}
     if migration is not None:
-        clashes = case_differs_keys(step.contract, migration, inputs.target_database_name)
+        clashes = case_differs_keys(step.contract, migration, _target_database(step, inputs))
         held = held_routines(store, db, job_id, migration)  # the deploy gate (#2411)
 
     def why(m: Any) -> dict[str, str]:
@@ -2561,7 +2569,7 @@ def views(clients: MoveClients, root: str, db: str, job_id: str, inputs: MoveInp
                         "status shows full_load_percent 100")  # fmt: skip
     scripts = write_view_scripts(store, db, job_id, step.contract, step.contract_sha256,
                                  _step_dir(root, db, job_id),
-                                 target_database=inputs.target_database_name)  # fmt: skip
+                                 target_database=_target_database(step, inputs))  # fmt: skip
     refused = [
         {"view_id": i, "reason": c, "why": REFUSED_WHY.get(c, "")} for i, c in scripts.refused
     ]
@@ -2592,7 +2600,7 @@ def views_check(root: str, db: str, job_id: str, inputs: MoveInputs) -> dict[str
     try:
         result = read_view_check(output, step.contract, job_id=job_id, database_name=db,
                                  contract_sha=step.contract_sha256,
-                                 target_database=inputs.target_database_name)  # fmt: skip
+                                 target_database=_target_database(step, inputs))  # fmt: skip
     except RoutineCheckOutputError as exc:
         store.delete(key)
         raise MoveError(f"{output}: refused: {exc}") from None
@@ -2727,13 +2735,13 @@ def triggers_scripts(root: str, db: str, job_id: str, inputs: MoveInputs,
                             f"output at {output} first")  # fmt: skip
         try:
             parsed = parse_triggers_output(output, step.contract, step.contract_sha256,
-                                          inputs.target_database_name)  # fmt: skip
+                                          _target_database(step, inputs))  # fmt: skip
         except RoutineCheckOutputError as exc:
             raise MoveError(f"{output}: refused: {exc}") from None
         present = {k for k in parsed if k != (EVENT_SCHEDULER,)}
     scripts = write_triggers_scripts(store, db, job_id, step.contract, step.contract_sha256,
                                     _step_dir(root, db, job_id),
-                                    target_database=inputs.target_database_name,
+                                    target_database=_target_database(step, inputs),
                                     target_user=target_user, present=present)  # fmt: skip
     from src.tools.data_movement.routine_scripts import CASE_DIFFERS_TRIGGERS_WHY
     from src.tools.data_movement.routine_test_gate import HELD_WHY, TEST_COMMAND
@@ -2785,7 +2793,7 @@ def triggers_check(root: str, db: str, job_id: str, inputs: MoveInputs) -> dict[
     try:
         result = read_triggers_check(output, step.contract, store, job_id=job_id, database_name=db,
                                     contract_sha=step.contract_sha256,
-                                    target_database=inputs.target_database_name)  # fmt: skip
+                                    target_database=_target_database(step, inputs))  # fmt: skip
     except RoutineCheckOutputError as exc:
         store.delete(key)
         raise MoveError(f"{output}: refused: {exc}") from None

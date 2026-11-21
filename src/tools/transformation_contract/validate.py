@@ -27,11 +27,16 @@ from src.tools.data_movement.validation_key import validation_problem
 from src.tools.transformation_contract.collations import database_collation, rule_collations
 from src.tools.transformation_contract.pg_enums import enum_columns
 from src.tools.transformation_contract.step1 import (
+    SAVED_TYPES_NOT_APPLIED,
     UNSAFE_NAME,
     TargetTable,
     _load_collector,
     _same_type,
+    keeps_schemas,
+    saved_types_finding,
+    target_key,
     target_tables,
+    unapplied_saved_tables,
 )
 
 # Findings the builder or this validator wrote about a rule that cannot be re-checked.
@@ -49,14 +54,16 @@ def _rule_findings(
     tables: dict[str, Table],
     targets: dict[str, TargetTable],
     source_dialect: str | None = None,
+    qualified: bool = False,
 ) -> list[Finding]:
+    """``qualified``: the targets are keyed ``<schema>.<table>`` (``step1.keeps_schemas``)."""
     tid = rule.source_table
     t = tables.get(tid)
     if t is None:
         return [_f("unknown_table", "error", f"{tid} is not in the collection", tid)]
     out: list[Finding] = []
     cols = {c.column_name for c in t.columns}
-    target = targets.get(rule.target_table)
+    target = targets.get(target_key(rule.target_table, t.schema_name, qualified))
     design = {c.name: c.aurora_type for c in (target.columns if target else ())}
     for f in rule.fields:
         ref = getattr(f.op, "column", None)
@@ -138,18 +145,34 @@ def _checked(rule: Rule, findings: list[Finding]) -> Rule:
 
 
 def _revalidated(
-    rule: Rule, tables: dict[str, Table], targets: dict[str, TargetTable], dialect: str | None
+    rule: Rule,
+    tables: dict[str, Table],
+    targets: dict[str, TargetTable],
+    dialect: str | None,
+    qualified: bool = False,
 ) -> Rule:
     if not any(f.code in _KEPT for f in rule.findings):
-        return _checked(rule, _rule_findings(rule, tables, targets, dialect))
+        return _checked(rule, _rule_findings(rule, tables, targets, dialect, qualified))
     # A kept rule has no fields to re-check, but its table may have left the collection.
     kept = list(rule.findings)
     if rule.source_table not in tables:
-        kept += _rule_findings(rule, tables, targets, dialect)
+        kept += _rule_findings(rule, tables, targets, dialect, qualified)
     unique: dict[str, Finding] = {}
     for f in kept:
         unique.setdefault(f.code, f)
     return _checked(rule, list(unique.values()))
+
+
+def _with_saved_type_findings(rule: Rule, tables: dict[str, Table], unapplied: set[str]) -> Rule:
+    """The rule with a warning when the saved design's types for its table were not applied
+    (``step1.unapplied_saved_tables``, #2525 review); once, however often it is validated."""
+    t = tables.get(rule.source_table)
+    if t is None or t.table_name not in unapplied or rule.status == "blocked":
+        return rule
+    if any(f.code == SAVED_TYPES_NOT_APPLIED for f in rule.findings):
+        return rule
+    finding = saved_types_finding(rule.source_table, t.table_name)
+    return rule.model_copy(update={"findings": [*rule.findings, finding]})
 
 
 def _with_enum_findings(rule: Rule, fallbacks: dict[tuple[str, str], tuple[str, str]]) -> Rule:
@@ -174,8 +197,14 @@ def validate_step1(contract: StepContract, inputs: JobInputs) -> StepContract:
     source = (inputs.collector.get("metadata") or {}).get("source_database") or {}
     dialect = dialect_of(str(source.get("engine") or "").lower())
     fallbacks = enum_columns(collector, contract.target.engine).fallbacks
+    qualified = keeps_schemas(collector)
+    unapplied = unapplied_saved_tables(inputs, contract.target.engine, collector)
     rules = [
-        _with_enum_findings(_revalidated(r, tables, targets, dialect), fallbacks)
+        _with_saved_type_findings(
+            _with_enum_findings(_revalidated(r, tables, targets, dialect, qualified), fallbacks),
+            tables,
+            unapplied,
+        )
         for r in contract.rules
     ]
     waves = sorted(inputs.report.get("migration_waves") or [], key=lambda w: int(w["wave"]))

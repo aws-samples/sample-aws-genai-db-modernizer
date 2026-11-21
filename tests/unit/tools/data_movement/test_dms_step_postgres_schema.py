@@ -14,8 +14,6 @@ import json
 import re
 from pathlib import Path
 
-import pytest
-
 from src.agents.collector.offline_ingest import build_offline_collector_output
 from src.storage.local_store import LocalArtifactStore
 from src.tools.data_movement.dms_control import CONTROL_SCHEMA
@@ -95,14 +93,14 @@ def test_the_dms_task_selects_the_tables_schema_and_the_ddl_creates_them_there(t
     assert 'SCHEMA "forum"' not in ddl
 
 
-@pytest.mark.passes_on_main  # main never qualified step 1; this pins it (#2479 review)
-def test_tables_of_two_schemas_keep_step_1s_bare_keys(tmp_path):
-    """Step 1's rules are keyed by the bare table name, and the DDL its DMS step renders
-    reads the same base (#2479 review): two schemas with no shared table name still get
-    every contract type, with no schema-qualified design keys."""
+def test_tables_of_two_schemas_keep_their_schemas(tmp_path):
+    """Each table keeps its source schema (#2494): two schemas with no shared table name get
+    every contract type, and the DDL creates both schemas and each table in its own."""
     inputs = load_step1(_job(tmp_path, ("public", "extra")), "forum", "job1")
     assert {r.source_table: [f.target_type for f in r.fields] for r in inputs.contract.rules} == {
         "public.posts": ["BIGINT", "TEXT"], "extra.topics": ["BIGINT", "TEXT"]}  # fmt: skip
-    # The step 1 DDL the bundle carries (render_files refuses two PostgreSQL schemas).
-    assert re.findall(r'CREATE TABLE "(\w+)"', inputs.ddl) == ["posts", "topics"]
-    assert "CREATE SCHEMA" not in inputs.ddl
+    assert re.findall(r'CREATE TABLE "(\w+)"\."(\w+)"', inputs.ddl) == [
+        ("extra", "topics"), ("public", "posts")]  # fmt: skip
+    ddl = render_files(inputs)[DDL_FILE]
+    assert re.findall(r'^CREATE SCHEMA IF NOT EXISTS "([^"]+)";', ddl, re.M)[:3] == [
+        CONTROL_SCHEMA, "extra", "public"]  # fmt: skip

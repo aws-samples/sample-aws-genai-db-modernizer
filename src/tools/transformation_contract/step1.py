@@ -6,6 +6,11 @@
 No model: one rule per wave 1 table, a field per column; copy when the Aurora type
 equals the source type, a cast otherwise. Targets come from the saved Aurora design,
 or from the Aurora DDL generator when there is none.
+
+Each table keeps its source schema in the target (#2494): when the collector's tables come
+from more than one schema (MySQL: database), a target is keyed ``<schema>.<table>`` as the
+schema design keys it (#2455), so ``sales.orders`` and ``archive.orders`` are two targets.
+A source of one schema keys targets by the bare table name, as before.
 """
 
 from __future__ import annotations
@@ -29,7 +34,7 @@ from src.contracts.transformation_contract import (
 )
 from src.shared.contract_versioning import load_contract
 from src.shared.sql_identifiers import UNSAFE_NAME_REASON, has_unprintable
-from src.shared.table_keys import is_system_schema
+from src.shared.table_keys import is_system_schema, spans_schemas
 from src.shared.table_keys import table_key as table_key_of
 from src.tools.data_movement.plan import JobInputs, _aurora_wave, _Schema
 from src.tools.data_movement.validation_key import table_key
@@ -57,41 +62,121 @@ class TargetTable:
     columns: tuple[TargetColumn, ...]
 
 
+def keeps_schemas(collector: CollectorOutputContract) -> bool:
+    """Whether step 1 keys its targets ``<schema>.<table>`` (#2494): the collector's tables
+    come from more than one schema, a system schema not counted (``spans_schemas``), the
+    rule the schema design keys its tables by (#2455)."""
+    source = collector.metadata.source_database.engine.value
+    return spans_schemas((t.schema_name for t in collector.database_schema.tables), source)
+
+
+def target_key(table_name: str, schema_name: str | None, qualified: bool) -> str:
+    """A target's key: ``<schema>.<table>`` with ``qualified`` (``design_table_name``), else
+    the bare table name."""
+    return f"{schema_name}.{table_name}" if qualified and schema_name else table_name
+
+
 def target_tables(
     inputs: JobInputs, engine: str, collector: CollectorOutputContract | None = None
 ) -> dict[str, TargetTable]:
-    """The Aurora tables by bare table name.
+    """The Aurora tables by :func:`target_key`.
 
     A saved design covers only the tables routed to Aurora, while wave 1 mirrors every
     table of the wave, so the generator's tables for the whole collector come first and
     the saved design's columns replace the generated ones of the same name, per column
     (a design column the generator lacks is kept, a generated column the design lacks too).
+    With targets keyed by schema (#2494), a saved table that names its schema is that
+    schema's table; one that does not (a design of one schema, or one saved before #2455)
+    is the one table of its name, and reaches no table when two schemas have one.
     """
     collector = collector or _load_collector(inputs)
+    qualified = keeps_schemas(collector)
     tables = _generated_tables(inputs, engine, collector)
+    by_bare: dict[str, list[str]] = {}
+    for t in _user_tables(collector):
+        by_bare.setdefault(t.table_name, []).append(target_key(t.table_name, t.schema_name, True))
     saved = inputs.schema_designs.get(engine)
     if saved:
         for d in saved[1].get("table_definitions") or []:
             name = d["table_name"]
+            if qualified:
+                found = (
+                    [target_key(name, d["schema_name"], True)]
+                    if d.get("schema_name")
+                    else by_bare.get(name, [])
+                )
+                if len(found) != 1:
+                    continue
+                name = found[0]
             columns = {c.name: c for c in (tables[name].columns if name in tables else ())}
             for c in d.get("columns") or []:
                 columns[c["name"]] = TargetColumn(c["name"], c["aurora_type"])
             tables[name] = TargetTable(name, tuple(columns.values()))
-    return _with_enum_types(tables, enum_columns(collector, engine))
+    ids = {target_key(t.table_name, t.schema_name, qualified): t.table_id
+           for t in _user_tables(collector)}  # fmt: skip
+    return _with_enum_types(tables, enum_columns(collector, engine), ids)
 
 
-def _with_enum_types(tables: dict[str, TargetTable], enums: EnumColumns) -> dict[str, TargetTable]:
+#: The warning a rule gets when a saved design names its table with no schema while two
+#: source schemas have a table of that name (a design saved before #2455): its reviewed types
+#: reach neither table, and the customer sees that at the gate (#2525 review).
+SAVED_TYPES_NOT_APPLIED = "saved_design_types_not_applied"
+
+
+def unapplied_saved_tables(
+    inputs: JobInputs, engine: str, collector: CollectorOutputContract
+) -> set[str]:
+    """The bare names of the saved design's tables with no schema that two or more of the
+    step's schemas have (:func:`target_tables` skips them), when targets keep their schema."""
+    saved = inputs.schema_designs.get(engine)
+    if not saved or not keeps_schemas(collector):
+        return set()
+    counts = Counter(t.table_name for t in _user_tables(collector))
+    return {
+        str(d["table_name"])
+        for d in saved[1].get("table_definitions") or []
+        if not d.get("schema_name") and counts[d["table_name"]] > 1
+    }
+
+
+def saved_types_finding(table_id: str, table_name: str) -> Finding:
+    return Finding(
+        code=SAVED_TYPES_NOT_APPLIED,
+        severity="warning",
+        message=(
+            f"the saved Aurora design names {table_name} with no schema, and more than one "
+            "source schema has a table of that name, so its column types were not applied to "
+            "this table: step 1 uses the generated types. Design the schema again to apply them"
+        ),
+        table_id=table_id,
+    )
+
+
+def _user_tables(collector: CollectorOutputContract) -> list:
+    """The collector's tables outside the source engine's system schemas (#2478)."""
+    source = collector.metadata.source_database.engine.value
+    return [
+        t for t in collector.database_schema.tables if not is_system_schema(t.schema_name, source)
+    ]
+
+
+def _with_enum_types(
+    tables: dict[str, TargetTable], enums: EnumColumns, ids: dict[str, str]
+) -> dict[str, TargetTable]:
     """Each column that keeps its PostgreSQL enum (#1834) declared as ``"<schema>"."<type>"``,
     over the generator's and a saved design's type: neither saw the labels (a design's delta
-    cannot name such a type), so both fall back to TEXT for it."""
+    cannot name such a type), so both fall back to TEXT for it. ``ids``: each target's table
+    id, which the enums are keyed by."""
     if not enums.types:
         return tables
-    return {
-        name: TargetTable(name, tuple(
-            TargetColumn(c.name, enums.types[(name, c.name)].sql_type) if (name, c.name) in enums.types else c
-            for c in t.columns))
-        for name, t in tables.items()
-    }  # fmt: skip
+    out = {}
+    for name, t in tables.items():
+        table_id = ids.get(name, "")
+        out[name] = TargetTable(name, tuple(
+            TargetColumn(c.name, enums.types[(table_id, c.name)].sql_type)
+            if (table_id, c.name) in enums.types else c
+            for c in t.columns))  # fmt: skip
+    return out
 
 
 def _load_collector(inputs: JobInputs) -> CollectorOutputContract:
@@ -100,23 +185,29 @@ def _load_collector(inputs: JobInputs) -> CollectorOutputContract:
 
 
 def design_base(
-    inputs: JobInputs, engine: str, collector: CollectorOutputContract
+    inputs: JobInputs,
+    engine: str,
+    collector: CollectorOutputContract,
+    qualified: bool | None = None,
 ) -> AuroraDesignBase:
     """The Aurora DDL generator's input for every collector table: what the step 1
     targets are generated from, and what step 1's DDL file is rendered from (#1798).
 
-    Step 1 keys its targets by the bare table name and blocks a name two schemas share
-    (``ambiguous_target``), so the base never keys tables ``schema.table`` (#2455):
-    ``schema_qualified=False`` whatever schemas the collector spans."""
+    ``qualified``: whether each table is created in its source schema and keyed
+    ``<schema>.<table>`` (#2494); None decides it from the collector (:func:`keeps_schemas`).
+    The DDL passes whether the tables it moves span schemas, so a step whose other schemas
+    move nothing keeps the one-schema form."""
     source = collector.metadata.source_database
+    if qualified is None:
+        qualified = keeps_schemas(collector)
     return AuroraDesignBase(
         engine=engine,
         job_id=inputs.job_id,
         source_database=source.database_name or "",
         source_engine=source.engine.value,
         tables=project_schema_design_tables(collector),
-        source_data_types=source_data_types(dict(inputs.collector)),
-        schema_qualified=False,
+        source_data_types=source_data_types(dict(inputs.collector), qualified=qualified),
+        schema_qualified=qualified,
     )
 
 
@@ -258,17 +349,18 @@ def build_step1(inputs: JobInputs) -> StepContract:
     # The design base leaves out every table of a system schema of the source engine
     # (#2478): such a rule has no target, so it is blocked, and it never makes a user
     # table's name ambiguous. Of the others, it leaves out a table whose name another table
-    # of its own schema has once case is folded. Two schemas' tables whose names differ
-    # only by case are both designed, so their rules keep their fields, as before #2478
-    # (the multi-schema step 1 is #2494).
+    # of its own schema has once case is folded. Two schemas' tables of one name, or of
+    # names that differ only by case, are two targets, each in its own schema (#2494).
     user_tables = [
         t
         for t in collector.database_schema.tables
         if not is_system_schema(t.schema_name, source_engine)
     ]
+    qualified = keeps_schemas(collector)
     names = Counter(t.table_name for t in user_tables)
     folded = Counter(table_key_of(t.table_name, t.schema_name) for t in user_tables)
     targets = target_tables(inputs, engine, collector)
+    unapplied = unapplied_saved_tables(inputs, engine, collector)
     enums = enum_columns(collector, engine).types
     rules: list[Rule] = []
     views: list[str] = []
@@ -327,11 +419,13 @@ def build_step1(inputs: JobInputs) -> StepContract:
                 f"{table_id} is in the system schema {t.schema_name}, which the database "
                 "creates and owns, so it has no target",
             )
-        elif names[t.table_name] > 1:
-            # Targets are matched by table name; two schemas sharing one would share a target.
+        elif not qualified and names[t.table_name] > 1:
+            # Bare targets of one schema: two tables of one name (one with no schema) would
+            # share a target. Targets keyed by schema never do (#2494).
             why = (
                 "ambiguous_target",
-                f"{t.table_name} exists in more than one source schema, so its target is ambiguous",
+                f"{t.table_name} is the name of another source table and step 1 targets both in "
+                "one schema, so its target is ambiguous",
             )
         elif folded[table_key_of(t.table_name, t.schema_name)] > 1:
             why = (
@@ -345,15 +439,17 @@ def build_step1(inputs: JobInputs) -> StepContract:
             fields: list[FieldRule] = []
             findings, status = [finding], "blocked"
         else:
-            target = targets.get(t.table_name)
+            target = targets.get(target_key(t.table_name, t.schema_name, qualified))
             by_name = {c.name: c for c in (target.columns if target else ())}
             fields = [
                 _field(table_id, c, by_name[c.column_name], source_engine, engine,
-                       enums.get((t.table_name, c.column_name)))  # fmt: skip
+                       enums.get((table_id, c.column_name)))  # fmt: skip
                 for c in _ordered(list(t.columns))
                 if c.column_name in by_name
             ]
             findings, status = [], "valid"
+            if t.table_name in unapplied:
+                findings = [saved_types_finding(table_id, t.table_name)]
         rules.append(
             Rule(
                 input_schema="collector",

@@ -154,25 +154,24 @@ def test_the_assignment_version_is_the_one_load_inputs_resolved():
     assert build_step1(resolved).assignment_version == 4
 
 
-@pytest.mark.passes_on_main  # main never qualified step 1; fails if step 1 does (#2479 review)
-def test_two_schemas_sharing_a_table_name_block_both_rules():
-    tables = [_table("a", "users", [_col("id", "int", 1)]), _table("b", "users", [_col("id", "int", 1)]),
+def test_two_schemas_sharing_a_table_name_both_get_valid_rules_with_their_fields():
+    """#2494: step 1 keeps each table's source schema, so ``a.users`` and ``b.users`` are
+    two targets: each rule is valid with its own table's fields."""
+    tables = [_table("a", "users", [_col("id", "int", 1), _col("name", "text", 2)]),
+              _table("b", "users", [_col("id", "bigint", 1)]),
               _table("a", "solo", [_col("id", "int", 1)])]  # fmt: skip
     c = build_step1(_inputs(tables=tables))
-    assert c.status == "has_blocked_rules" and c.blocked_rule_count == 2
-    for table_id in ("a.users", "b.users"):
-        rule = _rule(c, table_id)
-        assert rule.status == "blocked" and [f.code for f in rule.findings] == ["ambiguous_target"]
-        assert rule.findings[0].severity == "error" and rule.findings[0].table_id == table_id
-    solo = _rule(c, "a.solo")
-    assert solo.status == "valid" and [f.target_type for f in solo.fields] == ["INT"]
+    assert c.status == "valid" and c.blocked_rule_count == 0
+    assert {r.source_table: (r.status, r.target_table, [f.target_type for f in r.fields])
+            for r in c.rules} == {
+        "a.users": ("valid", "users", ["INT", "TEXT"]), "b.users": ("valid", "users", ["BIGINT"]),
+        "a.solo": ("valid", "solo", ["INT"])}  # fmt: skip
 
 
-@pytest.mark.passes_on_main  # main never qualified step 1; this pins it (#2479 review)
+@pytest.mark.passes_on_main  # main kept these fields too; #2479 review, #2494 keys by schema
 def test_two_schemas_with_no_shared_name_keep_their_rule_fields():
-    """Step 1 keys its targets by the bare table name (#2479 review): a collector with two
-    schemas must not switch the design base to ``schema.table`` keys, or every rule loses
-    its fields."""
+    """A collector with two schemas keys its targets ``schema.table`` (#2494): every rule
+    keeps its fields, as with bare keys before."""
     tables = [
         _table("a", "users", [_col("id", "int", 1)]),
         _table("b", "orders", [_col("id", "int", 1)]),
@@ -201,11 +200,10 @@ def test_tables_whose_names_fold_to_one_block_both_rules():
     assert solo.status == "valid" and [f.target_type for f in solo.fields] == ["INT"]
 
 
-@pytest.mark.passes_on_main
 def test_two_schemas_tables_whose_names_differ_only_by_case_keep_their_fields():
     """#2478 maintainer decision: ``sales.Orders`` and ``archive.orders`` are both designed,
-    so step 1 keeps main's valid rules with their fields (the multi-schema step 1 is
-    #2494). The same name in two schemas is still ``ambiguous_target``."""
+    so step 1 keeps valid rules with their fields. #2494: so are ``sales.orders`` and
+    ``archive.orders``, each with its own table's fields."""
     tables = [_table("sales", "Orders", [_col("id", "int", 1), _col("total", "int", 2)]),
               _table("archive", "orders", [_col("id", "int", 1)])]  # fmt: skip
     c = build_step1(_inputs(tables=tables))
@@ -216,11 +214,11 @@ def test_two_schemas_tables_whose_names_differ_only_by_case_keep_their_fields():
     archived = _rule(c, "archive.orders")
     assert archived.status == "valid" and archived.findings == []
     assert [f.target_column for f in archived.fields] == ["id"]
-    same = [_table("sales", "orders", [_col("id", "int", 1)]),
+    same = [_table("sales", "orders", [_col("id", "int", 1), _col("total", "int", 2)]),
             _table("archive", "orders", [_col("id", "int", 1)])]  # fmt: skip
     c = build_step1(_inputs(tables=same))
-    assert {r.source_table: [f.code for f in r.findings] for r in c.rules} == {
-        "sales.orders": ["ambiguous_target"], "archive.orders": ["ambiguous_target"]}  # fmt: skip
+    assert {r.source_table: (r.status, [f.target_column for f in r.fields]) for r in c.rules} == {
+        "sales.orders": ("valid", ["id", "total"]), "archive.orders": ("valid", ["id"])}  # fmt: skip
 
 
 @pytest.mark.parametrize("engine,system", [("postgresql", "pg_catalog"), ("mysql", "mysql")])
@@ -255,13 +253,11 @@ def test_a_system_table_never_makes_a_user_tables_name_ambiguous(engine, system)
     assert c.blocked_rule_count == 1
 
 
-@pytest.mark.passes_on_main
 @pytest.mark.parametrize("engine,schema", [("postgresql", "sys"), ("mysql", "pg_app")])
 def test_a_schema_only_another_engine_reserves_moves(engine, schema):
     """#2478 review: ``sys`` is a user schema on PostgreSQL and ``pg_app`` a user database
-    on MySQL, so their tables get valid rules with their fields. Two such schemas' tables
-    of one name meet the same ``ambiguous_target`` as any two schemas' (step 1 targets one
-    schema), never ``system_schema``."""
+    on MySQL, so their tables get valid rules with their fields. #2494: two such schemas'
+    tables of one name both move, each into its own schema, never ``system_schema``."""
     tables = [_table("public", "orders", [_col("id", "int", 1)]),
               _table(schema, "items", [_col("id", "int", 1)])]  # fmt: skip
     c = build_step1(_inputs(engine=engine, tables=tables))
@@ -271,8 +267,8 @@ def test_a_schema_only_another_engine_reserves_moves(engine, schema):
     same = [_table("public", "orders", [_col("id", "int", 1)]),
             _table(schema, "orders", [_col("id", "int", 1)])]  # fmt: skip
     c = build_step1(_inputs(engine=engine, tables=same))
-    codes = {f.code for r in c.rules for f in r.findings}
-    assert codes == {"ambiguous_target"}
+    assert c.blocked_rule_count == 0 and {f.code for r in c.rules for f in r.findings} == set()
+    assert all(r.status == "valid" and r.fields for r in c.rules)
 
 
 def test_the_input_is_not_changed():
@@ -286,3 +282,67 @@ def test_a_wave_entry_spelled_differently_resolves_like_the_plan_does():
     c = build_step1(_inputs(wave_tables=["posts", "WP.LOG"]))
     assert {r.source_table for r in c.rules} == {"wp.posts", "wp.log"}
     assert not [f for r in c.rules for f in r.findings if f.code == "unknown_table"]
+
+
+def _types(c):
+    return {r.source_table: {f.target_column: f.target_type for f in r.fields} for r in c.rules}
+
+
+def test_a_saved_design_of_several_schemas_gives_each_schemas_table_its_own_types():
+    """#2494: a design of several schemas names each table's schema (#2455), so its
+    ``sales.orders`` override reaches that table only, never ``archive.orders``."""
+    tables = [_table("sales", "orders", [_col("id", "int", 1), _col("total", "int", 2)]),
+              _table("archive", "orders", [_col("id", "int", 1), _col("total", "int", 2)])]  # fmt: skip
+    design = [{"table_name": "orders", "schema_name": "sales",
+               "columns": [{"name": "total", "aurora_type": "BIGINT"}]}]  # fmt: skip
+    c = build_step1(_inputs(tables=tables, design=design))
+    assert _types(c) == {"sales.orders": {"id": "INT", "total": "BIGINT"},
+                         "archive.orders": {"id": "INT", "total": "INT"}}  # fmt: skip
+
+
+def test_a_bare_saved_table_reaches_the_one_schema_that_has_it_and_a_shared_name_none():
+    """#2494: a design of one schema names its tables bare (only that schema's tables were
+    routed to Aurora). A bare name one schema of the step has is that schema's table; a
+    bare name two schemas share, as in a design saved before #2455, reaches neither, so
+    both keep the generator's types, stay valid and get a warning."""
+    tables = [_table("a", "solo", [_col("id", "int", 1)]),
+              _table("a", "users", [_col("id", "int", 1)]),
+              _table("b", "users", [_col("id", "int", 1)])]  # fmt: skip
+    design = [{"table_name": "solo", "columns": [{"name": "id", "aurora_type": "BIGINT"}]},
+              {"table_name": "users", "columns": [{"name": "id", "aurora_type": "BIGINT"}]},
+              {"table_name": "users", "columns": [{"name": "id", "aurora_type": "SMALLINT"}]}]  # fmt: skip
+    inputs = _inputs(tables=tables, design=design)
+    c = build_step1(inputs)
+    assert c.blocked_rule_count == 0
+    assert _types(c) == {"a.solo": {"id": "BIGINT"}, "a.users": {"id": "INT"},
+                         "b.users": {"id": "INT"}}  # fmt: skip
+    # #2525 review: both tables say their saved types were not applied, as warnings that
+    # survive validation (once each) and block nothing; the table one schema has does not.
+    from src.tools.transformation_contract.validate import validate_step1
+
+    for contract in (
+        c,
+        validate_step1(c, inputs),
+        validate_step1(validate_step1(c, inputs), inputs),
+    ):
+        codes = {r.source_table: [f.code for f in r.findings if f.code.startswith("saved_")]
+                 for r in contract.rules}  # fmt: skip
+        assert codes["a.users"] == codes["b.users"] == ["saved_design_types_not_applied"]
+        assert codes["a.solo"] == [] and contract.blocked_rule_count == 0
+    users = next(r for r in c.rules if r.source_table == "b.users")
+    assert "names users with no schema" in " ".join(f.message for f in users.findings)
+
+
+def test_each_schemas_table_keeps_its_own_schemas_enum_type():
+    """#2494: two schemas' ``orders`` each keep the enum of their own schema (#1834), keyed
+    by table id: neither takes the other's type."""
+    tables = [_table("sales", "orders", [_col("id", "int", 1), _col("state", "state_t", 2)]),
+              _table("archive", "orders", [_col("id", "int", 1), _col("state", "state_t", 2)])]  # fmt: skip
+    inputs = _inputs(engine="postgresql", tables=tables)
+    inputs.collector["database_schema"]["enum_types"] = [
+        {"schema_name": "sales", "type_name": "state_t", "labels": ["new", "paid"]},
+        {"schema_name": "archive", "type_name": "state_t", "labels": ["old"]},
+    ]
+    c = build_step1(inputs)
+    assert {t: f["state"] for t, f in _types(c).items()} == {
+        "sales.orders": '"sales"."state_t"', "archive.orders": '"archive"."state_t"'}  # fmt: skip
