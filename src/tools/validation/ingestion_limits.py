@@ -9,8 +9,8 @@ memory use, processing time and LLM/compute cost before the pipeline ever reache
 analysis. This module is the one place every ingestion path checks a collection
 against configurable limits, as early as possible: the local API upload (confirm
 step), ``scripts/run_assessment.py`` and ``scripts/run_collect.py --file``, the
-live S3-backed offline collector (``fetch_offline_json``), and the AWS Transform
-upload-discovery/ingestion path.
+live S3-backed offline collector (``fetch_offline_json``), and the library ingest
+(``src/orchestrator/core.py``).
 
 ``check_collection_counts`` checks the parsed collection's table and query counts,
 once the (necessarily already in-memory) dict is available, before the more

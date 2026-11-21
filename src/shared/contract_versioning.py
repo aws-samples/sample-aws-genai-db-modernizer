@@ -432,10 +432,6 @@ INTERNAL_ARTIFACTS: tuple[tuple[str, str], ...] = (
         "each query's access-pattern class and scores as routing scored them (#728, "
         "#936): an audit record written with its assignment version",
     ),
-    (
-        r"assignment/review/pending_hitl\.json",
-        "AWS Transform transport state: the pending review task to resume",
-    ),
     # Schema design and post-schema routing
     (
         r"schema-[^/]+/(?:v\d+/)?merge_record\.json",
@@ -507,11 +503,6 @@ INTERNAL_ARTIFACTS: tuple[tuple[str, str], ...] = (
         "phase's wall-clock seconds and engines and any per-run ceiling that stopped the "
         "run (#145), written by scripts/run_assessment.py for every run (#1675, #145) and "
         "by assess() for a run that called a model, and read by scripts/usage_cost.py",
-    ),
-    (r"uploads/input_key\.json", "AWS Transform transport state: the resolved input location"),
-    (
-        r"_pending/[^/]+/upload\.json",
-        "AWS Transform transport state: a pending upload task, before the job folder exists",
     ),
     (
         r"\.meta/_stored-input-redaction-v\d+\.json",

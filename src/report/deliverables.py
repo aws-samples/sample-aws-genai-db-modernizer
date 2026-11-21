@@ -3,8 +3,7 @@
 
 """Render every customer deliverable from one synthesis report.
 
-Single entry point shared by the local scripts and the AWS Transform integration.
-It only renders; the caller decides where items go: every item is a file of the
+Single entry point for the local scripts and the API. It only renders; the caller decides where items go: every item is a file of the
 job's ``deliverables/`` folder (``FOLDER_ENTRIES``), and ``publish`` marks the ones
 handed to a delivery channel. No LLM calls; content is a pure function of the
 report apart from the provenance timestamp and the code commit of the render (#1166).
@@ -225,7 +224,7 @@ def synthesis_report_key(
     ``synthesis_handler`` writes ``synthesis/v{N}/report.json`` when
     ``assignment_version > 0`` and ``referee-synthesis/report.json`` at 0. The
     requested version is tried first, then any other version found under
-    ``synthesis/``, then the unversioned path -- so this works for an AWS Transform
+    ``synthesis/``, then the unversioned path -- so this works for a versioned
     job and a v0 local run without the caller having to know which.
     """
     candidates: list[str] = []

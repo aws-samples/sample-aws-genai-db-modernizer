@@ -165,7 +165,7 @@ def parse_offline_collection(
             sections or entries the parser cannot read (every one listed).
     """
     # The Oracle script's end-of-list sentinels never count as entries (#131): dropped
-    # here too for a collection given in memory (AWS Transform ingest, ``assess()``).
+    # here too for a collection given in memory (``assess()``).
     data = without_sentinels(data)
     absent = validate_offline_collection(data, source=source)
     warn_absent_sections(data, absent, source=source)

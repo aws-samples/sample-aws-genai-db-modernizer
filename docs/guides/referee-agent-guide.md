@@ -148,7 +148,7 @@ AGENTS.md "Routing changes" lists the rules a change must keep:
 
 After reality check, the one human gate (`Phase.ASSIGNMENT_REVIEW`) shows the
 customer the plan and records the approval under `decisions/`
-(`assignment_review.py`, [ADR-028 (customer assignment review gate)](../architecture/decisions/ADR-028-customer-assignment-review-gate.md)).
+([ADR-028 (customer assignment review gate)](../architecture/decisions/ADR-028-customer-assignment-review-gate.md)).
 There is no gate after triage.
 
 ---

@@ -19,8 +19,8 @@ on the user's own machine. A prior hosted deployment (ECS Fargate, Cognito,
 Step Functions, EventBridge, per-environment CloudFormation stacks) was
 retired — see [#175](https://github.com/aws-samples/sample-aws-genai-db-modernizer/issues/175)
 and [high-level-design.md §2](high-level-design.md#2-deployment-architecture).
-The separate AWS Transform integration (`src/atx_orchestrator/`) runs the
-same agent code over S3-backed storage, orchestrated over A2A.
+The AWS Transform integration that ran the same agent code over S3-backed
+storage was removed in [#2509](https://github.com/aws-samples/sample-aws-genai-db-modernizer/issues/2509).
 
 ### Key Design Decisions
 
@@ -63,7 +63,7 @@ in #175/#341).
 ### For Developers
 
 1. **Read the HLD**: Start with [high-level-design.md](high-level-design.md)
-2. **Understand how it runs**: [high-level-design.md §2](high-level-design.md#2-deployment-architecture) — Claude Code, local API/UI, deterministic CLI, or the AWS Transform integration
+2. **Understand how it runs**: [high-level-design.md §2](high-level-design.md#2-deployment-architecture) — Claude Code, local API/UI, or deterministic CLI
 3. **Review the pipeline**: phases, routing and the one approval gate, [§3](high-level-design.md#3-pipeline-design)
 4. **Check technology stack**: [§6](high-level-design.md#6-technology-stack)
 

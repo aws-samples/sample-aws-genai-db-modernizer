@@ -723,7 +723,7 @@ class TestEveryReaderTakesTheLineageRecord:
         ]
 
     def test_the_aws_transform_core_reports_the_same_record(self, store, monkeypatch) -> None:
-        from src.atx_orchestrator.core import run_reality_check_core
+        from src.orchestrator.core import run_reality_check_core
 
         monkeypatch.setenv("REALITY_CHECK_LLM_MODE", "none")
         original = _forced_noop_on_an_edit(store)

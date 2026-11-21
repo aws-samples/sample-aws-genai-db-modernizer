@@ -7,6 +7,8 @@
 
 ---
 
+> *Removed (2026-11-20, #2509):* the AWS Transform integration (`src/atx_orchestrator/`, `pipeline/`) was removed. What this ADR says about it is history; the pipeline phase entry points it called now live in `src/orchestrator/core.py`.
+
 ## Context
 
 ADR-028 shipped the customer assignment-review gate between Reality Check and
@@ -105,6 +107,8 @@ Re-entry reuses the existing gate rather than adding a parallel flow.
   `finalize_assignment_review` -> `apply_assignment_overrides` path, appending a
   new `customer_gate` version `vN+1` exactly as a first-pass edit does.
 
+  *Removed (2026-11-20, #2509): the `reopen_assignment_review` re-entry entry point and the `present_assignment_review`, `open_detailed_routing_review` and `finalize_assignment_review` tools went with the AWS Transform integration, and nothing replaces the reopen. `apply_assignment_overrides` stays; the assignment API (`src/api/routes/assignments.py`) calls it.*
+
 - **Diff.** `assignment_engine_diff(previous, effective)` compares the set of
   in-scope queries routed to each engine between the version schema was last
   built at and the new effective version. An engine is **affected** if its
@@ -127,6 +131,8 @@ Re-entry reuses the existing gate rather than adding a parallel flow.
   This is deterministic and owned by the tool, not by the LLM choosing which
   per-engine tools to call, so re-entry re-dispatch is reproducible.
 
+  *Removed (2026-11-20, #2509): the `redispatch_after_reroute` tool went with the AWS Transform integration. The engine diff above stays and is what `tests/unit/test_assignment_engine_diff.py` guards.*
+
 - **Correctness.** `co_dependency_groups` is consumed at **assignment time** —
   `assignment_resolver` assigns each group atomically to a single engine, which
   is how co-dependent queries are kept together — **not** at schema design.
@@ -143,6 +149,8 @@ Re-entry reuses the existing gate rather than adding a parallel flow.
   `synthesis/v{N}/report.json` (falling back to the legacy
   `referee-synthesis/report.json`), matching what the writer produces.
 
+  *Removed (2026-11-20, #2509): `get_synthesis_report` went with the AWS Transform integration.*
+
 ### B. Keep the gate honest (cheap, high value)
 
 - **Recompute derived views on override.** In `apply_assignment_overrides`,
@@ -157,7 +165,11 @@ Re-entry reuses the existing gate rather than adding a parallel flow.
   `WARNING [HIGH]` strings the validator already computes) so the orchestrator
   presents them to the customer instead of leaving them only on the artifact.
 
+  *Removed (2026-11-20, #2509): `finalize_assignment_review` went with the AWS Transform integration, so this bullet no longer applies. The recompute above stays.*
+
 ### C. Post-gate feasibility reviewer
+
+*Removed (2026-11-20, #2509): no gate runs the reviewer any more. Its only caller was the AWS Transform review tools. The function (`review_assignment_feasibility` in `src/agents/referee/feasibility_review.py`) is kept, and this decision's Enforcement row tests it on its own, not as part of a gate. Wiring it into the local gate, or removing it, is #2519.*
 
 A reviewer runs on the customer-edited assignment **after** `finalize` applies it
 (on both first-pass and re-entry), producing structured, human-facing findings.
@@ -195,6 +207,8 @@ explicit decision), but it will not let an infeasible routing pass unremarked.
   records the accepted findings on the artifact for audit). Advisory findings
   inform and proceed. The customer always decides; the gate never silently ships
   a broken split, and never overrides the customer's explicit choice.
+
+  *Removed (2026-11-20, #2509): the finalize loop and the acceptance flag were part of the AWS Transform gate and went with it. The reviewer function still produces these findings when called, but no gate calls it (#2519).*
 
 - **Inform, do not auto-fix.** The reviewer does not re-score or pull a whole
   co-dependency group along to follow a moved query. That would fight the
@@ -250,13 +264,13 @@ Each decision names the guard test that fails when the code stops following it. 
 
 | Decision | Enforced by |
 |---|---|
-| A. Staleness-driven re-entry (mechanics) | `tests/unit/atx_orchestrator/test_reentry.py::TestReopen`<br>`tests/unit/atx_orchestrator/test_reentry.py::TestRedispatch`<br>`tests/unit/test_assignment_engine_diff.py`<br>`tests/unit/atx_orchestrator/test_get_synthesis_report.py::TestGetSynthesisReport` |
-| B. Keep the gate honest (cheap, high value) | `tests/unit/test_assignment_overrides.py::TestRecomputesDerivedViews`<br>`tests/unit/agents/referee/test_reality_check_revised_write_layer_b.py::TestRevisedWriteRecomputesDerivedViews`<br>`tests/unit/atx_orchestrator/test_finalize_returns_validation_warnings.py::TestFinalizeReturnsTheNewVersionsWarnings` |
-| C. Post-gate feasibility reviewer | `tests/unit/agents/referee/test_feasibility_review.py::TestReadWriteSplit`<br>`tests/unit/agents/referee/test_feasibility_review.py::TestCoDependencySplit`<br>`tests/unit/atx_orchestrator/test_assignment_gate.py::TestFeasibilityGate` |
+| A. Staleness-driven re-entry (mechanics) | `tests/unit/test_assignment_engine_diff.py` |
+| B. Keep the gate honest (cheap, high value) | `tests/unit/test_assignment_overrides.py::TestRecomputesDerivedViews`<br>`tests/unit/agents/referee/test_reality_check_revised_write_layer_b.py::TestRevisedWriteRecomputesDerivedViews` |
+| C. Post-gate feasibility reviewer | `tests/unit/agents/referee/test_feasibility_review.py::TestReadWriteSplit`<br>`tests/unit/agents/referee/test_feasibility_review.py::TestCoDependencySplit` |
 | E. Prune dead-engine signals after consolidation | `tests/unit/test_assignment_overrides.py::TestRefreshConsolidatedAssignment`<br>`tests/unit/agents/referee/test_synthesis_dead_engine_filter.py`<br>`tests/unit/agents/referee/test_eliminated_engine_agreement.py` |
-| Amendment 1 (2026-09-17): defer job completion so re-entry is possible | `tests/unit/atx_orchestrator/test_job_status.py::TestNonTerminalTransitions`<br>`tests/unit/atx_orchestrator/test_job_status.py::TestSynthesisRestsJobAwaitingInput`<br>`tests/unit/atx_orchestrator/test_job_status.py::TestCompleteAssessmentTool`<br>`tests/unit/atx_orchestrator/test_reentry.py::TestReopen`<br>`tests/unit/atx_orchestrator/test_post_report_checkpoint.py::TestPostReportCheckpointStep`<br>`tests/unit/atx_orchestrator/test_post_report_checkpoint.py::TestCompletionIsNeverAutomatic` |
-| Amendment 2 (2026-09-18): read/write split is advisory, not blocking | `tests/unit/agents/referee/test_feasibility_review.py::TestReadWriteSplit`<br>`tests/unit/atx_orchestrator/test_assignment_gate.py::TestFeasibilityGate` |
-| Amendment 3 (2026-09-18): co-dependency-aware override propagation | `tests/unit/test_assignment_overrides.py::TestCoDependencyPropagation`<br>`tests/unit/atx_orchestrator/test_assignment_gate.py::TestDetailedReviewChatFallback`<br>`tests/unit/agents/referee/test_feasibility_review.py::TestCoDependencySplit` |
+| Amendment 1 (2026-09-17): defer job completion so re-entry is possible | superseded -- #2509 (the AWS Transform integration was removed) |
+| Amendment 2 (2026-09-18): read/write split is advisory, not blocking | `tests/unit/agents/referee/test_feasibility_review.py::TestReadWriteSplit` |
+| Amendment 3 (2026-09-18): co-dependency-aware override propagation | `tests/unit/test_assignment_overrides.py::TestCoDependencyPropagation`<br>`tests/unit/agents/referee/test_feasibility_review.py::TestCoDependencySplit` |
 
 ## Implementation surface
 
@@ -383,6 +397,8 @@ Tradeoffs:
 
 ## Amendment 1 (2026-09-17): defer job completion so re-entry is possible
 
+*Superseded (2026-11-20, #2509): the AWS Transform job status and re-entry tools this amendment changed were removed with the integration.*
+
 **Status:** Accepted. **Trigger:** re-entry was broken on the deployed
 `feat_staleness_` fleet — the reopened routing table showed no submit button and
 nothing auto-continued after submit.
@@ -424,6 +440,8 @@ is produced. The completion idempotency guard now latches only on the terminal
 ---
 
 ## Amendment 2 (2026-09-18): read/write split is advisory, not blocking
+
+*Removed (2026-11-20, #2509): the gate this amendment describes went with the AWS Transform integration, and no gate runs the feasibility reviewer now. The advisory classification stays in `review_assignment_feasibility`, which this amendment's Enforcement row tests on its own. Wiring it into the local gate, or removing it, is #2519.*
 
 **Status:** Accepted. **Trigger:** on the `feat_staleness_` fleet, the very first
 assignment-review gate blocked approve-as-is: the feasibility reviewer flagged

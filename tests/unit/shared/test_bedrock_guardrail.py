@@ -121,8 +121,7 @@ def _request_for(role: Role) -> dict:
     return seen[0]
 
 
-# ATX_AGENT is built by the AWS Transform SDK from the model ID, not by build_bedrock_model.
-_STRANDS_ROLES = [r for r in Role if r is not Role.ATX_AGENT]
+_STRANDS_ROLES = list(Role)
 
 
 @pytest.mark.parametrize("role", _STRANDS_ROLES)
@@ -1122,16 +1121,6 @@ def test_the_api_refuses_to_start_with_a_partial_setting(monkeypatch):
 
     with pytest.raises(GuardrailConfigError, match=bg.ENV_ID):
         asyncio.run(enter())
-
-
-def test_the_atx_entrypoint_exits_non_zero(monkeypatch):
-    from src.atx_orchestrator import atx_entrypoint
-
-    monkeypatch.setenv("AGENT_TYPE", "orchestrator")
-    monkeypatch.setenv(bg.ENV_ID, "gr")
-    with pytest.raises(SystemExit) as caught:
-        atx_entrypoint.main()
-    assert caught.value.code == 1
 
 
 def test_handlers_check_before_touching_the_store(monkeypatch):

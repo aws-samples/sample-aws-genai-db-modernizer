@@ -184,7 +184,7 @@ python_version = "3.12"
 # One mypy invocation for ci/lint.sh and the pre-commit hook (#2245): both run plain
 # `uv run mypy`, so the paths and the environment come from here and from the project venv.
 # Every tracked Python tree except contrib/ (tests/unit/ci/test_mypy_parity.py keeps this true).
-files = ["src", "tests", "scripts", "ci", "benchmarks", "docs", "pipeline"]
+files = ["src", "tests", "scripts", "ci", "benchmarks", "docs"]
 exclude = ["^contrib/"]
 ignore_missing_imports = true
 warn_return_any = true

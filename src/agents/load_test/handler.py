@@ -547,7 +547,7 @@ def _write_artifacts(
 
     # One result artifact per load-tested query (scales with query count — the
     # reference discourse run is ~1,654). Each write targets a distinct key, so
-    # fan them out instead of paying serial ATX upload latency; the surrounding
+    # fan them out instead of paying serial upload latency; the surrounding
     # fixed-count writes stay serial.
     def _write_result(pr: PatternResult) -> None:
         store.write_json(f"{base}/results/{pr.query_id}.json", pr.model_dump())

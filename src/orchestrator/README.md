@@ -9,6 +9,8 @@ Fargate task; that hosted deployment was retired in
 `base.py` still defines the `Orchestrator` ABC so a different backend could
 implement it again, but `LocalOrchestrator` is the only implementation today.
 
+`core.py` holds the phase entry points (`ingest_offline_collection` and the `run_*_core` functions) that `assess()` (`src/assessment/runner.py`) runs, and the one post-schema routing entry point `LocalOrchestrator` and `scripts/run_post_schema_routing.py` share.
+
 ## Workflow
 
 ```
@@ -37,8 +39,7 @@ JobComplete
 ## Artifact Paths
 
 All artifacts live under `{database_name}/{job_id}/` in the local artifact
-store (`./artifacts/` by default) — or in S3, for jobs run through the
-separate AWS Transform integration (`src/atx_orchestrator/`):
+store (`./artifacts/` by default):
 
 | Agent | Path | Key Files |
 |-------|------|-----------|
@@ -55,8 +56,7 @@ Agents share a single container image (`agent-load-test`, which bundles the
 k6 binary) for load testing; the other agent types run as local Python
 function calls, not containers. The entrypoint (`src/agents/entrypoint.py`)
 still routes based on `AGENT_TYPE` for anything that does run containerized
-(the load-test image, and the AWS Transform integration's own
-`atx_entrypoint.py` sibling):
+(the load-test image):
 
 - `collector` → `src/agents/collector/handler.py`
 - `referee-triage` → `src/agents/referee/triage_handler.py`

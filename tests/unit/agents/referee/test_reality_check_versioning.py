@@ -9,7 +9,7 @@ assignment version it did not produce itself, writes its revision to
 already ran for the lineage (including a customer edit made after it), and never
 moves a ``customer_override`` query. These tests drive every entry point that
 runs it (the handler, ``run_assessment``'s phase/finalize/resume path,
-``run_reality_check.py``, and the ATX core) against a real local store, with the
+``run_reality_check.py``, and the pipeline core) against a real local store, with the
 consolidation logic stubbed to "move every documentdb query to dynamodb".
 """
 
@@ -541,7 +541,7 @@ class TestRunRealityCheckScript:
 
 
 # =============================================================================
-# Container entrypoint and AWS Transform core
+# Container entrypoint and the pipeline core
 
 
 class TestEntrypoint:
@@ -557,9 +557,9 @@ class TestEntrypoint:
         assert rc.call_args.kwargs["assignment_version"] == expected
 
 
-class TestAtxRealityCheckCore:
+class TestRealityCheckCore:
     def test_core_resolves_input_and_reports_effective_version(self, store, monkeypatch) -> None:
-        from src.atx_orchestrator.core import run_reality_check_core
+        from src.orchestrator.core import run_reality_check_core
 
         monkeypatch.setenv("REALITY_CHECK_LLM_MODE", "none")
         _run(store)
@@ -572,7 +572,7 @@ class TestAtxRealityCheckCore:
         assert store.read_json(_path(4))["previous_version"] == 3
 
     def test_core_skips_after_customer_edit(self, store, monkeypatch) -> None:
-        from src.atx_orchestrator.core import run_reality_check_core
+        from src.orchestrator.core import run_reality_check_core
 
         monkeypatch.setenv("REALITY_CHECK_LLM_MODE", "none")
         _run(store)

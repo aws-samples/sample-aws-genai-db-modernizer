@@ -1153,14 +1153,13 @@ class TestASavedSplitIsReRouted:
 @pytest.mark.parametrize(
     "module",
     [
-        "src/atx_orchestrator/tools.py",
         "src/api/routes/assignments.py",
         "src/orchestrator/local_orchestrator.py",
         "scripts/run_schema_design.py",
     ],
 )
 def test_every_approval_and_resume_path_reroutes_a_saved_split(module: str) -> None:
-    """The ATX approval tool, the API's edit/approval route, the orchestrator's
+    """The API's edit/approval route, the orchestrator's
     schema-design resume and the schema-design script all re-route a saved split
     first (``reroute_split_writes``), so no path approves or designs one."""
     from pathlib import Path
@@ -1187,44 +1186,6 @@ def _local_legacy_split(tmp_path):
 
 
 class TestTheReviewShowsTheReRoutedVersion:
-    def test_an_unchanged_submission_of_the_shown_table_changes_nothing(self, tmp_path) -> None:
-        """The round-4 repro: the customer was shown the split v1 and submits it
-        unchanged. The gate re-routes (v2) and approves; no customer override, no
-        v3, nothing moved back onto the old engine."""
-        from unittest.mock import patch
-
-        from src.agents.referee.assignment_review import render_assignment_review
-        from src.atx_orchestrator import tools
-        from src.atx_orchestrator.runtime.store import upgrade_store
-
-        store = upgrade_store(_local_legacy_split(tmp_path))
-        v1 = Assignment.model_validate(store.read_json(f"{DB}/{JOB}/assignment/v1/assignment.json"))
-        shown = render_assignment_review(v1)
-        with patch("src.atx_orchestrator.tools._make_store", return_value=store):
-            out = __import__("json").loads(tools.finalize_assignment_review(JOB, DB, shown))
-        assert out["status"] == "approved", out
-        assert out["changed"] is False and out["applied_overrides"] == 0
-        assert out["assignment_version"] == 2
-        assert not store.exists(f"{DB}/{JOB}/assignment/v3/assignment.json")
-        v2 = store.read_json(f"{DB}/{JOB}/assignment/v2/assignment.json")
-        assert not any(qa.get("customer_override") for qa in v2["query_assignments"])
-        engines = {qa["query_id"]: qa["assigned_engine"] for qa in v2["query_assignments"]}
-        assert engines["w1"] == engines["w2"]
-
-    def test_presenting_the_review_reroutes_first(self, tmp_path) -> None:
-        from unittest.mock import patch
-
-        from src.atx_orchestrator import tools
-        from src.atx_orchestrator.runtime.store import upgrade_store
-
-        store = upgrade_store(_local_legacy_split(tmp_path))
-        with (
-            patch("src.atx_orchestrator.tools._make_store", return_value=store),
-            patch("src.atx_orchestrator.tools.mark_step_pending_human_input"),
-        ):
-            out = __import__("json").loads(tools.present_assignment_review(JOB, DB))
-        assert out["assignment_version"] == 2
-
     def test_the_api_shows_the_rerouted_version_and_refuses_a_stale_edit(self, tmp_path) -> None:
         from fastapi.testclient import TestClient
 

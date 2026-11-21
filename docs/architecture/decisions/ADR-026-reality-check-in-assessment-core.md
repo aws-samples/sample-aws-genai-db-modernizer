@@ -1,6 +1,6 @@
 # ADR-026: Fold Reality Check into the Assessment Core
 
-**Status:** Partially superseded: Decision 4 (the human gate half) by ADR-028 (customer assignment review gate) Decision A; the external LLM mode half still holds in the transform core
+**Status:** Partially superseded: Decision 2 went with the AWS Transform integration (#2509); Decision 4's human gate half by ADR-028 (customer assignment review gate) Decision A, itself removed in #2509; Decision 4's external LLM mode half still holds in the pipeline core (`src/orchestrator/core.py`)
 **Date:** 2026-08-27
 **Deciders:** Database Modernizer Assessment Architecture Team
 **Related ADRs:** ADR-025 (Consolidate the Deterministic Core), ADR-024 (Consolidate the Analysis Fleet), ADR-018 (Reality Check and Human Approval Gate), ADR-021 (Aurora Absorption Pass)
@@ -8,6 +8,8 @@
 > Superseded in part by [ADR-031](ADR-031-query-first-routing-and-engine-rule-catalog.md): the reality check's internal scoring logic described here is replaced by the shared per-query score the first assignment uses.
 
 ---
+
+> *Removed (2026-11-20, #2509):* the AWS Transform integration (`src/atx_orchestrator/`, `pipeline/`) was removed. What this ADR says about it is history; the pipeline phase entry points it called now live in `src/orchestrator/core.py`.
 
 ## Context
 
@@ -73,6 +75,8 @@ pipeline now reads as **assess (assessment-core) -> design (schema) -> report
 (synthesis)**. The rename covers the AGENT_TYPE, the subagent module, the fleet
 entry, the A2A tool, the container directory, and the orchestrator prompt.
 
+*Superseded (2026-11-20, #2509): the AWS Transform integration was removed, and with it the `assessment-core` agent. The phases it ran stay in `src/orchestrator/core.py`, which `assess()` runs.*
+
 ### 3. Resolve the assignment version in Python, not the prompt
 
 Remove `assignment_version` from the prompt and from the schema-design and
@@ -94,7 +98,7 @@ mid-run human or LLM input, which the current A2A model (submit, poll, terminal;
 no streaming, no mid-run input) does not support. Both are deferred. Reality
 Check runs to completion without either.
 
-*Superseded (#701) by ADR-028 (customer assignment review gate) Decision A for the human gate, which was added. The external-mode half still holds: `run_reality_check_core` in `src/atx_orchestrator/core.py` leaves `"external"` intentionally unsupported in the transform core and defaults `REALITY_CHECK_LLM_MODE` to `bedrock`.*
+*Superseded (#701) by ADR-028 (customer assignment review gate) Decision A for the human gate, which was added. The external-mode half still holds: `run_reality_check_core` in `src/orchestrator/core.py` leaves `"external"` intentionally unsupported in the pipeline core and defaults `REALITY_CHECK_LLM_MODE` to `bedrock`.* *(Path updated 2026-11-20, #2509: the core moved from `src/atx_orchestrator/core.py`.)*
 
 ## Enforcement
 
@@ -102,10 +106,10 @@ Each decision names the guard test that fails when the code stops following it. 
 
 | Decision | Enforced by |
 |---|---|
-| 1. Fold Reality Check into the core agent | `tests/unit/atx_orchestrator/test_run_assessment_core.py::test_runs_all_phases_and_writes_same_artifacts` |
-| 2. Rename the agent to `assessment-core` | `tests/unit/atx_orchestrator/test_tools_a2a.py::TestRunDeterministicCoreViaA2AHappyPath::test_invokes_correct_agent_name` |
-| 3. Resolve the assignment version in Python, not the prompt | `tests/unit/atx_orchestrator/test_subagent_assignment_version.py::TestCoreResolvesAbsentVersion`<br>`tests/unit/atx_orchestrator/test_subagent_assignment_version.py::TestSubagentParams`<br>`tests/unit/atx_orchestrator/test_run_assessment_core.py::test_resolve_assignment_version` |
-| 4. Defer the human gate and the external LLM mode | superseded by ADR-028 Decision A (the gate was added)<br>`tests/unit/atx_orchestrator/test_reality_check_core_llm_mode.py::TestRealityCheckCoreLlmMode`<br>`tests/unit/atx_orchestrator/test_reality_check_core_llm_mode.py::TestRealityCheckCoreLlmMode::test_external_is_rejected_with_a_clear_error`<br>`tests/unit/atx_orchestrator/test_reality_check_core_llm_mode.py::TestRealityCheckCoreLlmModeArgument` |
+| 1. Fold Reality Check into the core agent | `tests/unit/agents/referee/test_reality_check_versioning.py::TestRealityCheckCore` |
+| 2. Rename the agent to `assessment-core` | superseded -- #2509 (the AWS Transform integration was removed) |
+| 3. Resolve the assignment version in Python, not the prompt | `tests/unit/orchestrator/test_core_assignment_version.py::TestCoreResolvesAbsentVersion`<br>`tests/unit/orchestrator/test_core_assignment_version.py::test_resolve_assignment_version`<br>`tests/unit/agents/referee/test_reality_check_versioning.py::TestRealityCheckCore::test_core_resolves_input_and_reports_effective_version`<br>`tests/unit/test_assignment_downstream_helpers.py` |
+| 4. Defer the human gate and the external LLM mode | superseded -- #701 (the human gate half: ADR-028 Decision A added the gate, and #2509 removed it with the integration)<br>`tests/unit/orchestrator/test_reality_check_core_llm_mode.py::TestRealityCheckCoreLlmMode`<br>`tests/unit/orchestrator/test_reality_check_core_llm_mode.py::TestRealityCheckCoreLlmModeArgument` |
 
 ## Rationale
 

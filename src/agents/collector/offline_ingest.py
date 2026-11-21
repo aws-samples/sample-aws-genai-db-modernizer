@@ -6,7 +6,7 @@
 Every ingest path that turns a raw collection-script file into
 ``collector/output.json`` builds it here:
 
-- the library ingest (``src/atx_orchestrator/core.py::ingest_offline_collection``),
+- the library ingest (``src/orchestrator/core.py::ingest_offline_collection``),
   ``scripts/run_assessment.py``, ``scripts/run_collect.py`` and
   ``scripts/test_local_phased.py`` call :func:`build_offline_collector_output`;
 - the collector handler's offline mode (``mysql_collector._collect_offline``, which

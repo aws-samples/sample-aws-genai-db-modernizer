@@ -77,7 +77,7 @@ UNTYPED_WRITE_SITES: dict[tuple[str, str, str], type[BaseModel] | tuple[type[Bas
     ("src/agents/load_test/handler.py", "_write_artifacts", "output"): LoadTestOutput,
     ("scripts/run_analysis.py", "_write_analysis_artifacts", "contract"): AnalysisOutputContract,
     # ``contract, trace, mermaid = analyze_fn(...)``: the engine's analysis entry point.
-    ("src/atx_orchestrator/core.py", "run_analysis_core", "contract"): AnalysisOutputContract,
+    ("src/orchestrator/core.py", "run_analysis_core", "contract"): AnalysisOutputContract,
     # The one decision-trace writer loads the trace through the contract registered for
     # its path: any engine's typed trace.
     ("src/agents/analysis/decision_trace.py", "write_decision_trace", "typed"): (

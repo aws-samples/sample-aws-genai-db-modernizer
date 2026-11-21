@@ -563,10 +563,10 @@ def test_the_schema_merge_entrypoint_fails_with_the_reason(monkeypatch, tmp_path
 
 
 @pytest.mark.parametrize("older_output", [False, True])
-def test_atx_fails_with_the_contract_errors_never_an_older_output(
+def test_the_core_fails_with_the_contract_errors_never_an_older_output(
     grouped_merge_refuses, older_output
 ):
-    from src.atx_orchestrator.core import run_schema_design_core
+    from src.orchestrator.core import run_schema_design_core
 
     store = grouped_merge_refuses
     if older_output:
@@ -591,27 +591,6 @@ def _saved_design(store: LocalArtifactStore, version: int, design: dict) -> None
     base = f"{DB}/{JOB}/schema-dynamodb/v{version}"
     store.write_json(f"{base}/schema_output.json", design)
     store.write_json(f"{base}/design_trace.json", {"groups": []})
-
-
-def test_atx_copy_forward_designs_an_invalid_saved_design_again(tmp_path):
-    from src.atx_orchestrator.tools import _copy_schema_forward
-
-    store = LocalArtifactStore(base_dir=str(tmp_path))
-    _saved_design(store, 1, _items_draft(with_entities=True))
-
-    assert _copy_schema_forward(store, DB, JOB, "dynamodb", 1, 2) is False
-    assert not store.exists(f"{DB}/{JOB}/schema-dynamodb/v2/schema_output.json")
-
-
-def test_atx_copy_forward_copies_a_valid_design(tmp_path):
-    from src.atx_orchestrator.tools import _copy_schema_forward
-
-    store = LocalArtifactStore(base_dir=str(tmp_path))
-    _saved_design(store, 1, _items_draft(with_entities=False))
-
-    assert _copy_schema_forward(store, DB, JOB, "dynamodb", 1, 2) is True
-    copied = store.read_json(f"{DB}/{JOB}/schema-dynamodb/v2/schema_output.json")
-    assert copied["assignment_version"] == 2
 
 
 def test_local_copy_forward_refuses_an_invalid_saved_design(tmp_path):

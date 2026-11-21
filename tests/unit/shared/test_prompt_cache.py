@@ -478,17 +478,3 @@ def test_no_cache_config_class_means_no_caching(monkeypatch):
 
     monkeypatch.setattr(builtins, "__import__", fake_import)
     assert "cache_config" not in bedrock_model_kwargs(Role.SCHEMA_DESIGN)
-
-
-def test_atx_image_bounds_strands():
-    import re
-    from pathlib import Path
-
-    from packaging.specifiers import SpecifierSet
-    from packaging.version import Version
-
-    root = Path(__file__).resolve().parents[3] / "src/atx_orchestrator"
-    assert "strands-agents>=1.56.0,<2" in (root / "requirements.in").read_text()
-    # The image installs the locked version, which must satisfy that bound (#1725).
-    pin = re.search(r"^strands-agents==(\S+)$", (root / "requirements.txt").read_text(), re.M)
-    assert pin and Version(pin[1]) in SpecifierSet(">=1.56.0,<2")

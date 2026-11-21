@@ -14,6 +14,8 @@
 > that predate the graph. The `materialize_*` functions and the `JOURNEY_MODE`
 > flag that gated them have been removed. This ADR is retained as the historical
 > record of the original design.
+>
+> *Removed (2026-11-20, #2509):* the AWS Transform integration (`src/atx_orchestrator/`, `pipeline/`) was removed. What this ADR says about it is history; the pipeline phase entry points it called now live in `src/orchestrator/core.py`.
 
 ## Context
 

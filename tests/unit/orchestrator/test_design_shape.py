@@ -21,7 +21,7 @@ from __future__ import annotations
 
 import pytest
 
-from src.atx_orchestrator.core import _DESIGN_SHAPE, _design_shape
+from src.orchestrator.core import _DESIGN_SHAPE, _design_shape
 
 # (target, artifact field, count observed on v2-e2e-08)
 OBSERVED = [

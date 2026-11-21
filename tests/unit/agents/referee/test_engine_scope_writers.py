@@ -43,7 +43,7 @@ class TestTheSourceOfTruthReroute:
         _scope_triage(store, f"{one_writer.DB}/{one_writer.JOB}", ["documentdb"])
         with pytest.raises(OutOfScopeVersion, match="source-of-truth reroute") as refused:
             reroute_split_writes(store, one_writer.DB, one_writer.JOB)
-        # The API and the AWS Transform tools report it as a refused edit.
+        # The API reports it as a refused edit.
         assert isinstance(refused.value, AssignmentOverrideError)
         assert "DynamoDB is outside the scope" in str(refused.value)
         assert not store.exists(f"{one_writer.DB}/{one_writer.JOB}/assignment/v2/assignment.json")

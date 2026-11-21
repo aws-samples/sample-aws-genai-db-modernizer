@@ -100,10 +100,6 @@ def test_e2e_llm_nightly_tier_runs_nightly(path: str) -> None:
         "src/tools/analysis/llm_advisor_base.py",
         "src/tools/schema/aurora_common/bedrock_delta.py",
         "src/agents/answer_validation.py",
-        "src/atx_orchestrator/orchestrator.py",
-        "src/atx_orchestrator/subagents/base.py",
-        "src/atx_orchestrator/tools.py",
-        "src/atx_orchestrator/mcp_tools.py",
         "src/shared/bedrock_guardrail.py",
         "src/contracts/reality_check_model_response.py",
         "src/contracts/executive_summary_response.py",
@@ -117,8 +113,6 @@ def test_bedrock_smoke_prompt_tier_is_required(path: str) -> None:
 @pytest.mark.parametrize(
     "path",
     [
-        "src/atx_orchestrator/app.py",
-        "src/atx_orchestrator/runtime/store.py",
         "src/shared/role_bedrock_model.py",
         "scripts/test_local_phased.py",
     ],
@@ -243,12 +237,12 @@ def test_main_prints_verdict_per_run(capsys: pytest.CaptureFixture[str]) -> None
         "e2e-llm: not required",
         "bedrock-smoke: not required",
     ]
-    assert main(["AGENTS.md", "src/atx_orchestrator/orchestrator.py"]) == 0
+    assert main(["AGENTS.md", "src/shared/bedrock_guardrail.py"]) == 0
     assert capsys.readouterr().out.splitlines() == [
         "e2e-llm: required",
         "  AGENTS.md",
         "bedrock-smoke: required",
-        "  src/atx_orchestrator/orchestrator.py",
+        "  src/shared/bedrock_guardrail.py",
     ]
     # Nightly-tier paths are listed under a required run, marked, after the prompt tier.
     assert (
@@ -493,7 +487,7 @@ def test_llm_input_builders_are_in_e2e_llm() -> None:
 # untrusted text, or an llm_input / request builder. Such a file is prompt tier in every run
 # that lists it (#1965), so a change to it gets its real-model run before merging.
 PROMPT_SITE = re.compile(
-    r"frame_untrusted\(|with_untrusted_notice\(|TOOL_RESULT_NOTICE|SYSTEM_PROMPT_DATA_DIRECTIVE"
+    r"frame_untrusted\(|with_untrusted_notice\(|SYSTEM_PROMPT_DATA_DIRECTIVE"
     r"|^SYSTEM_PROMPT\b\s*=|system_prompt="
     r"|^def \w*_prompt\(|^def prepare_\w*llm_input\b|^def prepare_schema_design_input\b"
     r"|^def (?:build|render)_\w*request\b",
@@ -548,7 +542,7 @@ def test_not_prompt_builders_are_still_scan_hits() -> None:
 
 def test_prompt_builders_are_in_the_prompt_tier() -> None:
     hits = _prompt_sites()
-    assert len(hits) >= 35, f"PROMPT_SITE found only {len(hits)} files; fix the regex"
+    assert len(hits) >= 34, f"PROMPT_SITE found only {len(hits)} files; fix the regex"
     missing = [
         (p, run)
         for p in hits
@@ -568,9 +562,7 @@ def test_prompt_builders_are_in_the_prompt_tier() -> None:
     [
         "src/agents/referee/synthesis_report.py",
         "src/agents/answer_validation.py",
-        "src/atx_orchestrator/subagents/schema.py",
         "src/tools/schema/aurora_common/design_view.py",
-        "src/atx_orchestrator/tools.py",
         "scripts/run_schema_design.py",
         "ci/llm/judge.py",
     ],
@@ -620,8 +612,7 @@ REVIEWED_DETERMINISTIC_IMPORTS: dict[str, str] = {
         "the one read of the collector output for every model-facing step (#1180): the "
         "schema-design handler, revision handler and group merger, the analysis handler and "
         "scripts/run_analysis.py (whose AnalysisInput the DynamoDB and DocumentDB advisors and "
-        "prepare_*_llm_input read), the reality check, the synthesis data and the ATX analysis "
-        "and feasibility tools; it only removes the query tags. That nothing of them reaches a "
+        "prepare_*_llm_input read), the reality check and the synthesis data; it only removes the query tags. That nothing of them reaches a "
         "model input is checked without a model by tests/unit/agents/"
         "test_query_tags_reach_no_model.py (every request file, prompt and designer input of "
         "a tagged job), and that those modules read through it by tests/unit/storage/"
@@ -717,9 +708,6 @@ def test_feeder_scan_finds_known_modules(known: str) -> None:
         "src/agents/referee/reality_check_request.py",
         "src/agents/referee/synthesis_handler.py",
         "src/tools/schema/aurora_common/design_view.py",
-        "src/atx_orchestrator/orchestrator.py",
-        "src/atx_orchestrator/app.py",
-        "src/atx_orchestrator/subagents/base.py",
         "src/tools/analysis/llm_advisor_base.py",
         "src/shared/role_bedrock_model.py",
     ],

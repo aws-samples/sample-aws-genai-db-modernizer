@@ -1,11 +1,11 @@
 # Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
 # SPDX-License-Identifier: MIT-0
 
-"""Shared pipeline logic for the AWS Transform integration.
+"""The pipeline's phase entry points over one ArtifactStore.
 
-This module holds the storage-agnostic functions that BOTH the orchestrator
-tools (tools.py) and the subagent wrappers call. Single source of truth — no
-duplication between the in-process tool path and the A2A subagent path.
+``assess()`` (``src/assessment/runner.py``), the local orchestrator and
+``scripts/run_post_schema_routing.py`` call these functions, so each phase has one
+implementation.
 
 Everything here operates on the ArtifactStore abstraction. Storage type
 (local dir vs S3) is controlled by env vars via create_artifact_store().
@@ -13,12 +13,10 @@ Everything here operates on the ArtifactStore abstraction. Storage type
 
 from __future__ import annotations
 
-import contextlib
 import logging
 import os
-import tempfile
 from collections.abc import Callable
-from typing import Any, NamedTuple, cast
+from typing import NamedTuple
 
 from src.shared.ranking import main_engine
 from src.storage.assignment_versioning import (
@@ -29,290 +27,16 @@ from src.storage.assignment_versioning import (
 logger = logging.getLogger(__name__)
 
 
-def _atx_backend_active() -> bool:
-    """True when the ATX Agentic Artifact Store backend is selected."""
-    return os.environ.get("STORAGE_BACKEND") == "atx"
-
-
 def make_store():
     """Create a text-capable ArtifactStore.
 
-    ``STORAGE_BACKEND=atx`` selects the ATX Agentic Artifact Store backend (ATX
-    runs store nothing in our S3). Otherwise core-modernizer's
     ``create_artifact_store()`` decides S3-vs-local from env and ``upgrade_store``
-    re-homes it onto the Transform subclass that adds ``write_text``.
+    re-homes it onto the subclass that adds ``write_text``.
     """
-    if _atx_backend_active():
-        from src.atx_orchestrator.runtime.atx_store import TransformAtxStore
-
-        return TransformAtxStore()
-
-    from src.atx_orchestrator.runtime.store import upgrade_store
     from src.storage import create_artifact_store
+    from src.storage.text_store import upgrade_store
 
     return upgrade_store(create_artifact_store())
-
-
-def make_orchestrator(store=None):
-    """Create a LocalOrchestrator bound to the given store.
-
-    The ATX tools use it only for ``.meta`` phase-progression persistence; they
-    run the phases through this module's ``run_*_core`` functions, not through
-    the orchestrator, so ``LLM_MODE`` (default ``"none"``) does not make an ATX
-    run deterministic. ``run_schema_design_core`` always designs with Bedrock
-    (``SCHEMA_AGENT_MODEL_ID``), and reality check takes its mode from
-    ``REALITY_CHECK_LLM_MODE``. ``LLM_MODE`` only applies to phases run through
-    the returned orchestrator (``resume`` / ``resume_lenient``).
-    """
-    from src.orchestrator.local_orchestrator import LocalOrchestrator
-
-    s = store or make_store()
-    llm_mode = os.environ.get("LLM_MODE", "none")
-    return LocalOrchestrator(store=s, llm_mode=llm_mode)
-
-
-def default_input_key(job_id: str, database_name: str) -> str:
-    """Default ArtifactStore key for the raw offline collection JSON."""
-    return f"{database_name}/{job_id}/uploads/collector-output.json"
-
-
-def _discover_uploaded_input(store, job_id: str = "", database_name: str = "") -> str | None:
-    """Locate a customer's WebApp-uploaded offline collection via the ATX
-    Artifact API, download it, and stage it at the seed key for the collector.
-
-    A customer's upload is a platform **artifact** (category ``CUSTOMER_INPUT``),
-    not an object in this pipeline's ``S3_BUCKET``. The Artifact Store owns where
-    it physically lives — an ATX-managed bucket or the customer's own bucket, in
-    a different account than this fleet — and mints a presigned URL for it with
-    its own role. Listing a prefix in our ``S3_BUCKET`` (the old approach) only
-    ever found the upload when the WebApp happened to write into the same bucket
-    the runtime reads, i.e. same-account dev; cross-account it silently found
-    nothing. So discovery goes through ``ListArtifacts`` +
-    ``CreateArtifactDownloadUrl`` instead, which is account/bucket-agnostic.
-
-    Discovery runs whenever we're in the ATX runtime -- it does NOT gate on
-    ``STORAGE_BACKEND=atx``. That flip is deferred: live ATX runs still set
-    ``STORAGE_BACKEND`` to something other than ``atx``, so gating on it made
-    discovery return ``None`` unconditionally in production, and the collector
-    fell back to a seed key nothing had staged. The customer's upload also has
-    an arbitrary ATX-assigned name/path we don't control, so the collector can't
-    read it directly under a fixed key either -- staging it ourselves at the
-    seed key is what makes the collector's read path work regardless of backend.
-    Once ``STORAGE_BACKEND=atx`` is eventually flipped, ``store.write_json`` for
-    the seed lands in the ATX artifact store as a ``STATE`` artifact rather than
-    our S3 -- so this still never touches our S3 for the customer's data.
-
-    Flow:
-
-      1. Resolve the ATX agent context (workspace/job/agent-instance) and build
-         the SDK ``ArtifactStore``. Outside the ATX runtime this raises, and we
-         return ``None`` (local/dev falls back to a pre-staged seed key).
-      2. ``list_artifacts(category=CUSTOMER_INPUT)`` for THIS agent instance (the
-         orchestrator's), filter to JSON, exclude the auto-written
-         ``job_objective`` AND our own ``STATE``-category artifacts (this
-         pipeline's own writes, e.g. ``{db}/{job}/collector/output.json`` on a
-         retry/resume). ``STATE`` is a category THIS pipeline assigns to its own
-         writes; we assume the platform never tags a customer WebApp upload as
-         ``STATE``. If it ever did, discovery would exclude the real upload and
-         fall back to the seed. Expect exactly one candidate after exclusions;
-         more than one is ambiguous and raises.
-      3. Download it and stage it into ``store`` at the seed key
-         ``{db}/{job}/uploads/collector-output.json``; return that key. The
-         collector then reads it exactly as it does a dev/reference seed.
-
-    Returns the staged seed key, or ``None`` when not in the ATX runtime or no
-    upload was found. Raises ``ValueError`` on an ambiguous upload.
-    """
-    try:
-        from agent_builder_sdk.agentic_framework.artifact_store import ArtifactStore
-        from agent_builder_sdk.agentic_framework.client_factory import get_agentic_api_client
-        from agent_builder_sdk.env_var import get_agent_context_from_env
-
-        ctx = get_agent_context_from_env()
-        artifacts = ArtifactStore(
-            workspace_id=ctx.workspace_id,
-            job_id=ctx.job_id,
-            agent_instance_id=ctx.agent_instance_id,
-            client=get_agentic_api_client(),
-        )
-    except Exception as exc:  # noqa: BLE001 -- not in the ATX runtime; no upload to discover
-        logger.info(
-            "upload discovery: no ATX agent context (%s); returning None "
-            "(collector will fall back to the seed key)",
-            exc,
-        )
-        return None
-
-    # List the job's artifacts with NO server-side filter, then match in Python.
-    # Server-side category/agent filters both returned listed=0 in the field even
-    # though the WebApp Artifacts panel shows the upload — the customer upload's
-    # stored category is not necessarily CUSTOMER_INPUT. (The WebApp Artifacts
-    # panel surfaces it under a "User Uploads/" grouping, but that path prefix is
-    # NOT relied upon for matching below -- matching is exclusion-based: a .json
-    # basename, minus the auto-written job_objective, minus our own STATE writes.)
-    # The live-tested agentcore_list_artifacts.py reference defaults to no filter
-    # for exactly this reason; we mirror that and inspect each artifact's real
-    # categoryType / fileType / path. Paginate.
-    all_artifacts: list[dict] = []
-    next_token: str | None = None
-    while True:
-        kwargs: dict = {
-            "requestContext": artifacts._create_request_context(),
-            "maxResults": 100,
-        }
-        if next_token:
-            kwargs["nextToken"] = next_token
-        resp = artifacts.client.list_artifacts(**kwargs)
-        # The SDK types these as list[ArtifactTypeDef] (a TypedDict); every consumer
-        # below reads them as plain dicts via .get(), so narrow to list[dict] for the
-        # extend. Newer mypy treats the TypedDict as invariantly incompatible otherwise.
-        all_artifacts.extend(cast("list[dict[str, Any]]", resp.get("artifacts") or []))
-        next_token = resp.get("nextToken")
-        if not next_token:
-            break
-
-    def _path(a: dict) -> str:
-        return (a.get("fileMetadata") or {}).get("path") or ""
-
-    def _label(a: dict) -> str:
-        return a.get("artifactLabel") or ""
-
-    # Log the artifact paths the platform returned. This is the observability that
-    # a None/empty result was previously missing (it looked identical whether the
-    # upload was absent, in the wrong scope, or filtered out). Paths are enough to
-    # diagnose; full artifact dicts were only needed while reverse-engineering the
-    # shape. See fix/atx-input-file.
-    logger.info(
-        "upload discovery: job=%s agent_instance=%s listed=%d paths=%s",
-        ctx.job_id,
-        ctx.agent_instance_id,
-        len(all_artifacts),
-        [_path(a) or _label(a) for a in all_artifacts],
-    )
-
-    # A customer collection upload is a .json whose path basename ends in
-    # ``.json``. The auto-written objective is ALSO CUSTOMER_INPUT/JSON, but with
-    # label ``default`` (not ``job_objective``) and a bare ``job_objective`` path
-    # -- so it must be excluded by its path basename, not by label or a
-    # leading-slash suffix (both of which it evades, which produced a spurious
-    # "found 2" ambiguity in the field). See the ground-truth discovery log above.
-    def _basename(a: dict) -> str:
-        return _path(a).rsplit("/", 1)[-1]
-
-    # Our own pipeline writes JSON artifacts under CategoryType.STATE into the
-    # same job (e.g. {db}/{job}/collector/output.json). Once the ATX backend is
-    # active, those land in the same ListArtifacts response as the customer's
-    # upload on a retry/resume and match the ".json" basename rule too -- so
-    # they must be excluded explicitly. STATE is a category THIS pipeline
-    # assigns to its own writes; we assume the platform never tags a customer
-    # WebApp upload as STATE. If it ever did, this would exclude the real
-    # upload and fall back to the seed (see docstring).
-    def _category(a: dict) -> str:
-        return (a.get("artifactType") or {}).get("categoryType") or ""
-
-    candidates = [
-        a
-        for a in all_artifacts
-        if _basename(a).endswith(".json")
-        and _basename(a) != "job_objective"
-        and _category(a) != "STATE"
-    ]
-    if len(candidates) > 1:
-        paths = sorted(_path(a) or _label(a) for a in candidates)
-        raise ValueError(
-            f"Expected exactly one uploaded collection JSON artifact, found "
-            f"{len(candidates)}: {paths}. The pipeline cannot choose among multiple "
-            "uploads without a naming convention."
-        )
-    if not candidates:
-        logger.warning(
-            "upload discovery found no CUSTOMER_INPUT JSON artifact for agent_instance=%s "
-            "(listed %d artifact(s)). input_key will be empty; the collector will fall "
-            "back to the seed key and fail if none is staged. Confirm the customer "
-            "uploaded a collection file to this job.",
-            ctx.agent_instance_id,
-            len(all_artifacts),
-        )
-        return None
-
-    artifact_id = candidates[0]["artifactId"]
-    seed_key = default_input_key(job_id, database_name)
-    with tempfile.NamedTemporaryFile(suffix=".json", delete=False) as tmp:
-        tmp_path = (
-            tmp.name
-        )  # nosemgrep: tempfile-without-flush -- file created on disk by NamedTemporaryFile; path used correctly
-    try:
-        # Any size (#384); the counts are checked when it is ingested (#142).
-        artifacts.download_artifact(artifact_id, tmp_path)
-        # The collection scripts' own reader (#2128): a MySQL or MariaDB file may hold a second
-        # object after the collection (the LOB sizes), which json.load rejects as extra data.
-        from src.tools.database.offline_collection_check import read_collection_text
-
-        with open(tmp_path, encoding="utf-8") as fh:
-            collection = read_collection_text(fh.read(), source=f"uploaded artifact {artifact_id}")
-        # The staged copy holds no literal value (#1625): a collector output's text,
-        # tags and definitions, or a raw collection's (which keeps its query ids).
-        from src.tools.sql.redact import redact_collector_output, redact_raw_collection
-
-        if isinstance(collection, dict):
-            collection = dict(
-                redact_collector_output(collection)
-                if "contract_version" in collection
-                else redact_raw_collection(collection)
-            )
-        store.write_json(seed_key, collection)
-    finally:
-        with contextlib.suppress(OSError):
-            os.remove(tmp_path)
-    logger.info(
-        "upload discovery: staged CUSTOMER_INPUT artifact %s (label=%r) at seed key %r",
-        artifact_id,
-        candidates[0].get("artifactLabel"),
-        seed_key,
-    )
-    return seed_key
-
-
-def _resolve_collector_input(store, job_id: str, database_name: str, input_key: str) -> str:
-    """Resolve where the collector reads the raw offline collection.
-
-    Discovery of a customer's WebApp upload happens in the orchestrator
-    (``run_collect_via_a2a``), which reliably holds the customer's Transform job
-    context and passes the resolved key here as ``input_key`` -- see
-    ``_discover_uploaded_input``. The collector itself only chooses between an
-    explicit key and the seed, so it never depends on its own subagent context
-    matching the customer's job:
-
-      1. an explicit ``input_key`` (from the orchestrator or the reference harness);
-      2. the seed key ``{db}/{job}/uploads/collector-output.json`` (dev/reference
-         workloads stage it there).
-
-    Raises FileNotFoundError if neither is present. The raw input's location does
-    not affect the pipeline's ``{db}/{job}/`` output tree: that tree is created by
-    the collector writing ``{db}/{job}/collector/output.json`` and by every
-    subsequent phase's own writes, not by where the input was read from.
-    """
-    if input_key:
-        if not store.exists(input_key):
-            raise FileNotFoundError(f"Offline collection input not found at '{input_key}'.")
-        logger.info("collector input resolved from explicit input_key=%r", input_key)
-        return input_key
-
-    seed = default_input_key(job_id, database_name)
-    if store.exists(seed):
-        logger.info(
-            "collector input resolved from SEED key %r (no input_key was passed). "
-            "This is expected for dev/reference runs; a customer WebApp job should "
-            "resolve via upload discovery instead.",
-            seed,
-        )
-        return seed
-
-    raise FileNotFoundError(
-        f"No offline collection found for job '{job_id}': no input_key was passed and "
-        f"no seed exists at '{seed}'. The orchestrator resolves customer uploads and "
-        "passes the key; for dev/reference runs, stage the collection at the seed key."
-    )
 
 
 def ingest_offline_collection(store, job_id: str, database_name: str, raw_input: dict) -> dict:
@@ -411,33 +135,10 @@ def ingest_offline_collection(store, job_id: str, database_name: str, raw_input:
     return collector_data
 
 
-def run_collect_core(job_id: str, database_name: str, input_key: str = "", store=None) -> dict:
-    """Ingest offline collection only (no triage). Returns a summary dict.
-
-    Wraps the collector step exactly as the existing collector agent does, reading
-    the raw offline collection through the ArtifactStore and writing the collector
-    output contract. This maps one-to-one to AGENT_TYPE='collector'.
-
-    Raises FileNotFoundError if the offline input is missing.
-    """
-    store = store or make_store()
-    key = _resolve_collector_input(store, job_id, database_name, input_key)
-    raw_input = store.read_json(key)
-    collector_data = ingest_offline_collection(store, job_id, database_name, raw_input)
-
-    return {
-        "job_id": job_id,
-        "database_name": database_name,
-        "tables": len(collector_data.get("database_schema", {}).get("tables", [])),
-        "queries": len(collector_data.get("queries", {}).get("query_patterns", [])),
-        "collector_artifact": f"{database_name}/{job_id}/collector/output.json",
-    }
-
-
 def run_triage_core(job_id: str, database_name: str, store=None) -> dict:
     """Run triage only (assumes collector output already exists). Returns a summary dict.
 
-    Maps one-to-one to AGENT_TYPE='referee-triage'. Reads the collector output from
+    Reads the collector output from
     the ArtifactStore and writes the triage decision.
 
     Raises FileNotFoundError if the collector output is missing.
@@ -469,48 +170,6 @@ def run_triage_core(job_id: str, database_name: str, store=None) -> dict:
         "selected_engines": selected_engines,
         "signal_count": signal_count,
         "triage_artifact": triage_key,
-    }
-
-
-def run_collect_triage_core(
-    job_id: str, database_name: str, input_key: str = "", store=None
-) -> dict:
-    """Ingest offline collection + run triage. Returns a summary dict.
-
-    This is the shared core used by BOTH the orchestrator tool and the subagent.
-    Raises FileNotFoundError if the offline input is missing.
-    """
-    store = store or make_store()
-    key = _resolve_collector_input(store, job_id, database_name, input_key)
-    raw_input = store.read_json(key)
-
-    # Phase 1a: ingest collection (mirrors run_assessment.phase_collect)
-    collector_data = ingest_offline_collection(store, job_id, database_name, raw_input)
-    n_tables = len(collector_data.get("database_schema", {}).get("tables", []))
-    n_queries = len(collector_data.get("queries", {}).get("query_patterns", []))
-
-    # Phase 1b: triage (existing deterministic handler)
-    from src.agents.referee.triage_handler import run_triage
-
-    run_triage(job_id, database_name, store)
-
-    triage_key = f"{database_name}/{job_id}/referee-triage/triage.json"
-    selected_engines: list[str] = []
-    signal_count = 0
-    if store.exists(triage_key):
-        triage = store.read_json(triage_key)
-        selected_engines = [
-            a["agent_type"] if isinstance(a, dict) else a for a in triage.get("selected_agents", [])
-        ]
-        signal_count = len(triage.get("signals", []))
-
-    return {
-        "job_id": job_id,
-        "database_name": database_name,
-        "tables": n_tables,
-        "queries": n_queries,
-        "selected_engines": selected_engines,
-        "signal_count": signal_count,
     }
 
 
@@ -654,7 +313,7 @@ def _confidence_band_counts(table_recommendations) -> dict[str, int]:
 def run_analysis_core(engine: str, job_id: str, database_name: str, store=None) -> dict:
     """Run one engine's analysis for a completed collector run. Returns a summary dict.
 
-    Maps to AGENT_TYPE='analysis-<engine>'. Reads the collector output from the
+    Reads the collector output from the
     ArtifactStore, constructs AnalysisInput, invokes the engine's analyze
     function, and writes analysis.json + decision-trace.json (+ er-diagram.mmd
     for engines that produce one) under ``<db>/<job>/analysis-<target_database>/``.
@@ -692,7 +351,7 @@ def run_analysis_core(engine: str, job_id: str, database_name: str, store=None) 
     )
 
     logger.info(
-        "ATX analysis-%s starting: job_id=%s db=%s",
+        "analysis-%s starting: job_id=%s db=%s",
         spec.target_database,
         job_id,
         database_name,
@@ -717,15 +376,11 @@ def run_analysis_core(engine: str, job_id: str, database_name: str, store=None) 
         try:
             store.write_text(mermaid_key, mermaid_diagram, content_type="text/x-mermaid")
         except NotImplementedError:
-            # The ATX artifact store is JSON-only and cannot hold the .mmd text
-            # deliverable (dynamodb / documentdb set mermaid_always=True, so they
-            # hit this every run). The ER diagram is a non-essential artifact —
-            # it is rebuilt on demand from the analysis contract — so a store that
-            # cannot hold it must not fail the whole engine's analysis. Drop the
-            # artifact reference and continue, mirroring the write_text guards in
-            # tools.py for the same JSON-only backend.
+            # A JSON-only store cannot hold the .mmd text. The ER diagram is
+            # rebuilt on demand from the analysis contract, so a store that cannot
+            # hold it does not fail the engine's analysis: drop the reference.
             logger.debug(
-                "ATX analysis-%s: store is JSON-only; skipping er-diagram.mmd durable write",
+                "analysis-%s: store is JSON-only; skipping er-diagram.mmd durable write",
                 spec.target_database,
             )
             mermaid_key = None
@@ -822,9 +477,8 @@ def run_all_analyses(
     triage token that is not one is dropped with a warning. Engines are
     de-duplicated while preserving order.
 
-    The optional callbacks report per-engine progress (the WebApp job-plan
-    sub-steps); each receives the engine key and the plan step label
-    ``analysis_<target_database>``. When ``engines`` is left to default (derived
+    The optional callbacks report per-engine progress; each receives the engine
+    key and the step label ``analysis_<target_database>``. When ``engines`` is left to default (derived
     from triage), ``on_engine_skipped`` is also invoked for each candidate engine
     triage chose not to analyze, carrying triage's reason so the UI can explain
     why (e.g. a PostgreSQL source skips Aurora MySQL). Skip reporting is suppressed
@@ -907,7 +561,7 @@ def run_assignment_core(
 ) -> dict:
     """Run assignment for a completed collector + triage + analysis pipeline.
 
-    Maps one-to-one to AGENT_TYPE='assignment'. Deterministic — no LLM invocation.
+    Deterministic — no LLM invocation.
     Scores every query against selected candidate engines (from triage output)
     using each engine's analysis output, producing a per-query assignment
     mapping. Writes to S3:
@@ -933,7 +587,7 @@ def run_assignment_core(
     from src.agents.referee.assignment_handler import run_assignment_resolver
 
     logger.info(
-        "ATX assignment starting: job_id=%s db=%s",
+        "assignment starting: job_id=%s db=%s",
         job_id,
         database_name,
     )
@@ -996,7 +650,7 @@ def run_reality_check_core(
     ``REALITY_CHECK_LLM_MODE`` (default ``"bedrock"``, per ADR-026). ``"none"`` runs
     purely deterministically (e.g. in tests without Bedrock access, or the public
     ``assess()`` with ``deterministic=True``); ``"external"`` is rejected with a ``ValueError``
-    before any work (it needs an out-of-band resume the A2A model cannot do), and so
+    before any work (it needs an out-of-band resume this core cannot do), and so
     is any other value than ``"bedrock"`` or ``"none"``.
 
     Prerequisites: collector/output.json, referee-triage/triage.json,
@@ -1013,7 +667,7 @@ def run_reality_check_core(
     if llm_mode is None:
         llm_mode = os.environ.get("REALITY_CHECK_LLM_MODE", "bedrock")
     if llm_mode == "external":
-        # ADR-026 Decision 4: the A2A model has no mid-run input, so nothing could
+        # ADR-026 Decision 4: this core has no mid-run input, so nothing could
         # supply the response and the run would report success while still waiting.
         raise ValueError(
             "REALITY_CHECK_LLM_MODE=external is not supported in the assessment core "
@@ -1044,7 +698,7 @@ def run_reality_check_core(
     from src.agents.referee.reality_check_handler import run_reality_check_handler
 
     logger.info(
-        "ATX reality-check starting: job_id=%s db=%s assignment_version=%s llm_mode=%s",
+        "reality-check starting: job_id=%s db=%s assignment_version=%s llm_mode=%s",
         job_id,
         database_name,
         assignment_version,
@@ -1095,255 +749,6 @@ def run_reality_check_core(
     }
 
 
-def _triage_signals(store, job_id: str, database_name: str) -> list[str]:
-    """Return the names of the workload signals triage detected, or [] if absent.
-
-    Reads ``referee-triage/triage.json``. Best-effort: missing file or malformed
-    entries yield an empty list rather than raising, because this feeds progress
-    detail and chat narration, not control flow.
-    """
-    triage_key = f"{database_name}/{job_id}/referee-triage/triage.json"
-    if not store.exists(triage_key):
-        return []
-    triage = store.read_json(triage_key)
-    names: list[str] = []
-    for s in triage.get("signals", []):
-        if isinstance(s, dict) and s.get("signal"):
-            names.append(str(s["signal"]))
-    return names
-
-
-def _triage_signal_summary(store, job_id: str, database_name: str, max_signals: int = 6) -> str:
-    """One-line summary of triage's detected signals and selected engines.
-
-    Used as the Triage plan step's description so the WebApp progress panel shows
-    what triage found, mirroring the web interface. Returns "" when triage output
-    is unavailable.
-    """
-    triage_key = f"{database_name}/{job_id}/referee-triage/triage.json"
-    if not store.exists(triage_key):
-        return ""
-    triage = store.read_json(triage_key)
-    signals = _triage_signals(store, job_id, database_name)
-    selected = [
-        a["agent_type"] if isinstance(a, dict) else a for a in triage.get("selected_agents", [])
-    ]
-    parts: list[str] = []
-    if signals:
-        shown = ", ".join(signals[:max_signals])
-        extra = len(signals) - max_signals
-        if extra > 0:
-            shown += f" (+{extra} more)"
-        parts.append(f"Signals: {shown}")
-    if selected:
-        parts.append(f"Selected: {', '.join(str(e) for e in selected)}")
-    return ". ".join(parts)
-
-
-def run_assessment_core(
-    job_id: str,
-    database_name: str,
-    input_key: str = "",
-    store=None,
-    on_phase_start: Callable[[str], None] | None = None,
-    on_phase_done: Callable[[str, dict, str], None] | None = None,
-    on_phase_error: Callable[[str, str], None] | None = None,
-    on_engine_start: Callable[[str, str], None] | None = None,
-    on_engine_done: Callable[[str, str, dict], None] | None = None,
-    on_engine_error: Callable[[str, str, str], None] | None = None,
-    on_engine_skipped: Callable[[str, str, str], None] | None = None,
-) -> dict:
-    """Run the whole assessment front-half in one process (ADR-025, ADR-026).
-
-    Composes the existing single-source cores in DAG order:
-    ``run_collect_core`` -> ``run_triage_core`` -> ``run_all_analyses`` ->
-    ``run_assignment_core`` -> ``run_reality_check_core``. Each phase writes the
-    same artifacts it always has (``collector/output.json``,
-    ``referee-triage/triage.json``, ``analysis-<engine>/analysis.json`` and
-    friends, ``assignment/v1/assignment.json``, ``reality-check/output.json``, and
-    when Reality Check consolidates, ``assignment/v2/assignment.json``), so Schema
-    Design, Synthesis, and every downstream reader are unaffected. This is the
-    single assessment-core agent that replaced the collector/triage/analysis/
-    assignment runtimes (ADR-025) and now also runs Reality Check (ADR-026);
-    consolidation is safe because every phase runs in-process, satisfying the
-    ordering dependencies sequentially without a cross-agent wait.
-
-    Collect, Triage, Analyze, and Assign are deterministic. Reality Check runs
-    with an LLM pass (validates the consolidations and writes the CTO executive
-    summary), which is why the agent is named for what it produces rather than
-    for being purely deterministic.
-
-    Progress callbacks drive the WebApp job-plan panel. ``on_phase_*`` fire for the
-    five top-level plan steps (``collector``, ``triage``, ``analysis``,
-    ``assignment``, ``reality_check``); ``on_phase_done`` carries a short
-    human-readable ``detail`` string (e.g. triage's detected signals) for the step
-    description. The ``on_engine_*`` callbacks are forwarded to
-    :func:`run_all_analyses` and tick the nested per-engine
-    ``analysis_<target_database>`` sub-steps, including skip reasons for engines
-    triage did not select.
-
-    Failures propagate: a phase that raises stops the chain (downstream phases
-    depend on its artifacts), after reporting the error through ``on_phase_error``.
-    Returns a merged summary with each phase's result, the
-    ``effective_assignment_version`` (the newest version: Reality Check's
-    consolidation when it made one, else the assignment it read),
-    plus a compact ``summary_for_chat`` block the orchestrator can narrate.
-    """
-    store = store or make_store()
-
-    def _run_phase(label: str, fn: Callable[[], dict]) -> dict:
-        if on_phase_start is not None:
-            on_phase_start(label)
-        try:
-            return fn()
-        except Exception as exc:  # noqa: BLE001 - report then re-raise to stop the chain
-            logger.exception(
-                "run_assessment_core: phase %s failed", label
-            )  # nosemgrep: logging-error-without-handling -- intentional: log-and-reraise for observability
-            if on_phase_error is not None:
-                on_phase_error(label, str(exc))
-            raise
-
-    # 1. Collect
-    collect_summary = _run_phase(
-        "collector",
-        lambda: run_collect_core(job_id, database_name, input_key=input_key, store=store),
-    )
-    if on_phase_done is not None:
-        on_phase_done(
-            "collector",
-            collect_summary,
-            f"{collect_summary.get('tables', 0)} tables, "
-            f"{collect_summary.get('queries', 0)} queries",
-        )
-
-    # 2. Triage
-    triage_summary = _run_phase(
-        "triage", lambda: run_triage_core(job_id, database_name, store=store)
-    )
-    if on_phase_done is not None:
-        on_phase_done(
-            "triage", triage_summary, _triage_signal_summary(store, job_id, database_name)
-        )
-
-    # 3. Analyze — parent step plus nested per-engine sub-steps via run_all_analyses.
-    if on_phase_start is not None:
-        on_phase_start("analysis")
-    try:
-        analysis_summary = run_all_analyses(
-            job_id,
-            database_name,
-            store=store,
-            on_engine_start=on_engine_start,
-            on_engine_done=on_engine_done,
-            on_engine_error=on_engine_error,
-            on_engine_skipped=on_engine_skipped,
-        )
-    except Exception as exc:  # noqa: BLE001 - report then re-raise to stop the chain
-        logger.exception(
-            "run_assessment_core: phase analysis failed"
-        )  # nosemgrep: logging-error-without-handling -- intentional: log-and-reraise for observability
-        if on_phase_error is not None:
-            on_phase_error("analysis", str(exc))
-        raise
-    if on_phase_done is not None:
-        analyzed = analysis_summary.get("engines_analyzed", [])
-        on_phase_done("analysis", analysis_summary, f"{len(analyzed)} engines analyzed")
-
-    # 4. Assign
-    assign_summary = _run_phase(
-        "assignment", lambda: run_assignment_core(job_id, database_name, store=store)
-    )
-    if on_phase_done is not None:
-        qpe = assign_summary.get("queries_per_engine", {})
-        detail = f"{assign_summary.get('total_queries', 0)} queries routed"
-        if qpe:
-            detail += ": " + ", ".join(f"{k} {v}" for k, v in qpe.items())
-        on_phase_done("assignment", assign_summary, detail)
-
-    # 5. Reality Check — CTO-level engine consolidation (ADR-018, ADR-026). Runs
-    # on the newest assignment it did not produce itself (v1 on a fresh job) and,
-    # when it consolidates, writes the next free version (issue #189). Uses the
-    # Bedrock LLM pass (consolidation validation + executive summary).
-    reality_check_summary = _run_phase(
-        "reality_check",
-        lambda: run_reality_check_core(job_id, database_name, store=store),
-    )
-    effective_version = reality_check_summary.get(
-        "effective_assignment_version"
-    ) or resolve_downstream_assignment_version(store, database_name, job_id)
-    if on_phase_done is not None:
-        consolidations = reality_check_summary.get("consolidations", 0)
-        before = reality_check_summary.get("before_distribution", {})
-        after = reality_check_summary.get("after_distribution", {})
-        if consolidations:
-            detail = f"Consolidated {len(before)} -> {len(after)} engines"
-        else:
-            detail = "No consolidation; assignment unchanged"
-        on_phase_done("reality_check", reality_check_summary, detail)
-
-    result = {
-        "job_id": job_id,
-        "database_name": database_name,
-        "collector": collect_summary,
-        "triage": triage_summary,
-        "analysis": analysis_summary,
-        "assignment": assign_summary,
-        "reality_check": reality_check_summary,
-        # The version downstream schema-design and synthesis should read: the
-        # newest version (Reality Check's consolidation when it made one). Downstream tools resolve this from
-        # the store themselves (see _resolve_assignment_version); it is echoed here
-        # for narration and tests.
-        "effective_assignment_version": effective_version,
-        # A compact, ready-to-narrate view for the orchestrator's post-core chat
-        # summary (signals picked up, engines selected, query distribution,
-        # consolidation).
-        "summary_for_chat": {
-            "tables": collect_summary.get("tables"),
-            "queries": collect_summary.get("queries"),
-            "signals": _triage_signals(store, job_id, database_name),
-            "selected_engines": triage_summary.get("selected_engines", []),
-            "engines_analyzed": analysis_summary.get("engines_analyzed", []),
-            "engines_skipped": analysis_summary.get("engines_skipped", {}),
-            "queries_per_engine": assign_summary.get("queries_per_engine", {}),
-            "reality_check_consolidations": reality_check_summary.get("consolidations", 0),
-            "after_distribution": reality_check_summary.get("after_distribution", {}),
-        },
-    }
-
-    # Build + publish the context graph read-model from the contract artifacts
-    # just written (collector/triage/analysis/assignment/reality-check). This is
-    # a single-writer boundary — assessment-core is one process — so it is safe
-    # to build the graph here. Best-effort: never fails the assessment.
-    _build_graph(store, job_id, database_name)
-
-    return result
-
-
-def _build_graph(store, job_id: str, database_name: str) -> None:
-    """Build + publish the context graph read-model.
-
-    Wrapped so a graph-build failure can never propagate into the phase. The
-    graph is the read-model that replaces the per-query journey artifacts.
-    """
-    logger.info(
-        "ATX: context graph boundary reached for %s/%s",
-        database_name,
-        job_id,
-    )
-    try:
-        from src.atx_orchestrator.runtime.graph_transport import build_and_publish_graph
-
-        build_and_publish_graph(store, database_name, job_id)
-    except Exception:  # noqa: BLE001 - read-model build must never fail the phase
-        logger.warning(
-            "context graph build/publish skipped for %s/%s",
-            database_name,
-            job_id,
-            exc_info=True,
-        )
-
-
 def run_synthesis_core(
     job_id: str,
     database_name: str,
@@ -1352,7 +757,7 @@ def run_synthesis_core(
 ) -> dict:
     """Run referee-synthesis for a completed analysis + assignment pipeline.
 
-    Maps one-to-one to AGENT_TYPE='referee-synthesis'. Deterministic-first: all
+    Deterministic-first: all
     builders run without an LLM, then a single Bedrock call generates the
     executive summary. This matches core-modernizer, whose ``entrypoint.py``
     calls ``run_synthesis(...)`` without an ``llm_mode`` argument and therefore
@@ -1406,7 +811,7 @@ def run_synthesis_core(
     from src.agents.referee.synthesis_handler import run_synthesis
 
     logger.info(
-        "ATX referee-synthesis starting: job_id=%s db=%s assignment_version=%s",
+        "referee-synthesis starting: job_id=%s db=%s assignment_version=%s",
         job_id,
         database_name,
         assignment_version,
@@ -1485,22 +890,6 @@ def run_synthesis_core(
             f"is a known pipeline gap, not a failure."
         )
 
-    # The customer-facing deliverables (the PDF report, the Engineering Report MD,
-    # the assessment data JSON) and their publication live on the orchestrator,
-    # which owns the synthesis plan step -- see tools._publish_synthesis_deliverables. The
-    # subagent's contract ends at writing report.json to S3 above (the system of
-    # record, already durable). published_artifacts stays here for payload-shape
-    # stability; the orchestrator populates the panel, not this subagent.
-    published: dict[str, str] = {}
-
-    # Rebuild + publish the context graph at the synthesis boundary. Synthesis is
-    # its own process that runs AFTER the concurrent per-engine schema fan-out has
-    # joined, so this is the single-writer point where the design, load-test and
-    # synthesis contracts all exist — the graph built here is the complete
-    # read-model, folding in everything the assessment-core build could not yet
-    # see. Best-effort, never fails the phase.
-    _build_graph(store, job_id, database_name)
-
     return {
         "job_id": job_id,
         "database_name": database_name,
@@ -1518,10 +907,6 @@ def run_synthesis_core(
         "has_executive_summary": bool(report.get("summary")),
         "warnings": warnings,
         "report_artifact": report_key,
-        # Platform artifact ids, keyed by the label the customer sees. Empty when
-        # running outside the ATX runtime or when publishing failed; the report is
-        # still at report_artifact either way.
-        "published_artifacts": published,
     }
 
 
@@ -1534,22 +919,6 @@ _SAME_FAMILY: dict[str, set[str]] = {
 }
 
 
-# Target engines that have a real schema designer in
-# handler._dispatch_schema_agent. Both Aurora engines (aurora_postgresql and
-# aurora_mysql) now have one — there is no remaining Aurora placeholder — so
-# all six target engines are implemented. Keep in sync with the match arms in
-# _dispatch_schema_agent.
-#
-# Once a real design is produced, the _SAME_FAMILY "no redesign required" note
-# below no longer fires for PostgreSQL -> Aurora PostgreSQL or
-# MySQL -> Aurora MySQL, because table_definitions is non-empty (see the
-# `if not designs` check in this file). _SAME_FAMILY remains only as the
-# fallback for a genuinely empty design.
-IMPLEMENTED_SCHEMA_DESIGNERS: frozenset[str] = frozenset(
-    {"dynamodb", "documentdb", "opensearch", "elasticache", "aurora_postgresql", "aurora_mysql"}
-)
-
-
 def schema_no_design_notes(
     target_type: str,
     source_engine: str,
@@ -1560,10 +929,8 @@ def schema_no_design_notes(
 
     A same-family target gets an informational note that the existing schema
     carries over; a skipped engine gets its skip reason; anything else gets a
-    warning that the report does not cover the conversion. Shared by
-    ``run_schema_design_core`` (after a design runs and produces nothing) and the
-    orchestrator's pre-dispatch skip (which never invokes the engine), so the
-    customer-facing wording is identical from either path.
+    warning that the report does not cover the conversion. Called by
+    ``run_schema_design_core`` after a design runs and produces nothing.
     """
     notes: list[str] = []
     warnings: list[str] = []
@@ -1644,7 +1011,7 @@ def run_schema_design_core(
 ) -> dict:
     """Design the target schema for one engine. Returns a summary dict.
 
-    Maps to AGENT_TYPE='schema-<engine>'. One call per engine, because
+    One call per engine, because
     core-modernizer's ``run_schema_design`` is parameterised by ``target_type``
     rather than iterating engines itself.
 
@@ -1686,7 +1053,7 @@ def run_schema_design_core(
         )
 
     logger.info(
-        "ATX schema-design starting: job_id=%s db=%s target=%s assignment_version=%s",
+        "schema-design starting: job_id=%s db=%s target=%s assignment_version=%s",
         job_id,
         database_name,
         target_type,
@@ -1786,9 +1153,8 @@ def run_post_schema_routing_core(
 ) -> dict:
     """Run the post-schema routing after schema design (#1492). Returns a summary dict.
 
-    The one implementation the local pipeline and ``assess()`` share, and AWS
-    Transform is to call (#1498) (``post_schema_routing_handler.PostSchemaRouting``):
-    each statement a design
+    The one implementation the local pipeline and ``assess()`` share
+    (``post_schema_routing_handler.PostSchemaRouting``): each statement a design
     reports unsupported, or a PE reviewer flags, moves with its placement unit to its
     best remaining engine among the ones the effective assignment keeps (the shared
     scorer, the move ledger, never an engine outside the customer's engine scope);
@@ -1803,10 +1169,7 @@ def run_post_schema_routing_core(
     ``llm_mode``, as the local pipeline designs. Prerequisites: the designs of the
     effective assignment version (with none, nothing is routed).
     """
-    from src.agents.referee.post_schema_routing_handler import (
-        PostSchemaRouting,
-        pipeline_redesign,
-    )
+    from src.agents.referee.post_schema_routing_handler import PostSchemaRouting, pipeline_redesign
 
     store = store or make_store()
     routing = PostSchemaRouting(store, redesign or pipeline_redesign(store, llm_mode))

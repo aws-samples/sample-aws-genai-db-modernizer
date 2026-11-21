@@ -7,8 +7,9 @@ A pathological offline collection can drive excessive memory, processing time,
 and LLM/compute cost before the pipeline ever reaches analysis. There is no file
 size cap (#384, 2026-11-03: "it takes what it takes"); the query cap is 250,000. ``src/tools/validation/ingestion_limits.py`` is the one place every
 ingestion path (the local API upload, ``run_assessment.py`` /
-``run_collect.py --file``, and the AWS Transform upload path) checks a
-collection against configurable limits.
+``run_collect.py --file``, and the library ingest) checks a
+collection against configurable limits. The library ingest's check is tested in
+``tests/unit/orchestrator/test_ingest_offline_collection_limits.py``.
 """
 
 from __future__ import annotations

@@ -2,9 +2,8 @@
 # SPDX-License-Identifier: MIT-0
 
 """The local API's assessment request models must reject a malformed or
-path-traversing database_name before anything is written, the same as the
-AWS Transform invocation path (#418) and the scripts/run_*.py CLI entry
-points (#420). This exercises src.api.models.requests.AssessmentRequest and
+path-traversing database_name before anything is written (#418), the same as
+the scripts/run_*.py CLI entry points (#420). This exercises src.api.models.requests.AssessmentRequest and
 PrepareAssessmentRequest, which both delegate to
 src.shared.database_name.validate_database_name."""
 

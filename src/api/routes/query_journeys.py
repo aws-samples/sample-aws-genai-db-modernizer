@@ -127,8 +127,8 @@ def list_query_journeys(
     end = start + page_size
     page_keys = all_keys[start:end]
 
-    # Read the page's journeys concurrently — on the ATX backend each read is a
-    # network round trip, so a full 200-item page is ~60-100s serially.
+    # Read the page's journeys concurrently: on a remote backend each read is a
+    # network round trip, so a full 200-item page is slow serially.
     # map_parallel preserves page order and drops any unreadable journey.
     store = artifact_store
     items = map_parallel(store.read_json, page_keys)

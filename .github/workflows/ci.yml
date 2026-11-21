@@ -96,13 +96,6 @@ jobs:
           cache-suffix: dev
       - name: Install dependencies
         run: uv sync --locked --extra dev
-      - name: Install AWS Transform SDK
-        # Not a project dependency (it ships only in the ATX container image), but
-        # the atx_orchestrator tests import it. Installing it here means those tests
-        # RUN in CI instead of being silently skipped — the gap that let issue #150
-        # (stale PIPELINE_TOOLS registry) merge green. The image's own pins,
-        # including the agentic MCP server whose tools the IAM test reads (#1736).
-        run: uv pip install -r src/atx_orchestrator/requirements-sdk.txt
       - name: Run tests
         env:
           AWS_DEFAULT_REGION: us-east-1
@@ -340,15 +333,13 @@ jobs:
       - name: cfn-lint
         # Scoped to the CloudFormation templates that still exist after #175:
         # the one remaining hosted-path template (automation.yaml, kept per
-        # maintainer decision — see #342), the data movement stacks and their rendered examples (#1414), and the
-        # AWS Transform integration's IAM roles template. W3037 is cfn-lint's
-        # IAM-action-prefix check; its bundled service list doesn't yet know
-        # about bedrock-runtime or transform-agents, both real AWS actions.
+        # maintainer decision — see #342) and the data movement stacks and their rendered examples (#1414).
+        # W3037 is cfn-lint's IAM-action-prefix check; its bundled service list
+        # does not know every real AWS action.
         run: |
           uv run cfn-lint infrastructure/cloudformation/automation.yaml \
             infrastructure/cloudformation/data-movement/*.yaml \
             infrastructure/cloudformation/data-movement/examples/*.yaml \
-            pipeline/iam-roles.yaml \
             --ignore-checks W3037
       - name: Checkov (CloudFormation)
         run: |
@@ -358,13 +349,11 @@ jobs:
             -f infrastructure/cloudformation/data-movement/routine-proof-target.yaml \
             -f infrastructure/cloudformation/data-movement/examples/wordpress-mysql.yaml \
             -f infrastructure/cloudformation/data-movement/examples/wordpress-postgresql.yaml \
-            -f pipeline/iam-roles.yaml \
             --framework cloudformation --quiet --compact \
             --skip-check CKV2_AWS_71
       - name: Checkov (Dockerfiles)
         run: |
-          checkov -f src/atx_orchestrator/Dockerfile.atx \
-            -f infrastructure/docker/agent-load-test/Dockerfile \
+          checkov -f infrastructure/docker/agent-load-test/Dockerfile \
             --framework dockerfile --quiet --compact
 
   validate-contracts:

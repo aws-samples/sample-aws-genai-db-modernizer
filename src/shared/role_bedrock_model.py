@@ -44,11 +44,7 @@ from strands.types.content import Messages
 from strands.types.streaming import StreamEvent
 from strands.types.tools import ToolChoice, ToolChoiceAuto, ToolChoiceAutoDict, ToolSpec
 
-from src.shared.bedrock_guardrail import (
-    GuardrailIntervened,
-    blocked_by_guardrail,
-    guard_messages,
-)
+from src.shared.bedrock_guardrail import GuardrailIntervened, blocked_by_guardrail, guard_messages
 from src.shared.model_usage import record_usage
 from src.shared.models import ModelProfile
 
@@ -74,7 +70,7 @@ if _missing:
         "strands BedrockModel no longer has "
         + ", ".join(_missing)
         + "; RoleBedrockModel overrides them. Pin strands-agents to a release that has "
-        "them (see src/atx_orchestrator/requirements.txt) or update RoleBedrockModel."
+        "them (see pyproject.toml) or update RoleBedrockModel."
     )
 
 #: Bedrock Converse usage fields, as Strands reports them.

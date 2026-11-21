@@ -27,7 +27,7 @@ from tests.unit.assessment.conftest import collection
 
 DB = "wordpress"
 
-CORE_ENTRY = "src.atx_orchestrator.core.run_post_schema_routing_core"
+CORE_ENTRY = "src.orchestrator.core.run_post_schema_routing_core"
 
 
 class _FlaggingDesigner:
@@ -219,7 +219,7 @@ def test_synthesis_after_a_reroute_reads_the_new_version(tmp_path: Any) -> None:
 def test_assess_and_the_local_pipeline_call_one_entry_point(tmp_path: Any) -> None:
     """``assess()`` and ``LocalOrchestrator`` (the CLI's and the API's pipeline) both
     route through ``core.run_post_schema_routing_core``."""
-    from src.atx_orchestrator import core
+    from src.orchestrator import core
     from src.orchestrator.local_orchestrator import LocalOrchestrator
 
     spy = MagicMock(wraps=core.run_post_schema_routing_core)

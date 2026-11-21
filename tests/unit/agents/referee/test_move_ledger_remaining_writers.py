@@ -6,8 +6,7 @@
 The cache owner normalisation (``cache_overlay.normalize_cache_owners``: the
 reality check handler's, the customer gate's and synthesis's), the customer
 gate (``assignment_overrides.apply_assignment_overrides``: picks, a cache
-request's owner, co-dependency propagation) and the review surfaces that feed
-it (``assignment_review``) set every engine through ``move_ledger``. Every
+request's owner, co-dependency propagation) set every engine through ``move_ledger``. Every
 version they write holds exactly its own Moves, and replaying the stored input
 version plus those Moves rebuilds it; a write that bypassed the ledger fails
 loudly instead of reaching a version.
@@ -16,7 +15,6 @@ loudly instead of reaching a version.
 from __future__ import annotations
 
 from collections.abc import Iterable
-from copy import deepcopy
 from typing import Any
 
 import pytest
@@ -24,7 +22,6 @@ import pytest
 from src.agents.referee import assignment_overrides
 from src.agents.referee.assignment_overrides import QueryOverrideInput, apply_assignment_overrides
 from src.agents.referee.assignment_resolver import AssignmentResolver
-from src.agents.referee.assignment_review import diff_review_items
 from src.agents.referee.cache_overlay import normalize_cache_owners
 from src.agents.referee.move_ledger import (
     MoveLedger,
@@ -439,27 +436,6 @@ class TestCustomerGate:
         with pytest.raises(RuntimeError, match="without a Move"):
             apply_assignment_overrides(store, DB, JOB, [QueryOverrideInput("q1", in_scope=False)])
         assert not store.exists(f"{DB}/{JOB}/assignment/v2/assignment.json")
-
-
-class TestAssignmentReview:
-    def test_a_review_edit_reaches_the_ledger_as_a_customer_pick(self) -> None:
-        store = _MemStore()
-        _seed(store, [_qa("q1", "dynamodb", ["t1"])], ["dynamodb", "aurora_postgresql"])
-        current = Assignment.model_validate(
-            deepcopy(store.read_json(f"{DB}/{JOB}/assignment/v1/assignment.json"))
-        )
-
-        overrides = diff_review_items(
-            current, [{"query_id": "q1", "new_engine": "aurora_postgresql", "in_scope": "yes"}]
-        )
-        result = apply_assignment_overrides(store, DB, JOB, overrides)
-
-        (move,) = _assert_replays(store, result)
-        assert (move.pass_, move.actor, move.to_engine) == (
-            MovePass.CUSTOMER_PICK,
-            MoveActor.CUSTOMER,
-            "aurora_postgresql",
-        )
 
 
 # ---------------------------------------------------------------------------

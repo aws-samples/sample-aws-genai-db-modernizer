@@ -213,11 +213,13 @@ def test_the_three_merge_counts_add_up_when_other_database_rows_are_dropped(
     assert "6 script rows -> 4 query shapes" in stdout
 
 
-def test_the_atx_ingest_logs_the_merge(tmp_path: Path, caplog: pytest.LogCaptureFixture) -> None:
-    from src.atx_orchestrator.core import ingest_offline_collection
+def test_the_library_ingest_logs_the_merge(
+    tmp_path: Path, caplog: pytest.LogCaptureFixture
+) -> None:
+    from src.orchestrator.core import ingest_offline_collection
 
     store = LocalArtifactStore(base_dir=str(tmp_path / "artifacts"))
-    with caplog.at_level("INFO", logger="src.atx_orchestrator.core"):
+    with caplog.at_level("INFO", logger="src.orchestrator.core"):
         out = ingest_offline_collection(store, "job1", "shop", _collection())
     assert "6 script rows -> 3 query shapes, 3 literal variants merged" in caplog.text
     assert out["metadata"]["query_capture"]["captured"] == 6

@@ -2,19 +2,15 @@
 # SPDX-License-Identifier: MIT-0
 
 """src.shared.database_name: the one database_name validator every entry
-point that builds an artifact path shares (#420). #418 added it only on the
-AWS Transform path (src/atx_orchestrator/subagents/base.py); this is now the
-single source of truth it, the scripts/run_*.py CLI scripts, and the local
-API's assessment request models all call."""
+point that builds an artifact path shares (#418, #420): the single source of
+truth the scripts/run_*.py CLI scripts and the local API's assessment request
+models call."""
 
 from __future__ import annotations
 
 import pytest
 
-from src.shared.database_name import (
-    DATABASE_NAME_ERROR,
-    validate_database_name,
-)
+from src.shared.database_name import DATABASE_NAME_ERROR, validate_database_name
 
 
 @pytest.mark.parametrize(

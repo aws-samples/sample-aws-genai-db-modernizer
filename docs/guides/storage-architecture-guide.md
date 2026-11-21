@@ -91,11 +91,8 @@ API/UI. A thin wrapper over `pathlib.Path`: `read_json`/`write_json` do
 
 ### `S3ArtifactStore` (`src/storage/s3_store.py`)
 
-Any process with `S3_BUCKET` set gets this instead of the local store — in
-practice that's the separate AWS Transform integration
-(`src/atx_orchestrator/`), which sets it so jobs started there read and
-write the exact same artifact layout in an S3 bucket, and a job can be
-inspected the same way regardless of which path produced it. `exists()`
+Any process with `S3_BUCKET` set gets this instead of the local store, with
+the exact same artifact layout in an S3 bucket. `exists()`
 treats a `404` from `head_object` as "does not exist" and re-raises
 everything else.
 
@@ -198,8 +195,8 @@ This is the common shape, not the full list. Every JSON file a run writes, by ki
 (`FOLDER_ENTRIES`).
 
 Which backend a run uses: the local filesystem for the CLI, Claude Code and the
-local API/UI (`./artifacts/`, or `ARTIFACT_DIR`); S3 for the AWS Transform
-integration (`s3://<bucket>/<db>/<job>/<agent>/...`). Both sit behind the same
+local API/UI (`./artifacts/`, or `ARTIFACT_DIR`); S3 when `S3_BUCKET` is set
+(`s3://<bucket>/<db>/<job>/<agent>/...`). Both sit behind the same
 `ArtifactStore` interface:
 
 ```mermaid

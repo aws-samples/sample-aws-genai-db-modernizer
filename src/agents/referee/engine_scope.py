@@ -177,7 +177,7 @@ def check_in_scope(
     cache, is outside the scope"), so the version is not written and no query is
     forced onto an engine the customer left out. A writer the customer drives (the
     customer gate, the source-of-truth reroute) passes its own subclass, which the API
-    and the AWS Transform tools report as a refused edit.
+    reports as a refused edit.
     """
     if scope is None:
         return

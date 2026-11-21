@@ -3,7 +3,7 @@
 
 """Shared customer-override write path (ADR-028).
 
-Locks the one helper both the web route and the ATX gate call: it must bump the
+Locks the one helper every override writer calls: it must bump the
 version, stamp status=customer_modified + source=customer_gate + previous_version,
 mark reassigned queries customer_override, honor table-scope narrowing, compute
 skipped engines, and fail loudly (without writing) on unknown queries, a missing

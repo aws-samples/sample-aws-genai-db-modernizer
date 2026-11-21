@@ -31,11 +31,7 @@ from src.contracts.assignment_models import (
     PendingEngineChoice,
     ValidationResult,
 )
-from src.shared.assumptions import (
-    assumption_lines,
-    gate_assumption_items,
-    read_assumptions,
-)
+from src.shared.assumptions import assumption_lines, gate_assumption_items, read_assumptions
 from src.shared.contract_versioning import load_contract
 from src.shared.gate_facts import cache_candidate_reads, gate_block_facts
 from src.shared.gate_status import gate_status
@@ -325,7 +321,7 @@ async def put_assignments(
     """Accept overrides or scope narrowing.
 
     Delegates to the shared ``apply_assignment_overrides`` helper (ADR-028) so the
-    web route and the ATX review gate write byte-identical artifacts, then maps
+    web route and every other override writer write byte-identical artifacts, then maps
     the helper's domain errors to HTTP status codes. Returns HTTP 404 when there
     is no assignment to override, HTTP 422 for hard validation errors (e.g. query
     assigned to an unanalyzed engine), and HTTP 400 for every other rejected

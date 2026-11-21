@@ -135,9 +135,6 @@ FILE_READS: dict[tuple[str, str, str], str] = {
     ("src/tools/data_movement/plan.py", "_inputs_skip", "data"): (
         "step 1's inputs.json, the customer's ids and choices (no contract): only its lob_sizes key"
     ),
-    ("src/atx_orchestrator/runtime/hitl.py", "_download_artifact_json", "<return>"): (
-        "a human-in-the-loop answer file, not a contract"
-    ),
     ("src/agents/answer_validation.py", "_bedrock_validate", "result"): (
         "a model's HTTP response body"
     ),
@@ -566,7 +563,7 @@ READ_JSON_IMPLS = _read_json_implementations()
 
 def test_the_store_scan_is_not_vacuous() -> None:
     names = {cls for _, cls, _ in READ_JSON_IMPLS}
-    assert {"LocalArtifactStore", "S3ArtifactStore", "AtxArtifactStore"} <= names
+    assert {"LocalArtifactStore", "S3ArtifactStore"} <= names
 
 
 @pytest.mark.parametrize("impl", READ_JSON_IMPLS, ids=lambda i: f"{i[0]}::{i[1]}")
@@ -636,7 +633,7 @@ PATH_HINTS: dict[tuple[str, str], str | tuple[str, ...]] = {
     # engine's trace path.
     ("src/agents/analysis/decision_trace.py", "key"): _trace_paths(),
     # The one design-trace writer takes the key from its callers (the schema design
-    # handler, the group merger, the external PE review, the ATX carry-forward) and
+    # handler, the group merger, the external PE review) and
     # writes it through the contract registered for its path (#1258).
     ("src/agents/schema_design/design_trace.py", "key"): _design_trace_paths(),
     # The group merger writes the merged design trace under its caller's version

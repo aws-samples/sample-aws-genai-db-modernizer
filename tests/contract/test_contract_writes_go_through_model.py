@@ -52,11 +52,6 @@ REPO = Path(__file__).resolve().parents[2]
 SCAN_ROOTS = ("src", "scripts")
 STAMP_HELPERS = {"stamp_artifact_version"}
 
-_UPLOAD = (
-    "the user's upload, kept as it was sent: usually a raw collection, which is not a "
-    "contract and carries no contract_version; the collector output written from it is "
-    "stamped"
-)
 _UPLOADS = "1/1/uploads/collector-output.json"
 # The scripts' copy of a raw collection, with its literal values redacted (#1625).
 _REDACTED_UPLOAD = "dict(redact_raw_collection(input_data))"
@@ -74,19 +69,6 @@ NOT_THROUGH_MODEL: dict[tuple[str, str, str, str], str] = {
     ("scripts/run_assessment.py", "phase_collect", _REDACTED_UPLOAD, _UPLOADS): _SCRIPT_UPLOAD,
     ("scripts/run_collect.py", "main", _REDACTED_UPLOAD, _UPLOADS): _SCRIPT_UPLOAD,
     ("scripts/test_local_phased.py", "main", _REDACTED_UPLOAD, _UPLOADS): _SCRIPT_UPLOAD,
-    ("src/atx_orchestrator/core.py", "_discover_uploaded_input", "collection", _UPLOADS): (_UPLOAD),
-    (
-        "scripts/atx_subagent_test.py",
-        "<module>",
-        "read_collection_text(offline_input.read_text(), source=str(offline_input))",
-        "discourse/subagent1/uploads/collector-output.json",
-    ): _UPLOAD,
-    (
-        "scripts/atx_tool_test.py",
-        "<module>",
-        "read_collection_text(offline_input.read_text(), source=str(offline_input))",
-        "discourse/atxtool1/uploads/collector-output.json",
-    ): _UPLOAD,
     (
         "src/storage/assignment_versioning.py",
         "keep_completed_reality_check_output",

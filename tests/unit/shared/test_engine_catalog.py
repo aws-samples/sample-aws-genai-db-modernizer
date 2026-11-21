@@ -10,7 +10,7 @@ status and role are written down. This file guards that:
   that is not the file name; a repeated display order; a cache or search engine that
   claims to be a system of record);
 - every engine the pipeline knows (contract enums, triage's agent sets, the local
-  runner and the ATX orchestrator) has a catalog file, and every catalog engine is one
+  runner and the pipeline core) has a catalog file, and every catalog engine is one
   the contracts can carry;
 - every field the catalog schema defines is read by some consumer, so no field is dead;
 - the constants that used to be hand-kept copies are now exactly the catalog's view;
@@ -33,8 +33,8 @@ import pytest
 from src.agents.referee import triage
 from src.agents.referee.assignment_resolver import SIGNAL_ENGINE_OVERRIDES
 from src.api.services import local_execution
-from src.atx_orchestrator import core as atx_core
 from src.contracts import analysis_input, analysis_output, referee_output
+from src.orchestrator import core as pipeline_core
 from src.shared import catalog, report_facts
 from src.shared.cache_engines import CACHE_ENGINES
 from src.shared.catalog import (
@@ -159,10 +159,10 @@ class TestEveryKnownEngineHasACatalogFile:
     def test_analysis_agents_are_exactly_the_active_engines(self) -> None:
         assert triage.ANALYSIS_AGENTS == ACTIVE_IDS
         assert set(local_execution._ENGINES) == ACTIVE_IDS
-        # The ATX orchestrator keys its table by the catalog id, which is also the
+        # The pipeline core keys its table by the catalog id, which is also the
         # ``target_database`` it dispatches (#1179).
-        assert set(atx_core._ANALYSIS_ENGINES) == ACTIVE_IDS
-        assert all(k == e.target_database for k, e in atx_core._ANALYSIS_ENGINES.items())
+        assert set(pipeline_core._ANALYSIS_ENGINES) == ACTIVE_IDS
+        assert all(k == e.target_database for k, e in pipeline_core._ANALYSIS_ENGINES.items())
 
     def test_every_active_engine_has_a_cost_estimator(self) -> None:
         """The TCO prices each kept engine with its own estimator (#1195)."""

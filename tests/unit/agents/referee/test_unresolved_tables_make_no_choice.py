@@ -332,12 +332,9 @@ class TestEveryDeliverableShowsNoSourceTable:
         assert "### No source table (`q1`) (1 query)" in md
         assert "`unknown`" not in md and "`query:q1`" not in md
 
-    def test_the_review_chat_and_the_gate_summary(self):
-        from src.agents.referee.assignment_review import render_pending_choices
+    def test_the_gate_summary(self):
         from src.report.printed_summary import render_gate_block
 
-        (choice,) = self._choices()
-        assert "### query:q1 (No source table) (1 queries" in render_pending_choices([choice])
         gate = {
             "pending_choices": [
                 {"choice": "query:q1", "table": "No source table", "queries": 1, "why_tied": "x"}
@@ -432,18 +429,3 @@ class TestChoiceHeadingsCountTablesAndStatementsApart:
         )
         # A report saved before the split: every choice was a table's.
         assert _choice_count_text({"choice_count": 3, "query_count": 3}) == "3 tables, 3 queries"
-
-    def test_the_review_chat_heading(self):
-        from src.agents.referee.assignment_review import render_pending_choices
-
-        qas = [_qa("q1", ["app.t"]), _qa("q2", ["unknown"]), _qa("s1", ["app.t"], tied=None)]
-        choices = build_pending_choices(qas, _collector([], ["app.t"]), None)
-        text = render_pending_choices(choices)
-        assert (
-            "## Pending engine choices (1 table and 1 statement with no source table, 2 queries)"
-            in text
-        )
-        tables_only = [c for c in choices if c.table]
-        assert "## Pending engine choices (1 table(s), 1 queries)" in render_pending_choices(
-            tables_only
-        )

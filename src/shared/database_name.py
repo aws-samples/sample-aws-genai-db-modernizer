@@ -5,11 +5,10 @@
 
 Every entry point that turns a caller-supplied ``database_name`` into an
 artifact key (``<database_name>/<job_id>/...``) must reject a malformed or
-path-traversing value before anything is read or written. The AWS Transform
-subagent invocation path (``src/atx_orchestrator``) got this check first
-(#418); this module is the single pattern it and every local entry point --
-the ``scripts/run_*.py`` CLI scripts and the local API's assessment request
-models -- share, so there is exactly one regex to keep in sync (#420).
+path-traversing value before anything is read or written (#418). This module is
+the single pattern every entry point -- the ``scripts/run_*.py`` CLI scripts and
+the local API's assessment request models -- shares, so there is exactly one
+regex to keep in sync (#420).
 """
 
 from __future__ import annotations

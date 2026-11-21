@@ -39,7 +39,6 @@ The core pipeline is **fully deterministic** — pattern detection, scoring, ass
 - **Load testing validation**: k6 empirical performance testing against real target infrastructure with per-pattern latency and cost measurement ([ADR-020](https://github.com/aws-samples/sample-aws-genai-db-modernizer/blob/main/docs/architecture/decisions/ADR-020-load-testing-stage.md))
 - **Query journeys from the context graph**: per-query detail is served from the context graph read-model ([ADR-023](https://github.com/aws-samples/sample-aws-genai-db-modernizer/blob/main/docs/architecture/decisions/ADR-023-context-graph-layer.md))
 - **Deterministic triage**: triage selects every query-owning engine; its signals are evidence for scoring and reports, not a filter. Only ElastiCache, which owns no query, depends on a signal
-- **AWS Transform integration**: `src/atx_orchestrator/` lets AWS Transform run the same phases over S3-backed storage, independent of the local-only API/UI path
 - **Bedrock integration**: AWS Bedrock for the model-backed steps (optional)
 - **Open-source distribution**: GitHub repository with MIT-0 license
 
@@ -112,7 +111,7 @@ The core pipeline is **fully deterministic** — pattern detection, scoring, ass
 **Data Storage Layer:**
 
 - Local filesystem (`LocalArtifactStore`, default `./artifacts`): collector outputs, reports, job artifacts, query journeys (path: `<database-name>/<job-id>/<agent-name>/artifact.json`)
-- S3 (`S3ArtifactStore`, used only by the AWS Transform integration — `S3_BUCKET` env var): same path convention, for ATX-orchestrated jobs
+- S3 (`S3ArtifactStore`, chosen when the `S3_BUCKET` env var is set): same path convention
 - Local job metadata file (`.meta/<job-id>.json` at the artifact store root): phase progression, status tracking
 
 **Source Databases (Customer-Owned, Read-Only Access):**
@@ -164,9 +163,9 @@ One CloudFormation template remains from that path:
 which provisions a per-VPC SSM automation instance for the opt-in live
 collection path described in §2.2 and §7.1 (kept per a maintainer decision —
 see [#342](https://github.com/aws-samples/sample-aws-genai-db-modernizer/issues/342)
-for what's still missing to wire it end-to-end). `pipeline/iam-roles.yaml`
-also remains — it is unrelated to the hosted deployment and provisions IAM
-roles for the AWS Transform integration (§2.4).
+for what's still missing to wire it end-to-end). The AWS Transform integration
+(`src/atx_orchestrator/`) and its IAM roles template (`pipeline/iam-roles.yaml`)
+were removed in [#2509](https://github.com/aws-samples/sample-aws-genai-db-modernizer/issues/2509).
 
 ### 2.1 Primary Mode: Claude Code
 
@@ -209,13 +208,6 @@ session — local development, demos, and users who prefer a browser.
 with `--llm-mode none` (fully deterministic, no model calls) or
 `--llm-mode bedrock` (Strands agents call Amazon Bedrock directly with the
 user's own AWS credentials — no hosted inference proxy).
-
-### 2.4 AWS Transform Integration
-
-`src/atx_orchestrator/` lets AWS Transform run the same agent code over
-S3-backed storage (`S3ArtifactStore`), orchestrated over A2A instead of the
-local API. This is the one path that still talks to S3 and is unaffected by
-the hosted-deployment removal.
 
 ---
 
@@ -291,7 +283,6 @@ Collect and Triage -> Analysis (per engine, concurrent) -> Assignment -> Reality
 - Each phase is a direct Python function call. Analysis and schema design run per engine concurrently through a `ThreadPoolExecutor`; load testing runs per engine sequentially
 - There is **one** human approval gate, after the reality check. Resumption happens through the UI/API, the CLI or the Claude Code command; there is no task-token callback to a workflow service
 - Progress is tracked in a local phase-progression file (`.meta/<job_id>.json`), not in DynamoDB or EventBridge. The API's `/execution-history` and `/agents` endpoints derive status from the artifact layout (`LocalExecutionService`)
-- The `AWS Transform` integration drives the same phases as a four-agent fleet over A2A ([guide](../guides/aws-transform-integration.md))
 
 ### 3.4 Restart Strategy
 
@@ -342,13 +333,11 @@ Load Test (optional) -> load-test-<engine>/v<N>/
 Synthesis -> synthesis/v<N>/report.json -> deliverables/
 ```
 
-(The AWS Transform integration runs the same flow against `S3ArtifactStore` instead of `LocalArtifactStore`, orchestrated over A2A rather than `LocalOrchestrator`; see [§2.4](#24-aws-transform-integration).)
-
 ### 4.2 Storage Architecture
 
 **Artifact Storage (`ArtifactStore` abstraction, `src/storage/`):**
 
-`LocalArtifactStore` (default) writes to the local filesystem; `S3ArtifactStore` (used only by the AWS Transform integration) writes to S3. Both use the same path convention: `<database-name>/<job-id>/<agent-name>/<file>`. The layout, with the files each phase writes, is in the [storage guide](../guides/storage-architecture-guide.md); every JSON file a job writes, by kind, is in [contracts/artifacts.md](../contracts/artifacts.md). In short:
+`LocalArtifactStore` (default) writes to the local filesystem; `S3ArtifactStore` (chosen when `S3_BUCKET` is set) writes to S3. Both use the same path convention: `<database-name>/<job-id>/<agent-name>/<file>`. The layout, with the files each phase writes, is in the [storage guide](../guides/storage-architecture-guide.md); every JSON file a job writes, by kind, is in [contracts/artifacts.md](../contracts/artifacts.md). In short:
 
 - `collector/output.json`, `referee-triage/triage.json`, `analysis-<engine>/analysis.json`
 - `assignment/v{N}/assignment.json` and `access_patterns.json`, `reality-check/output.json`, `decisions/`
@@ -492,7 +481,7 @@ deployment (#175).
 | Job Orchestration | `LocalOrchestrator`      | -       | Direct function calls over the local artifact store, no cloud workflow service |
 | Frontend          | React (JavaScript)       | 18+     | Component reusability                                            |
 | UI Library        | Cloudscape Design System | Latest  | AWS native, professional appearance                               |
-| Container Runtime | Docker                   | Latest  | Used for the `agent-load-test` image and the AWS Transform integration — not for a hosted service |
+| Container Runtime | Docker                   | Latest  | Used for the `agent-load-test` image — not for a hosted service |
 | AI/ML             | AWS Bedrock              | -       | Managed LLM access (optional)                                     |
 
 ### 6.2 Database Drivers
@@ -506,7 +495,7 @@ where they add value — not through a hosted account the project manages.
 
 **Storage:**
 
-- S3, only via the AWS Transform integration's `S3ArtifactStore` — the local API/UI/CLI paths use the filesystem
+- S3, only through `S3ArtifactStore` when `S3_BUCKET` is set — the local API/UI/CLI paths use the filesystem
 
 **Live-mode collection (optional — offline/DDL collection needs none of this):**
 
@@ -704,9 +693,10 @@ The ADR index, [decisions/README.md](decisions/README.md), lists every ADR with 
 | 11.1    | 2026-06-01 | tebanieo | **Open-source release candidate review: Full architecture documentation audit. Sanitized internal references. Updated ADR statuses (superseded, accepted). Verified diagrams against current codebase. Corrected storage architecture to reflect ArtifactStore abstraction. Added Aurora Absorption (ADR-021) to accepted decisions.**                                                                                                                                                                                                                                                                                                     |
 | 12.0    | 2026-10-05 | tebanieo | **Hosted deployment removed (#175): the ECS Fargate / ALB / Cognito / Step Functions / EventBridge / DynamoDB deployment described in sections 2, 5.3, 6.3, 7 and 8 is gone — the project is local-only (Claude Code, local API/UI, deterministic CLI) plus the separate AWS Transform integration. Rewrote Deployment Architecture, Orchestration Pattern, Progress Reporting, Storage Architecture, API Architecture, Technology Stack, Security Architecture, Operational Considerations and CI/CD Pipeline to describe the current local-first, GitHub-Actions-only reality.**                                                      |
 | 13.0    | 2026-10-27 | maintainers | **Documentation audit (#1600): rewrote sections 1, 3, 4 and 6.2 and the appendices around query-first routing (ADR-031), the move ledger, the engine scope, the facts layer (ADR-032), `assess()` and the one approval gate; fixed sections 5 and 9; removed the Redis, Db2, mini-collector, Neptune and Keyspaces claims and the deeper-analysis loop.** |
+| 13.1    | 2026-11-20 | maintainers | AWS Transform integration removed (#2509): `src/atx_orchestrator/`, `pipeline/` and their tests are gone. The phase entry points `assess()` runs moved to `src/orchestrator/core.py`. |
 
 ---
 
 **Document Status:** Approved
 **Current Phase:** Local-first, post-hosted-removal (#175)
-**Next Review:** When the AWS Transform integration or local UI/API architecture materially changes
+**Next Review:** When the local UI/API architecture materially changes

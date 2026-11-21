@@ -34,7 +34,6 @@ TEMPLATES = [
     REPO_ROOT / "infrastructure" / "cloudformation" / "bedrock-guardrail.yaml",
     PLUGIN_BUCKET_STACK,
     REPO_ROOT / "infrastructure" / "cloudformation" / "data-movement" / "routine-proof-target.yaml",
-    REPO_ROOT / "pipeline" / "iam-roles.yaml",
     # The rendered data-movement examples CI scans too.
     *sorted(
         (REPO_ROOT / "infrastructure" / "cloudformation" / "data-movement" / "examples").glob(
@@ -47,7 +46,6 @@ TEMPLATES = [
 
 DOCKERFILES = [
     REPO_ROOT / "infrastructure" / "docker" / "agent-load-test" / "Dockerfile",
-    REPO_ROOT / "src" / "atx_orchestrator" / "Dockerfile.atx",
 ]
 
 #: (file, resource, check id): the reviewed skips.
@@ -60,7 +58,6 @@ EXPECTED_SKIPS = {
     ("routine-proof-target.yaml", "Writer", "CKV_AWS_118"),
     ("routine-proof-target.yaml", "Writer", "CKV_AWS_16"),
     ("routine-proof-target.yaml", "Writer", "CKV_AWS_157"),
-    ("iam-roles.yaml", "AgentCoreExecutionRole", "CKV_AWS_111"),
     ("Dockerfile", "-", "CKV_DOCKER_2"),
 }
 
@@ -79,7 +76,7 @@ def _template_skips(path: Path) -> list[tuple[str, str, str]]:
         metadata: dict[str, Any] = resource.get("Metadata") or {}
         for skip in (metadata.get("checkov") or {}).get("skip", []):
             out.append((name, skip["id"], skip.get("comment", "")))
-    # Inline comments directly under a resource (pipeline/iam-roles.yaml style).
+    # Inline comments directly under a resource.
     resource_name = None
     for line in path.read_text(encoding="utf-8").splitlines():
         header = re.match(r"^  ([A-Za-z0-9]+):\s*$", line)

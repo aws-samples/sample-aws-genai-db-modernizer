@@ -4,7 +4,7 @@
 """Shared write path for customer assignment overrides (ADR-028).
 
 One place builds the ``customer_modified`` next version from a set of per-query
-overrides, so the web REST route and the ATX review gate produce byte-identical
+overrides, so every caller (the web REST route, the CLI) produces byte-identical
 artifacts (same version bump, status, source, provenance) instead of each
 re-implementing the write. This is transport-agnostic: it raises domain errors
 that callers translate to their own protocol (HTTP status, chat message, ...).
@@ -404,8 +404,7 @@ class UnservableQueryOverride(AssignmentOverrideError):
 class OutOfScopeVersion(AssignmentOverrideError, OutOfScopeAssignment):
     """A customer edit or a source-of-truth reroute would write a version with a query
     on, tied with or cached by an engine outside the customer's engine scope (#1327).
-    Nothing is written; the API answers 400 and the AWS Transform tools a refused edit,
-    as for every ``AssignmentOverrideError``."""
+    Nothing is written; the API answers 400, as for every ``AssignmentOverrideError``."""
 
 
 class ExcludedEngineOverride(AssignmentOverrideError):
@@ -1326,8 +1325,9 @@ def _propagate_codependent_overrides(
 
     Respects explicit customer picks otherwise: a JOIN group the customer
     explicitly split (two members set to different engines in the same edit) is
-    left as chosen -- the resulting split is surfaced by the feasibility reviewer,
-    not overridden here -- and only the writes of a picked table follow the pick.
+    left as chosen -- the resulting split is the feasibility reviewer's to report
+    (no gate runs it since #2509, see #2519), not overridden here -- and only the
+    writes of a picked table follow the pick.
     A propagated query is tagged ``co_dependency_propagated`` (not
     ``customer_override``) so it is distinguishable from the customer's own picks.
 
@@ -1894,7 +1894,8 @@ def reroute_split_writes(
 
     # #1151: the counts whose waiver relied on a split table's old placement are
     # re-placed against the one source of truth each table now has; a pinned one is
-    # held, pin kept, and said (the feasibility review blocks on it at the gate).
+    # held, pin kept, and said (``stranded_counts`` finds it; no gate runs the
+    # feasibility review since #2509, see #2519).
     from src.agents.referee.waived_counts import replace_lapsed_counts
 
     replaced = replace_lapsed_counts(

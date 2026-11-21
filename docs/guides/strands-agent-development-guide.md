@@ -21,11 +21,7 @@ Python function calls, the local `ArtifactStore`). The hosted deployment
 retired in [#175](https://github.com/aws-samples/sample-aws-genai-db-modernizer/issues/175);
 `src/agents/entrypoint.py` still dispatches on `AGENT_TYPE` because it serves
 the `agent-load-test` container image, a run-to-completion batch dispatch.
-The AWS Transform integration does **not** route through this file — it has
-its own sibling, `src/atx_orchestrator/atx_entrypoint.py`, which also
-dispatches on an `AGENT_TYPE` env var but with its own vocabulary, and uses
-it to launch long-running A2A/AgentCore servers rather than run-to-completion
-agents. Neither entrypoint talks to Step Functions or ECS anymore.
+It does not talk to Step Functions or ECS anymore.
 
 ---
 
@@ -72,9 +68,8 @@ Transform integration, which do launch separate processes):
 
 The entrypoint is a run-to-completion script, never a server: it does its
 work, writes to the artifact store, and exits. `LocalOrchestrator` calls agent
-*handler functions* directly for everything except the load-test container
-and the AWS Transform path — there is no process boundary to cross for most
-of the pipeline.
+*handler functions* directly for everything except the load-test container,
+so there is no process boundary to cross for most of the pipeline.
 
 See [the orchestrator README](../../src/orchestrator/README.md) for the full
 workflow diagram and artifact path table, and

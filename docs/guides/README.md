@@ -37,7 +37,6 @@ for the original rationale; its orchestration mechanism is retired, while its pr
 | [load-testing-new-engine.md](load-testing-new-engine.md) | Adding a load-test provisioner for an engine | Developers |
 | [../architecture/rule-catalog.md](../architecture/rule-catalog.md) | The generated rule catalog: engines, patterns and gaps | Developers |
 | [context-graph-query-cookbook.md](context-graph-query-cookbook.md) | Ready-to-run Cypher queries for the context graph | Developers, Solutions Architects |
-| [aws-transform-integration.md](aws-transform-integration.md) | Running the pipeline on AWS Transform (subagents + A2A) | Developers, Solutions Architects |
 
 ## Quick Start
 
@@ -94,10 +93,7 @@ Start from [AGENTS.md](../../AGENTS.md) (the repo map, the invariants and the ro
 Agent code runs as direct Python function calls under `LocalOrchestrator`, not
 as separate containers or tasks. `src/agents/entrypoint.py` still routes on an
 `AGENT_TYPE` environment variable, but only to serve the `agent-load-test`
-container image's run-to-completion dispatch. The AWS Transform integration
-does not route through this file at all — it has its own sibling,
-`src/atx_orchestrator/atx_entrypoint.py`, with its own `AGENT_TYPE`
-vocabulary, dispatching to long-running A2A/AgentCore servers instead. See
+container image's run-to-completion dispatch. See
 [the orchestrator README](../../src/orchestrator/README.md) for the full
 dispatch table and artifact paths.
 

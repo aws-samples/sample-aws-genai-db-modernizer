@@ -4,7 +4,7 @@
 """Shared downstream helpers in assignment_versioning (ADR-028).
 
 Schema design and synthesis must read the effective assignment (v2 when
-Reality Check consolidated) on every path: ATX, LocalOrchestrator, and the
+Reality Check consolidated) on every path: the pipeline core, LocalOrchestrator, and the
 local scripts the Claude Code skills drive. These pin the two helpers all of
 them share.
 """

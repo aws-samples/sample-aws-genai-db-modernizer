@@ -88,7 +88,6 @@ Not contracts: callers may not rely on their shape. A pattern starting with `^` 
 | `analysis-[^/]+/er-diagram\.json` | the ER diagram's Mermaid text in a JSON wrapper, rebuilt from the analysis |
 | `analysis-[^/]+/partial\.json` | external-mode analysis held for the model's advisor pass, replaced at finalize |
 | `assignment/v\d+/access_patterns\.json` | each query's access-pattern class and scores as routing scored them (#728, #936): an audit record written with its assignment version |
-| `assignment/review/pending_hitl\.json` | AWS Transform transport state: the pending review task to resume |
 | `schema-[^/]+/(?:v\d+/)?merge_record\.json` | the last --merge of the DynamoDB group drafts (draft hashes, errors) |
 | `schema-[^/]+/(?:v\d+/)?finalize_record\.json` | the last --finalize of a single-pass engine (status, errors, response and output hashes) |
 | `schema-[^/]+/(?:v\d+/)?changelog\.json` | a schema revision's changelog, shown with the revision |
@@ -105,6 +104,4 @@ Not contracts: callers may not rely on their shape. A pattern starting with `^` 
 | `^[^/]+/[^/]+/(?:collector|referee-triage|referee-synthesis|assignment-resolver|reality-check|schema-design|schema-split|schema-merge|load-test|{engines})/error\.json` | a container agent's failure record, under its agent type |
 | `_logs/model_usage\.json` | token usage of the run's model calls by phase and model id (#1494), with each phase's wall-clock seconds and engines and any per-run ceiling that stopped the run (#145), written by scripts/run_assessment.py for every run (#1675, #145) and by assess() for a run that called a model, and read by scripts/usage_cost.py |
 | `_logs/prose_style_rejections-v\d+\.json` | a log of the synthesis prose a style check rejected, per assignment version |
-| `uploads/input_key\.json` | AWS Transform transport state: the resolved input location |
-| `_pending/[^/]+/upload\.json` | AWS Transform transport state: a pending upload task, before the job folder exists |
 | `\.meta/_stored-input-redaction-v\d+\.json` | the stored-input redaction marker (not a job's progression) |

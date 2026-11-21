@@ -271,14 +271,10 @@ ENGINE_OR_PATTERN_TABLES: dict[str, tuple[frozenset[str], str]] = {
         "engine versions, parameter-group settings, DMS endpoint types, identifier quoting "
         "and log exports as AWS names them; no routing rule (#1798)",
     ),
-    "src/atx_orchestrator/core.py": (
-        frozenset(
-            {"_ANALYSIS_ENGINES", "_SAME_FAMILY", "IMPLEMENTED_SCHEMA_DESIGNERS", "_DESIGN_SHAPE"}
-        ),
+    "src/orchestrator/core.py": (
+        frozenset({"_ANALYSIS_ENGINES", "_SAME_FAMILY", "_DESIGN_SHAPE"}),
         _PLUMBING + "; _ANALYSIS_ENGINES is also " + _PINNED,
     ),
-    "src/atx_orchestrator/subagents/schema.py": (frozenset({"VALID_TARGET_TYPES"}), _PLUMBING),
-    "src/atx_orchestrator/tools.py": (frozenset({"_SCHEMA_ENGINES"}), _PLUMBING),
     "src/api/routes/agent_interaction.py": (frozenset({"_KNOWN_AGENT_FOLDERS"}), _PLUMBING),
     "src/assessment/models.py": (
         frozenset({"DESIGN_ENTRY_ENGINES"}),

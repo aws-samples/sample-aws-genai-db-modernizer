@@ -7,10 +7,9 @@ Every model call in ``src/`` resolves its model through a role in
 ``src.shared.models`` and builds its request settings from that role plus the
 model family. These tests pin three things:
 
-* no literal model ID lives in any tracked text file under ``src/``,
-  ``scripts/`` or ``pipeline/`` outside ``src/shared/models.py``;
-* the defaults are the 5.5 family, in the ``us.`` inference-profile form that
-  ``pipeline/iam-roles.yaml`` allows;
+* no literal model ID lives in any tracked text file under ``src/`` or
+  ``scripts/`` outside ``src/shared/models.py``;
+* the defaults are the 5.5 family;
 * a 4.x model (still reachable through the env overrides) keeps exactly the
   request settings the call sites sent before the role config existed;
 * a 5.5-family model gets a valid request: no sampling parameters, no
@@ -73,13 +72,11 @@ def _clean_env(monkeypatch):
 _MODEL_ID_PATTERN = re.compile(r"anthropic\.claude|claude-(opus|sonnet|haiku|fable|mythos|\d)-\d")
 
 
-# Files allowed to spell a model ID: the role module itself, and the IAM policy,
-# whose resource patterns follow the role defaults (a follow-up of #624).
+# The one file allowed to spell a model ID: the role module itself.
 _ALLOWED = {
     REPO_ROOT / "src" / "shared" / "models.py",
-    REPO_ROOT / "pipeline" / "iam-roles.yaml",
 }
-_SCANNED_TOPS = ("src", "scripts", "pipeline")
+_SCANNED_TOPS = ("src", "scripts")
 
 
 def _tracked_text_files() -> list[tuple[Path, str]]:
@@ -247,7 +244,6 @@ def test_defaults_are_the_five_five_family():
     assert resolve_model_id(Role.SUMMARY) == "global.anthropic.claude-sonnet-5-5"
     assert resolve_model_id(Role.VALIDATOR) == "global.anthropic.claude-sonnet-5-5"
     assert resolve_model_id(Role.ANALYSIS_ADVISOR) == "global.anthropic.claude-sonnet-5-5"
-    assert resolve_model_id(Role.ATX_AGENT) == "global.anthropic.claude-sonnet-5-5"
     assert resolve_model_id(Role.LIGHT_CHECK) == "global.anthropic.claude-haiku-5-5"
 
 
@@ -297,7 +293,6 @@ def test_first_set_env_var_wins_and_empty_is_unset(monkeypatch):
         (Role.SUMMARY, "SUMMARY_MODEL_ID"),
         (Role.LIGHT_CHECK, "LIGHT_CHECK_MODEL_ID"),
         (Role.ANALYSIS_ADVISOR, "ANALYSIS_MODEL_ID"),
-        (Role.ATX_AGENT, "MODEL_ID"),
     ],
 )
 def test_each_role_has_an_env_override(monkeypatch, role, env_var):
@@ -363,7 +358,6 @@ _FOUR_X = {
     Role.VALIDATOR: MODEL_IDS["sonnet-4.6"],
     Role.LIGHT_CHECK: MODEL_IDS["haiku-4.5"],
     Role.ANALYSIS_ADVISOR: MODEL_IDS["sonnet-4.6"],
-    Role.ATX_AGENT: MODEL_IDS["sonnet-4.6"],
 }
 
 

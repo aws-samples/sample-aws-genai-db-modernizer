@@ -14,8 +14,7 @@ Two kinds of run exercise different code:
   AGENTS.md/CLAUDE.md) and every builder or validator of the ``llm_input`` /
   request files that run reads and writes.
 * ``bedrock-smoke``: Bedrock-only call sites (Strands agents, advisors, the
-  validator and summary model calls, the AWS Transform orchestrator). The
-  headless run never reaches them.
+  validator and summary model calls). The headless run never reaches them.
 
 Each run has two tiers of paths:
 
@@ -185,12 +184,6 @@ BEDROCK_SMOKE_PROMPT: tuple[str, ...] = (
     "src/tools/analysis/dynamodb_analysis_tools.py",
     "src/tools/schema/*_schema_agent.py",
     "src/tools/schema/aurora_common/bedrock_delta.py",
-    # The orchestrator's and its subagents' system prompts, its tools' descriptions and
-    # framed results, and the plan wording it is given.
-    "src/atx_orchestrator/orchestrator.py",
-    "src/atx_orchestrator/subagents/*.py",
-    "src/atx_orchestrator/tools.py",
-    "src/atx_orchestrator/mcp_tools.py",
     # Re-splits and tags the text Bedrock receives around the framed data.
     "src/shared/bedrock_guardrail.py",
     # Model settings per role, the summary request's budget and slimming, and the
@@ -223,7 +216,6 @@ BEDROCK_SMOKE_NIGHTLY: tuple[str, ...] = (
     "scripts/run_synthesis.py",
     "scripts/run_routine_repair.py",
     "src/shared/role_bedrock_model.py",
-    "src/atx_orchestrator/*.py",  # runtime/* uses agent_builder_sdk for plumbing, still listed
 )
 TIERS: dict[str, tuple[tuple[str, ...], tuple[str, ...]]] = {
     "e2e-llm": (E2E_LLM_PROMPT, E2E_LLM_NIGHTLY),
