@@ -697,6 +697,13 @@ class _Body:
         # The variables in scope where the reader is: a block's names join on DECLARE and
         # leave at its END, as the compound statements the reader walks say.
         self.scope: frozenset[str] = frozenset(n.lower() for n in parameters)
+        # The token indexes of the compound statements' own keywords the reader consumed
+        # (``IF``, ``ELSEIF``, ``WHILE``, ``UNTIL``, ``RETURN``), #2406.
+        self.keywords: set[int] = set()
+
+    def _keyword(self) -> None:
+        """Note the token here as a compound statement's own keyword."""
+        self.keywords.add(self.cur.i)
 
     def _leaf(self, start: int, end: int, expression: bool = False) -> None:
         self.leaves.append(_Leaf(start, end, expression, self.scope))
@@ -845,6 +852,7 @@ class _Body:
             self._end_label(label)
             return
         if w == "WHILE":
+            self._keyword()
             self.cur.take()
             self._expression_until("DO")
             self.cur.expect("DO")
@@ -855,6 +863,7 @@ class _Body:
         if w == "REPEAT":
             self.cur.take()
             self._statements(inner, "UNTIL")
+            self._keyword()
             self.cur.expect("UNTIL")
             self._expression_until("END")
             self.cur.expect("END", "REPEAT")
@@ -863,11 +872,14 @@ class _Body:
         if label is not None:
             raise _Unparseable("label")
         if w == "IF":
+            self._keyword()
             self.cur.take()
             self._expression_until("THEN")
             self.cur.expect("THEN")
             self._statements(block, "ELSEIF", "ELSE", "END")
-            while self.cur.accept("ELSEIF"):
+            while self.cur.word() == "ELSEIF":
+                self._keyword()
+                self.cur.take()
                 self._expression_until("THEN")
                 self.cur.expect("THEN")
                 self._statements(block, "ELSEIF", "ELSE", "END")
@@ -899,6 +911,7 @@ class _Body:
                 raise _Unparseable("iterate on a block label")
             return
         if w == "RETURN":
+            self._keyword()
             self.cur.take()
             start = self._to_semicolon(top)
             self._leaf(start, self.cur.i, expression=True)
@@ -2008,6 +2021,22 @@ def _statement_kind(part: Sequence[Token]) -> str:
             elif depth == 0 and _word(tok) in _WITH_MAIN:
                 return _word(tok)
     return first
+
+
+def control_flow_keywords(toks: list[Token]) -> frozenset[int]:
+    """The indexes in ``toks``, one routine ``CREATE``'s tokens, of the keywords that open
+    its compound statements or their parts where a statement or condition starts (``IF``,
+    ``ELSEIF``, ``WHILE``, ``UNTIL``, ``RETURN``), as the body reader reads
+    them (#2406): syntax, never a call to a function of that name. An ``IF(...)`` or
+    ``REPEAT(...)`` inside an expression is not one, nor is a quoted or qualified name.
+    Empty when the tokens do not read as one routine. Never raises."""
+    try:
+        header = _header(toks)
+        body = _Body(toks, header.body_start)
+        body.read()
+    except Exception:  # noqa: BLE001 -- a text the reader cannot read has no keywords
+        return frozenset()
+    return frozenset(body.keywords)
 
 
 def statement_kinds(routine: MySqlRoutine) -> frozenset[str] | None:

@@ -75,8 +75,14 @@ from __future__ import annotations
 import re
 from collections import Counter
 from collections.abc import Collection, Iterator, Sequence
+from dataclasses import replace
 
-from src.tools.routines.mysql_checks import MySqlRoutine, check_mysql_routine, statement_kinds
+from src.tools.routines.mysql_checks import (
+    MySqlRoutine,
+    check_mysql_routine,
+    control_flow_keywords,
+    statement_kinds,
+)
 from src.tools.routines.postgresql_checks import (
     RoutineParts,
     created_schemas,
@@ -1152,6 +1158,8 @@ def called_functions(text: str, engine: str) -> frozenset[str] | None:
     levels = _deep_levels(text, engine)
     if levels is None:
         return None
+    if engine == "mysql" and levels:  # its control-flow keywords are syntax (#2406)
+        levels[0] = _mysql_keywords_as_syntax(levels[0])
     found: set[str] = set()
     for tokens in levels:
         for i, tok in enumerate(tokens[:-1]):
@@ -1168,6 +1176,17 @@ def called_functions(text: str, engine: str) -> frozenset[str] | None:
                 name = f"{tokens[i - 2].text.casefold()}.{name}"
             found.add(name)
     return frozenset(found)
+
+
+def _mysql_keywords_as_syntax(tokens: list[RoutineToken]) -> list[RoutineToken]:
+    """``tokens``, a MySQL ``CREATE``'s, with each compound statement's own keyword
+    (``IF (c) THEN``, ``ELSEIF (``, ``WHILE (``, ``UNTIL (``, ``RETURN (``, as the body
+    reader finds them where a statement or condition starts) given its own kind, so the
+    call scan never reads it as a name (#2406). The reader reads a quoted or qualified name
+    as no keyword, and an ``IF()`` or ``REPEAT()`` inside an expression as no statement, so
+    those stay names. The tokens as they are when the text does not read as one routine."""
+    keywords = control_flow_keywords(tokens)
+    return [replace(t, kind=t.text.upper()) if i in keywords else t for i, t in enumerate(tokens)]
 
 
 #: The statement kinds every routine may run, as :func:`run_statements` names them: reads,
