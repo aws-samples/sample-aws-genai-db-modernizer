@@ -73,9 +73,9 @@ _ENGINES = [
             pytest.mark.skipif(not de.available_majors("mysql"), reason="no mysqld"),
         ],
     ),
-    # Which PostgreSQL path runs is a choice of the test, not of whatever is installed:
-    # the pgserver library (postgres started through its pg_ctl) and a bin folder
-    # (initdb and postgres run directly).
+    # Which PostgreSQL is found is a choice of the test, not of whatever is installed:
+    # the newest major discovery finds (pgserver's, where nothing else is installed) and
+    # an explicit bin folder. Both run initdb and postgres directly (#2518).
     pytest.param(
         ("postgresql", ""),
         id="postgresql-pgserver",

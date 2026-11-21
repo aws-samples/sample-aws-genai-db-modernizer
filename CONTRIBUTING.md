@@ -412,8 +412,10 @@ uv run pytest tests/contract/ -v
 
 The disposable-engine tests (`tests/unit/tools/database/test_disposable_engine.py`)
 run once for every PostgreSQL and MySQL major they find. `pgserver` (PostgreSQL 16)
-comes with the `dev` extra, and its binaries also cover the `initdb`/`postgres`
-path. Any other major comes from conda-forge: `conda install -c conda-forge
+comes with the `dev` extra. Only its `bin` folder is used, started with `initdb` and
+`postgres` like any other, so a lock `pgserver` takes for every process of the user
+never holds a start up (#2518). <!-- claim: tests/unit/tools/database/test_disposable_engine.py::test_pgserver_s_own_major_starts_from_its_bin_folder_while_another_process_holds_its_lock -->
+Any other major comes from conda-forge: `conda install -c conda-forge
 postgresql=<major>` and `conda install -c conda-forge mysql-server=<major>` (or
 `micromamba`, one environment per major). Point `MODERNIZER_PG_BIN_<major>` (for
 example `MODERNIZER_PG_BIN_14`) at the environment's `bin` folder, and
