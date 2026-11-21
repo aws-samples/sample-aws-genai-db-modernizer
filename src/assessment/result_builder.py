@@ -52,6 +52,8 @@ from dataclasses import dataclass, field
 from typing import Any, get_args
 
 from src.assessment.models import (
+    AURORA_DESIGN_ENGINES,
+    CONTRACT_VERSION,
     AntiPatternRef,
     Artifacts,
     AssessmentRequest,
@@ -93,6 +95,7 @@ from src.assessment.models import (
     TableForeignKey,
     TableLine,
     result_label,
+    writes_table_schemas,
 )
 from src.assessment.part_ids import from_query_id_of
 from src.assessment.reason_codes import CONSOLIDATION_CODES, public_reason_code
@@ -103,6 +106,7 @@ from src.shared.model_usage import USAGE_KEY
 from src.shared.package_version import get_package_version
 from src.shared.placeholder_tables import is_placeholder_table, saved_write_groups
 from src.shared.row_counts import known_row_count
+from src.shared.table_keys import table_schema
 
 # --------------------------------------------------------------------------- inputs
 
@@ -1305,12 +1309,21 @@ def _dynamodb_design(design: Mapping[str, Any]) -> DynamoDBDesign:
     )
 
 
-def _aurora_design(engine: str, design: Mapping[str, Any]) -> AuroraDesign:
+def _aurora_design(
+    engine: str, design: Mapping[str, Any], *, with_schemas: bool = True
+) -> AuroraDesign:
+    """An Aurora design's stable entry. ``with_schemas`` (a 1.5 result, #2478) gives each
+    table the schema the design creates it in, so two schemas' tables of one name stay two
+    tables a caller can tell apart; ``(schema_name, name)`` is the pair
+    ``src.shared.table_keys.table_key`` keys the table by."""
     tables = [
         AuroraTable(
             name=str(t["table_name"]),
             primary_key=_strs(t.get("primary_key")),
             indexes=_strs(t.get("indexes")),
+            # A 1.3 or 1.4 entry does not set the field at all: a result for those
+            # versions refuses one that does.
+            **({"schema_name": table_schema(t)} if with_schemas else {}),
         )
         for t in design.get("table_definitions") or []
         if isinstance(t, Mapping) and t.get("table_name")
@@ -1441,7 +1454,9 @@ def _opensearch_design(design: Mapping[str, Any]) -> OpenSearchDesign:
     )
 
 
-#: How each designed engine's stable design is read from its schema output.
+#: How each designed engine's stable design is read from its schema output. An Aurora
+#: engine's entry here only marks it as having a reader: ``build_designs`` calls
+#: ``_aurora_design`` itself, with the result's version (#2478).
 _DESIGN_READERS: dict[str, Callable[[Mapping[str, Any]], EngineDesign]] = {
     "dynamodb": _dynamodb_design,
     "aurora_mysql": lambda d: _aurora_design("aurora_mysql", d),
@@ -1452,13 +1467,21 @@ _DESIGN_READERS: dict[str, Callable[[Mapping[str, Any]], EngineDesign]] = {
 }
 
 
-def build_designs(state: RunState, designed_engines: list[str]) -> list[EngineDesign]:
+def build_designs(
+    state: RunState, designed_engines: list[str], contract_version: str = CONTRACT_VERSION
+) -> list[EngineDesign]:
     """One stable design per engine of ``designed_engines``, in that order, from the
-    engine's schema output at the effective version. Every active catalog engine has a
+    engine's schema output at the effective version, as ``contract_version`` states it (a
+    1.3 or 1.4 entry has no table schemas, #2478). Every active catalog engine has a
     reader (``tests/unit/assessment/test_design_block.py`` checks it); an engine with
     none, such as a planned one, has no entry."""
+    with_schemas = writes_table_schemas(contract_version)
     return [
-        _DESIGN_READERS[engine](state.schema_designs[engine])
+        (
+            _aurora_design(engine, state.schema_designs[engine], with_schemas=with_schemas)
+            if engine in AURORA_DESIGN_ENGINES
+            else _DESIGN_READERS[engine](state.schema_designs[engine])
+        )
         for engine in designed_engines
         if engine in _DESIGN_READERS and engine in state.schema_designs
     ]
@@ -1508,7 +1531,11 @@ def build_result(state: RunState, request: AssessmentRequest) -> AssessmentResul
         summary=summary,
         statements=statements,
         groups=build_groups(state, statements),
-        designs=build_designs(state, summary.designed_engines) if label == "designed" else None,
+        designs=(
+            build_designs(state, summary.designed_engines, request.contract_version)
+            if label == "designed"
+            else None
+        ),
         artifacts=build_artifacts(state) if request.options.include_artifacts else None,
     )
     # What ``cut_collection`` cuts (#1633); never part of the result's value.

@@ -55,7 +55,7 @@ def test_the_committed_schemas_are_current() -> None:
 
 
 def test_one_file_per_model_named_by_the_major_version() -> None:
-    assert CONTRACT_VERSION == "1.4"
+    assert CONTRACT_VERSION == "1.5"
     assert [p.name for p, _ in rcs.render()] == [
         "assess_request.v1.schema.json",
         "assess_result.v1.schema.json",
@@ -267,12 +267,12 @@ def test_the_request_schema_refuses(request_: dict[str, Any], what: str) -> None
 # --------------------------------------------------------------------------- required fields
 
 
-@pytest.mark.passes_on_main
 def test_every_always_written_result_field_is_required() -> None:
     """``model_dump_json`` writes every field, so the result schema requires each one
-    (generated types are not all-optional). It describes contracts 1.3 and 1.4 (#1641,
-    #2022), so the fields 1.2 and 1.3 added are required too: no earlier version's result is read.
-    The request keeps its defaults optional."""
+    (generated types are not all-optional). It describes contracts 1.3 to 1.5 (#1641,
+    #2022, #2478), so the fields 1.2 and 1.3 added are required too: no earlier version's result is read.
+    The one exception is an Aurora table's ``schema_name`` (1.5), which a 1.3 or 1.4 result
+    leaves out. The request keeps its defaults optional."""
     from src.assessment.models import StatementResult
 
     result = _schema("assess_result")
@@ -280,7 +280,9 @@ def test_every_always_written_result_field_is_required() -> None:
     assert len(StatementResult.model_fields) == 24
     assert set(statement["required"]) == set(StatementResult.model_fields)
     for name, model in result["$defs"].items():
-        assert set(model.get("required", [])) == set(model["properties"]), name
+        optional = {"schema_name"} if name == "AuroraTable" else set()
+        assert set(model.get("required", [])) == set(model["properties"]) - optional, name
+    assert "schema_name" in result["$defs"]["AuroraTable"]["properties"]
     assert set(result["required"]) == set(AssessmentResult.model_fields)
     request = _schema("assess_request")
     assert request["required"] == ["database_name", "collection"]

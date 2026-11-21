@@ -9,7 +9,7 @@ Two snapshots, one per era (#1641):
   release recorded before contract 1.3: v0.4.0-beta.1's contract 1.1 (v0.4.0-beta.2
   shipped 1.2, but its release step never recorded it). It is kept
   exactly as it was and never re-recorded. Every version it records is retired: this
-  code reads 1.3 and 1.4 only, so a request or a result naming one is refused.
+  code reads 1.3, 1.4 and 1.5 only, so a request or a result naming one is refused.
 - ``tests/contract/assess_released_since_1_3.json`` (``RELEASED_SNAPSHOT_PATH``) is the
   released surface from 1.3 on. A change that breaks a caller -- a field removed or
   renamed, a type changed, an enum value removed or changed -- fails here unless

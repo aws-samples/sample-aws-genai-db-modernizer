@@ -94,7 +94,7 @@ def _check_message(exc: RetiredContractVersionError, version: str) -> None:
 
 def test_the_retired_versions_are_1_0_1_1_and_1_2() -> None:
     assert RETIRED_CONTRACT_VERSIONS == RETIRED
-    assert CONTRACT_VERSION == "1.4"
+    assert CONTRACT_VERSION == "1.5"
     assert issubclass(RetiredContractVersionError, ValueError)
     assert "RetiredContractVersionError" in library.__all__
 
@@ -224,7 +224,9 @@ def test_a_retired_version_is_refused_even_with_other_errors() -> None:
 
 
 @pytest.mark.passes_on_main
-@pytest.mark.parametrize("version", ["1.5", "2.0", "1", "1.3.0", "1.4.0", "", 1.3, 1.4, None])
+@pytest.mark.parametrize(
+    "version", ["1.6", "2.0", "1", "1.3.0", "1.4.0", "1.5.0", "", 1.3, 1.4, 1.5, None]
+)
 def test_an_unknown_version_keeps_the_invalid_field_refusal(version: Any) -> None:
     payload = {"contract_version": version, "database_name": "shop", "collection": {"a": 1}}
     with pytest.raises(ValidationError) as raised:
@@ -234,7 +236,7 @@ def test_an_unknown_version_keeps_the_invalid_field_refusal(version: Any) -> Non
 
 
 @pytest.mark.passes_on_main
-@pytest.mark.parametrize("version", ["1.3", "1.4", None])
+@pytest.mark.parametrize("version", ["1.3", "1.4", "1.5", None])
 def test_a_supported_request_keeps_its_version_and_none_gets_the_recorded_one(
     version: str | None,
 ) -> None:
@@ -245,7 +247,7 @@ def test_a_supported_request_keeps_its_version_and_none_gets_the_recorded_one(
 
 
 @pytest.mark.passes_on_main
-@pytest.mark.parametrize("recorded", ["1.3", "1.4"])
+@pytest.mark.parametrize("recorded", ["1.3", "1.4", "1.5"])
 def test_the_refusal_names_the_versions_as_the_record_leaves_them(
     recorded: str, tmp_path: Path
 ) -> None:
@@ -257,14 +259,20 @@ def test_the_refusal_names_the_versions_as_the_record_leaves_them(
     assert f"this code reads contracts {versions_note(recorded)}. Pin" in text
     assert f'Pin contract_version "{recorded}", or send none' in text
     assert ("1.4 (read only when pinned)" in text) == (recorded == "1.3")
+    assert ("1.5 (read only when pinned)" in text) == (recorded != "1.5")
 
 
 def test_a_request_with_a_retired_version_is_refused_by_the_published_schema() -> None:
     validator = Draft202012Validator(_schema("assess_request"))
-    assert _schema("assess_request")["properties"]["contract_version"]["enum"] == ["1.3", "1.4"]
+    assert _schema("assess_request")["properties"]["contract_version"]["enum"] == [
+        "1.3",
+        "1.4",
+        "1.5",
+    ]
     minimal = {"database_name": "shop", "collection": {"a": 1}}
     validator.validate({**minimal, "contract_version": "1.3"})
     validator.validate({**minimal, "contract_version": "1.4"})
+    validator.validate({**minimal, "contract_version": "1.5"})
     for version in RETIRED:
         with pytest.raises(SchemaError):
             validator.validate({**minimal, "contract_version": version})
@@ -299,4 +307,8 @@ def test_a_result_is_written_as_1_3_with_every_field() -> None:
     for statement in document["statements"]:
         assert set(statement) == set(type(result.statements[0]).model_fields)
     Draft202012Validator(_schema("assess_result")).validate(document)
-    assert _schema("assess_result")["properties"]["contract_version"]["enum"] == ["1.3", "1.4"]
+    assert _schema("assess_result")["properties"]["contract_version"]["enum"] == [
+        "1.3",
+        "1.4",
+        "1.5",
+    ]

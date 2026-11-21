@@ -109,14 +109,17 @@ def test_the_default_is_the_version_the_release_recorded() -> None:
     for model in (AssessmentRequest, AssessmentResult):
         field = model.model_fields["contract_version"]
         assert field.get_default(call_default_factory=True) == record["contract_version"]
-    assert CONTRACT_VERSION == SUPPORTED_CONTRACT_VERSIONS[-1] == "1.4"
+    assert CONTRACT_VERSION == SUPPORTED_CONTRACT_VERSIONS[-1] == "1.5"
 
 
 @pytest.fixture
 def recorded_1_4(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Iterator[dict[str, Any]]:
-    """The next release recorded: this tree's shape as --write-released records it for a
-    tag, with its released-version record, which the models then read."""
+    """The release that recorded 1.4: this tree's shape as --write-released records it
+    for a tag, stamped 1.4 (the tree is 1.5 since #2478), with its released-version
+    record, which the models then read."""
     document = {**released_document(None), "released": "v9.9.9"}
+    for entry in document["contracts"].values():
+        entry["version"] = "1.4"
     record = tmp_path / "released_contract.json"
     write_released_version(document, record)
     monkeypatch.setattr(models, "RELEASED_VERSION_PATH", record)
@@ -135,26 +138,29 @@ def recorded_1_3(tmp_path: Path) -> Iterator[None]:
 @pytest.mark.passes_on_main
 def test_before_the_record_1_4_is_read_only_when_pinned(recorded_1_3: None) -> None:
     assert default_contract_version() == "1.3"
-    assert pinned_only_contract_versions() == ("1.4",)
+    assert pinned_only_contract_versions() == ("1.4", "1.5")
     assert AssessmentRequest.model_validate(_request(None)).contract_version == "1.3"
     assert AssessmentRequest.model_validate(_request("1.4")).contract_version == "1.4"
     with pytest.raises(ValueError, match=r"1\.4 \(read only when pinned\)"):
-        models.check_contract_version("1.5")
-    # The public shape is 1.4's: against the released 1.3 it is the MINOR rise.
-    assert {e["version"] for e in build_public_snapshot().values()} == {"1.4"}
+        models.check_contract_version("1.6")
+    # The public shape is the newest version's (1.5 since #2478).
+    assert {e["version"] for e in build_public_snapshot().values()} == {CONTRACT_VERSION}
 
 
 @pytest.mark.passes_on_main
 def test_once_a_release_records_1_4_it_is_the_default(recorded_1_4: dict[str, Any]) -> None:
     assert released_version_of(recorded_1_4) == "1.4"
     assert default_contract_version() == "1.4"
-    assert pinned_only_contract_versions() == ()
+    # 1.5 (#2478) is newer than the record: read only when pinned.
+    assert pinned_only_contract_versions() == ("1.5",)
     assert AssessmentRequest.model_validate(_request(None)).contract_version == "1.4"
     assert assess(_request(None)).contract_version == "1.4"
     with pytest.raises(ValueError) as caught:
-        models.check_contract_version("1.5")
-    assert str(caught.value).endswith("this code reads contracts 1.3 and 1.4")
-    assert "read only when pinned" not in str(caught.value)
+        models.check_contract_version("1.6")
+    assert str(caught.value).endswith(
+        "this code reads contracts 1.3, 1.4 and 1.5 (read only when pinned)"
+    )
+    assert "1.4 (read only when pinned)" not in str(caught.value)
     # A request naming no version may set a 1.4 field: it is a 1.4 request.
     AssessmentRequest.model_validate({**_request(None), "routine_sources": []})
     # A 1.3 caller is still served as before, and may not set a 1.4 field.
@@ -255,12 +261,13 @@ def test_an_unvalidated_1_3_request_naming_routine_sources_is_refused_before_it_
         assert not any(tmp_path.iterdir())
 
 
+@pytest.mark.passes_on_main
 def test_the_published_schemas_read_both_versions_and_document_routine_sources() -> None:
     request = json.loads(rcs.schema_path("assess_request").read_text(encoding="utf-8"))
     result = json.loads(rcs.schema_path("assess_result").read_text(encoding="utf-8"))
     for schema in (request, result):
-        assert schema["x-contract-version"] == "1.4"
-        assert schema["properties"]["contract_version"]["enum"] == ["1.3", "1.4"]
+        assert schema["x-contract-version"] == CONTRACT_VERSION
+        assert schema["properties"]["contract_version"]["enum"][:2] == ["1.3", "1.4"]
         # No default in the schema: a request naming none gets the released version,
         # which the release step moves with no regeneration.
         assert "default" not in schema["properties"]["contract_version"]

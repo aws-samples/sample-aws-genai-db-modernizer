@@ -24,7 +24,7 @@ the report are in ``artifacts`` (with ``include_artifacts=True``). The
 deterministic analysis's own data-model guesses are inputs to that design, not
 results, and are never part of the stable surface.
 
-Stable surface (contracts ``1.3`` and ``1.4``, semantic versioning): ``contract_version``,
+Stable surface (contracts ``1.3`` to ``1.5``, semantic versioning): ``contract_version``,
 ``label`` (``analysis_only``, ``recommendation`` or ``designed``: only a designed
 result carries a data model), ``library_version``, ``ruleset_version``/``ruleset_hash``, ``options`` (as applied),
 ``scope`` (echoed), ``summary``, ``statements[]``, ``groups[]`` and ``designs``. Read a statement's
@@ -42,7 +42,10 @@ send none, for the newest version a release recorded (1.4, since the record afte
 v0.5.0-beta.1's tag). A version newer than the recorded one is read only when pinned.
 1.4 adds ``routine_sources`` (#2022), refused in a 1.3 request,
 and a 1.4 run writes the job's routine sources; an invalid entry raises
-``RoutineSourcesError`` (a ``ValueError`` that quotes no input).
+``RoutineSourcesError`` (a ``ValueError`` that quotes no input). 1.5 (read only when
+pinned until a release records it) adds ``schema_name`` to each Aurora design table
+(#2478): the source schema of a design whose tables come from more than one schema, else
+None; a 1.3 or 1.4 result leaves it out.
 
 Not stable: ``artifacts`` (only with ``include_artifacts=True``) carries the pipeline's
 internal contracts verbatim, each with its own internal version, and has no
