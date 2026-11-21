@@ -26,6 +26,7 @@ from src.agents.referee.migration_risks import (
     wave_gate_strategies,
 )
 from src.shared.cutover_message import CUTOVER_MESSAGE as CUTOVER
+from src.shared.left_out_objects import LEFT_OUT_FEATURES
 from src.shared.prose_style import find_style_hits
 from src.shared.report_facts import CLOSE_CALL_MARGIN, close_call_facts
 
@@ -1717,6 +1718,29 @@ def test_a_system_schema_note_raises_no_application_code_risk() -> None:
             "recommendation": "Table not created: it is in the system schema pg_catalog."}  # fmt: skip
     risks = _build(migration_waves=WAVES, schema_designs={AURORA: {"app_layer_notes": [note]}})
     assert [r for r in risks if r["rule"] == "design.app_layer"] == []
+
+
+@pytest.mark.parametrize(
+    "feature",
+    sorted(LEFT_OUT_FEATURES | {"index_key_prefix", "column_default", "time_zone"}),
+)
+def test_every_schema_note_without_logic_raises_no_application_code_risk(feature: str) -> None:
+    """#2415: a left-out object (colliding or unsafe name, duplicate index name, system-schema
+    table, ambiguous reference) and a note on an index key prefix, a column default or a time
+    zone are schema notes with no source logic: none
+    raises a design.app_layer risk, alone or next to a note that does, and none is told
+    to move into the application."""
+    note = {"feature": feature, "source_object": "sales.orders",
+            "recommendation": "Table not created: it cannot be created safely."}  # fmt: skip
+    alone = _build(migration_waves=WAVES, schema_designs={AURORA: {"app_layer_notes": [note]}})
+    assert [r for r in alone if r["rule"] == "design.app_layer"] == []
+    extension = {"feature": "extension", "source_object": "pg_x", "recommendation": "y"}
+    both = _build(
+        migration_waves=WAVES, schema_designs={AURORA: {"app_layer_notes": [note, extension]}}
+    )
+    risk = _one(both, "design.app_layer")
+    assert feature.replace("_", " ") not in risk["description"]
+    assert "1 source object needs application code" in risk["description"]
 
 
 def test_a_choice_in_no_wave_names_no_cutover_timing() -> None:
