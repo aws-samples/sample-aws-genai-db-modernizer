@@ -2893,13 +2893,21 @@ class RateWindowFacts(BaseModel):
         ),
     )
     flags: list[
-        Literal["short_window", "short_against_uptime", "after_reset", "above_source_rate"]
+        Literal[
+            "short_window",
+            "short_against_uptime",
+            "after_reset",
+            "above_source_rate",
+            "scoped_reset",
+        ]
     ] = Field(
         default_factory=list,
         description=(
             "The checks the window failed (#1991): under a day, short against the server's "
-            "uptime, counted from a reset (statements first seen together), or a measured "
-            "rate 3x or more the server's own"
+            "uptime, counted from a reset (statements first seen together), a measured "
+            "rate 3x or more the server's own, or, on PostgreSQL before 17, counts that may "
+            "start at a reset scoped to a database, user or statement, which the reset "
+            "time does not record (#2389)"
         ),
     )
     window_statement: str | None = Field(

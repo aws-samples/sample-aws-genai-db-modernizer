@@ -21,7 +21,12 @@ offline parser and every live collector. The window, in order:
    PostgreSQL 14+), or ``uptime``, the server's uptime for every other engine, whose
    statement counters empty on a restart. PostgreSQL never uses its uptime: with
    ``pg_stat_statements.save`` on (the default) the counters survive a clean restart, so
-   the uptime can be far shorter than the window the counts cover.
+   the uptime can be far shorter than the window the counts cover. A reset scoped to one
+   database, user or statement (``pg_stat_statements_reset`` with arguments) does not
+   move ``stats_reset`` (#2389): on PostgreSQL 17 the window is then the age of the
+   database's oldest entry when that is shorter; before 17 nothing records when such a
+   reset ran, so the rates keep the reset age and the window check flags them when the
+   server's statements hold a reset call with arguments (``scoped_reset``).
 3. ``assumed_24h``: 24 hours, the figure every collector used before #1893.
 
 Above all three, ``sampled`` (#1908): a collection reads the counters, waits the sampling
@@ -217,6 +222,7 @@ def server_window(
     uptime_seconds: object = None,
     uptime_hours: object = None,
     stats_reset_seconds: object = None,
+    oldest_entry_age_seconds: object = None,
 ) -> ServerWindow | None:
     """The window a server's cumulative statement counters cover, or None.
 
@@ -224,12 +230,16 @@ def server_window(
     wins when given; else the uptime, in seconds (MySQL's and MariaDB's ``Uptime``, the
     SQL Server and Oracle scripts' ``os_stats.db_uptime_seconds`` and live reads) or, from
     an older collection, in hours (``os_stats.db_uptime_hours``). A PostgreSQL caller
-    passes only the reset age (see the module docstring). A missing, non-numeric, zero,
+    passes only the reset age (see the module docstring), and on PostgreSQL 17 the age
+    of the database's oldest entry (``stats_since``, #2389): a reset scoped to one
+    database does not move ``stats_reset``, and no count covers more time than its
+    entry, so the window is the shorter of the two. A missing, non-numeric, zero,
     negative or non-finite figure is ignored.
     """
     reset = _positive(stats_reset_seconds)
     if reset is not None:
-        return ServerWindow(reset, STATS_RESET)
+        oldest = _positive(oldest_entry_age_seconds)
+        return ServerWindow(min(reset, oldest) if oldest is not None else reset, STATS_RESET)
     seconds = _positive(uptime_seconds)
     if seconds is None:
         hours = _positive(uptime_hours)
@@ -761,7 +771,14 @@ SHORT_WINDOW = "short_window"
 SHORT_AGAINST_UPTIME = "short_against_uptime"
 AFTER_RESET = "after_reset"
 ABOVE_SOURCE_RATE = "above_source_rate"
-WINDOW_FLAGS: tuple[str, ...] = (SHORT_WINDOW, SHORT_AGAINST_UPTIME, AFTER_RESET, ABOVE_SOURCE_RATE)
+SCOPED_RESET = "scoped_reset"
+WINDOW_FLAGS: tuple[str, ...] = (
+    SHORT_WINDOW,
+    SHORT_AGAINST_UPTIME,
+    AFTER_RESET,
+    ABOVE_SOURCE_RATE,
+    SCOPED_RESET,
+)
 
 #: Each flag's reason in a few words, for the one-line label.
 _SHORT_REASONS = {
@@ -769,6 +786,7 @@ _SHORT_REASONS = {
     SHORT_AGAINST_UPTIME: "short against the server's uptime",
     AFTER_RESET: "counted from a reset or a restart",
     ABOVE_SOURCE_RATE: "well above the server's own rate",
+    SCOPED_RESET: "possibly counted from a scoped reset the window does not show",
 }
 
 #: The bases whose window was measured (the counters' own window or two snapshots).
@@ -923,6 +941,52 @@ def _length_reasons(
     return reasons
 
 
+def _reset_age(counters: Mapping[str, Any]) -> float | None:
+    """The time since PostgreSQL's statement statistics were reset, bounded by the age of
+    the database's oldest entry when the server dates it (PostgreSQL 17, #2389)."""
+    window = server_window(
+        stats_reset_seconds=counters.get("stats_reset_seconds"),
+        oldest_entry_age_seconds=counters.get("oldest_entry_age_seconds"),
+    )
+    return window.seconds if window is not None else None
+
+
+def _reset_scope_reasons(
+    rows: list[Mapping[str, Any]],
+    counters: Mapping[str, Any],
+    checked: list[str],
+    unchecked: list[str],
+) -> dict[str, str]:
+    """The reset scope check (#2389) over the statements counted since PostgreSQL's
+    statistics reset: a reset scoped to one database, user or statement does not move
+    ``stats_reset``. PostgreSQL 17 dates every entry, so the window is already bounded
+    by the oldest one (:func:`server_window`) and nothing is checked here. Before 17 the
+    one trace such a reset leaves is its own call among the server's statements
+    (``scoped_reset_calls``: calls of ``pg_stat_statements_reset`` with arguments, whose
+    entries a full reset would have removed): any raises ``scoped_reset``."""
+    over_reset = [r for r in rows if r.get(BASIS_KEY) == STATS_RESET]
+    if not over_reset or _positive(counters.get("oldest_entry_age_seconds")) is not None:
+        return {}
+    calls = _whole_count(counters.get("scoped_reset_calls"))
+    if calls is None:
+        unchecked.append("a reset scoped to one database, user or statement (not collected)")
+        return {}
+    checked.append("pg_stat_statements_reset calls with arguments")
+    if calls == 0:
+        return {}
+    window = max(_positive(r.get(WINDOW_KEY)) or 0.0 for r in over_reset)
+    return {
+        SCOPED_RESET: (
+            f"{calls} call{'' if calls == 1 else 's'} of pg_stat_statements_reset with "
+            "arguments ran on the server since its last full reset, and a reset scoped to "
+            "one database, user or statement does not move the reset time PostgreSQL "
+            "records (before PostgreSQL 17 no entry records when it started counting), so "
+            f"the counts of {_counted(len(over_reset))} may cover far less than the "
+            f"{duration_text(window)} they are divided by, and their rates may read too low"
+        )
+    }
+
+
 def _server_rate_unchecked(started: float | None, uptime: float | None) -> str:
     """Why the server's own statement rate was not compared, as the check states it."""
     if started is None:
@@ -1026,9 +1090,10 @@ def window_check_facts(
                 uptime,
                 checked,
                 unchecked,
-                _positive(counters.get("stats_reset_seconds")),
+                _reset_age(counters),
             )
         )
+        reasons.update(_reset_scope_reasons(rows, counters, checked, unchecked))
     elif windows:
         unchecked.append("the window's length (a sampled interval, short on purpose)")
     else:
