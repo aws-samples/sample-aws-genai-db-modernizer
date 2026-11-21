@@ -747,7 +747,7 @@ def test_no_statement_of_a_whole_collection_has_a_from_query_id() -> None:
 @pytest.mark.passes_on_main
 @pytest.mark.parametrize("version", ["1.0", "1.1", "1.2"])
 def test_a_cut_assessed_for_a_retired_version_is_refused(version: str) -> None:
-    """A cut's request names 1.3, 1.4 or nothing: 1.0 to 1.2 are retired (#1641)."""
+    """A cut's request names 1.3, 1.4, 1.5 or nothing: 1.0 to 1.2 are retired (#1641)."""
     cut = cut_collection(
         _whole(),
         table_ids=ORDERS,
@@ -775,7 +775,7 @@ def test_the_published_schemas_carry_the_1_3_additions() -> None:
     result = json.loads(rcs.schema_path("assess_result").read_text("utf-8"))
     statement = result["$defs"]["StatementResult"]
     assert "from_query_id" in statement["properties"]
-    # The result schema describes 1.3 and 1.4: the library always writes both.
+    # The result schema describes 1.3 to 1.5: the library always writes both.
     assert "from_query_id" in statement["required"]
     scope_def = result["$defs"]["WorkloadScope"]
     assert "unplaced_statements" in scope_def["properties"]

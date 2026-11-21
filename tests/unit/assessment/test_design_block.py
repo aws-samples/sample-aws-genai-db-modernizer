@@ -141,7 +141,12 @@ def test_the_aurora_design_copies_tables_indexes_and_points_at_the_ddl() -> None
     assert isinstance(design, AuroraDesign)
     assert design.validation_passed is True
     assert [t.model_dump() for t in design.tables] == [
-        {"name": t["table_name"], "primary_key": t["primary_key"], "indexes": t["indexes"]}
+        {
+            "name": t["table_name"],
+            "primary_key": t["primary_key"],
+            "indexes": t["indexes"],
+            "schema_name": None,
+        }
         for t in source["table_definitions"]
     ]
     assert design.ddl_artifact_path == "artifacts.schema_designs.aurora_mysql.generated_ddl"
@@ -261,7 +266,12 @@ def test_the_aurora_postgresql_design_copies_tables_indexes_and_points_at_the_dd
     assert isinstance(design, AuroraDesign)
     assert design.validation_passed is True
     assert [t.model_dump() for t in design.tables] == [
-        {"name": t["table_name"], "primary_key": t["primary_key"], "indexes": t["indexes"]}
+        {
+            "name": t["table_name"],
+            "primary_key": t["primary_key"],
+            "indexes": t["indexes"],
+            "schema_name": None,
+        }
         for t in source["table_definitions"]
     ]
     assert design.ddl_artifact_path == "artifacts.schema_designs.aurora_postgresql.generated_ddl"
@@ -401,7 +411,7 @@ def test_a_partial_design_reads_its_missing_optional_fields_as_empty() -> None:
         {
             "validation_passed": False,
             "engine": "aurora_postgresql",
-            "tables": [{"name": "orders", "primary_key": [], "indexes": []}],
+            "tables": [{"name": "orders", "primary_key": [], "indexes": [], "schema_name": None}],
             "ddl_artifact_path": "artifacts.schema_designs.aurora_postgresql.generated_ddl",
         },
         {

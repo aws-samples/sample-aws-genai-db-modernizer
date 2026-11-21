@@ -347,11 +347,13 @@ def test_the_fixtures_cover_a_sql_server_source_and_an_engine_scope() -> None:
 def test_every_fixture_is_pinned_to_1_3_and_gets_1_3(name: str) -> None:
     """The fixtures are a 1.3 caller's requests: pinned to 1.3, a released version this
     code still reads (#1641), whatever the default is. A request pinned to 1.3 gets a
-    1.3 result after 1.4 is recorded as the default too (#2461)."""
-    assert FIXTURES[name]["contract_version"] == "1.3"
-    assert "1.3" in SUPPORTED_CONTRACT_VERSIONS
+    1.3 result after 1.4 is recorded as the default too (#2461). A fixture named
+    ``*_contract_1_5`` pins 1.5 instead, to guard the field 1.5 added (#2478)."""
+    pinned = "1.5" if name.endswith("_contract_1_5") else "1.3"
+    assert FIXTURES[name]["contract_version"] == pinned
+    assert pinned in SUPPORTED_CONTRACT_VERSIONS
     assert "1.3" not in pinned_only_contract_versions()
-    assert _run(name, "analysis", True)["contract_version"] == "1.3"
+    assert _run(name, "analysis", True)["contract_version"] == pinned
 
 
 @pytest.mark.passes_on_main

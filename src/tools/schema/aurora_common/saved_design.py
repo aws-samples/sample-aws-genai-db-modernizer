@@ -53,6 +53,7 @@ from typing import Any
 from src.contracts.aurora_design_delta import SavedDesignError
 from src.contracts.schema_design_input import ForeignKeyAction
 from src.shared.left_out_objects import without_not_created_comments
+from src.shared.table_keys import table_schema
 from src.tools.schema.aurora_common.ddl_generator import (
     MYSQL,
     NOT_CREATED_REASON,
@@ -228,8 +229,7 @@ def _design_name(table: str, schema: str | None) -> str:
 
 def _schema(table: Mapping[str, Any]) -> str | None:
     """A table definition's ``schema_name`` (#2455): a non-empty string, or None."""
-    schema = table.get("schema_name")
-    return schema if isinstance(schema, str) and schema else None
+    return table_schema(table)
 
 
 def _quoted_table(dialect: Dialect, table: str, schema: str | None) -> str:

@@ -1,5 +1,5 @@
 {
-  "about": "Consumer contract fixtures for the public assess() result (#1184). tests/contract/test_assess_consumer_contract.py runs assess() on each fixture, pinned to contract_version 1.3 (the only version this release supports), for every supported run_through and checks that every field the fixture guards is present with the type the published schema (docs/contracts/schemas/assess_result.v1.schema.json) gives it. Paths: '.' between fields, '[]' for every item of a list, '{}' for every value of a map, '[Variant]' for the items of a list of a discriminated union that are the result schema's $defs entry Variant (designs[DynamoDBDesign]). Every result field is guarded by at least one fixture, and every guarded path must reach at least one value across the fixture's runs.",
+  "about": "Consumer contract fixtures for the public assess() result (#1184). tests/contract/test_assess_consumer_contract.py runs assess() on each fixture, pinned to contract_version 1.3 (a 1.3 caller), or to 1.5 for a fixture named *_contract_1_5 (the field 1.5 added), for every supported run_through and checks that every field the fixture guards is present with the type the published schema (docs/contracts/schemas/assess_result.v1.schema.json) gives it. Paths: '.' between fields, '[]' for every item of a list, '{}' for every value of a map, '[Variant]' for the items of a list of a discriminated union that are the result schema's $defs entry Variant (designs[DynamoDBDesign]). Every result field is guarded by at least one fixture, and every guarded path must reach at least one value across the fixture's runs.",
   "fixtures": {
     "wordpress": {
       "why": "MySQL source with no engine scope: the cache layer, reality-check consolidations, co-dependency and write groups",
@@ -334,6 +334,20 @@
         "designs[AuroraDesign].tables[].primary_key",
         "designs[AuroraDesign].tables[].indexes",
         "designs[AuroraDesign].ddl_artifact_path"
+      ]
+    },
+    "wordpress_aurora_postgresql_contract_1_5": {
+      "why": "Contract 1.5: the Aurora PostgreSQL engine scope pinned to 1.5, so each Aurora design table carries schema_name, the field 1.5 (#2478) added (null for the sample's design of one schema)",
+      "sample": "wordpress",
+      "database_name": "wordpress",
+      "contract_version": "1.5",
+      "options": {
+        "target_engines": ["aurora_postgresql", "dynamodb"]
+      },
+      "scope": null,
+      "guards": [
+        "designs[AuroraDesign].tables",
+        "designs[AuroraDesign].tables[].schema_name"
       ]
     },
     "trailgear_contract_1_3": {
