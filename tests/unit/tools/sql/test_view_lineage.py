@@ -176,6 +176,20 @@ def test_a_definition_that_does_not_parse_is_reported_as_such(output: dict) -> N
     assert _query(output, "q_broken")["tables_accessed"] == ["dbo.vw_Broken"]
 
 
+def test_a_mysql_view_with_a_backslash_escaped_quote_resolves() -> None:
+    # MySQL prints a quote inside a literal as \' (VIEW_DEFINITION): the redacted
+    # definition keeps the SQL after the literal, so the view parses (#2331).
+    views = {
+        "vw_Notes": "select `o`.`OrderId` AS `OrderId` from `shop`.`Orders` `o` "
+        "where (`o`.`Total` <> 'it\\'s; x') and (`o`.`UserId` > 2)",
+    }
+    out = _output("mysql", views=views, queries={"q": "SELECT * FROM vw_Notes"})
+    view = _view(out, "vw_Notes")
+    assert view["definition"].endswith("<> '?') and (`o`.`UserId` > 2)")
+    assert view["lineage_status"] == "resolved", view.get("lineage_reason")
+    assert view["referenced_tables"] == ["shop.Orders"]
+
+
 def test_a_view_reading_an_unresolved_view_is_partial() -> None:
     views = {
         "vw_Missing": None,

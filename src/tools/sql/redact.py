@@ -80,12 +80,16 @@ Redaction fails closed on the source's string settings (#1482). Whether a ``\\``
 escapes a quote depends on a setting (MySQL's ``NO_BACKSLASH_ESCAPES``, PostgreSQL's
 ``standard_conforming_strings``), and the one a statement ran under can differ from the
 one the collection reports: an application's session sets its own ``sql_mode``, a
-routine keeps the mode it was created with. So a text is read both ways, and every
-character either reading puts inside a string or a comment is masked: where the two
-readings agree on a span, it is redacted as that span; where they disagree, the whole
-run they disagree on is one value (``?``, or ``'?'`` in a definition). The reported
-settings (``sql_spans.SpanSettings``, the collection's own for a whole collection) only
-choose which reading names a span both readings agree on; they never shrink what is
+routine keeps the mode it was created with. So a text is read both ways. When one
+reading's strings hold every letter, digit and quote the other reading hides, the text
+is redacted by that reading alone, so the SQL after a literal holding an escaped quote
+(MySQL's ``'it\\'s'``) is kept (#2331); a definition is whole valid SQL, so a reading
+that leaves a string or comment open in one is set aside when the other closes them
+all. Otherwise every character either reading puts inside a string or a comment is
+masked: where the two readings agree on a span, it is redacted as that span; where they
+disagree, the whole run they disagree on is one value (``?``, or ``'?'`` in a
+definition). The reported settings (``sql_spans.SpanSettings``, the collection's own for
+a whole collection) only choose which reading is tried first; they never shrink what is
 masked.
 
 Text the database already normalised has nothing left to replace and comes back
@@ -599,8 +603,13 @@ class _Redactor:
         # Whether the last redaction masked a run the readings disagree on, or a cut
         # text's tail: then ``_redacted`` confirms it with another pass.
         self.disagreed = False
+        # The span ``_found``'s last reading added for a cut text, or ``None``.
+        self.cut: tuple[int, int, str] | None = None
         self.mode = mode
         self.quoted = mode != "query"
+        # How deep the redaction is inside the open tail of a cut comment or dollar
+        # quote: a text read there is not whole, whatever its mode (``_one_safe_reading``).
+        self.in_cut_tail = 0
         self.style = {"oracle": ":", "postgresql": "$"}.get(self.dialect, "?")
 
     def redact(self, text: str) -> str:
@@ -619,7 +628,8 @@ class _Redactor:
     def _found(self, text: str, grammar: Grammar) -> list[tuple[int, int, str]]:
         """The spans of ``text`` one reading finds. A quote or ``/*`` left in the code
         has no closer: the text was cut inside a string or a comment, which then runs to
-        the end."""
+        the end (the last span, ``self.cut``)."""
+        self.cut = None
         found = list(spans(text, grammar))
         cut = _unterminated(_blanked(text, grammar, found), self.dialect, text, found)
         if cut is not None:
@@ -629,6 +639,7 @@ class _Redactor:
             if cut[2] == "/*" and self._ambiguous_cut(text, cut[0], found, grammar):
                 cut = (cut[0], cut[1], _DISAGREED)
             found = [s for s in found if s[1] <= cut[0]] + [cut]
+            self.cut = cut
         return found
 
     def _ambiguous_cut(
@@ -649,10 +660,16 @@ class _Redactor:
         found = self._found(text, self.grammar)
         # The readings differ only on a backslash: without one there is one reading.
         if self.other is not None and "\\" in text:
+            cut = self.cut
             other = self._found(text, self.other)
             if other != found:
                 self.disagreed = True
-                found = _both_readings(found, other, self.grammar.identifiers)
+                ids = self.grammar.identifiers
+                whole = self.quoted and not self.in_cut_tail
+                one = _one_safe_reading(
+                    text, [(found, cut), (other, self.cut)], ids, complete=whole
+                )
+                found = one if one is not None else _both_readings(found, other, ids)
         masked = _blanked(text, self.grammar, found)
         numbers = _number_edits(masked, self.dialect) if self.mode == "query" else []
         out: list[str] = []
@@ -765,9 +782,12 @@ class _Redactor:
             return "/*!" + self._redact(inner, numbering, body=False) + "*/"
         if code and opener == "/*" and (len(span) < 4 or not span.endswith("*/")):
             # Cut inside a comment: what follows may be the statement itself.
-            return "/*" + scrub_comment(
-                self._redact(scrub_comment(span[2:]), numbering, body=False)
-            )
+            self.in_cut_tail += 1
+            try:
+                rest = self._redact(scrub_comment(span[2:]), numbering, body=False)
+            finally:
+                self.in_cut_tail -= 1
+            return "/*" + scrub_comment(rest)
         if opener == "/*" and len(span) >= 4:
             return "/*" + redact_comment(span[2:-2], self.engine) + "*/"
         return opener + redact_comment(span[len(opener) :], self.engine)
@@ -811,7 +831,11 @@ class _Redactor:
                 return head + "?" + tail, False
             return numbering.take(), False
         if opener.startswith("$"):
-            body_text = self._redact(inner, numbering, body=True)
+            self.in_cut_tail += closer_len == 0
+            try:
+                body_text = self._redact(inner, numbering, body=True)
+            finally:
+                self.in_cut_tail -= closer_len == 0
             if body_text != inner:
                 # The body's first or last placeholder never runs into the ``$tag$``.
                 body_text = (" " if body_text[:1] in "?$:" else "") + body_text
@@ -856,6 +880,91 @@ def _other_reading(dialect: str, settings: SpanSettings) -> SpanSettings | None:
             settings, standard_conforming_strings=not settings.standard_conforming_strings
         )
     return None
+
+
+# A character a reading may leave in the code that the other reading hides: anything
+# but a letter, a digit or a character that opens or escapes a string or a comment.
+_UNSAFE_EXPOSED_RE = re.compile(r"[\w'\"`\\$#*/-]")
+
+_Spans = list[tuple[int, int, str]]
+
+
+def _one_safe_reading(
+    text: str,
+    readings: list[tuple[_Spans, tuple[int, int, str] | None]],
+    identifiers: frozenset[str],
+    *,
+    complete: bool,
+) -> _Spans | None:
+    """The one reading of ``text`` to redact it by, or ``None`` when both are masked
+    (``_both_readings``): a literal ends only at a quote its reading leaves unescaped,
+    so the text after it is kept (#2331).
+
+    Each reading comes with the span it added for a cut text (``_Redactor._found``).
+    A ``complete`` text (a definition: the collection holds it whole, and the server
+    stored it as valid SQL) leaves no string or comment open under the reading it was
+    written in, so a reading that does is none when the other one closes them all.
+    Otherwise a reading is taken only when its strings mask every value the other
+    reading hides: it may leave in its code only punctuation the other reading hides
+    (the ``)`` after ``'it\\'s'``, where the other reading opens a string), never a
+    letter, a digit, a quote or a comment's text, and readings that leave nothing
+    open are tried first."""
+    if complete and any(cut is None for _spans, cut in readings):
+        readings = [r for r in readings if r[1] is None]
+        if len(readings) == 1:
+            return readings[0][0]
+    order = sorted(range(len(readings)), key=lambda i: readings[i][1] is not None)
+    for i in order:
+        mine = readings[i][0]
+        safe = True
+        for j, (theirs, _cut) in enumerate(readings):
+            if j == i:
+                continue
+            agreed = set(mine) & set(theirs)
+            # What this reading masks: its strings, and a span both readings agree on.
+            hidden = _merged(s for s in mine if s in agreed or _is_string_opener(s[2], identifiers))
+            required = _merged(s for s in theirs if s[2] not in identifiers and s not in agreed)
+            if _exposes(text, required, hidden):
+                safe = False
+                break
+        if safe:
+            return mine
+    return None
+
+
+def _is_string_opener(opener: str, identifiers: frozenset[str]) -> bool:
+    return opener not in identifiers and opener not in ("--", "#") and not opener.startswith("/*")
+
+
+def _merged(items) -> list[tuple[int, int]]:
+    out: list[list[int]] = []
+    for start, end, *_ in sorted(items):
+        if out and start <= out[-1][1]:
+            out[-1][1] = max(out[-1][1], end)
+        else:
+            out.append([start, end])
+    return [(s, e) for s, e in out]
+
+
+def _exposes(text: str, required: list[tuple[int, int]], hidden: list[tuple[int, int]]) -> bool:
+    """Whether a part of ``required`` that ``hidden`` leaves out holds an unsafe
+    character (``_UNSAFE_EXPOSED_RE``). Both are sorted, disjoint runs."""
+    k = 0
+    for start, end in required:
+        pos = start
+        while k < len(hidden) and hidden[k][1] <= pos:
+            k += 1
+        h = k
+        while pos < end:
+            if h < len(hidden) and hidden[h][0] <= pos:
+                pos = hidden[h][1]
+                h += 1
+                continue
+            gap_end = min(end, hidden[h][0]) if h < len(hidden) else end
+            if _UNSAFE_EXPOSED_RE.search(text, pos, gap_end):
+                return True
+            pos = gap_end
+    return False
 
 
 def _both_readings(

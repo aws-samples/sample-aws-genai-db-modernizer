@@ -14,6 +14,7 @@ from pathlib import Path
 
 import pytest
 
+from src.shared.sql_spans import SpanSettings
 from src.tools.database.collection_text import extract_json_object
 from src.tools.sql.facade import read_sql
 from src.tools.sql.query_facts import QueryFacts, query_facts
@@ -292,6 +293,69 @@ class TestDefinitions:
 
     def test_the_quote_form_a_gap_rule_reads_is_kept(self) -> None:
         assert redact_definition('SELECT "Jane" FROM t', "mysql") == 'SELECT "?" FROM t'
+
+
+_NO_BACKSLASH_ESCAPES = SpanSettings(no_backslash_escapes=True)
+_BACKSLASH_STRINGS = SpanSettings(standard_conforming_strings=False)
+_VIEW = "select a from t where (t.n <> {}) and k = 2"
+
+
+class TestEscapedQuotes:
+    """A literal ends only at an unescaped quote: the SQL after a ``\\'`` survives (#2331)."""
+
+    @pytest.mark.parametrize(
+        ("literal", "expected"),
+        [
+            ("'it\\'s; x'", "'?'"),  # MySQL prints a quote in a literal as \'
+            ('"a \\"b\\""', '"?"'),
+            ("'a\\\\\\'b'", "'?'"),  # an escaped backslash, then an escaped quote
+            ("'it\\'s''x'", "'?'"),  # both escapes in one literal
+            ("_utf8mb4'it\\'s; x'", "_utf8mb4'?'"),
+            ("_latin1'it\\'s'", "_latin1'?'"),
+            ("N'it\\'s'", "N'?'"),
+        ],
+    )
+    @pytest.mark.parametrize("engine", ["mysql", "mariadb"])
+    @pytest.mark.parametrize("reported", [None, _NO_BACKSLASH_ESCAPES])
+    def test_a_mysql_definition_keeps_the_text_after_the_literal(
+        self, engine: str, reported: SpanSettings | None, literal: str, expected: str
+    ) -> None:
+        text = _VIEW.format(literal)
+        assert redact_definition(text, engine, reported) == _VIEW.format(expected)
+
+    @pytest.mark.parametrize("reported", [None, _BACKSLASH_STRINGS])
+    def test_a_postgresql_definition_keeps_the_text_after_the_literal(
+        self, reported: SpanSettings | None
+    ) -> None:
+        # standard_conforming_strings = off reads \' as a quote in a plain string.
+        text = _VIEW.format("'it\\'s; x'")
+        assert redact_definition(text, "postgresql", reported) == _VIEW.format("'?'")
+
+    @pytest.mark.parametrize(
+        ("engine", "literal", "expected"),
+        [
+            ("mysql", "'it\\'s; x'", "?"),
+            ("mysql", "'a\\\\\\'b'", "?"),
+            ("postgresql", "'it\\'s; x'", "$1"),
+        ],
+    )
+    def test_a_query_keeps_the_punctuation_after_the_literal(
+        self, engine: str, literal: str, expected: str
+    ) -> None:
+        text = f"select a from t where (t.n <> {literal})"
+        assert redact_literals(text, engine) == f"select a from t where (t.n <> {expected})"
+
+    @pytest.mark.passes_on_main
+    @pytest.mark.parametrize("reported", [None, _NO_BACKSLASH_ESCAPES])
+    def test_a_definition_still_masks_a_value_only_one_reading_puts_in_a_string(
+        self, reported: SpanSettings | None
+    ) -> None:
+        # Under NO_BACKSLASH_ESCAPES ' WHERE e = ' is a string; under the default
+        # reading Jane is one: both stay masked.
+        text = "select a from t where n = 'C:\\' and e = 'Jane' and k = 2"
+        out = redact_definition(text, "mysql", reported)
+        assert "Jane" not in out
+        assert redact_definition(out, "mysql", reported) == out
 
 
 class TestSeededValues:

@@ -730,6 +730,7 @@ def _markers_in_strings(text: str, engine: str, settings: SpanSettings) -> set[i
     return found
 
 
+@pytest.mark.passes_on_main
 @pytest.mark.parametrize("engine", list(_READINGS))
 @pytest.mark.parametrize("reported", [0, 1])
 @hypothesis_settings(max_examples=scaled(1500), deadline=None)
@@ -742,11 +743,33 @@ def test_no_reading_of_the_setting_leaks_a_string(engine, reported, tokens):
     reported = min(reported, len(readings) - 1)
     total = text.count(_MARKER)
     in_a_string = set().union(*(_markers_in_strings(text, engine, r) for r in readings))
-    allowed = total - len(in_a_string)
-    for redact in (redact_literals, redact_definition):
+    # A definition is stored whole, as valid SQL: a reading that leaves a string or a
+    # comment open is no reading of it when another reading closes them all (#2331).
+    whole = [r for r in readings if not _leaves_open(text, engine, r)]
+    in_a_definition_string = set().union(
+        *(_markers_in_strings(text, engine, r) for r in (whole or readings))
+    )
+    for redact, inside in (
+        (redact_literals, in_a_string),
+        (redact_definition, in_a_definition_string),
+    ):
         once = redact(text, engine, readings[reported])
-        assert once.count(_MARKER) <= allowed, (text, once)
+        assert once.count(_MARKER) <= total - len(inside), (text, once)
         assert redact(once, engine, readings[reported]) == once, (text, once)
+
+
+def _leaves_open(text: str, engine: str, settings: SpanSettings) -> bool:
+    """Whether a reading leaves a quote, a PostgreSQL dollar quote or a ``/*`` open."""
+    grammar = literals_and_comments_for(engine, settings)
+    code = list(text)
+    for start, end, _opener in spans(text, grammar):
+        code[start:end] = " " * (end - start)
+    blanked = "".join(code)
+    quotes = "'\"" if engine == "mysql" else "'"
+    if any(ch in quotes for ch in blanked) or "/*" in blanked:
+        return True
+    dollar = re.search(r"(?<![\w$])\$(?:[^\W\d]\w*)?\$", blanked)
+    return engine == "postgresql" and dollar is not None
 
 
 @pytest.mark.parametrize(

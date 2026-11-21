@@ -78,6 +78,20 @@ def test_each_literal_goes_back_in_its_place_with_its_quotes_and_escapes(exact, 
     assert rebuilt.count("'?'") == 1
 
 
+def test_a_backslash_escaped_quote_goes_back_in_its_place() -> None:
+    # MySQL keeps a quote inside a literal as \'; redaction reads the literal whole, so
+    # the counts match and the exact literal goes back (#2331; refused as
+    # literal_count before).
+    exact = "CREATE PROCEDURE p(OUT r text) BEGIN SELECT CONCAT('a\\'b', 'Alpha') INTO r; END"
+    seen = _seen(exact, MY)
+    assert seen == "CREATE PROCEDURE p(OUT r text) BEGIN SELECT CONCAT('?', '?') INTO r; END"
+    assert rebuild_refusal(exact, seen, MY) is None
+    candidate = seen.replace("INTO r;", "INTO r; SET r = r;")
+    assert rebuild_exact(exact, seen, candidate, MY) == exact.replace(
+        "INTO r;", "INTO r; SET r = r;"
+    )
+
+
 def test_a_moved_placeholder_takes_the_literal_of_its_new_position() -> None:
     """Position decides: a swapped placeholder takes the other literal, which only the
     side-by-side proof can tell (the screen sees '?' and '?')."""
@@ -101,6 +115,7 @@ def test_the_text_is_never_searched_for_the_placeholder() -> None:
     assert "/* was '?' */ SELECT 'Alpha'" in rebuilt
 
 
+@pytest.mark.passes_on_main
 @pytest.mark.parametrize(
     ("exact", "engine", "code"),
     [
@@ -144,13 +159,6 @@ def test_the_text_is_never_searched_for_the_placeholder() -> None:
             PG,
             "literal_holds_sql",
         ),
-        # A backslash escape the redaction cannot read under unknown string settings: it
-        # fails closed, and the counts no longer match.
-        (
-            "CREATE PROCEDURE p(OUT r text) BEGIN SELECT CONCAT('a\\'b', 'Alpha') INTO r; END",
-            MY,
-            "literal_count",
-        ),
     ],
     ids=[
         "reads-placeholder",
@@ -159,7 +167,6 @@ def test_the_text_is_never_searched_for_the_placeholder() -> None:
         "prepared-from-literal",
         "sql-after-a-semicolon",
         "sql-in-lower-case",
-        "escape",
     ],
 )
 def test_a_routine_whose_literals_cannot_be_put_back_is_refused(exact, engine, code) -> None:
