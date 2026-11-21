@@ -67,8 +67,9 @@ rule                       severity  raised when
                            LOW       every noted object is a trigger or routine on wave 1's
                                      engine for a homogeneous source: it carries over with
                                      the schema and is tested on the target (#1642)
-                                     (a ``duplicate_index_name`` or ``system_schema`` note is
-                                     no source logic and raises no risk, #2402, #2478)
+                                     (a note for an object the design leaves out, or on an index
+                                     key prefix, a column default or a time zone, is no source
+                                     logic and raises no risk, #2402, #2478, #2415)
 ``design.hot_partition``   HIGH      a partition key value's estimated load is above its
                                      throughput limit at the collected traffic (#1989,
                                      ``partition_load``: every request on one key value, or the
@@ -156,6 +157,7 @@ from src.shared.design_text import (
     unsupported_pattern_detail,
 )
 from src.shared.engine_names import canonical_engine_id, display_engine
+from src.shared.left_out_objects import LEFT_OUT_FEATURES
 from src.shared.migration_risk_rules import (
     GATE_IDS_NAMED,
     LISTED_ITEMS,
@@ -877,10 +879,14 @@ def _cache_risks(
 # Source logic a source-compatible engine runs as the source does: wave 1 moves a
 # homogeneous source 1:1, so these carry over with the schema (#1642).
 _CARRIED_FEATURES = frozenset({"trigger", "function", "procedure", "stored procedure", "routine"})
-# Notes about no source logic, so no application code (#2402): an index left out because an
-# earlier index of its table has its name. The design's note and step 1's DDL file name it.
-# A table of a system schema (#2478) is the database's own, not the application's.
-_NO_LOGIC_FEATURES = frozenset({"duplicate_index_name", "system_schema"})
+# Notes about no source logic, so no application code (#2402, #2478, #2415): every object the
+# design leaves out (a colliding or unsafe name, a duplicate index name, a system-schema
+# table, an ambiguous reference) and the schema notes on an index key prefix, a column
+# default and a time zone. The design's note and step 1's DDL file already say what to do
+# about each, so no risk repeats them.
+_NO_LOGIC_FEATURES = LEFT_OUT_FEATURES | frozenset(
+    {"index_key_prefix", "column_default", "time_zone"}
+)
 
 
 def _homogeneous_engines(ctx: _Context) -> set[str]:
