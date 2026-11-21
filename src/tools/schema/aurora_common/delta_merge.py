@@ -67,10 +67,12 @@ from src.tools.schema.aurora_common.ddl_generator import (
     generate_pg_ddl,
     mysql_key_plan,
     pg_method_conflict,
+    pg_name,
     quotable_tables,
     render_index,
     rendered_method,
     secondary_indexes,
+    unique_index_names,
 )
 from src.tools.schema.aurora_common.source_family import migration_strategy
 from src.tools.schema.aurora_common.sql_safety import (
@@ -119,6 +121,10 @@ class AuroraDesignBase:
     SQL (#2381 review 2) or another index of the table has it (#2402), by
     ``ddl_generator.quotable_tables``, kept across
     ``dataclasses.replace``. Never written into DDL; each becomes an app-layer note."""
+    renamed: list[dict] = field(default_factory=list)
+    """The indexes of ``tables`` Aurora PostgreSQL creates under another name because the
+    schema already has the collected one (#2410, ``ddl_generator.unique_index_names``),
+    kept across ``dataclasses.replace``. Each becomes an app-layer note."""
     schema_qualified: bool | None = None
     """Whether the draft creates each table in its source schema (#2455): None decides it
     from ``tables`` (more than one schema among them); step 1 passes False. With it, the
@@ -134,6 +140,8 @@ class AuroraDesignBase:
             self.tables, self.dialect, self.source_engine, self.qualified
         )
         self.left_out = [*self.left_out, *left_out]
+        self.tables, renamed = unique_index_names(self.tables, self.dialect, self.qualified)
+        self.renamed = [*self.renamed, *renamed]
 
     @property
     def qualified(self) -> bool:
@@ -529,28 +537,49 @@ def _apply_index_changes(
     index_notes: list[dict],
 ) -> dict[str, int]:
     counts = {"added": 0, "modified": 0, "removed": 0}
+    # Aurora PostgreSQL: each (schema, name as stored) -> the draft table whose index has it,
+    # and the tables' own names; one schema holds a name once (#2410).
+    owners: dict[tuple[str | None, str], str] = {}
+    relations = {(schema, pg_name(bare)) for bare, schema in tables.refs.values()}
+    if base.dialect is POSTGRES:
+        for draft, names in draft_indexes.items():
+            schema = tables.refs[draft][1]
+            owners.update({(schema, pg_name(n)): draft for n in names})
+    # name -> statement per table, in draft order (names come from the source, not the model)
+    currents: dict[str, dict[str, str]] = {}
+    # Every removal first, so a name one table frees is free for any other table's add,
+    # whatever the order of the delta's tables (#2410 review).
+    for i, change in enumerate(delta.tables):
+        table = tables.find(change.table_name)
+        if table is None:
+            continue
+        ref = tables.refs[table.table_name]
+        current = currents.setdefault(
+            table.table_name,
+            dict(zip(draft_indexes[table.table_name], table_ddls[table.table_name].index_sql,
+                     strict=True)),
+        )  # fmt: skip
+        for j, name in enumerate(change.remove_indexes):
+            existing = _lookup(current, name.strip().strip('"`'))
+            if existing is None:
+                errors.append(
+                    f"tables[{i}].remove_indexes[{j}]: table '{table.table_name}' has no "
+                    f"index '{name}'{_renamed_hint(base, table.table_name, name)}"
+                )
+                continue
+            del current[existing]
+            if owners.get(key := (ref[1], pg_name(existing))) == table.table_name:
+                del owners[key]
+            _drop_index_notes(index_notes, table.table_name, existing)
+            counts["removed"] += 1
+
     for i, change in enumerate(delta.tables):
         table = tables.find(change.table_name)
         if table is None:
             continue
         ref = tables.refs[table.table_name]
         ddl = table_ddls[table.table_name]
-        # name -> statement, in draft order (names come from the source, not the model)
-        current: dict[str, str] = dict(
-            zip(draft_indexes[table.table_name], ddl.index_sql, strict=True)
-        )
-
-        for j, name in enumerate(change.remove_indexes):
-            existing = _lookup(current, name.strip().strip('"`'))
-            if existing is None:
-                errors.append(
-                    f"tables[{i}].remove_indexes[{j}]: table '{table.table_name}' has no "
-                    f"index '{name}'"
-                )
-                continue
-            del current[existing]
-            _drop_index_notes(index_notes, table.table_name, existing)
-            counts["removed"] += 1
+        current = currents[table.table_name]
 
         for j, entry in enumerate(change.modify_indexes):
             where = f"tables[{i}].modify_indexes[{j}]"
@@ -566,6 +595,7 @@ def _apply_index_changes(
                 errors.append(
                     f"{where}: table '{table.table_name}' has no index '{index.name}' to modify "
                     "(modify_indexes is matched by index_name; use add_indexes for a new one)"
+                    f"{_renamed_hint(base, table.table_name, index.name)}"
                 )
                 continue
             current[existing] = _render(base, ref, index)
@@ -585,6 +615,17 @@ def _apply_index_changes(
                     f"{where}: index '{index.name}' already exists on '{table.table_name}'"
                 )
                 continue
+            key = (ref[1], pg_name(index.name))
+            owner = owners.get(key, table.table_name)
+            if base.dialect is POSTGRES and (key in relations or owner != table.table_name):
+                by = "a table of that name" if key in relations else f"table '{owner}'"
+                errors.append(
+                    f"{where}: index name '{index.name}' is already used in the schema by "
+                    f"{by} (PostgreSQL index names are unique within a schema); "
+                    "choose another name"
+                )
+                continue
+            owners[key] = table.table_name
             current[index.name] = _render(base, ref, index)
             index_notes.extend(index.notes)
             counts["added"] += 1
@@ -592,6 +633,19 @@ def _apply_index_changes(
         ddl.index_sql = list(current.values())
         draft_indexes[table.table_name] = list(current)
     return counts
+
+
+def _renamed_hint(base: AuroraDesignBase, table: str, name: str) -> str:
+    """For a delta that names an index by the name the source gave it: the name the design
+    creates it under instead (#2410), else nothing."""
+    bare = name.strip().strip('"`').lower()
+    for o in base.renamed:
+        if o["table"] == table and str(o["name"]).lower() == bare:
+            return (
+                f"; the design creates it as '{o['new_name']}', because another object of the "
+                "schema has the name, so use that name"
+            )
+    return ""
 
 
 def _drop_index_notes(notes: list[dict], table: str, index: str) -> None:
@@ -616,6 +670,19 @@ def _left_out_notes(base: AuroraDesignBase) -> list[dict]:
             "recommendation": f"{o['kind'].capitalize()} not created: {o['reason']}.",
         }
         for o in base.left_out
+    ]
+
+
+def _renamed_notes(base: AuroraDesignBase) -> list[dict]:
+    """One app-layer note per index Aurora PostgreSQL creates under another name (#2410):
+    the collected name, ``table.index``, and the name the script gives it."""
+    return [
+        {
+            "feature": o["feature"],
+            "source_object": comment_text(f"{o['table']}.{o['name']}"),
+            "recommendation": f"Created as {o['new_name']}: {o['reason']}.",
+        }
+        for o in base.renamed
     ]
 
 
@@ -906,6 +973,7 @@ def merge_design_delta(
         + _time_zone_notes(ddl)
         + _default_notes(ddl)
         + _index_notes(ddl)
+        + _renamed_notes(base)
         + left_out,
         "optimizations": [o.model_dump(mode="json") for o in contract.optimizations],
         "trade_offs": trade_offs,
