@@ -40,6 +40,17 @@ Parameters:
     Description: Modernizer S3 bucket name (for DDL file read access)
     Default: ''
 
+  S3DdlPrefix:
+    Type: String
+    Default: ''
+    # Empty, or a key prefix with no leading '/', no '..' and no wildcards.
+    AllowedPattern: '^$|^(?!.*\.\.)[A-Za-z0-9_=@+.-][A-Za-z0-9_=@+./-]*$'
+    ConstraintDescription: Must be empty or a key prefix such as ddl/ (letters, digits and _ = @ + . - /; no leading /, no .., no wildcards)
+    Description: >-
+      Optional key prefix of the DDL objects in S3BucketName (for example ddl/).
+      When set, the instance can read only keys that start with it. When empty,
+      it can read every object in the bucket.
+
   InstanceType:
     Type: String
     Description: EC2 instance type for the automation machine
@@ -74,6 +85,7 @@ Parameters:
 
 Conditions:
   HasS3Bucket: !Not [!Equals [!Ref S3BucketName, '']]
+  HasS3DdlPrefix: !Not [!Equals [!Ref S3DdlPrefix, '']]
   HasSubnet2: !Not [!Equals [!Ref SubnetId2, '']]
   HasAdditionalSecrets: !Not [!Equals [!Join ['', !Ref AdditionalSecretArns], '']]
 
@@ -267,7 +279,10 @@ Resources:
                 - Effect: Allow
                   Action:
                     - s3:GetObject
-                  Resource: !Sub 'arn:aws:s3:::${S3BucketName}/*'
+                  Resource: !If
+                    - HasS3DdlPrefix
+                    - !Sub 'arn:aws:s3:::${S3BucketName}/${S3DdlPrefix}*'
+                    - !Sub 'arn:aws:s3:::${S3BucketName}/*'
           - !Ref AWS::NoValue
       Tags:
         - Key: Project

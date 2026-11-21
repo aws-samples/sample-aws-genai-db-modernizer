@@ -97,6 +97,7 @@ def ensure_automation_machine(
     route_table_id: str,
     subnet_id_2: str = "",
     s3_bucket: str = "",
+    s3_ddl_prefix: str = "",
     region: str = "us-east-1",
 ) -> dict:
     """Ensure an automation machine exists for this VPC. Returns instance_id and sg_id.
@@ -149,6 +150,8 @@ def ensure_automation_machine(
         params.append({"ParameterKey": "SubnetId2", "ParameterValue": subnet_id_2})
     if s3_bucket:
         params.append({"ParameterKey": "S3BucketName", "ParameterValue": s3_bucket})
+    if s3_ddl_prefix:
+        params.append({"ParameterKey": "S3DdlPrefix", "ParameterValue": s3_ddl_prefix})
 
     create_kwargs: dict = {
         "StackName": stack_name,
