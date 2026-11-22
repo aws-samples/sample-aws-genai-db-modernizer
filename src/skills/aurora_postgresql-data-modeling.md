@@ -57,7 +57,8 @@ come from more than one source schema, the view names each table `schema.table`
    `tables[].add_indexes` / `modify_indexes` (structured entries
    `{index_name, columns, unique}` over that table's columns; the script renders
    the DDL) and `remove_indexes` (names). modify/remove name an index from that
-   table's `indexes`. Those entries are the only source of index DDL: an
+   table's `indexes`. Index names are unique per schema in PostgreSQL, not per table, so an
+   added index never reuses a name another table has, nor `<table>_pkey` or `<table>_<col>_seq`. Those entries are the only source of index DDL: an
    `index` optimization records an index recommendation you do not add, and
    never creates one. An Aurora PostgreSQL index entry also takes `method`
    (`btree`, `hash`, `gin`, `gist`, `spgist` or `brin`; only `btree` can be
