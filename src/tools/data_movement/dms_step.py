@@ -590,13 +590,19 @@ def _step1_ddl(
     source indexes it does not create; and the ones it creates under another name, named
     as the saved design names them where there is one (#2545). Tables of several schemas are each created in their
     own (``keeps_schemas``, #2494), and keyed by the design's ``<schema>.<table>`` name."""
+    from src.shared.left_out_objects import readded_reason
+    from src.shared.sql_identifiers import comment_text
     from src.tools.schema.aurora_common.ddl_generator import (
         TypeOverride,
         assemble_full_ddl,
         referenced_table,
         schemas_by_name,
     )
-    from src.tools.transformation_contract.step1 import _load_collector, design_base
+    from src.tools.transformation_contract.step1 import (
+        _load_collector,
+        design_base,
+        saved_design_readded,
+    )
 
     engine = contract.target.engine
     qualified = keeps_schemas(contract)
@@ -650,8 +656,16 @@ def _step1_ddl(
     generated = {t.table_name: dataclasses.replace(t, schema_sql=None) for t in result.tables}
     # The objects the generator leaves out: a name it cannot quote (#2381 review 2), or an
     # index whose name an earlier index of its table already has (#2402).
+    # #2571: a left-out index the saved design re-adds on the same columns says so, as the
+    # design's own note does.
+    readded = saved_design_readded(job, engine)
+
+    def reason_of(o: dict) -> str:
+        new_name = readded.get(comment_text(f"{o['table']}.{o['name']}"))
+        return o["reason"] if new_name is None else readded_reason(o["reason"], new_name)
+
     unsafe = [LeftOutObject(table_id=rules[o["table"]].source_table, kind=o["kind"],
-                            name=o["name"], reason=o["reason"])
+                            name=o["name"], reason=reason_of(o))
               for o in [*base.left_out, *result.left_out] if o["table"] in rules]  # fmt: skip
     for name, rule in sorted(rules.items()):
         table = generated.get(name)

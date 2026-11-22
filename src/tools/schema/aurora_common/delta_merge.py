@@ -46,7 +46,7 @@ from src.contracts.schema_design_input import (
     AgentQueryPattern,
     AgentTable,
 )
-from src.shared.left_out_objects import with_not_created_comments
+from src.shared.left_out_objects import readded_reason, with_not_created_comments
 from src.shared.table_keys import DesignTableKeys, spans_schemas, table_key
 from src.tools.schema.aurora_common.access_patterns import derive_access_patterns
 from src.tools.schema.aurora_common.ddl_generator import (
@@ -545,7 +545,10 @@ def _apply_index_changes(
     draft_indexes: dict[str, list[str]],
     errors: list[str],
     index_notes: list[dict],
+    added: list[tuple[str, _Index]] | None = None,
 ) -> dict[str, int]:
+    """Apply the delta's index removals, modifications and additions to ``table_ddls``;
+    ``added`` collects each added index with its draft table's name (#2571)."""
     counts = {"added": 0, "modified": 0, "removed": 0}
     # Aurora PostgreSQL: each (schema, name as stored) -> the draft table whose index has it,
     # and the tables' own names; one schema holds a name once (#2410).
@@ -654,6 +657,8 @@ def _apply_index_changes(
             current[index.name] = _render(base, ref, index)
             index_notes.extend(index.notes)
             counts["added"] += 1
+            if added is not None:
+                added.append((table.table_name, index))
 
         ddl.index_sql = list(current.values())
         draft_indexes[table.table_name] = list(current)
@@ -730,22 +735,40 @@ def _drop_index_notes(notes: list[dict], table: str, index: str) -> None:
     ]
 
 
-def _left_out_notes(base: AuroraDesignBase) -> list[dict]:
+def _readded_as(o: dict, added: list[tuple[str, _Index]]) -> str | None:
+    """The name of the first index the delta adds on a left-out index's table and columns,
+    in their order (#2571), else None."""
+    if o["kind"] != "index" or not o.get("columns"):
+        return None
+    for table, index in added:
+        if table == o["table"] and list(index.columns) == list(o["columns"]):
+            return index.name
+    return None
+
+
+def _left_out_notes(
+    base: AuroraDesignBase, added: list[tuple[str, _Index]] | None = None
+) -> list[dict]:
     """One app-layer note per source object the draft does not create because its name
     cannot be quoted into SQL (#2381 review 2) or another index of its table has it
     (#2402, feature ``duplicate_index_name``); the names cleaned like a comment's. A table
     is named once (#2484: ``Sales.orders``, not ``Sales.orders.Sales.orders``), any other
-    object ``table.object``."""
-    return [
-        {
-            "feature": o.get("feature", "unsafe_name"),
-            "source_object": comment_text(
-                o["table"] if o["kind"] == "table" else f"{o['table']}.{o['name']}"
-            ),
-            "recommendation": f"{o['kind'].capitalize()} not created: {o['reason']}.",
-        }
-        for o in base.left_out
-    ]
+    object ``table.object``. A left-out index the delta re-adds on the same table and
+    columns (``added``) says so, with the new name (#2571, ``readded_reason``)."""
+    notes = []
+    for o in base.left_out:
+        new_name = _readded_as(o, added or [])
+        reason = o["reason"] if new_name is None else readded_reason(o["reason"], new_name)
+        notes.append(
+            {
+                "feature": o.get("feature", "unsafe_name"),
+                "source_object": comment_text(
+                    o["table"] if o["kind"] == "table" else f"{o['table']}.{o['name']}"
+                ),
+                "recommendation": f"{o['kind'].capitalize()} not created: {reason}.",
+            }
+        )
+    return notes
 
 
 def _renamed_notes(base: AuroraDesignBase) -> list[dict]:
@@ -941,8 +964,9 @@ def merge_design_delta(
     ddl = base.generate(overrides)
     table_ddls = {t.table_name: t for t in ddl.tables}
     draft_indexes = {t.table_name: draft_index_names(t, base.dialect) for t in tables.named}
+    added: list[tuple[str, _Index]] = []
     index_counts = _apply_index_changes(
-        base, contract, tables, table_ddls, draft_indexes, errors, ddl.index_notes
+        base, contract, tables, table_ddls, draft_indexes, errors, ddl.index_notes, added
     )
     _check_serial_sequences(base, contract, tables, overrides, draft_indexes, errors)
 
@@ -1015,7 +1039,7 @@ def merge_design_delta(
         source_database=base.source_database,
     )
     warnings.extend(_access_pattern_residual_warnings(derived.residuals))
-    left_out = _left_out_notes(base)
+    left_out = _left_out_notes(base, added)
     output = {
         "contract_version": _OUTPUT_CONTRACTS[base.engine].model_fields["contract_version"].default,
         "job_id": base.job_id,

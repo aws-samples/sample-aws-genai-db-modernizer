@@ -33,6 +33,7 @@ from src.contracts.transformation_contract import (
     printable,
 )
 from src.shared.contract_versioning import load_contract
+from src.shared.left_out_objects import readded_indexes
 from src.shared.sql_identifiers import UNSAFE_NAME_REASON, has_unprintable
 from src.shared.table_keys import is_system_schema, spans_schemas
 from src.shared.table_keys import table_key as table_key_of
@@ -252,6 +253,16 @@ def saved_design_index_names(
         for t in found:
             out.update(_stored_names(t, stored, renamed, str(label)))
     return out
+
+
+def saved_design_readded(inputs: JobInputs, engine: str) -> dict[str, str]:
+    """``table.index`` -> the name the saved ``engine`` design re-adds a left-out index as,
+    read from the design's left-out notes (#2571, ``left_out_objects.readded_indexes``), so
+    step 1's DDL file says what the design says; empty with no design or a skip record."""
+    saved = inputs.schema_designs.get(engine)
+    if not saved or saved[1].get("status") == "skipped":
+        return {}
+    return readded_indexes(saved[1].get("app_layer_notes"))
 
 
 def _renamed_by_notes(notes: object) -> dict[tuple[str, str], str]:

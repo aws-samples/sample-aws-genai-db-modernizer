@@ -96,6 +96,38 @@ def left_out_objects(notes: Any) -> list[dict[str, str]]:
     return [o for o in (left_out_object(n) for n in notes) if o is not None]
 
 
+#: How a left-out index's reason ends when the schema design re-adds it (#2571).
+_READDED = "; the schema design re-adds it as "
+_SAME_COLUMNS = " on the same columns"
+
+
+def readded_reason(reason: str, new_name: str) -> str:
+    """A left-out index's ``reason`` when the schema design re-adds it as ``new_name`` on
+    the same table and columns (#2571): the merge writes it into the note, and step 1's DDL
+    file repeats it from the saved design's note, so every deliverable says the same."""
+    return f"{reason}{_READDED}{comment_text(new_name)}{_SAME_COLUMNS}"
+
+
+def readded_name(reason: str) -> str | None:
+    """The name :func:`readded_reason` put in ``reason``, or None when it says none."""
+    text = reason.strip().removesuffix(".")
+    if _READDED not in text or not text.endswith(_SAME_COLUMNS):
+        return None
+    name = text.rsplit(_READDED, 1)[1][: -len(_SAME_COLUMNS)]
+    return name or None
+
+
+def readded_indexes(notes: Any) -> dict[str, str]:
+    """``table.index`` -> the name the schema design re-adds it as, for each left-out
+    index whose note says the design re-adds it (#2571); empty when none does."""
+    out: dict[str, str] = {}
+    for o in left_out_objects(notes):
+        name = readded_name(o["reason"]) if o["object"] == "index" else None
+        if name is not None:
+            out[o["name"]] = name
+    return out
+
+
 def not_created_comment(entry: dict[str, str]) -> str:
     """One object's comment line: ``-- Not created: <name>: <reason>``, both made one line
     (``sql_identifiers.comment_text``), so a hostile name cannot end the comment or start a statement.
