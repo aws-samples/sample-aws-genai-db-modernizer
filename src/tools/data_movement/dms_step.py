@@ -163,6 +163,22 @@ class LeftOutObject(BaseModel):
     reason: str
 
 
+class RenamedIndex(BaseModel):
+    """A source index step 1's DDL creates under another name (#2545): Aurora PostgreSQL
+    index names are unique within a schema, so a name another table's index or a table
+    already has is taken by a new one (``ddl_generator.unique_index_names``). ``reason``
+    is the generator's sentence; ``design_name`` is the name the saved design gives the
+    index when it is not ``new_name``, else None."""
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    table_id: str
+    name: str
+    new_name: str
+    reason: str
+    design_name: str | None = None
+
+
 @dataclass(frozen=True)
 class UnsupportedField:
     """A field of a moved table no operation can express: DMS copies the source value and
@@ -220,6 +236,8 @@ class Step1Inputs:
     enum_types: tuple[EnumType, ...] = ()
     # The source indexes the DDL does not create (#2381), sorted by table id and name.
     left_out_objects: tuple[LeftOutObject, ...] = ()
+    # The source indexes the DDL creates under another name (#2545), by table id and name.
+    renamed_indexes: tuple[RenamedIndex, ...] = ()
 
     @property
     def unbounded_varchar(self) -> UnboundedVarchar:
@@ -262,6 +280,8 @@ class DmsStepBundle(BaseModel):
     extensions: list[str] | None = None
     # The source indexes the DDL does not create (#2381).
     left_out_objects: list[LeftOutObject] = Field(default_factory=list)
+    # The source indexes the DDL creates under another name (#2545).
+    renamed_indexes: list[RenamedIndex] = Field(default_factory=list)
 
 
 def _selected(contract: StepContract) -> list[Rule]:
@@ -463,7 +483,8 @@ def bundle_inputs(bundle: DmsStepBundle) -> Step1Inputs:
                     zero_date_defaults=tuple(sorted(set(bundle.zero_date_defaults))),
                     identity_columns=tuple(sorted(set(bundle.identity_columns))),
                     source_objects=bundle.source_objects, extensions=extensions,
-                    left_out_objects=_sorted_left_out(bundle.left_out_objects))
+                    left_out_objects=_sorted_left_out(bundle.left_out_objects),
+                    renamed_indexes=_sorted_renamed(bundle.renamed_indexes))
     )  # fmt: skip
 
 
@@ -512,6 +533,10 @@ def _sorted_left_out(objects: Any) -> tuple[LeftOutObject, ...]:
     return tuple(sorted(objects, key=lambda i: (i.table_id, i.kind, i.name)))
 
 
+def _sorted_renamed(indexes: Any) -> tuple[RenamedIndex, ...]:
+    return tuple(sorted(indexes, key=lambda i: (i.table_id, i.name)))
+
+
 def _expression_indexes(
     base: Any, generated: dict[str, Any], rules: dict[str, Rule], engine: str
 ) -> tuple[dict[str, Any], tuple[LeftOutObject, ...]]:
@@ -556,13 +581,14 @@ def _expression_indexes(
 
 def _step1_ddl(
     job: Any, plan: DataMovementPlan, contract: StepContract
-) -> tuple[str, tuple[tuple[str, str], ...], tuple[LeftOutObject, ...]]:
+) -> tuple[str, tuple[tuple[str, str], ...], tuple[LeftOutObject, ...], tuple[RenamedIndex, ...]]:
     """The DDL of every table step 1 moves: the Aurora DDL generator over the whole
     collector (``step1.design_base``), each column declared as the contract's
     ``target_type``, kept to the moved tables (and foreign keys between them), with the
     source's expression indexes it can recreate (``_expression_indexes``); the columns
-    it declares identity (AUTO_INCREMENT on Aurora MySQL), as (table id, column); and the
-    source indexes it does not create. Tables of several schemas are each created in their
+    it declares identity (AUTO_INCREMENT on Aurora MySQL), as (table id, column); the
+    source indexes it does not create; and the ones it creates under another name, named
+    as the saved design names them where there is one (#2545). Tables of several schemas are each created in their
     own (``keeps_schemas``, #2494), and keyed by the design's ``<schema>.<table>`` name."""
     from src.tools.schema.aurora_common.ddl_generator import (
         TypeOverride,
@@ -650,10 +676,18 @@ def _step1_ddl(
         for c in generated[name].columns
         if c.identity
     )
+    renamed = [
+        RenamedIndex(table_id=rules[o["table"]].source_table, name=o["name"],
+                     new_name=o["new_name"], reason=o["reason"],
+                     design_name=o.get("design_name"))
+        for o in base.renamed
+        if o["table"] in rules
+    ]  # fmt: skip
     return (
         assemble_full_ddl(ordered) + "\n",
         tuple(identity),
         _sorted_left_out([*left_out, *unsafe, *dropped]),
+        _sorted_renamed(renamed),
     )
 
 
@@ -738,14 +772,15 @@ def load_step1(store: Any, db: str, job_id: str, *, with_ddl: bool = True) -> St
     if not with_ddl:
         return inputs
     job = _load_job(store, db, job_id, plan)
-    ddl, identity, left_out = _step1_ddl(job, plan, contract)
+    ddl, identity, left_out, renamed = _step1_ddl(job, plan, contract)
     defaults = _zero_date_defaults(job, contract)
     objects, extensions = _collection(job)
     enums = _step1_enum_types(job, contract)
     return _checked(dataclasses.replace(inputs, ddl=ddl, zero_date_defaults=defaults,
                                         identity_columns=identity, source_objects=objects,
                                         extensions=extensions, enum_types=enums,
-                                        left_out_objects=left_out))  # fmt: skip
+                                        left_out_objects=left_out,
+                                        renamed_indexes=renamed))  # fmt: skip
 
 
 def table_mappings(inputs: Step1Inputs) -> dict[str, Any]:
@@ -2023,6 +2058,7 @@ def render_ddl(inputs: Step1Inputs) -> str:
         head.append("Unsupported fields: none.")
     head += _enum_header_lines(inputs)
     head += _left_out_index_lines(inputs)
+    head += _renamed_index_lines(inputs)
     # Every header line is one comment line, whatever collected text a reason quotes (a
     # blocked rule's finding names its column, #2381 review 2).
     head = [_comment_line(line) for line in head]
@@ -2110,6 +2146,29 @@ def _left_out_index_lines(inputs: Step1Inputs) -> list[str]:
             for o in inputs.left_out_objects
         ),
     ]
+
+
+def _renamed_index_lines(inputs: Step1Inputs) -> list[str]:
+    """The source indexes this file creates under another name (#2545), one line each: the
+    collected name as a skipped-index comment writes it (``comment_name``), the new name and
+    the generator's reason, and the saved design's name when it differs; every name cleaned
+    like the left-out lines' (``comment_text``). Nothing when none is renamed."""
+    from src.tools.schema.aurora_common.ddl_generator import comment_name, comment_text
+
+    if not inputs.renamed_indexes:
+        return []
+    lines = [
+        "Indexes created under another name (PostgreSQL index names are unique within a schema):"
+    ]
+    for r in inputs.renamed_indexes:
+        line = (
+            f"- index {comment_text(comment_name(r.table_id, r.name))} is created as "
+            f"{comment_text(r.new_name)}: {comment_text(r.reason)}."
+        )
+        if r.design_name is not None:
+            line += f" The saved schema design names it {comment_text(r.design_name)}."
+        lines.append(line)
+    return lines
 
 
 def _enum_header_lines(inputs: Step1Inputs) -> list[str]:
@@ -2223,5 +2282,6 @@ def write_step1_delivery(store: Any, db: str, job_id: str) -> dict[str, Any]:
         "replica_identity_recommended": len(contract_tables(inputs.contract)) if pg else 0,
         "sequences_to_set": len(moved_identity_columns(inputs)) if pg else 0,
         "objects_not_created": len(inputs.left_out_objects),
+        "indexes_renamed": len(inputs.renamed_indexes),
         "extensions": [e.name for e in required_extensions(inputs)],
     }

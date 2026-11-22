@@ -18,7 +18,7 @@ per schema, and the draft names the table ``<schema>.<table>`` in its notes and 
 from __future__ import annotations
 
 import re
-from collections.abc import Callable
+from collections.abc import Callable, Mapping
 from dataclasses import dataclass, field
 
 from src.contracts.aurora_design_delta import INDEX_METHODS, validate_aurora_type
@@ -1892,7 +1892,11 @@ def _renamed_index(label: str, idx: AgentIndex, new: str, held: str) -> dict:
 
 
 def unique_index_names(
-    tables: list[AgentTable], dialect: Dialect, qualified: bool = False, source_engine: str = ""
+    tables: list[AgentTable],
+    dialect: Dialect,
+    qualified: bool = False,
+    source_engine: str = "",
+    design_names: Mapping[tuple[str, str], str] | None = None,
 ) -> tuple[list[AgentTable], list[dict]]:
     """``tables`` with every index Aurora PostgreSQL creates named once in its schema (#2410).
 
@@ -1910,7 +1914,15 @@ def unique_index_names(
     as the table's last indexes, as step 1 adds them; the draft itself creates none. A
     design of several schemas (``qualified``) checks each schema on its own; any other
     creates every table in one schema. Run after ``quotable_tables`` so a name repeated on
-    one table is already left out. Aurora MySQL returns ``tables`` unchanged."""
+    one table is already left out. Aurora MySQL returns ``tables`` unchanged.
+
+    ``design_names`` (step 1, #2545): (table id, collected index name) -> the name the
+    saved design stores for that index. Step 1 builds from every collector table, the
+    design from the engine's tables only, so on its own each could name one index
+    differently. Each such index takes the design's name before any other index keeps or
+    gets one, and another table's index that clashes with it is renamed instead. When a
+    table or another design name of the step already has it, the index is renamed too,
+    and its record's ``design_name`` says what the design calls it."""
     if dialect is not POSTGRES:
         return tables, []
 
@@ -1918,6 +1930,7 @@ def unique_index_names(
         return t.schema_name if qualified else None
 
     recreated = classify_source_family(source_engine) == "postgresql"
+    stored_names = dict(design_names or {})
     # (schema, name as stored) -> what holds it, as the note says it.
     holders: dict[tuple[str | None, str], str] = {}
     for t in tables:
@@ -1925,34 +1938,60 @@ def unique_index_names(
     for implicit in pg_implicit_names(tables, qualified, source_engine):
         holders.setdefault((implicit.schema, implicit.name), _held_implicitly(implicit))
     clashing: dict[int, str] = {}  # id of each index to rename -> what holds its name
-    for t in tables:
-        named = [*carried_indexes(t, dialect), *(expression_indexes(t) if recreated else [])]
-        for idx in named:
-            key = (schema(t), pg_name(idx.index_name))
-            if key in holders:
-                clashing[id(idx)] = holders[key]
-            else:
-                holders[key] = _held_by_index(design_table_name(t, qualified), idx.index_name)
+    # The design's indexes first, under the design's names (#2545), then every other index.
+    for first in (True, False):
+        for t in tables:
+            named = [*carried_indexes(t, dialect), *(expression_indexes(t) if recreated else [])]
+            for idx in named:
+                if ((t.table_id, idx.index_name) in stored_names) is not first:
+                    continue
+                name = stored_names[(t.table_id, idx.index_name)] if first else idx.index_name
+                key = (schema(t), pg_name(name))
+                if key in holders:
+                    clashing[id(idx)] = holders[key]
+                else:
+                    holders[key] = _held_by_index(design_table_name(t, qualified), name)
     out: list[AgentTable] = []
     renamed: list[dict] = []
     for t in tables:
-        if not any(id(i) in clashing for i in t.indexes or []):
+        label = design_table_name(t, qualified)
+        moved = [
+            i for i in t.indexes or []
+            if id(i) in clashing or stored_names.get((t.table_id, i.index_name), i.index_name) != i.index_name
+        ]  # fmt: skip
+        if not moved:
             out.append(t)
             continue
         indexes: list[AgentIndex] = []
         for idx in t.indexes or []:
+            design_name = stored_names.get((t.table_id, idx.index_name))
             if id(idx) in clashing:
                 new, n = _pg_index_name(t.table_name, idx.columns, "idx"), 0
                 while (schema(t), new) in holders:
                     n += 1
                     new = _pg_index_name(t.table_name, idx.columns, f"idx{n}")
-                label = design_table_name(t, qualified)
                 holders[(schema(t), new)] = _held_by_index(label, new)
-                renamed.append(_renamed_index(label, idx, new, clashing[id(idx)]))
+                record = _renamed_index(label, idx, new, clashing[id(idx)])
+                renamed.append(
+                    record if design_name is None else {**record, "design_name": design_name}
+                )
                 idx = idx.model_copy(update={"index_name": new})
+            elif design_name is not None and design_name != idx.index_name:
+                held = holders.get((schema(t), pg_name(idx.index_name)))
+                renamed.append(_design_renamed(label, idx, design_name, held))
+                idx = idx.model_copy(update={"index_name": design_name})
             indexes.append(idx)
         out.append(t.model_copy(update={"indexes": indexes}))
     return out, renamed
+
+
+def _design_renamed(label: str, idx: AgentIndex, new: str, held: str | None) -> dict:
+    """An index step 1 creates under the name the saved design stores for it (#2545): the
+    reason says what holds the collected name when something of the step does, else that
+    the design chose the name."""
+    if held is not None:
+        return _renamed_index(label, idx, new, held)
+    return _renamed_index(label, idx, new, "the saved schema design creates it under this name")
 
 
 def _without_unsafe_columns(

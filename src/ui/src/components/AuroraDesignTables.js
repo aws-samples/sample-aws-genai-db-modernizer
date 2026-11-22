@@ -4,6 +4,7 @@
 import { memo, useMemo, useState } from 'react';
 import Alert from '@cloudscape-design/components/alert';
 import Box from '@cloudscape-design/components/box';
+import ExpandableSection from '@cloudscape-design/components/expandable-section';
 import SpaceBetween from '@cloudscape-design/components/space-between';
 import Header from '@cloudscape-design/components/header';
 import Link from '@cloudscape-design/components/link';
@@ -12,6 +13,7 @@ import Table from '@cloudscape-design/components/table';
 import TextFilter from '@cloudscape-design/components/text-filter';
 import { filterAuroraTables } from '../utils/auroraDesign';
 import { formatCount } from '../utils/format';
+import ProseText from './ProseText';
 
 /**
  * The tables of one Aurora design as one Cloudscape table (#2325): name, columns,
@@ -166,6 +168,35 @@ export const AuroraLeftOutAlert = memo(({ leftOut, t }) => {
         </ul>
       </SpaceBetween>
     </Alert>
+  );
+});
+
+/**
+ * #2545: the design's app-layer notes (`design.appLayerNotes`, built by appLayerNotesOf):
+ * a collapsed section listing each note's kind, its object and its text, an index the
+ * design renames included, so a name in the DDL the source does not have is explained
+ * here too. It shows no count. Every name and text renders as text.
+ */
+export const AuroraAppLayerNotes = memo(({ notes, t }) => {
+  if (!notes || notes.length === 0) return null;
+  return (
+    <ExpandableSection headerText={t('analysis-results.aurora-design.app-layer-notes-header')} defaultExpanded={false}>
+      <SpaceBetween size="xxs">
+        <Box fontSize="body-s" color="text-body-secondary">{t('analysis-results.aurora-design.app-layer-notes-body')}</Box>
+        <ul id="aurora-design-app-layer-notes" style={{ margin: 0, paddingLeft: '1.25rem' }}>
+          {notes.map((n, i) => (
+            <li key={i}>
+              <Box fontSize="body-s">
+                {t('analysis-results.aurora-design.app-layer-notes-item', { label: n.label })}{' '}
+                <Box variant="code" display="inline">{n.object}</Box>
+                {n.text ? ': ' : ''}
+                <ProseText text={n.text} />
+              </Box>
+            </li>
+          ))}
+        </ul>
+      </SpaceBetween>
+    </ExpandableSection>
   );
 });
 

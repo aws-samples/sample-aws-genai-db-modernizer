@@ -73,7 +73,7 @@ import { buildQueryRoutingRows, queryPatternLinks } from "../utils/queryRouting"
 import QueryDetailPanel from "../components/QueryDetailPanel";
 import SourceTablesSection from "../components/SourceTablesSection";
 import { cacheLayerPatterns, ownerAccessPatterns, patternsByQueryId, shortTable, sourceNameMapper, sourceTableRows } from "../utils/accessPatterns";
-import AuroraDesignTables, { AuroraLeftOutAlert } from "../components/AuroraDesignTables";
+import AuroraDesignTables, { AuroraAppLayerNotes, AuroraLeftOutAlert } from "../components/AuroraDesignTables";
 import AuroraTableDetailPanel from "../components/AuroraTableDetailPanel";
 import { getCacheOverlay, ownerDistribution, formatCacheLayerLine, cacheChangeSentence, targetEngineEntries, resolveCostBreakdown, cacheAccessPatternCount, addCacheOverlayNode } from "../utils/cacheLayer";
 import { summaryFallbackInfo } from "../utils/summaryFallback";
@@ -1069,6 +1069,10 @@ const AnalysisResultsPage = memo(() => {
                             ))}
                           </SpaceBetween>
                         </ExpandableSection>
+                      )}
+
+                      {designState.state !== 'none' && designState.state !== 'unavailable' && (
+                        <AuroraAppLayerNotes notes={design.appLayerNotes} t={t} />
                       )}
 
                       <ExpandableSection

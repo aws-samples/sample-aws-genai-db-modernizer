@@ -3634,6 +3634,58 @@ def test_the_designed_job_renders_the_schema_design_panels(
         assert ev == {"console": [], "pageerror": [], "failed": []}, (r.job_id, ev)
 
 
+def _aurora_notes(r: PipelineResult) -> list[tuple[str, list[dict]]]:
+    """Each designed Aurora engine of ``r`` with its app-layer notes the Table design lists:
+    all but the notes for an object the design leaves out, which the left-out alert lists."""
+    from src.shared.left_out_objects import is_left_out_note
+
+    out = []
+    for path in real_designs(r.job_dir()):
+        engine = path.parent.parent.name.removeprefix("schema-")
+        if not engine.startswith("aurora_"):
+            continue
+        notes = json.loads(path.read_text()).get("app_layer_notes") or []
+        out.append((engine, [n for n in notes if isinstance(n, dict) and not is_left_out_note(n)]))
+    return out
+
+
+def test_the_table_design_lists_the_designs_app_layer_notes(
+    page: Page, ui: str, all_runs: list[PipelineResult]
+) -> None:
+    """#2545: the Table design lists each Aurora design's app-layer notes (a renamed index
+    among them) in a collapsed section, each note's object and text as the design states
+    them; a design with none shows no such section."""
+    checked = 0
+    for r in _designed_runs(all_runs):
+        for engine, notes in _aurora_notes(r):
+            ev = _watch(page)
+            _goto_results(page, ui, r, "data-model")
+            design = page.locator("#table-design-section")
+            expect(design).to_be_visible(timeout=READY_MS)
+            tab = design.get_by_role(
+                "tab", name=re.compile(rf"^{re.escape(ENGINE_LABELS[engine])}")
+            )
+            if tab.get_attribute("aria-selected") != "true":
+                tab.click()
+            header = design.get_by_role("button", name="Application-layer notes")
+            if not notes:
+                expect(header).to_have_count(0)
+                continue
+            expect(header).to_have_attribute("aria-expanded", "false", timeout=READY_MS)
+            header.click()
+            listed = design.locator("#aurora-design-app-layer-notes li")
+            expect(listed).to_have_count(len(notes), timeout=READY_MS)
+            first = notes[0]
+            text = listed.first.inner_text()
+            assert str(first.get("source_object")) in text, (r.job_id, text)
+            words = str(first.get("recommendation") or "").replace("`", "").split()
+            assert " ".join(text.split()).endswith(" ".join(words)), (r.job_id, text)
+            assert ev == {"console": [], "pageerror": [], "failed": []}, (r.job_id, ev)
+            checked += 1
+    if not any(r.external for r in all_runs):
+        assert checked >= 1, "the designed job's Aurora design lists no app-layer note"
+
+
 def _a_designed_query(r: PipelineResult) -> tuple[str, str] | None:
     """A query a NoSQL design's access pattern serves, and that design's engine, from the
     job's schema_output.json files (#2446)."""

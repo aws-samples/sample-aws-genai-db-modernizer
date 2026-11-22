@@ -225,6 +225,42 @@ export function filterAuroraTables(tables, text) {
   return tables.filter((t) => String(t.tableName).toLowerCase().includes(needle));
 }
 
+// Mirrors LEFT_OUT_FEATURES and the `<Object> not created: <reason>` head in
+// src/shared/left_out_objects.py: the notes the merge writes for an object the design
+// leaves out. The left-out alert lists those from facts.design_left_out (#2484), so the
+// app-layer notes leave them out, as the engineering report does.
+// utils/__tests__/auroraDesign.test.js pins both lists to the Python ones.
+export const LEFT_OUT_FEATURES = new Set([
+  'unsafe_name', 'colliding_table_name', 'ambiguous_reference', 'duplicate_index_name', 'system_schema',
+]);
+export const LEFT_OUT_OBJECTS = ['Table', 'Column', 'Primary key', 'Index', 'Foreign key'];
+const LEFT_OUT_HEAD = new RegExp(`^(${LEFT_OUT_OBJECTS.join('|')}) not created: \\S`);
+
+const isLeftOutNote = (n) => LEFT_OUT_FEATURES.has(n.feature)
+  && typeof n.source_object === 'string' && n.source_object.trim() !== ''
+  && typeof n.recommendation === 'string' && LEFT_OUT_HEAD.test(n.recommendation.trim());
+
+// A note's feature as the engineering report names it: `index_renamed` is "Index renamed".
+const noteLabel = (feature) => {
+  const text = String(feature || 'note').replace(/_/g, ' ');
+  return text.charAt(0).toUpperCase() + text.slice(1).toLowerCase();
+};
+
+/**
+ * #2545: the design's app-layer notes, as the engineering report lists them: each one's
+ * kind, the object it is about and its text, in the design's order, without the notes
+ * for objects the design leaves out (the left-out alert shows those).
+ */
+export function appLayerNotesOf(notes) {
+  return (Array.isArray(notes) ? notes : [])
+    .filter((n) => n && typeof n === 'object' && !isLeftOutNote(n))
+    .map((n) => ({
+      label: noteLabel(n.feature),
+      object: String(n.source_object || '?'),
+      text: String(n.recommendation || '').trim(),
+    }));
+}
+
 /**
  * One Aurora design, ready for the "Aurora design" section: display name,
  * table list, DDL, optimizations, migration strategy and queries-on-Aurora.
@@ -250,7 +286,7 @@ export function buildAuroraDesign(engine, design, queryGroups, tableQueryRows = 
     migrationStrategy: content.migration_strategy || null,
     ddl: content.generated_ddl || '',
     optimizations: content.optimizations || [],
-    appLayerNotes: content.app_layer_notes || [],
+    appLayerNotes: appLayerNotesOf(content.app_layer_notes),
     tables: withTableDetails(
       buildAuroraTables(content),
       (tableQueryRows || []).filter((r) => r.engine === engine),
