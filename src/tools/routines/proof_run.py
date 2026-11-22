@@ -222,6 +222,20 @@ def _carried_text(row: RoutineMigration, source: RoutineSource, migration: Routi
     return None if done.record.status == "needs_attention" else done.target_create
 
 
+def after_repair(migration: RoutineMigrationContract,
+                 repaired: Iterable[tuple[str, str]]) -> dict[tuple[str, str], str]:  # fmt: skip
+    """Each routine of ``migration`` carried after the ``repaired`` routines (#2428,
+    ``routine_facts.carried_after_repair``), with the status it is carried with: the test
+    runs it with them, as step 1 carries it."""
+    from src.shared.routine_facts import after_repair_status, carried_after_repair
+
+    rows: dict[tuple[str, str], dict[str, Any]] = {
+        (str(r.kind), r.routine_id): r.model_dump(mode="json") for r in migration.routines
+    }
+    return {ref: after_repair_status(rows[ref])
+            for ref in carried_after_repair(rows.values(), repaired)}  # fmt: skip
+
+
 def plan_proof(migration: RoutineMigrationContract, sources: Iterable[RoutineSource],
                collector: Mapping[str, Any], *, target_user: str,
                repaired: Mapping[tuple[str, str], str | None] | None = None) -> ProofPlan:  # fmt: skip
@@ -231,15 +245,19 @@ def plan_proof(migration: RoutineMigrationContract, sources: Iterable[RoutineSou
     text (#2384), or None when it did not rebuild: carried as ``model_repaired``."""
     dialect = migration.source_engine
     fixed = dict(repaired or {})
+    along = after_repair(migration, fixed)
     carried = [
-        r.model_copy(update={"status": "model_repaired"}) if (r.kind, r.routine_id) in fixed else r
+        r.model_copy(update={"status": "model_repaired"}) if (r.kind, r.routine_id) in fixed
+        else r.model_copy(update={"status": along[(r.kind, r.routine_id)]})
+        if (r.kind, r.routine_id) in along else r
         for r in migration.routines
-        if r.status in CARRIED or (r.kind, r.routine_id) in fixed
-    ]
+        if r.status in CARRIED or (r.kind, r.routine_id) in fixed or (r.kind, r.routine_id) in along
+    ]  # fmt: skip
     wanted: dict[tuple[str, str, str], RoutineMigration] = {
         (r.kind, r.schema_name or "", r.specific_name or ""): r for r in carried
     }
     texts: dict[str, tuple[str, str]] = {}
+    texted: set[tuple[str, str]] = set()
     plan = ProofPlan(dialect=dialect, routines=[])
     for source in sources:
         row = wanted.get(source.key())
@@ -266,6 +284,20 @@ def plan_proof(migration: RoutineMigrationContract, sources: Iterable[RoutineSou
             )
             continue
         texts[row.routine_id] = (source.create_statement, text)
+        texted.add(key)
+    for row in carried:
+        # #2428: a routine carried after a repair is tested only with what it waited for, by
+        # kind and id (a MySQL function and procedure may share a name).
+        missing = [(str(ref.kind), ref.routine_id) for ref in row.blocked_by
+                   if (str(ref.kind), ref.routine_id) not in texted]  # fmt: skip
+        if (row.kind, row.routine_id) in along and (row.kind, row.routine_id) in texted and missing:
+            texted.discard((row.kind, row.routine_id))
+            del texts[row.routine_id]
+            plan.not_tested[row.routine_id] = (
+                "a routine it calls that was repaired is not tested"
+                if any(m in fixed for m in missing)
+                else "a routine it calls is not tested"
+            )
     depends: dict[str, tuple[str, ...]] = {}
     for row in carried:
         refs = [
@@ -517,9 +549,10 @@ def apply_proof(migration: RoutineMigrationContract, entries: Mapping[str, Routi
     rows = []
     counts: dict[Any, int] = {"proved": 0, "needs_attention": 0, "not_proved": 0}
     fixed = dict(repaired or {})
+    along = after_repair(migration, fixed)
     for row in migration.routines:
         key = (row.kind, row.routine_id)
-        tested = row.status in CARRIED or key in fixed
+        tested = row.status in CARRIED or key in fixed or key in along
         entry = entries.get(row.routine_id) if tested else None
         if tested and entry is None:
             entry = RoutineProofEntry(mode="load_and_run", outcome="not_proved",
@@ -537,7 +570,7 @@ def apply_proof(migration: RoutineMigrationContract, entries: Mapping[str, Routi
         proved_at=datetime.now(UTC), seconds=round(seconds, 1),
         counts=counts,
         not_carried=sum(r.status not in CARRIED and (r.kind, r.routine_id) not in fixed
-                        for r in migration.routines),
+                        and (r.kind, r.routine_id) not in along for r in migration.routines),
         coverage_limits=limits, routine_sources_sha256=sources_digest,
     )  # fmt: skip
     fields = {**dict(migration), "routines": rows, "proof_run": run}
@@ -587,8 +620,10 @@ def run_proof(
     }
     digests: dict[tuple[str, str], str] = {ref: d for ref, d in repaired_routines(repair, version).items()
                if ref in rows and repairable_row(rows[ref].model_dump(mode="json"))}  # fmt: skip
+    along = after_repair(migration, digests)
     carried = [r for r in migration.routines
-               if r.status in CARRIED or (r.kind, r.routine_id) in digests]  # fmt: skip
+               if r.status in CARRIED or (r.kind, r.routine_id) in digests
+               or (r.kind, r.routine_id) in along]  # fmt: skip
     if not carried:
         return {
             "status": "nothing_to_prove",
@@ -703,7 +738,9 @@ def run_proof(
         "cluster_changes": changes,
         "routines": [
             {"routine_id": r.routine_id, "kind": r.kind,
-             "status": "model_repaired" if (r.kind, r.routine_id) in digests else r.status,
+             "status": "model_repaired" if (r.kind, r.routine_id) in digests
+             else along.get((r.kind, r.routine_id), r.status),
+             **({"carried_after_repair": True} if (r.kind, r.routine_id) in along else {}),
              "mode": r.proof.mode,
              "outcome": r.proof.outcome, "reason": r.proof.reason, "calls_run": r.proof.calls_run,
              "calls_succeeded": r.proof.calls_succeeded, "mismatches": r.proof.mismatches,

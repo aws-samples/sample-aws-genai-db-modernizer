@@ -3603,6 +3603,34 @@ class RoutineInterventionFact(BaseModel):
     )
 
 
+class RoutineAfterRepairFact(BaseModel):
+    """A routine carried after a repair (#2428): it needed attention only because it calls a
+    routine that needed attention, a model repaired that routine, and its own checks passed.
+    ``line`` is what the deliverables print. Never the routine's text."""
+
+    kind: str = Field(..., description="function, procedure, trigger or event")
+    routine_id: str = Field(..., min_length=1, description="The routine's routine_id")
+    after: list[RoutineRefFact] = Field(
+        default_factory=list,
+        description="The routines it waited for (its blocked_by), carried before it",
+    )
+    deploy_gate: Literal[
+        "deployed",
+        "not_tested",
+        "not_proved",
+        "needs_attention",
+        "depends_on_held",
+        "rebuild_differs",
+    ] = Field(
+        "not_tested",
+        description=(
+            "deployed when step 1 deploys it after a test on a test Aurora, else why its "
+            "deploy gate holds it back; not_tested before a test"
+        ),
+    )
+    line: str = Field(..., description="What the deliverables print about it, in plain words")
+
+
 class RoutineFacts(BaseModel):
     """The routine-migration headline and the routines behind its risks (#1938, ADR-034
     Decision 7), computed once from the newest ``routines/v<N>/routine_migration.json``
@@ -3728,6 +3756,20 @@ class RoutineFacts(BaseModel):
             "each routine the repair loop repaired, holds a candidate for, or could not "
             "repair, in the artifact's order; empty when no repair ran"
         ),
+    )
+    carried_after_repair: list[RoutineAfterRepairFact] = Field(
+        default_factory=list,
+        exclude_if=lambda value: not value,
+        description=(
+            "The routines carried after a repair (#2428), in deploy order; left out of the "
+            "dump when empty, so a report without one keeps its bytes"
+        ),
+    )
+    carried_after_repair_count: int = Field(
+        0,
+        ge=0,
+        exclude_if=lambda value: not value,
+        description="How many routines carried_after_repair lists (#2428); 0 is left out",
     )
 
     @field_validator("proof", mode="before")

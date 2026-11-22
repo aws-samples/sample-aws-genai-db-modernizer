@@ -20,7 +20,8 @@ import { routineKey, routinesOf, routineToDoText } from "../utils/reportFacts";
  * and the carried routines to check rolled up once per note (maintainer
  * decision 2 on #1938), then each intervention: what came of the model repair of
  * each routine a model was asked to repair (#1941), in the facts' own words
- * (`line`, and each attempt's line for one that still needs attention). It only
+ * (`line`, and each attempt's line for one that still needs attention), then each
+ * routine carried after a repair (#2428) with the routines it follows. It only
  * formats the facts (ADR-032): every count,
  * list and sentence is stored. Never a routine's code: the facts hold none.
  *
@@ -54,6 +55,7 @@ const RoutineMigrationSection = memo(({ synthesis, t }) => {
   const toDo = routineToDoText(routines);
   const toDoRoutines = routines.to_do_routines || [];
   const interventions = (routines.interventions || []).filter(i => i && typeof i === 'object' && i.line);
+  const afterRepair = (routines.carried_after_repair || []).filter(i => i && typeof i === 'object' && i.line);
   const step = routines.migrate_yourself_step;
   const columns = [
     { id: 'routine', header: t('analysis-results.routines.column-routine'), cell: r => <Mono>{r.routine_id}</Mono> },
@@ -127,6 +129,21 @@ const RoutineMigrationSection = memo(({ synthesis, t }) => {
                           {i.attempt_lines.map(a => <li key={a}>{a}</li>)}
                         </ul>
                       )}
+                    </li>
+                  ))}
+                </ul>
+              </Box>
+            )}
+            {afterRepair.length > 0 && (
+              <Box data-figure="routines-after-repair">
+                <Box variant="h4">{t('analysis-results.routines.after-repair')}</Box>
+                <div>{t('analysis-results.routines.after-repair-intro')}</div>
+                <ul>
+                  {afterRepair.map(i => (
+                    <li key={routineKey(i)} data-after-repair={i.deploy_gate}>
+                      {i.kind} <Mono>{i.routine_id}</Mono>
+                      {(i.after || []).length > 0 && <>{`, ${t('analysis-results.routines.after-repair-follows')} `}{refList(i.after)}</>}
+                      {`: ${i.line}`}
                     </li>
                   ))}
                 </ul>
