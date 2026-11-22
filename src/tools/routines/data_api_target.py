@@ -76,8 +76,8 @@ and rolled back. A MySQL session the Data API pools keeps what a call set in it,
 target reads every session variable (``SHOW SESSION VARIABLES``) after each call that ends and
 when each call starts, and sets each one that differs from the run's baseline back
 (``SessionBaseline``, #2574); it releases the session's named locks, and when a call starts
-deallocates the prepared statements and drops the temporary tables the routines name, in
-their text or in a string they prepare (#2579). After a
+deallocates the prepared statements, drops the temporary tables and sets to NULL the user
+variables the routines name, in their text or in a string they prepare (#2577, #2579). After a
 timed-out call, and before a reopened target's setup, ``CREATE``s and counters, it does the
 same in a transaction of its own, and checks what the setup and the creates made
 (``_check_made``), since a statement outside a transaction runs on any pooled session.
@@ -119,6 +119,7 @@ from decimal import Decimal
 from pathlib import Path
 from typing import Any, Protocol
 
+from src.shared.sql_identifiers import has_unprintable, quote_identifier
 from src.tools.database import disposable_engine as de
 from src.tools.database.mysql_grants import grant_database
 from src.tools.routines.proof_inputs import ProofCall, ProofSetup, run_call
@@ -182,6 +183,13 @@ _MY_PROGRAM_MODES = (
     "WHERE EVENT_SCHEMA IN ({marks})) AS made"
 )
 _MY_VARIABLE = re.compile(r"[a-z][a-z0-9_]*")
+#: An unquoted MySQL user variable's name, read from the text right after its ``@``
+#: (letters, digits, ``.``, ``_`` and ``$``: ``@a.b`` is one variable).
+_MY_USER_NAME = re.compile(r"[\w$.]+")
+#: The longest user variable name MySQL takes; a text with a longer one does not run.
+_MY_USER_NAME_MAX = 64
+#: How many user variables one ``SET`` statement clears.
+_MY_USER_CHUNK = 100
 #: How deep a routine's strings are read for the names they hold (a ``PREPARE`` literal).
 _MADE_DEPTH = 3
 _MY_INTEGER = re.compile(r"-?[0-9]{1,19}")
@@ -1038,6 +1046,9 @@ class SessionBaseline:
     #: The prepared statements the run's routines may leave in a session (``PREPARE name``
     #: in their text: a ``PREPARE`` cannot itself be prepared, so every name is there).
     prepared: set[str] = field(default_factory=set)
+    #: The user variables the run's routines name (``@name``), in their text or in a string
+    #: they prepare, lower case (MySQL reads a user variable's name in any case, #2577).
+    user_variables: set[str] = field(default_factory=set)
 
 
 @dataclass
@@ -1046,6 +1057,7 @@ class _MadeNames:
 
     prepared: set[str] = field(default_factory=set)
     temporary: set[str] = field(default_factory=set)
+    user_variables: set[str] = field(default_factory=set)
 
 
 def _token_levels(text: str, depth: int = 0) -> Iterator[tuple[str, tuple[RoutineToken, ...]]]:
@@ -1064,10 +1076,11 @@ def _token_levels(text: str, depth: int = 0) -> Iterator[tuple[str, tuple[Routin
 
 
 def _made_names(text: str) -> _MadeNames:
-    """The prepared statements (``PREPARE name``) and temporary tables (``CREATE TEMPORARY
-    TABLE [IF NOT EXISTS] [db.]name``) a MySQL routine's text names, read from its tokens, so
-    a comment between the words hides nothing, and from every string in it, so a statement a
-    ``PREPARE`` literal holds is read too (#2579). A ``PREPARE`` of anything but one literal is never called
+    """The prepared statements (``PREPARE name``), temporary tables (``CREATE TEMPORARY TABLE
+    [IF NOT EXISTS] [db.]name``) and user variables (``@name``, ``@`name```, ``@'name'``) a
+    MySQL routine's text names, read from its tokens, so a comment between the words hides
+    nothing, and from every string in it, so a statement a ``PREPARE`` literal holds is read
+    too (#2577, #2579). A ``PREPARE`` of anything but one literal is never called
     (``proof_screen.dynamic_sql``), and MySQL builds no name at run time any other way. A
     text that does not tokenize names none; such a text does not load either."""
     made = _MadeNames()
@@ -1076,8 +1089,12 @@ def _made_names(text: str) -> _MadeNames:
     except RoutineTokenError:
         return made
     names = ("VAR", "IDENTIFIER")
-    for _, tokens in levels:
+    for level_text, tokens in levels:
         for i, tok in enumerate(tokens):
+            if tok.kind == "PARAMETER" and tok.text == "@" and i + 1 < len(tokens):
+                user = _user_variable(level_text, tok, tokens[i + 1])
+                if user is not None:
+                    made.user_variables.add(user)
             if tok.text.upper() == "PREPARE" and i + 1 < len(tokens):
                 rest = tokens[i + 1]
                 with contextlib.suppress(RoutineTokenError):
@@ -1094,6 +1111,23 @@ def _made_names(text: str) -> _MadeNames:
                 if j < len(tokens) and tokens[j].kind in names:
                     made.temporary.add(tokens[j].text)  # a table name's case can matter
     return made
+
+
+def _user_variable(text: str, at: RoutineToken, nxt: RoutineToken) -> str | None:
+    """The user variable an ``@`` token starts, lower case: a quoted name as the tokenizer
+    unquoted it, else the unquoted name written right after the ``@`` in ``text``. None when
+    no name follows, or one no ``SET`` can name (too long, or a character ``quote_identifier``
+    refuses)."""
+    if nxt.kind in ("IDENTIFIER", "STRING") and not nxt.command_rest:
+        name = nxt.text
+    else:
+        found = _MY_USER_NAME.match(text, at.end + 1)
+        if found is None:
+            return None
+        name = found.group(0)
+    if not name or len(name) > _MY_USER_NAME_MAX or has_unprintable(name):
+        return None
+    return name.lower()
 
 
 def _session_value(text: str | None) -> Any:
@@ -1337,6 +1371,7 @@ class DataApiTarget(DisposableEngineTarget):
         if found is None and self.engine == "mysql":
             made = _made_names(routine.create_sql)
             self._baseline.prepared |= made.prepared
+            self._baseline.user_variables |= made.user_variables
             self._temporary |= made.temporary
         if (
             found is None
@@ -1454,10 +1489,11 @@ class DataApiTarget(DisposableEngineTarget):
         """MySQL: the session back to the run's baseline (``SessionBaseline``), which the first
         call records with ``last_insert_id``, ``insert_id`` and ``identity`` at 0. Its named
         locks are released; when a call starts (``starting``), its prepared statements the
-        run's routines name are deallocated and the temporary tables this target's routines
-        name are dropped. A variable that differs is set back to the server's global value
-        when the baseline holds that, else to the baseline's value (bound); ``autocommit`` is
-        never set, nor a name that is not plain. With ``check``, a session that still differs
+        run's routines name are deallocated, the temporary tables this target's routines
+        name are dropped and the user variables the run's routines name are set to NULL. A
+        variable that differs is set back to the server's global value when the baseline
+        holds that, else to the baseline's value (bound); ``autocommit`` is never set, nor a
+        name that is not plain. With ``check``, a session that still differs
         from the baseline, a variable missing or added included, fails: after a call it
         refuses the routine (:class:`HarnessTampered`); anywhere else it is the harness's
         failure (:class:`ProofTargetError`), since no routine of this call set it."""
@@ -1473,6 +1509,7 @@ class DataApiTarget(DisposableEngineTarget):
                     self._backend._guarded(
                         f"DROP TEMPORARY TABLE IF EXISTS {de._quote(name, '`')}"
                     )  # no implicit commit
+            self._clear_user_variables()
         now = self._my_session()
         if base.variables is None:
             base.variables = {**now, **{n: "0" for n in _MY_INSERT_IDS if n in now}}
@@ -1491,6 +1528,21 @@ class DataApiTarget(DisposableEngineTarget):
                                       f"{HARNESS_TAMPERED}")  # fmt: skip
             raise ProofTargetError(f"{self.description} could not put back the session "
                                    f"{when}")  # fmt: skip
+
+    def _clear_user_variables(self) -> None:
+        """Every user variable the run's routines name set to NULL, as a reset connection has
+        it on the source side (#2577). The runner cannot list a session's user variables on
+        the test cluster, so the names come from the routines' text (``_made_names``). A
+        ``SET`` that fails is the harness's failure: the session cannot be cleared."""
+        names = sorted(self._baseline.user_variables)
+        for at in range(0, len(names), _MY_USER_CHUNK):
+            sets = ", ".join(f"@{quote_identifier(n, '`')} = NULL"
+                             for n in names[at : at + _MY_USER_CHUNK])  # fmt: skip
+            try:
+                self._backend._guarded(f"SET {sets}")
+            except de.EngineError as exc:
+                raise ProofTargetError(f"{self.description} could not clear its user variables",
+                                       exc.sqlstate) from None  # fmt: skip
 
     def _clean_session(self, *, check: bool = True) -> None:
         """MySQL, outside a call: the session a transaction of its own gets put back as when a
