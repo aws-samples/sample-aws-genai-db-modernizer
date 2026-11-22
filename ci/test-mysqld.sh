@@ -3,7 +3,7 @@
 # SPDX-License-Identifier: MIT-0
 
 # The mysqld integration tests for step 1's routine scripts (#2274): the generated MySQL
-# scripts run on a real MySQL 8.0 server, as the customer runs them. ci/test.sh deselects
+# scripts run on a real MySQL server (8.0 and 8.4 LTS), as the customer runs them. ci/test.sh deselects
 # `-m integration`, so these tests have this entry point and their own CI job.
 # Usage: ci/test-mysqld.sh [extra pytest args]
 #
@@ -13,6 +13,8 @@
 # instead of skipping silently.
 #
 # Env vars read:
+#   MYSQL_SERIES      - which pinned server: 8.0 (the default) or 8.4 (LTS). The CI job runs
+#                       both as a matrix (#2348).
 #   CI                - set by GitHub Actions. Under CI the pinned server below is always
 #                       used, so the pin is what is tested. Without it, a `mysqld` and
 #                       `mysql` already on PATH are used (a local developer's install).
@@ -23,18 +25,34 @@
 #   MYSQL_FORCE_PINNED=1 - use the pinned server even outside CI (Linux x86_64 only).
 source "$(dirname "$0")/lib.sh"
 
-# The server: MySQL Community 8.0 generic Linux binaries (glibc 2.28, x86_64). A tarball
-# with a SHA-256 is the only pin that stays exact: a distro package moves with each
-# security update (and the older build leaves the archive), and the vendor's APT
-# repository serves only its newest 8.0. The archive's SHA-256 matches the MD5 the vendor
-# publishes for the same file; the two binaries' SHA-256 (MYSQLD_BIN_SHA256,
-# MYSQL_BIN_SHA256) are checked on every run, a restored cache included.
-MYSQL_VERSION="8.0.45"
-MYSQL_SHA256="c09137539ab42590c8682d498716e6b97a45d83d2188339fa2e980dd54b6e0af"
-MYSQLD_BIN_SHA256="b5a36c8b9446c00ce255c8de085d2c92dfe9321a2683d3b28c1b9ac991d500ca"
-MYSQL_BIN_SHA256="4aa11cec65dc04ce1211dda87684be04f6c83c2ca455a8064b7d380d08e04086"
+# The server: MySQL Community generic Linux binaries (glibc 2.28, x86_64), one pin per
+# series. A tarball with a SHA-256 is the only pin that stays exact: a distro package
+# moves with each security update (and the older build leaves the archive), and the
+# vendor's APT repository serves only its newest release. The archive's SHA-256 matches
+# the MD5 the vendor publishes for the same file; the two binaries' SHA-256
+# (MYSQLD_BIN_SHA256, MYSQL_BIN_SHA256) are checked on every run, a restored cache
+# included. 8.0 is Aurora MySQL 3's line; 8.4 is the LTS line.
+MYSQL_SERIES="${MYSQL_SERIES:-8.0}"
+case "$MYSQL_SERIES" in
+  8.0)
+    MYSQL_VERSION="8.0.45"
+    MYSQL_SHA256="c09137539ab42590c8682d498716e6b97a45d83d2188339fa2e980dd54b6e0af"
+    MYSQLD_BIN_SHA256="b5a36c8b9446c00ce255c8de085d2c92dfe9321a2683d3b28c1b9ac991d500ca"
+    MYSQL_BIN_SHA256="4aa11cec65dc04ce1211dda87684be04f6c83c2ca455a8064b7d380d08e04086"
+    ;;
+  8.4)
+    MYSQL_VERSION="8.4.11"
+    MYSQL_SHA256="94e204cc94dede3746d2773fa5818f28f555cd8368c75ca0612eac124e6f3e58"
+    MYSQLD_BIN_SHA256="0ae85e8c4efb8457e9230e42a1b54b9b542a3b27a711f0ac4b190649bc857dc9"
+    MYSQL_BIN_SHA256="599968be33b0b6073db238ede220a6312abd155b782d65e42ff320db8507cf87"
+    ;;
+  *)
+    echo "error: MYSQL_SERIES must be 8.0 or 8.4, not $MYSQL_SERIES" >&2
+    exit 2
+    ;;
+esac
 MYSQL_NAME="mysql-${MYSQL_VERSION}-linux-glibc2.28-x86_64"
-MYSQL_URL="https://cdn.mysql.com/archives/mysql-8.0/${MYSQL_NAME}.tar.xz"
+MYSQL_URL="https://cdn.mysql.com/archives/mysql-${MYSQL_SERIES}/${MYSQL_NAME}.tar.xz"
 
 # Exactly the tests that need a server. Add a file here when it joins them.
 MYSQLD_TEST_FILES=(
@@ -66,7 +84,7 @@ install_pinned_server() {
   local base="$cache/$MYSQL_NAME"
   if ! binaries_ok "$base"; then
     if [ "$(uname -s)-$(uname -m)" != "Linux-x86_64" ]; then
-      echo "error: the pinned MySQL $MYSQL_VERSION is a Linux x86_64 build; install mysqld and the mysql client (8.0) and put them on PATH" >&2
+      echo "error: the pinned MySQL $MYSQL_VERSION is a Linux x86_64 build; install mysqld and the mysql client ($MYSQL_SERIES) and put them on PATH" >&2
       exit 2
     fi
     mkdir -p "$cache"
