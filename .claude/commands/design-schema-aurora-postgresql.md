@@ -34,6 +34,10 @@ Read files with the Read tool (use `offset`/`limit` for large files). Search fil
           call rate, with the tables, the filter/sort columns, rows examined,
           timings and index-miss counts
         - `analysis` and `source_features` (triggers, procedures, views)
+        - `left_out`: each source object the draft does not create, with its
+          table, kind, name and reason (only when the draft leaves one out)
+        - `renamed_indexes`: each index the draft creates under another name,
+          with the new name and the reason (only when it renames one) <!-- claim: tests/unit/tools/schema/aurora_common/test_design_view_left_out.py::test_the_view_lists_each_left_out_kind, tests/unit/tools/schema/aurora_common/test_design_view_left_out.py::test_each_left_out_name_is_cleaned_like_the_app_layer_note, tests/unit/tools/schema/aurora_common/test_design_view_left_out.py::test_the_view_lists_each_renamed_index_with_its_new_name -->
         - `tables` (last, one table per line): `row_count`, `read_qps` /
           `write_qps`, `primary_key`, `columns` (one line each:
           `name TYPE [NOT NULL] [AI] [DEFAULT x]`, then `(residual; source t)`

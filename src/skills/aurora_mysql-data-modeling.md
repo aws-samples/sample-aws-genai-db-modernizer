@@ -16,7 +16,7 @@ script's work.
   `residual_types` (residual columns grouped by source data type),
   `hot_queries` (busiest in-scope queries with tables and filter/sort columns),
   `analysis` (detected patterns, anti-patterns) and `source_features`
-  (triggers, procedures, views). An index `USING fulltext` or `USING spatial` is
+  (triggers, procedures, views). `left_out` lists each source object the draft does not create (`table`, `kind`, `name`, `feature`, `reason`). <!-- claim: tests/unit/tools/schema/aurora_common/test_design_view_left_out.py::test_the_view_lists_each_left_out_kind, tests/unit/tools/schema/aurora_common/test_design_view_left_out.py::test_each_left_out_name_is_cleaned_like_the_app_layer_note --> An index `USING fulltext` or `USING spatial` is
   a FULLTEXT or SPATIAL index: the merge keeps it, and an Aurora MySQL delta
   names no method.
 - **analysis.redesign_requirements** (inside `design_view.analysis`): queries routing scored as a redesigned target would serve them, each with `index_on`, the `table.column` filters the source has no index on. Where `routing_depends` is true the plan relies on that index: add it in the delta (`add_indexes`; for a column tested `IS NOT NULL`, a plain index on that column, since Aurora MySQL has no partial indexes). Where it is false the engine already scores the query as well as written: add the index only if the query is hot.
@@ -67,7 +67,7 @@ come from more than one source schema, the view names each table `schema.table`
    `tables[].add_indexes` / `modify_indexes` (structured entries
    `{index_name, columns, unique}` over that table's columns; the script renders
    the DDL) and `remove_indexes` (names). modify/remove name an index from that
-   table's `indexes`. Those entries are the only source of index DDL: an
+   table's `indexes`. A left-out index (`left_out`, `kind` `index`) may come back when a hot query needs it: add it through `add_indexes` under a new name its table does not have, with only printable characters. <!-- claim: tests/unit/tools/schema/aurora_common/test_design_view_left_out.py::test_a_left_out_index_readded_under_a_new_name_merges, tests/unit/tools/schema/aurora_common/test_design_view_left_out.py::test_a_left_out_index_readded_under_its_clashing_name_is_refused --> Those entries are the only source of index DDL: an
    `index` optimization records an index recommendation you do not add, and
    never creates one. An Aurora MySQL index entry takes no `method`, `include`
    or `where`: those are Aurora PostgreSQL only, and the merge rejects them
