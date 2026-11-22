@@ -102,7 +102,7 @@ _CATALOG_RELATIONS = frozenset(
 )  # fmt: skip
 
 REASONS = {
-    DMS_OBJECT: "reads or writes only the table AWS DMS creates on the source ({objects})",
+    DMS_OBJECT: "writes only the table AWS DMS creates on the source ({objects})",
     DMS_REPLICATION_SLOT: (
         "reads a logical replication slot's changes ({objects}), run by the role that "
         "updates AWS DMS's heartbeat table"

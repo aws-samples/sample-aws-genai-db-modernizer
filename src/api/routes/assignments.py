@@ -189,7 +189,7 @@ class AssignmentResponse(BaseModel):
             "src.shared.gate_facts.gate_block_facts over src.shared.gate_status, the chat "
             "gate's source too: per-engine rows (before, after, share_percent, dropped), "
             "total_after (the in-scope queries), surviving, cache_candidates (read_count, "
-            "call_share_percent, reads, more), unservable_query_count, query_total_count "
+            "call_share_percent, reads, more), unservable_query_count, query_total_count, "
             "source_table_count, and excluded_statements (the statements AWS DMS ran that the "
             "collector left out, #2375). The version's report's facts once synthesis wrote it. "
             "Computed on read, so an older job has them too; None when its artifacts "
