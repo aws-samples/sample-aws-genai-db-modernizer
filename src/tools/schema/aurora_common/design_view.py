@@ -321,32 +321,52 @@ def _index_line(
     return f"{line} WHERE {index.predicate}" if index.predicate else line
 
 
+#: The longest cleaned name or reason a ``left_out`` or ``renamed_indexes`` entry carries
+#: (#2575): a longer one is cut there and ends with ``TRUNCATED``, so a 20,000-character
+#: collected name is not repeated across the view.
+TEXT_LIMIT = 200
+TRUNCATED = "... (cut)"
+
+
+def _cleaned(text: object) -> str:
+    """``text`` cleaned with ``comment_text``, like the app-layer note, then cut to
+    ``TEXT_LIMIT`` characters with the ``TRUNCATED`` marker when longer (#2575)."""
+    cleaned = comment_text(str(text))
+    return cleaned if len(cleaned) <= TEXT_LIMIT else cleaned[:TEXT_LIMIT] + TRUNCATED
+
+
 def _left_out(base: AuroraDesignBase) -> list[dict]:
     """One entry per source object the draft does not create (#2416): its table, kind,
-    name, the feature its app-layer note files it under and the reason. Every text is
-    cleaned with ``comment_text``, like the note (``delta_merge._left_out_notes``), so no
-    collected character the draft refused reaches the model."""
-    return [
-        {
-            "table": comment_text(str(o["table"])),
+    name, the feature its app-layer note files it under and the reason; for an index, also
+    the columns it covered and whether it is unique (#2575). Every text is cleaned with
+    ``comment_text``, like the note (``delta_merge._left_out_notes``), so no collected
+    character the draft refused reaches the model, and capped (``_cleaned``)."""
+    out = []
+    for o in base.left_out:
+        entry = {
+            "table": _cleaned(o["table"]),
             "kind": o["kind"],
-            "name": comment_text(str(o["name"])),
+            "name": _cleaned(o["name"]),
             "feature": o.get("feature", "unsafe_name"),
-            "reason": comment_text(str(o["reason"])),
+            "reason": _cleaned(o["reason"]),
         }
-        for o in base.left_out
-    ]
+        if o["kind"] == "index" and "columns" in o:
+            entry["columns"] = [_cleaned(c) for c in o["columns"]]
+            entry["unique"] = bool(o.get("unique"))
+        out.append(entry)
+    return out
 
 
 def _renamed_indexes(base: AuroraDesignBase) -> list[dict]:
     """One entry per index Aurora PostgreSQL creates under another name (#2410, #2416):
-    the collected name, the name the draft gives it and why, cleaned like ``_left_out``."""
+    the collected name, the name the draft gives it and why, cleaned and capped like
+    ``_left_out``."""
     return [
         {
-            "table": comment_text(str(o["table"])),
-            "name": comment_text(str(o["name"])),
-            "new_name": comment_text(str(o["new_name"])),
-            "reason": comment_text(str(o["reason"])),
+            "table": _cleaned(o["table"]),
+            "name": _cleaned(o["name"]),
+            "new_name": _cleaned(o["new_name"]),
+            "reason": _cleaned(o["reason"]),
         }
         for o in base.renamed
     ]

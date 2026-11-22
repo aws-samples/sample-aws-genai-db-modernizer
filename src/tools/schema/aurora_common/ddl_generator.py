@@ -1634,6 +1634,12 @@ def _duplicate_index(table: str, name: str, kept: str) -> dict:
             "feature": "duplicate_index_name"}  # fmt: skip
 
 
+def _covers(idx: AgentIndex) -> dict:
+    """What a left-out index covered (#2575): its columns as collected (a reader cleans
+    them) and whether it is unique, so the designer can re-add that very index."""
+    return {"columns": list(idx.columns), "unique": bool(idx.is_unique)}
+
+
 def quotable_tables(
     tables: list[AgentTable], dialect: Dialect, source_engine: str | None, qualified: bool = False
 ) -> tuple[list[AgentTable], list[dict]]:
@@ -1706,9 +1712,10 @@ def quotable_tables(
             names = [idx.index_name, *idx.columns, *(idx.included_columns or [])]
             name = idx.index_name.lower() if dialect is MYSQL else idx.index_name
             if any(has_unprintable(n) for n in names):
-                left_out.append(_unsafe(label, "index", idx.index_name))
+                left_out.append({**_unsafe(label, "index", idx.index_name), **_covers(idx)})
             elif name in kept:
-                left_out.append(_duplicate_index(label, idx.index_name, kept[name]))
+                left_out.append({**_duplicate_index(label, idx.index_name, kept[name]),
+                                 **_covers(idx)})  # fmt: skip
             else:
                 kept[name] = idx.index_name
                 indexes.append(idx)
