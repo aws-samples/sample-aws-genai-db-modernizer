@@ -196,6 +196,30 @@ def load_and_compare(root: Path) -> list[str]:
     return problems
 
 
+#: Single files with a loader above or in ``load_and_compare``: the file names the
+#: current catalog may hold at its top level. A file added under ``src/catalog/`` needs a
+#: loader here, in the pull request that adds it, so the release step needs no test edit.
+LOADED_FILES = {
+    *SINGLE_FILES,
+    "aurora_versions.toml",
+    "aurora_postgresql_extensions.toml",
+    "prices.toml",
+    "model_prices.toml",
+}
+
+
+def uncovered_entries(root: Path) -> list[str]:
+    """The ``*.toml`` files and folders directly under ``root`` that no loader here reads."""
+    found: list[str] = []
+    for entry in sorted(root.iterdir()):
+        if entry.is_dir() and any(entry.rglob("*.toml")):
+            if entry.name not in PER_FILE_KINDS:
+                found.append(entry.name + "/")
+        elif entry.is_file() and entry.suffix == ".toml" and entry.name not in LOADED_FILES:
+            found.append(entry.name)
+    return found
+
+
 def test_a_release_is_recorded() -> None:
     assert "v0.4.0-beta.2" in RELEASES
 
@@ -205,13 +229,7 @@ def test_a_release_is_recorded() -> None:
 def test_a_release_s_catalog_loads_with_the_same_meaning(tag: str) -> None:
     root = RELEASE_FILES_DIR / tag
     every_file = {p.relative_to(root).as_posix() for p in root.rglob("*.toml")}
-    covered = {
-        *SINGLE_FILES,
-        "aurora_versions.toml",
-        "aurora_postgresql_extensions.toml",
-        "prices.toml",
-        "model_prices.toml",
-    }
+    covered = set(LOADED_FILES)
     covered |= {f for f in every_file if f.split("/")[0] in PER_FILE_KINDS}
     assert every_file <= covered, f"{tag}: no loader reads {sorted(every_file - covered)}"
     problems = load_and_compare(root)
@@ -229,3 +247,25 @@ def test_a_dropped_or_changed_value_is_a_meaning_change() -> None:
     ]
     assert meaning_changes(raw, {**raw, "b": {"c": [1, 2], "d": 1}}) == [".b.d: True loaded as 1"]
     assert meaning_changes(raw, {**raw, "b": "flat"}) == [".b: a table became str"]
+
+
+@pytest.mark.passes_on_main  # the helper lives in this file; main's catalog is fully covered
+def test_every_catalog_file_and_folder_has_a_loader_here() -> None:
+    """The release step records the catalog as a fixture this test loads; a new file with
+    no loader would fail it at release time, so it fails in the pull request that adds it."""
+    from scripts.catalog_format_snapshot import CATALOG_DIR
+
+    assert uncovered_entries(CATALOG_DIR) == []
+
+
+@pytest.mark.passes_on_main  # the helper lives in this file
+def test_a_new_catalog_file_or_folder_with_no_loader_is_named(tmp_path: Path) -> None:
+    (tmp_path / "gates.toml").write_text("x = 1\n", encoding="utf-8")
+    (tmp_path / "engines").mkdir()
+    (tmp_path / "engines" / "a.toml").write_text("x = 1\n", encoding="utf-8")
+    (tmp_path / "README.md").write_text("notes\n", encoding="utf-8")
+    assert uncovered_entries(tmp_path) == []
+    (tmp_path / "new_rules.toml").write_text("x = 1\n", encoding="utf-8")
+    (tmp_path / "new_folder").mkdir()
+    (tmp_path / "new_folder" / "b.toml").write_text("x = 1\n", encoding="utf-8")
+    assert uncovered_entries(tmp_path) == ["new_folder/", "new_rules.toml"]
