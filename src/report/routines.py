@@ -12,7 +12,8 @@ module only formats them (ADR-032):
   that would behave differently, with no code collected) by id, kind and status with why
   and the routines it names, then each rewrite and check that could not run once with its
   routines (the LOW roll-up), then each intervention (#1941): what came of the model
-  repair of each routine it was asked for, in the facts' own words. The routine risks'
+  repair of each routine it was asked for, in the facts' own words, then each routine
+  carried after a repair (#2428) with the routines it follows. The routine risks'
   "And N more" points here;
 - :func:`routine_summary_lines`: the headline and the to-do, counts only, which the
   executive report and the final chat summary print.
@@ -132,6 +133,30 @@ def _interventions_md(routines: dict[str, Any]) -> list[str]:
     return out
 
 
+def _after_repair_md(routines: dict[str, Any]) -> list[str]:
+    """Each routine carried after a repair (#2428): the routines it waited for and the
+    facts' ``line``."""
+    items = [
+        i
+        for i in routines.get("carried_after_repair") or []
+        if isinstance(i, dict) and i.get("line")
+    ]
+    if not items:
+        return []
+    out = [
+        "### Carried after a repair",
+        "",
+        "Each routine carried only once a routine it calls was repaired, and the routines it "
+        "follows in deploy order.",
+        "",
+    ]
+    for item in items:
+        after = _refs_cell(item.get("after") or []) or "-"
+        out.append(f"- {_ref(item)}, after {after}: {escaping.md_text(item.get('line'))}")
+    out.append("")
+    return out
+
+
 def routines_md(report: dict[str, Any]) -> list[str]:
     """The engineering report's Routines section, from ``facts.routines``; nothing when
     the report has none."""
@@ -176,6 +201,7 @@ def routines_md(report: dict[str, Any]) -> list[str]:
             )
         out.append("")
     out += _interventions_md(routines)
+    out += _after_repair_md(routines)
     if notes:
         out += ["### Rewrites and checks that could not run", ""]
         out += [_note_md(n) for n in notes]

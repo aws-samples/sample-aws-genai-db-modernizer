@@ -1,0 +1,6 @@
+# A pending contract version bump (ADR-008 Decision 8). The number is assigned by
+# uv run python scripts/resolve_contract_versions.py --release at release (a MAJOR: in its pull request).
+contract = "synthesis_output.SynthesisOutputContract"
+kind = "minor"
+reason = "facts.routines.carried_after_repair and carried_after_repair_count: the routines carried after a repair of a routine they call (#2428)"
+issue = 2428

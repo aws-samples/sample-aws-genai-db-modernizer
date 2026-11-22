@@ -19,6 +19,7 @@ import en from '../../locales/en.json';
 import RoutineMigrationSection from '../RoutineMigrationSection';
 import routines from './fixtures/routineFacts.json';
 import withInterventions from './fixtures/routineInterventions.json';
+import withAfterRepair from './fixtures/routineAfterRepair.json';
 
 jest.mock('@cloudscape-design/components/expandable-section', () => ({
   __esModule: true,
@@ -239,6 +240,28 @@ test('lists each intervention with its line, and every attempt of one that needs
   expect(box.textContent).toContain('it is checked, not tested yet on a test Aurora');
   const pending = withInterventions.interventions.find(i => i.state === 'repaired_pending_proof');
   expect(box.textContent).not.toContain(pending.change_note);
+});
+
+// #2428: each routine carried after a repair, with the routines it follows, in the
+// facts' own words (fixtures/routineAfterRepair.json is checked against the Python facts
+// by tests/unit/tools/routines/test_carried_after_repair.py).
+test('lists each routine carried after a repair as checked, not tested', () => {
+  render({ facts: { routines: withAfterRepair } });
+  const box = container.querySelector('[data-figure="routines-after-repair"]');
+  expect(box.querySelector('[data-box-variant="h4"]').textContent).toBe('Carried after a repair');
+  const items = [...box.querySelectorAll(':scope > ul > li')];
+  expect(items).toHaveLength(withAfterRepair.carried_after_repair.length);
+  withAfterRepair.carried_after_repair.forEach((item, n) => {
+    const after = item.after.map(a => `${a.kind} ${a.routine_id}`).join(', ');
+    expect(items[n].textContent).toBe(`${item.kind} ${item.routine_id}, after ${after}: ${item.line}`);
+    expect(items[n].getAttribute('data-after-repair')).toBe(item.deploy_gate);
+  });
+  expect(box.textContent).toContain('checked, not tested yet');
+});
+
+test('no carried-after-a-repair section without one', () => {
+  render({ facts: { routines: withInterventions } });
+  expect(container.querySelector('[data-figure="routines-after-repair"]')).toBeNull();
 });
 
 test('no interventions section without one', () => {

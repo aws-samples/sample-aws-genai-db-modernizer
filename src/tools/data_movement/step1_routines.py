@@ -14,7 +14,10 @@ artifact's deploy order:
    not carried, with the artifact's reasons, unless the repair loop carried it
    (``model_repaired`` in ``routine_repair.json`` for the same version, #2384): then it is
    carried as ``model_repaired``, and the deploy gate decides whether its rebuilt text is
-   deployed (``routine_test_gate``), as for any carried routine.
+   deployed (``routine_test_gate``), as for any carried routine. A routine whose only
+   reason is a routine it calls that needed attention, when every such routine is carried
+   now (a repaired one among them), is carried after them with the status its own checks
+   gave it (``carried_after_repair``, #2428); the deploy gate decides it like any other.
 2. A routine that names a view step 1 does not create is not carried
    (``depends_on_view:<schema.view>``, one per view); a view the contract's views section
    carries (#2082) holds nothing back, since the views deploy script runs first. The
@@ -50,7 +53,11 @@ from typing import Any
 
 from src.contracts.routine_migration import RoutineMigration, RoutineMigrationContract
 from src.contracts.transformation_contract import StepContract, StepRoutine, StepRoutines
-from src.shared.routine_facts import repairable_row
+from src.shared.routine_facts import (
+    after_repair_status,
+    carried_after_repair,
+    repairable_row,
+)
 
 __all__ = [
     "DEFERRED_KINDS",
@@ -172,14 +179,19 @@ def build_step_routines(
     carry_of: dict[tuple[str, str], str] = {}
     carried: list[StepRoutine] = []
     others: list[StepRoutine] = []
+    # #2428: a routine that waited only for routines carried now (one repaired among them)
+    # is carried after them, with its own status; the facts read the same rule.
+    along = carried_after_repair([r.model_dump(mode="json") for r in migration.routines],
+                                 repaired)  # fmt: skip
     for row in migration.routines:
         key = (row.kind, row.routine_id)
         reasons: list[str] = []
-        status = (
-            "model_repaired"
-            if key in repaired and repairable_row(row.model_dump(mode="json"))
-            else row.status
-        )
+        if key in along:
+            status = after_repair_status(row.model_dump(mode="json"))
+        elif key in repaired and repairable_row(row.model_dump(mode="json")):
+            status = "model_repaired"
+        else:
+            status = row.status
         if migration.target_engine != engine:
             reasons = [ENGINE_DIFFERS]
         elif status not in ("as_is", "rewritten", "model_repaired"):
@@ -203,6 +215,8 @@ def build_step_routines(
         extra = _trigger_fields(row, engine, found)
         if status == "model_repaired" and not reasons:
             extra["repaired"] = True
+        if key in along and not reasons:
+            extra["carried_after_repair"] = True
         if reasons:
             carry_of[key] = "not_carried"
             others.append(_row(row, "not_carried", reasons=reasons, **extra))

@@ -654,7 +654,79 @@ def with_repairs(
         if digest and repairable_row(row):
             row.update(status="model_repaired", repair_sha256=digest)
         out.append(row)
+    along = carried_after_repair(rows, repaired)
+    for row in out:
+        after = along.get((str(row.get("kind")), str(row.get("routine_id"))))
+        if after is not None:
+            row.update(
+                status=after_repair_status(row), reasons=[], blocked_by=[],
+                carried_after_repair=after,
+            )  # fmt: skip
     return out
+
+
+#: The one reason a routine carried after a repair had (#2428): it named a routine that
+#: needed attention. Every other reason is its own and keeps it not carried.
+_BLOCKED_ONLY = ["depends_on_needs_attention"]
+
+
+def after_repair_status(row: Mapping[str, Any]) -> str:
+    """The status a routine carried after a repair gets (#2428): the one its own checks gave
+    it, ``rewritten`` with a header rewrite, else ``as_is``."""
+    return "rewritten" if row.get("rewrites") else "as_is"
+
+
+def carried_after_repair(
+    rows: Iterable[Mapping[str, Any]], repaired: Iterable[tuple[str, str]]
+) -> dict[tuple[str, str], list[dict[str, str]]]:
+    """Each routine carried because the routines it waited for are carried now (#2428), by
+    ``(kind, routine_id)``, with those routines (its ``blocked_by``, in its order).
+
+    Deterministic, no model. A routine is one when it needs attention for one reason only,
+    ``depends_on_needs_attention`` (its own checks passed; text that is not exact, a cycle
+    or a missing dependency each add a reason of their own), and every routine it names in ``blocked_by`` is clear: carried as it is
+    or rewritten, repaired by the loop (``repaired``, a row :func:`repairable_row` accepts)
+    with everything it names clear, or itself carried after a repair. Settled to a fixed
+    point, so a chain of callers follows one repair; a routine with a reason of its own, a
+    cycle member, and a caller of a routine whose repair failed or that still waits for an
+    unrepaired one stay not carried. Its place in deploy order is the artifact's, after
+    every routine it names."""
+    listed = [r for r in rows if isinstance(r, Mapping)]
+    fixed = set(repaired)
+
+    def key(r: Mapping[str, Any]) -> tuple[str, str]:
+        return (str(r.get("kind")), str(r.get("routine_id")))
+
+    def names(r: Mapping[str, Any]) -> set[tuple[str, str]]:
+        return {key(b) for b in r.get("blocked_by") or [] if isinstance(b, Mapping)} - {key(r)}
+
+    clear = {key(r) for r in listed if r.get("status") in ("as_is", "rewritten")}
+    waiting: dict[tuple[str, str], Mapping[str, Any]] = {}
+    for r in listed:
+        if key(r) in fixed and repairable_row(r):
+            waiting[key(r)] = r
+        elif (
+            r.get("status") == "needs_attention"
+            and list(r.get("reasons") or []) == _BLOCKED_ONLY
+            and names(r)
+        ):
+            waiting[key(r)] = r
+    changed = True
+    while changed:
+        changed = False
+        for ref, r in waiting.items():
+            if ref not in clear and names(r) <= clear:
+                clear.add(ref)
+                changed = True
+    return {
+        ref: [
+            {"kind": str(b.get("kind")), "routine_id": str(b.get("routine_id"))}
+            for b in r.get("blocked_by") or []
+            if isinstance(b, Mapping)
+        ]
+        for ref, r in waiting.items()
+        if ref in clear and ref not in fixed
+    }
 
 
 def target_wave(target_engine: str, migration_waves: Iterable[Any] | None) -> int | None:
@@ -756,6 +828,54 @@ def intervention_line(item: Mapping[str, Any]) -> str:
         f"A model repair was tried {n} time{'s' if n != 1 else ''} and none was accepted, so "
         "it needs attention."
     )
+
+
+#: What a routine carried after a repair is (#2428), before what step 1 does with it.
+_AFTER_REPAIR_HEAD = (
+    "It needed attention only because it calls a routine that needed attention, and a model "
+    "repaired that routine; its own checks passed, so it is carried after it in deploy order."
+)
+
+
+def after_repair_line(deploy_gate: str | None) -> str:
+    """What the deliverables say about one routine carried after a repair (#2428), by what
+    step 1's deploy gate does with it: before a test it is :data:`NOT_TESTED_STATE`, the
+    words every carried routine gets; never tested until :data:`TEST_COMMAND` runs it."""
+    gate = deploy_gate or "not_tested"
+    if gate == "deployed":
+        return (
+            f"{_AFTER_REPAIR_HEAD} On a test Aurora it showed no difference on the calls made, "
+            "so step 1 deploys it."
+        )
+    if gate == "not_tested":
+        return f"{_AFTER_REPAIR_HEAD} It is {NOT_TESTED_STATE}. {_NOT_TESTED_WORDS}"
+    return f"{_AFTER_REPAIR_HEAD} {_DEPLOY_WORDS.get(gate, _NOT_TESTED_WORDS)}"
+
+
+def after_repair_items(
+    rows: Iterable[Mapping[str, Any]], holds: Mapping[tuple[str, str], str], current: bool
+) -> list[dict[str, Any]]:
+    """``facts.routines.carried_after_repair`` (#2428): each row :func:`with_repairs` carried
+    after a repair, in deploy order, with the routines it waited for (``after``), its
+    ``deploy_gate`` (``deployed`` after a current test that holds it nowhere, else its
+    reason in ``holds``, ``not_tested`` before one) and its :func:`after_repair_line`."""
+    out = []
+    for row in rows:
+        after = row.get("carried_after_repair")
+        if not isinstance(after, list):
+            continue
+        ref = (str(row.get("kind")), str(row.get("routine_id")))
+        gate = holds.get(ref, "deployed" if current else "not_tested")
+        out.append(
+            {
+                "kind": ref[0],
+                "routine_id": ref[1],
+                "after": [{"kind": a["kind"], "routine_id": a["routine_id"]} for a in after],
+                "deploy_gate": gate,
+                "line": after_repair_line(gate),
+            }
+        )
+    return out
 
 
 def routine_interventions(
@@ -992,6 +1112,11 @@ def routine_facts(
         ],
         "interventions": interventions,
     }
+    after_repair = after_repair_items(artifact_rows, holds, current)
+    if after_repair:
+        # #2428: left out of the block when empty, so a report without one keeps its bytes.
+        out["carried_after_repair"] = after_repair
+        out["carried_after_repair_count"] = len(after_repair)
     rewrite_kinds = {
         str(w["rule_id"]): str(w.get("rewrite"))
         for row in artifact_rows

@@ -375,6 +375,15 @@ class StepRoutine(BaseModel):
             "gate rebuilt, never from the original"
         ),
     )
+    carried_after_repair: bool = Field(
+        False,
+        exclude_if=lambda value: value is False,
+        description=(
+            "Carried or left to the triggers-enable script after a repair (#2428): it needed "
+            "attention only because it calls a routine a model repaired, its own checks "
+            "passed, and it follows that routine in the deploy order"
+        ),
+    )
 
     @model_validator(mode="after")
     def _carry_fits(self) -> "StepRoutine":
