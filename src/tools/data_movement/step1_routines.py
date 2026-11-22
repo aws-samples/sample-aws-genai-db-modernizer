@@ -14,7 +14,9 @@ artifact's deploy order:
    not carried, with the artifact's reasons, unless the repair loop carried it
    (``model_repaired`` in ``routine_repair.json`` for the same version, #2384): then it is
    carried as ``model_repaired``, and the deploy gate decides whether its rebuilt text is
-   deployed (``routine_test_gate``), as for any carried routine. A routine whose only
+   deployed (``routine_test_gate``), as for any carried routine, unless a routine it calls
+   is not carried: then it is held by that routine, with the reasons the facts give it
+   (``routine_facts.repairs_held``, #2566). A routine whose only
    reason is a routine it calls that needed attention, when every such routine is carried
    now (a repaired one among them), is carried after them with the status its own checks
    gave it (``carried_after_repair``, #2428); the deploy gate decides it like any other.
@@ -56,7 +58,9 @@ from src.contracts.transformation_contract import StepContract, StepRoutine, Ste
 from src.shared.routine_facts import (
     after_repair_status,
     carried_after_repair,
+    held_reasons,
     repairable_row,
+    repairs_held,
 )
 
 __all__ = [
@@ -181,21 +185,25 @@ def build_step_routines(
     others: list[StepRoutine] = []
     # #2428: a routine that waited only for routines carried now (one repaired among them)
     # is carried after them, with its own status; the facts read the same rule.
-    along = carried_after_repair([r.model_dump(mode="json") for r in migration.routines],
-                                 repaired)  # fmt: skip
+    dumped = {(r.kind, r.routine_id): r.model_dump(mode="json") for r in migration.routines}
+    along = carried_after_repair(dumped.values(), repaired)
+    # #2566: a repair whose callee is not carried is held by it, as the facts hold it.
+    waits = repairs_held(dumped.values(), repaired)
     for row in migration.routines:
         key = (row.kind, row.routine_id)
         reasons: list[str] = []
-        if key in along:
-            status = after_repair_status(row.model_dump(mode="json"))
-        elif key in repaired and repairable_row(row.model_dump(mode="json")):
+        status: str = row.status
+        why = list(row.reasons)
+        if key in waits:
+            why = held_reasons(dumped[key])
+        elif key in along:
+            status = after_repair_status(dumped[key])
+        elif key in repaired and repairable_row(dumped[key]):
             status = "model_repaired"
-        else:
-            status = row.status
         if migration.target_engine != engine:
             reasons = [ENGINE_DIFFERS]
         elif status not in ("as_is", "rewritten", "model_repaired"):
-            reasons = list(row.reasons) or [NOT_CARRIABLE]
+            reasons = why or [NOT_CARRIABLE]
         else:
             named = {d.name.lower() for d in row.dependencies if d.kind == "table"}
             own = _trigger_table(row)

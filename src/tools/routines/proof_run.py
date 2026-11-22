@@ -68,6 +68,7 @@ from src.contracts.routine_migration import (
     RoutineProofRun,
 )
 from src.contracts.routine_sources import RoutineSource
+from src.shared.routine_facts import standing_repairs
 from src.tools.database import disposable_engine as de
 from src.tools.routines.comparison import (
     COVERAGE_LIMITS,
@@ -244,7 +245,9 @@ def plan_proof(migration: RoutineMigrationContract, sources: Iterable[RoutineSou
     they are not tested. ``repaired`` gives each model-repaired routine's rebuilt exact
     text (#2384), or None when it did not rebuild: carried as ``model_repaired``."""
     dialect = migration.source_engine
-    fixed = dict(repaired or {})
+    # #2566: a repair whose callee is not carried is held by it, so the test leaves it out.
+    fixed = standing_repairs([r.model_dump(mode="json") for r in migration.routines],
+                             dict(repaired or {}))  # fmt: skip
     along = after_repair(migration, fixed)
     carried = [
         r.model_copy(update={"status": "model_repaired"}) if (r.kind, r.routine_id) in fixed
@@ -620,6 +623,8 @@ def run_proof(
     }
     digests: dict[tuple[str, str], str] = {ref: d for ref, d in repaired_routines(repair, version).items()
                if ref in rows and repairable_row(rows[ref].model_dump(mode="json"))}  # fmt: skip
+    # #2566: a repair whose callee is not carried is held by it, as step 1 holds it.
+    digests = standing_repairs([r.model_dump(mode="json") for r in rows.values()], digests)
     along = after_repair(migration, digests)
     carried = [r for r in migration.routines
                if r.status in CARRIED or (r.kind, r.routine_id) in digests

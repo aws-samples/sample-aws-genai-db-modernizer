@@ -646,12 +646,19 @@ def with_repairs(
     """The artifact's rows with each repaired routine (:func:`repaired_routines`) as step 1
     and the test carry it (#2384): status ``model_repaired``, with its ``repair_sha256``. Only
     a row the repair loop could have sent (:func:`repairable_row`) is replaced: a row with no
-    exact text, or one carried as it is or rewritten that no test refused, never is."""
+    exact text, or one carried as it is or rewritten that no test refused, never is. A repair
+    whose callee is not carried (:func:`repairs_held`, #2566) stays not carried, held by the
+    callees it still waits for."""
+    rows = list(rows)
     out = []
+    held = repairs_held(rows, repaired)
     for r in rows:
         row = dict(r)
-        digest = repaired.get((str(row.get("kind")), str(row.get("routine_id"))))
-        if digest and repairable_row(row):
+        ref = (str(row.get("kind")), str(row.get("routine_id")))
+        digest = repaired.get(ref)
+        if ref in held:
+            row.update(reasons=held_reasons(row), blocked_by=held[ref])
+        elif digest and repairable_row(row):
             row.update(status="model_repaired", repair_sha256=digest)
         out.append(row)
     along = carried_after_repair(rows, repaired)
@@ -666,14 +673,95 @@ def with_repairs(
 
 
 #: The one reason a routine carried after a repair had (#2428): it named a routine that
-#: needed attention. Every other reason is its own and keeps it not carried.
-_BLOCKED_ONLY = ["depends_on_needs_attention"]
+#: needed attention. Every other reason is its own and keeps it not carried. Also the reason
+#: a repaired routine whose callee is not carried is held by (#2566).
+REPAIR_HELD = "depends_on_needs_attention"
+_BLOCKED_ONLY = [REPAIR_HELD]
 
 
 def after_repair_status(row: Mapping[str, Any]) -> str:
     """The status a routine carried after a repair gets (#2428): the one its own checks gave
     it, ``rewritten`` with a header rewrite, else ``as_is``."""
     return "rewritten" if row.get("rewrites") else "as_is"
+
+
+def held_reasons(row: Mapping[str, Any]) -> list[str]:
+    """The reasons a repaired routine held by its callee has (#2566): the artifact's reason
+    codes (the dependency reasons, a cycle among them), never the failed checks the repair
+    fixed, and always :data:`REPAIR_HELD`."""
+    codes = [str(r) for r in row.get("reasons") or [] if r in REASON_CODES]
+    return codes if REPAIR_HELD in codes else [*codes, REPAIR_HELD]
+
+
+def _key(r: Mapping[str, Any]) -> tuple[str, str]:
+    return (str(r.get("kind")), str(r.get("routine_id")))
+
+
+def _names(r: Mapping[str, Any]) -> set[tuple[str, str]]:
+    return {_key(b) for b in r.get("blocked_by") or [] if isinstance(b, Mapping)} - {_key(r)}
+
+
+def _settle(
+    rows: Iterable[Mapping[str, Any]], repaired: Iterable[tuple[str, str]]
+) -> tuple[set[tuple[str, str]], dict[tuple[str, str], Mapping[str, Any]], set[tuple[str, str]]]:
+    """The one rule for what a repair carries (#2428, #2566): ``(clear, waiting, fixed)``.
+    ``clear`` is every routine carried once the repairs stand, settled to a fixed point:
+    carried as it is or rewritten, a repaired routine (``fixed``, a row
+    :func:`repairable_row` accepts) whose ``blocked_by`` is all clear, or a routine whose only
+    reason is :data:`REPAIR_HELD` with its ``blocked_by`` all clear. ``waiting`` holds the
+    rows the fixed point decided."""
+    listed = [r for r in rows if isinstance(r, Mapping)]
+    clear = {_key(r) for r in listed if r.get("status") in ("as_is", "rewritten")}
+    wanted = set(repaired)
+    fixed: set[tuple[str, str]] = set()
+    waiting: dict[tuple[str, str], Mapping[str, Any]] = {}
+    for r in listed:
+        if _key(r) in wanted and repairable_row(r):
+            fixed.add(_key(r))
+            waiting[_key(r)] = r
+        elif (
+            r.get("status") == "needs_attention"
+            and list(r.get("reasons") or []) == _BLOCKED_ONLY
+            and _names(r)
+        ):
+            waiting[_key(r)] = r
+    changed = True
+    while changed:
+        changed = False
+        for ref, r in waiting.items():
+            if ref not in clear and _names(r) <= clear:
+                clear.add(ref)
+                changed = True
+    return clear, waiting, fixed
+
+
+def repairs_held(
+    rows: Iterable[Mapping[str, Any]], repaired: Iterable[tuple[str, str]]
+) -> dict[tuple[str, str], list[dict[str, str]]]:
+    """Each repaired routine a repair does not carry because a routine it calls is not
+    carried (#2566), by ``(kind, routine_id)``, with those routines (its ``blocked_by`` that
+    the repairs leave not carried, in its order). The same fixed point as
+    :func:`carried_after_repair` (:func:`_settle`), so a chain of repairs that ends at an
+    unrepaired routine, and a cycle of repairs, are held whole. The facts, step 1, the deploy
+    gate and the test read it, so each holds such a routine with :func:`held_reasons`."""
+    clear, waiting, fixed = _settle(rows, repaired)
+    return {
+        ref: [
+            {"kind": str(b.get("kind")), "routine_id": str(b.get("routine_id"))}
+            for b in waiting[ref].get("blocked_by") or []
+            if isinstance(b, Mapping) and _key(b) not in clear and _key(b) != ref
+        ]
+        for ref in sorted(fixed - clear)
+    }
+
+
+def standing_repairs(
+    rows: Iterable[Mapping[str, Any]], repaired: Mapping[tuple[str, str], Any]
+) -> dict[tuple[str, str], Any]:
+    """``repaired`` without the repairs :func:`repairs_held` holds (#2566): what step 1 and
+    the test carry as ``model_repaired``."""
+    held = repairs_held(rows, repaired)
+    return {ref: v for ref, v in repaired.items() if ref not in held}
 
 
 def carried_after_repair(
@@ -684,40 +772,15 @@ def carried_after_repair(
 
     Deterministic, no model. A routine is one when it needs attention for one reason only,
     ``depends_on_needs_attention`` (its own checks passed; text that is not exact, a cycle
-    or a missing dependency each add a reason of their own), and every routine it names in ``blocked_by`` is clear: carried as it is
-    or rewritten, repaired by the loop (``repaired``, a row :func:`repairable_row` accepts)
-    with everything it names clear, or itself carried after a repair. Settled to a fixed
-    point, so a chain of callers follows one repair; a routine with a reason of its own, a
-    cycle member, and a caller of a routine whose repair failed or that still waits for an
-    unrepaired one stay not carried. Its place in deploy order is the artifact's, after
-    every routine it names."""
-    listed = [r for r in rows if isinstance(r, Mapping)]
-    fixed = set(repaired)
-
-    def key(r: Mapping[str, Any]) -> tuple[str, str]:
-        return (str(r.get("kind")), str(r.get("routine_id")))
-
-    def names(r: Mapping[str, Any]) -> set[tuple[str, str]]:
-        return {key(b) for b in r.get("blocked_by") or [] if isinstance(b, Mapping)} - {key(r)}
-
-    clear = {key(r) for r in listed if r.get("status") in ("as_is", "rewritten")}
-    waiting: dict[tuple[str, str], Mapping[str, Any]] = {}
-    for r in listed:
-        if key(r) in fixed and repairable_row(r):
-            waiting[key(r)] = r
-        elif (
-            r.get("status") == "needs_attention"
-            and list(r.get("reasons") or []) == _BLOCKED_ONLY
-            and names(r)
-        ):
-            waiting[key(r)] = r
-    changed = True
-    while changed:
-        changed = False
-        for ref, r in waiting.items():
-            if ref not in clear and names(r) <= clear:
-                clear.add(ref)
-                changed = True
+    or a missing dependency each add a reason of their own), and every routine it names in
+    ``blocked_by`` is clear: carried as it is or rewritten, repaired by the loop
+    (``repaired``, a row :func:`repairable_row` accepts) with everything it names clear, or
+    itself carried after a repair (:func:`_settle`). Settled to a fixed point, so a chain of
+    callers follows one repair; a routine with a reason of its own, a cycle member, and a
+    caller of a routine whose repair failed or that still waits for an unrepaired one stay
+    not carried. Its place in deploy order is the artifact's, after every routine it
+    names."""
+    clear, waiting, fixed = _settle(rows, repaired)
     return {
         ref: [
             {"kind": str(b.get("kind")), "routine_id": str(b.get("routine_id"))}
@@ -785,6 +848,10 @@ _DEPLOY_WORDS: dict[str, str] = {
         f"({TEST_COMMAND} names why)."
     ),
     DEPENDS_ON_HELD: "Step 1 holds it back: it calls a routine that is held back.",
+    REPAIR_HELD: (
+        "It is not carried: it calls a routine that still needs attention, and step 1 "
+        "carries it only once that routine is carried."
+    ),
     REBUILD_DIFFERS: (
         "Step 1 holds it back: the repair it has now is not the one the test on a test "
         f"Aurora ran; test it again with {TEST_COMMAND}."
@@ -882,13 +949,15 @@ def routine_interventions(
     repair: RoutineRepairContract | Mapping[str, Any] | None,
     version: int,
     holds: Mapping[tuple[str, str], str] | None = None,
+    held: Iterable[tuple[str, str]] = (),
 ) -> list[dict[str, Any]]:
     """``facts.routines.interventions`` (#1940, #1941): each routine of the repair
     result for routine-migration ``version`` in :data:`INTERVENTION_STATES`, with its
     reasons, the model's change note, its attempts (words only) and the line the
     deliverables print. Empty without a result, or with one for another version. A
     ``model_repaired`` one also has its ``deploy_gate`` (#2384): ``deployed``, or its reason
-    in ``holds`` (:func:`routine_holds`)."""
+    in ``holds`` (:func:`routine_holds`), or :data:`REPAIR_HELD` for a repair in ``held``
+    (:func:`repairs_held`, #2566): not carried, held by its callee."""
     if repair is None:
         return []
     data = (
@@ -899,6 +968,7 @@ def routine_interventions(
     if data.get("assignment_version") != version:
         return []
     out = []
+    waits = set(held)
     for row in data.get("routines") or []:
         if row.get("state") not in INTERVENTION_STATES:
             continue
@@ -912,7 +982,11 @@ def routine_interventions(
             "attention": row.get("attention"),
             "attention_detail": row.get("attention_detail"),
             "deploy_gate": (
-                (holds or {}).get((str(row["kind"]), str(row["routine_id"])), "deployed")
+                (
+                    REPAIR_HELD
+                    if (str(row["kind"]), str(row["routine_id"])) in waits
+                    else (holds or {}).get((str(row["kind"]), str(row["routine_id"])), "deployed")
+                )
                 if row.get("state") == "model_repaired"
                 else None
             ),
@@ -923,6 +997,18 @@ def routine_interventions(
         }
         out.append(with_intervention_words(item))
     return out
+
+
+def repaired_by_model(interventions: Iterable[Any]) -> int:
+    """How many carried routines a model repaired: the ``model_repaired`` interventions,
+    never one held by its callee (:data:`REPAIR_HELD`, #2566), which is not carried."""
+    return sum(
+        1
+        for i in interventions
+        if isinstance(i, Mapping)
+        and i.get("state") == "model_repaired"
+        and i.get("deploy_gate") != REPAIR_HELD
+    )
 
 
 def with_intervention_words(item: Mapping[str, Any]) -> dict[str, Any]:
@@ -970,7 +1056,10 @@ def routine_facts(
     unknown_carried = rewritten_carried = 0
     # A routine the repair loop carried is carried, repaired (#2384): one overlay, read by the
     # counts and the deploy gate's holds alike.
-    artifact_rows = with_repairs(data.get("routines") or [], repaired_routines(repair, version))
+    repaired = repaired_routines(repair, version)
+    artifact_rows = with_repairs(data.get("routines") or [], repaired)
+    # #2566: a repair whose callee is not carried is held by it, as step 1 holds it.
+    held_repairs = repairs_held(data.get("routines") or [], repaired)
     run = data.get("proof_run")
     current = isinstance(run, Mapping) and proof_is_current(run, sources_digest)
     proved = (
@@ -1029,7 +1118,7 @@ def routine_facts(
             }
         )
     named = {r for row in rows for r in (*row["reasons"], *row["rewrites"], *row["unknown_checks"])}
-    interventions = routine_interventions(repair, version, holds)
+    interventions = routine_interventions(repair, version, holds, held_repairs)
     depends_held = sum(1 for reason in holds.values() if reason == DEPENDS_ON_HELD)
     carried_rows = [r for r in artifact_rows if r.get("status") in _CARRIED]
     changed = sum(
@@ -1091,7 +1180,7 @@ def routine_facts(
                     len(holds),
                 )
             ),
-            repaired_by_model=sum(1 for i in interventions if i["state"] == "model_repaired"),
+            repaired_by_model=repaired_by_model(interventions),
             repaired_deployed=(
                 None
                 if proved is None
@@ -1331,11 +1420,7 @@ def with_routine_words(
             {k: int(facts.get(f"{k}_count") or 0) for k in ("as_is", "rewritten", "repaired")},
             int(facts.get("routine_count") or 0),
             facts.get("wave") if isinstance(facts.get("wave"), int) else None,
-            repaired_by_model=sum(
-                1
-                for i in facts.get("interventions") or []
-                if isinstance(i, Mapping) and i.get("state") == "model_repaired"
-            ),
+            repaired_by_model=repaired_by_model(facts.get("interventions") or []),
         )
     out["interventions"] = [
         with_intervention_words(i)

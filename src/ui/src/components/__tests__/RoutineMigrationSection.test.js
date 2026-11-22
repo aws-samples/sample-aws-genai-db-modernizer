@@ -20,6 +20,7 @@ import RoutineMigrationSection from '../RoutineMigrationSection';
 import routines from './fixtures/routineFacts.json';
 import withInterventions from './fixtures/routineInterventions.json';
 import withAfterRepair from './fixtures/routineAfterRepair.json';
+import withRepairHeld from './fixtures/routineRepairHeld.json';
 
 jest.mock('@cloudscape-design/components/expandable-section', () => ({
   __esModule: true,
@@ -257,6 +258,24 @@ test('lists each routine carried after a repair as checked, not tested', () => {
     expect(items[n].getAttribute('data-after-repair')).toBe(item.deploy_gate);
   });
   expect(box.textContent).toContain('checked, not tested yet');
+});
+
+// #2566: a repaired routine whose callee is not carried is held by it: its row names the
+// routine it waits for and its intervention line says it is not carried, in the facts' own
+// words (fixtures/routineRepairHeld.json is checked against the Python facts by
+// tests/unit/tools/routines/test_repaired_routine_held_by_callee.py).
+test('a repaired routine held by its callee reads as not carried, waiting for it', () => {
+  render({ facts: { routines: withRepairHeld } });
+  const id = 'public.own_bad(integer)';
+  const row = container.querySelector(`[data-routine="${id}"]`);
+  expect(row.textContent).toContain('Not carried: needs repair');
+  expect(row.textContent).toContain('public.wal_pos(integer)');
+  const box = container.querySelector('[data-figure="routines-interventions"]');
+  const item = withRepairHeld.interventions.find(i => i.routine_id === id);
+  expect(item.deploy_gate).toBe('depends_on_needs_attention');
+  expect(box.textContent).toContain(`${item.kind} ${id}: ${item.line}`);
+  expect(box.textContent).toContain('It is not carried');
+  expect(container.querySelector('[data-figure="routines-after-repair"]')).toBeNull();
 });
 
 test('no carried-after-a-repair section without one', () => {
