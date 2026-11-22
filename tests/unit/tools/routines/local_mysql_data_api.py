@@ -12,11 +12,20 @@ and a SQL error comes back as a ``DatabaseErrorException`` whose message carries
 code: <n>`` and ``SQLState: <code>``. The master secret signs in as the engine's ``root``;
 a secret made in ``secrets`` signs in as the user and password it holds.
 
+With ``pooled`` (#2574) it keeps the connections it opens, one pool per user and database
+(``per_secret``: one per user, a connection moved to the database a statement names), and
+hands the one returned last to the next transaction or statement, as a pooled Data API
+session is reused: a session setting, a user variable, a named lock, a prepared statement or a
+``TEMPORARY`` table a call leaves is still there for the next call, or for the next scratch
+database's setup. Without it, each transaction and each statement outside one gets a fresh
+connection. A statement in a transaction that holds one of ``times_out`` runs, then ends as
+the Data API ends a statement past its limit: the transaction is rolled back and gone, its
+connection back in the pool as the statement left it, and ``StatementTimeoutException``.
+
 It is not a full model of the test cluster: its master user is ``root`` (on Aurora the
-master user has fewer privileges), each statement outside a transaction gets a fresh
-connection (the Data API reuses pooled sessions, so whether a session's ``TEMPORARY`` tables
-or settings outlive a transaction there is not modelled), and a ``CALL`` answers with its
-first result set only.
+master user has fewer privileges), whether the real Data API reuses a session for the next
+transaction is not known here (``pooled`` models the case where it does), and a ``CALL``
+answers with its first result set only.
 """
 
 from __future__ import annotations
@@ -48,13 +57,20 @@ def _error(code: str, message: str = "") -> ClientError:
 class LocalMySqlDataApi:
     """See the module docstring. ``sent`` records ``(user, transaction, sql)`` per statement."""
 
-    def __init__(self, handle: Any, secrets: Any) -> None:
+    def __init__(self, handle: Any, secrets: Any, *, pooled: bool = False,
+                 per_secret: bool = False, times_out: tuple[str, ...] = ()) -> None:  # fmt: skip
         self._server = handle._backend._server
         self._mc = handle._backend._mc
         self._secrets = secrets
         self._open: dict[str, Any] = {}
         self._count = 0
         self.sent: list[tuple[str, str | None, str]] = []
+        self.pooled = pooled
+        self.per_secret = per_secret
+        self.times_out = times_out
+        #: Pooled: the idle connections per ``(user, database)``, the last returned at the end.
+        self._idle: dict[tuple[str, str | None], list[Any]] = {}
+        self._key: dict[int, tuple[str, str | None]] = {}
 
     # ---- connections
     def login(self, secret_arn: str) -> tuple[str, str]:
@@ -68,9 +84,28 @@ class LocalMySqlDataApi:
         user, password = self.login(secret_arn)
         return self._mc.connect(**self._server.connect_args(user, password, database or None))
 
+    def _take(self, secret_arn: str, database: str | None) -> Any:
+        """A connection for a transaction or a statement: pooled, the idle one returned last."""
+        key = (self.login(secret_arn)[0], None if self.per_secret else database or None)
+        idle = self._idle.get(key) if self.pooled else None
+        conn = idle.pop() if idle else self.connect(secret_arn, database)
+        if database and conn.database != database:
+            conn.database = database  # USE: the session itself is kept
+        self._key[id(conn)] = key
+        return conn
+
+    def _give(self, conn: Any) -> None:
+        """A connection back: pooled, kept with its session as it is; else closed."""
+        key = self._key.pop(id(conn), None)
+        if not self.pooled or key is None:
+            conn.close()
+            return
+        conn.autocommit = True  # outside a transaction, a statement commits on its own
+        self._idle.setdefault(key, []).append(conn)
+
     # ---- the Data API's calls
     def begin_transaction(self, **kw: Any) -> dict[str, Any]:
-        conn = self.connect(kw["secretArn"], kw.get("database"))
+        conn = self._take(kw["secretArn"], kw.get("database"))
         conn.autocommit = False
         conn.start_transaction()
         self._count += 1
@@ -85,7 +120,7 @@ class LocalMySqlDataApi:
         try:
             conn.commit() if commit else conn.rollback()
         finally:
-            conn.close()
+            self._give(conn)
         return {}
 
     def commit_transaction(self, **kw: Any) -> dict[str, Any]:
@@ -102,18 +137,18 @@ class LocalMySqlDataApi:
         return {"updateResults": [{}] * len(kw.get("parameterSets") or [])}
 
     def close_all(self) -> None:
-        for conn in self._open.values():
+        for conn in [*self._open.values(), *(c for idle in self._idle.values() for c in idle)]:
             conn.close()
         self._open.clear()
+        self._idle.clear()
+        self._key.clear()
 
     # ---- helpers
     def _run(self, kw: dict[str, Any], sets: list[list[dict[str, Any]]]) -> list[dict[str, Any]]:
         tx = kw.get("transactionId")
         if tx is not None and tx not in self._open:
             raise _error("BadRequestException", "Transaction is not found")
-        conn = (
-            self._open[tx] if tx is not None else self.connect(kw["secretArn"], kw.get("database"))
-        )
+        conn = self._open[tx] if tx is not None else self._take(kw["secretArn"], kw.get("database"))
         self.sent.append((self.login(kw["secretArn"])[0], tx, kw["sql"]))
         out = []
         try:
@@ -122,6 +157,15 @@ class LocalMySqlDataApi:
                 cur = conn.cursor()
                 try:
                     cur.execute(text, values or None)
+                    if tx is not None and any(m in kw["sql"] for m in self.times_out):
+                        if cur.description:
+                            cur.fetchall()
+                        while cur.nextset():
+                            if cur.description:
+                                cur.fetchall()
+                        conn.rollback()
+                        self._give(self._open.pop(tx))
+                        raise _error("StatementTimeoutException", "the statement timed out")
                     out.append(self._response(cur))
                     while cur.nextset():
                         if cur.description:
@@ -133,7 +177,7 @@ class LocalMySqlDataApi:
                     cur.close()
         finally:
             if tx is None:
-                conn.close()
+                self._give(conn)
         return out
 
     def _response(self, cur: Any) -> dict[str, Any]:

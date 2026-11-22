@@ -66,7 +66,10 @@ What each engine freezes, and nothing more:
   temporary tables, session settings).
   After each call the session it left is read for ``session_state``, then the settings a
   harness read depends on (``de.MY_READ_STATE``) are put back, and every snapshot refuses a
-  table a ``TEMPORARY`` table hides (:class:`HarnessTampered`, #2560).
+  table a ``TEMPORARY`` table hides (:class:`HarnessTampered`, #2560). On the test cluster,
+  where a pooled Data API session has no reset, every session variable is also put back to
+  the run's baseline after each call that ends and when each call starts, with the session's
+  named locks, and the prepared statements and temporary tables its routines name (#2574).
 - **PostgreSQL:** ``setseed`` for ``random()``, the same draws only on the same major.
   ``now()`` and ``CURRENT_TIMESTAMP`` read the transaction's start; the comparison
   writes a value relative to it with its exact offset. Every other clock and every
@@ -140,8 +143,9 @@ def my_sentinel_sql(database: str) -> tuple[str, str]:
 #: Why a call that changed what the harness reads refuses the routine (#2337).
 HARNESS_TAMPERED = ("changed what the comparison reads (a cast, a row-level security policy, a "
                     "privilege on a table, a setup table dropped, moved or replaced by a "
-                    "view, or one a temporary table hides, or a session limit on the rows a "
-                    "read returns), so the routine is refused and that call is not counted")  # fmt: skip
+                    "view, or one a temporary table hides, a session limit on the rows a "
+                    "read returns, or a session setting the harness could not put back), so "
+                    "the routine is refused and that call is not counted")  # fmt: skip
 _PG_SESSION = (
     "SET TIME ZONE INTERVAL '+05:47' HOUR TO MINUTE",
     "SET lock_timeout = '5s'",
@@ -159,9 +163,9 @@ _MY_USER_VARIABLES = (
     "SELECT VARIABLE_NAME, VARIABLE_VALUE FROM performance_schema.user_variables_by_thread "
     "WHERE THREAD_ID = PS_CURRENT_THREAD_ID()"
 )
-# Read per call or per connection, never a routine's doing.
-_VOLATILE = {"timestamp", "warning_count", "error_count", "pseudo_thread_id", "statement_id",
-             "rand_seed1", "rand_seed2"}  # fmt: skip
+#: Read per call or per connection, never a routine's doing.
+SESSION_VOLATILE = frozenset({"timestamp", "warning_count", "error_count", "pseudo_thread_id",
+                              "statement_id", "rand_seed1", "rand_seed2"})  # fmt: skip
 
 
 class ProofTargetUnavailable(RuntimeError):
@@ -539,7 +543,11 @@ class DisposableEngineTarget:
             if got.error is not None:
                 return None
             out.update(
-                {prefix + str(k): str(v) for k, v in got.rows if str(k).lower() not in _VOLATILE}
+                {
+                    prefix + str(k): str(v)
+                    for k, v in got.rows
+                    if str(k).lower() not in SESSION_VOLATILE
+                }
             )
         return out
 
