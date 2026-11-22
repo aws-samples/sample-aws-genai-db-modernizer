@@ -8,7 +8,8 @@ so it does not need the draft itself, the full collector output or the full
 analysis. This view carries what those decisions need: each table's columns
 (name and draft type), primary key, indexes, row count and read/write rate;
 residual columns grouped by source data type; the hottest queries; and the
-source features (triggers, procedures, views) that may need app-layer notes.
+source features (triggers, procedures, views) that may need app-layer notes; and
+the source objects the draft leaves out and the indexes it renames (#2416).
 
 Its size grows with the table and column count only through one short line
 per column, and is independent of the query count beyond ``hot_query_limit``.
@@ -28,6 +29,7 @@ from src.contracts.schema_design_input import (
     AgentQueryPattern,
     AgentTable,
 )
+from src.shared.sql_identifiers import comment_text
 from src.shared.table_keys import DesignTableKeys
 from src.tools.schema.aurora_common.ddl_generator import (
     POSTGRES,
@@ -319,6 +321,37 @@ def _index_line(
     return f"{line} WHERE {index.predicate}" if index.predicate else line
 
 
+def _left_out(base: AuroraDesignBase) -> list[dict]:
+    """One entry per source object the draft does not create (#2416): its table, kind,
+    name, the feature its app-layer note files it under and the reason. Every text is
+    cleaned with ``comment_text``, like the note (``delta_merge._left_out_notes``), so no
+    collected character the draft refused reaches the model."""
+    return [
+        {
+            "table": comment_text(str(o["table"])),
+            "kind": o["kind"],
+            "name": comment_text(str(o["name"])),
+            "feature": o.get("feature", "unsafe_name"),
+            "reason": comment_text(str(o["reason"])),
+        }
+        for o in base.left_out
+    ]
+
+
+def _renamed_indexes(base: AuroraDesignBase) -> list[dict]:
+    """One entry per index Aurora PostgreSQL creates under another name (#2410, #2416):
+    the collected name, the name the draft gives it and why, cleaned like ``_left_out``."""
+    return [
+        {
+            "table": comment_text(str(o["table"])),
+            "name": comment_text(str(o["name"])),
+            "new_name": comment_text(str(o["new_name"])),
+            "reason": comment_text(str(o["reason"])),
+        }
+        for o in base.renamed
+    ]
+
+
 def _fk_line(fk) -> str:
     return f"{', '.join(fk.columns)} -> {fk.referenced_table}({', '.join(fk.referenced_columns)})"
 
@@ -384,6 +417,9 @@ def build_design_view(
         "residual_types": _residual_types(base, draft),
         **({"index_notes": draft.index_notes} if draft.index_notes else {}),
         **({"column_notes": draft.column_notes} if draft.column_notes else {}),
+        # #2416: what the draft leaves out or renames, so the model can re-add an index.
+        **({"left_out": _left_out(base)} if base.left_out else {}),
+        **({"renamed_indexes": _renamed_indexes(base)} if base.renamed else {}),
         "hot_queries": _hot_queries(collector, hot_query_limit, raw_collector, table_keys),
         "analysis": _analysis_summary(analysis),
         "source_features": _source_features(raw_collector, table_keys),
