@@ -47,15 +47,16 @@ def _index(name: str, columns: list[str]) -> AgentIndex:
     return AgentIndex(index_name=name, columns=columns, is_unique=False)
 
 
-@pytest.mark.passes_on_main
 @pytest.mark.parametrize("dialect", [MYSQL, POSTGRES], ids=["mysql", "postgres"])
 def test_a_second_index_of_one_name_is_left_out_and_the_first_kept(dialect) -> None:
-    """Both engines: the merge keys a table's indexes by name, so an exact copy goes."""
+    """Both engines: the merge keys a table's indexes by name, so an exact copy goes. The
+    record keeps the columns it covered and its uniqueness (#2575)."""
     first, second = _index("ix", ["a", "b"]), _index("ix", ["a"])
     [table], left_out = quotable_tables([_table("t", [first, second])], dialect, "mysql")
     assert table.indexes == [first]
     assert left_out == [{"table": "t", "kind": "index", "name": "ix", "reason": _reason("ix"),
-                         "feature": "duplicate_index_name"}]  # fmt: skip
+                         "feature": "duplicate_index_name", "columns": ["a"],
+                         "unique": False}]  # fmt: skip
 
 
 @pytest.mark.passes_on_main

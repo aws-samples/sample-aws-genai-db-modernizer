@@ -70,8 +70,8 @@ def _table(
     )
 
 
-def _index(name: str, columns: list[str]) -> AgentIndex:
-    return AgentIndex(index_name=name, columns=columns, is_unique=False)
+def _index(name: str, columns: list[str], unique: bool = False) -> AgentIndex:
+    return AgentIndex(index_name=name, columns=columns, is_unique=unique)
 
 
 def _fk(name: str, table: str, schema: str | None = None) -> AgentForeignKey:
@@ -132,7 +132,8 @@ def test_the_view_lists_each_left_out_kind(case: str) -> None:
     ]
     assert (kind, feature) in {(e["kind"], e["feature"]) for e in view["left_out"]}
     for entry in view["left_out"]:
-        assert set(entry) == {"table", "kind", "name", "reason", "feature"}
+        index_keys = {"columns", "unique"} if entry["kind"] == "index" else set()
+        assert set(entry) == {"table", "kind", "name", "reason", "feature", *index_keys}
 
 
 def test_each_left_out_name_is_cleaned_like_the_app_layer_note() -> None:
@@ -159,6 +160,8 @@ def test_a_duplicate_index_entry_names_the_index_the_table_keeps() -> None:
         "kind": "index",
         "name": "IX",
         "feature": "duplicate_index_name",
+        "columns": ["b"],
+        "unique": False,
         "reason": "the table already has an index named ix, so this one was not created; "
         "create it under another name if the queries need it",
     }
@@ -222,3 +225,110 @@ def test_on_postgresql_a_readded_name_another_table_has_is_refused() -> None:
         "tables[0].add_indexes[0]: index name 'ix' is already used in the schema by "
         "table 't' (PostgreSQL index names are unique within a schema); choose another name"
     ]
+
+
+# ---------------------------------------------------------------------------
+# #2575: a left-out index's columns and uniqueness, and a cap on every cleaned text
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize("engine", [PG, MY])
+def test_a_left_out_index_entry_carries_its_columns_and_uniqueness(engine: str) -> None:
+    """``ix`` and ``IX`` on different columns: the entry says which columns the dropped one
+    covered, so the model can re-add exactly that index."""
+    source = "postgresql" if engine == PG else "mysql"
+    tables = [_table("t", indexes=[_index("ix", ["a"]), _index("ix", ["b", "a"], unique=True)])]
+    [entry] = _view(_base(engine, tables, source))["left_out"]
+    assert entry["kind"] == "index"
+    assert entry["columns"] == ["b", "a"]
+    assert entry["unique"] is True
+
+
+def test_a_left_out_index_with_an_unsafe_column_lists_it_cleaned() -> None:
+    tables = [_table("t", columns=("a", f"b{ZWSP}c"), indexes=[_index("ix", ["a", f"b{ZWSP}c"])])]
+    view = _view(_base(PG, tables, "postgresql"))
+    [entry] = [e for e in view["left_out"] if e["kind"] == "index"]
+    assert entry["columns"] == ["a", "b c"]
+    assert entry["unique"] is False
+
+
+@pytest.mark.passes_on_main
+def test_other_left_out_kinds_carry_no_columns() -> None:
+    view = _view(_base(MY, [_table("t", columns=("a", f"b{ZWSP}c"))]))
+    [entry] = view["left_out"]
+    assert entry["kind"] == "column"
+    assert "columns" not in entry and "unique" not in entry
+
+
+LONG = 20_000
+
+
+def test_each_cleaned_text_is_capped_with_a_visible_marker() -> None:
+    """A 20,000-character table name is cut to a fixed length in every field that repeats
+    it, and the cut shows."""
+    from src.tools.schema.aurora_common.design_view import TEXT_LIMIT, TRUNCATED
+
+    long_table = "t" * LONG
+    long_index = "i" * LONG
+    tables = [_table(long_table, columns=("a", "c" * LONG),
+                     indexes=[_index("ix", ["a"]), _index("ix", ["c" * LONG]),
+                              _index(f"{long_index}{BELL}", ["a"])]),
+              _table(f"{long_table}{BELL}")]  # fmt: skip
+    view = _view(_base(MY, tables))
+    assert view["left_out"], "the case leaves objects out"
+    texts = [str(e[k]) for e in view["left_out"] for k in ("table", "name", "reason")]
+    texts += [c for e in view["left_out"] for c in e.get("columns", [])]
+    assert any(t.endswith(TRUNCATED) for t in texts)
+    for text in texts:
+        assert len(text) <= TEXT_LIMIT + len(TRUNCATED)
+        assert len(text) <= TEXT_LIMIT or text.endswith(TRUNCATED)
+
+
+def test_a_renamed_index_text_is_capped_too() -> None:
+    from src.tools.schema.aurora_common.design_view import TEXT_LIMIT, TRUNCATED
+
+    long_name = "m" * 70  # PostgreSQL keeps 63 bytes; the view still sees the collected name
+    tables = [_table("postmeta", indexes=[_index("meta_key", ["a"])]),
+              _table("u" * LONG, indexes=[_index("meta_key", ["a"])]),
+              _table("other", indexes=[_index(long_name, ["a"])])]  # fmt: skip
+    view = _view(_base(PG, tables, "postgresql"))
+    [entry] = [e for e in view["renamed_indexes"] if e["name"] == "meta_key"]
+    for key in ("table", "new_name", "reason"):
+        assert len(entry[key]) <= TEXT_LIMIT + len(TRUNCATED)
+    assert entry["table"].endswith(TRUNCATED)
+
+
+def test_the_cap_is_applied_after_cleaning() -> None:
+    """A name whose run of control characters collapses to one space is short once cleaned,
+    so it is not cut."""
+    from src.tools.schema.aurora_common.design_view import TEXT_LIMIT, TRUNCATED
+
+    name = "a" + BELL * (TEXT_LIMIT * 3) + "b"
+    view = _view(_base(MY, [_table("t", indexes=[_index("ix", ["a"]), _index(name, ["a"])])]))
+    [entry] = view["left_out"]
+    assert entry["name"] == "a b"
+    assert not entry["name"].endswith(TRUNCATED)
+
+
+def test_a_short_text_is_left_as_cleaned() -> None:
+    from src.tools.schema.aurora_common.design_view import TEXT_LIMIT, TRUNCATED
+
+    name = "n" * TEXT_LIMIT
+    view = _view(
+        _base(MY, [_table("t", indexes=[_index("ix", ["a"]), _index(f"{name}{BELL}", ["a"])])])
+    )
+    [entry] = view["left_out"]
+    assert entry["name"] == f"{name}"
+    assert TRUNCATED not in entry["name"]
+
+
+def test_the_mysql_skill_says_those_entries_before_the_left_out_sentence() -> None:
+    """ "Those entries are the only source of index DDL" points at the add, modify and
+    remove entries, so the left-out sentence comes after it (#2575)."""
+    from pathlib import Path
+
+    text = " ".join(Path("src/skills/aurora_mysql-data-modeling.md").read_text().split())
+    those = text.index("Those entries are the only source of index DDL")
+    left_out = text.index("A left-out index (`left_out`, `kind` `index`)")
+    remove = text.index("`remove_indexes` (names)")
+    assert remove < those < left_out
