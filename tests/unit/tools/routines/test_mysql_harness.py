@@ -12,7 +12,9 @@ back (``time_zone``, the result character set). The sentinel lives in
 a harness database the server's admin (on the test cluster the master user) makes and owns,
 where the runner may only read and insert the sentinel's rows; a setup table a temporary
 table shadows refuses the routine (``harness_tampered``); and the harness puts its own read
-settings back after each call.
+settings back after each call. On the Data API, whose pooled sessions have no reset between
+calls, every session variable goes back to the run's baseline after and before every call, and
+one that does not refuses the routine (#2574).
 
 The live tests run on a disposable ``mysqld``: the disposable engine's own target, and
 :class:`DataApiTarget` through :class:`LocalMySqlDataApi` (no AWS call). They are marked
@@ -23,6 +25,7 @@ from __future__ import annotations
 
 import contextlib
 import datetime
+import functools
 import os
 from collections.abc import Iterator
 from typing import Any
@@ -32,7 +35,7 @@ import pytest
 from src.tools.database import disposable_engine as de
 from src.tools.routines import data_api_target as dat
 from src.tools.routines.proof_inputs import ProofCall, ProofSetup
-from src.tools.routines.proof_targets import DisposableEngineTarget
+from src.tools.routines.proof_targets import DisposableEngineTarget, ProofTargetError
 from tests.unit.tools.routines.fake_data_api import FakeDataApi, FakeSecrets
 from tests.unit.tools.routines.test_data_api_target import ARNS, JOB, _factory
 
@@ -144,13 +147,15 @@ def _local_target() -> Iterator[tuple[Any, Any]]:
 
 
 @contextlib.contextmanager
-def _data_api_target() -> Iterator[tuple[Any, Any]]:
-    """A MySQL Data API target on a disposable ``mysqld``, set up, and the same helper."""
+def _data_api_target(*, pooled: bool = False) -> Iterator[tuple[Any, Any]]:
+    """A MySQL Data API target on a disposable ``mysqld``, set up, and the same helper. With
+    ``pooled`` the stand-in reuses one session across transactions, as a pooled Data API
+    session is reused (#2574)."""
     from tests.unit.tools.routines.local_mysql_data_api import LocalMySqlDataApi
 
     handle = de.start("mysql", _major())
     secrets = FakeSecrets()
-    client = LocalMySqlDataApi(handle, secrets)
+    client = LocalMySqlDataApi(handle, secrets, pooled=pooled)
     target = None
     try:
         runner = dat.create_runner(client, secrets, cluster_arn=ARNS["cluster_arn"],
@@ -183,7 +188,11 @@ def _data_api_target() -> Iterator[tuple[Any, Any]]:
         de.stop(handle)
 
 
-_TARGETS = [pytest.param(_local_target, id="local"), pytest.param(_data_api_target, id="data_api")]
+_TARGETS = [
+    pytest.param(_local_target, id="local"),
+    pytest.param(_data_api_target, id="data_api"),
+    pytest.param(functools.partial(_data_api_target, pooled=True), id="data_api_pooled"),
+]
 
 
 def _skip_as_root() -> None:
@@ -325,6 +334,157 @@ def test_settings_a_function_left_are_put_back_before_a_harness_read(opened):
         target.end_call()
 
 
+#: Leaves session settings no harness read depends on, which a pooled Data API session would
+#: carry into the next call's routine (#2574). A procedure keeps them after its ``CALL``.
+_LEAVE = (
+    "CREATE PROCEDURE leave_settings() BEGIN SET SESSION foreign_key_checks = 0; "
+    "SET SESSION unique_checks = 0; SET SESSION sql_safe_updates = 1; "
+    "SET SESSION innodb_lock_wait_timeout = 1; SET SESSION optimizer_switch = 'index_merge=off'; "
+    "DO LAST_INSERT_ID(7); END"
+)
+_LEFT = (
+    "SELECT CONNECTION_ID(), @@SESSION.foreign_key_checks, @@SESSION.unique_checks, "
+    "@@SESSION.sql_safe_updates, @@SESSION.innodb_lock_wait_timeout, "
+    "@@SESSION.optimizer_switch, LAST_INSERT_ID()"
+)
+
+
+@pytest.mark.integration
+@needs_mysql
+def test_a_setting_a_call_left_never_reaches_the_next_call_on_a_pooled_session():
+    """The stand-in hands the next call the same session; every setting the call left is back
+    at the run's baseline after the call and when the next call starts."""
+    _skip_as_root()
+    with _data_api_target(pooled=True) as (target, as_runner):
+        _plant(as_runner, _LEAVE)
+        target.prepare_calls()
+        target.begin_call(_frozen(), 0.25)
+        before = de.execute(target._handle, _LEFT).rows
+        assert target.run(_call("leave_settings")).error is None
+        assert de.execute(target._handle, _LEFT).rows == before
+        target.end_call()
+        target.begin_call(_frozen(), 0.5)
+        again = de.execute(target._handle, _LEFT).rows
+        assert again[0][0] == before[0][0]  # the same pooled session
+        assert again == before
+        target.end_call()
+
+
+@contextlib.contextmanager
+def _pooled_factory(**pool: Any) -> Iterator[Any]:
+    """A factory of MySQL Data API targets on one disposable ``mysqld``, through a stand-in
+    that pools one session per secret across scratch databases (``times_out`` as the stand-in
+    takes it), as a target opened again after a timed-out call would find it."""
+    from tests.unit.tools.routines.local_mysql_data_api import LocalMySqlDataApi
+
+    handle = de.start("mysql", _major())
+    secrets = FakeSecrets()
+    client = LocalMySqlDataApi(handle, secrets, pooled=True, per_secret=True, **pool)
+    try:
+        runner = dat.create_runner(client, secrets, cluster_arn=ARNS["cluster_arn"],
+                                   secret_arn=ARNS["secret_arn"], job_id=JOB,
+                                   admin_database=None, tags=[], engine="mysql")  # fmt: skip
+        yield dat.data_api_target(client, cluster_arn=ARNS["cluster_arn"],
+                                  secret_arn=ARNS["secret_arn"], engine="mysql", version="8.0",
+                                  job_id=JOB, admin_database=None, runner=runner)  # fmt: skip
+    finally:
+        client.close_all()
+        de.stop(handle)
+
+
+def _opened(factory: Any, *texts: str) -> Any:
+    """A target from ``factory``, its setup loaded, the procedures ``texts`` created."""
+    target = factory()
+    target.load_setup(_SETUP)
+    for i, text in enumerate(texts):
+        assert target.create(de.SourceRoutine(f"src.r{i}", "procedure", text)) is None
+    target.prepare_calls()
+    return target
+
+
+#: Leaves settings that change what the next setup makes, then runs past its time limit.
+_SLOW = (
+    "CREATE PROCEDURE slow_settings() BEGIN SET SESSION default_storage_engine = 'MEMORY'; "
+    "SET SESSION foreign_key_checks = 0; END"
+)
+_ENGINE = (
+    "SELECT ENGINE FROM information_schema.TABLES WHERE TABLE_SCHEMA = DATABASE() "
+    "AND TABLE_NAME = 't'"
+)
+
+
+@pytest.mark.integration
+@needs_mysql
+def test_a_timed_out_calls_session_never_reaches_the_next_targets_setup():
+    """The timed-out call's session goes back to the pool as the call left it; the side opened
+    again after it gets that session for its setup, and a ``MEMORY`` table would keep a
+    later call's writes past its rollback. The setup's table is the baseline's engine."""
+    _skip_as_root()
+    with _pooled_factory(times_out=("slow_settings",)) as factory:
+        first = _opened(factory, _SLOW)
+        first.begin_call(_frozen(), 0.25)
+        assert first.run(_call("slow_settings")).timed_out
+        first.end_call()
+        first.close()
+        second = _opened(factory)
+        assert de.execute(second._handle, _ENGINE).rows == [["InnoDB"]]
+        second.begin_call(_frozen(), 0.5)
+        assert de.execute(second._handle, "SELECT @@SESSION.foreign_key_checks").rows == [[1]]
+        second.end_call()
+        second.close()
+
+
+#: Leaves a named lock held, a temporary table and a prepared statement in its session.
+_OBJECTS = (
+    "CREATE PROCEDURE leave_objects() BEGIN SELECT GET_LOCK('mdz_lock', 0) INTO @l; "
+    "CREATE TEMPORARY TABLE mdz_tmp (id INT); PREPARE mdz_s FROM 'SELECT 42'; END"
+)
+
+
+@pytest.mark.integration
+@needs_mysql
+def test_a_lock_a_temporary_table_or_a_prepared_statement_a_call_left_never_reaches_the_next():
+    """On the same pooled session: the lock is released after the call, and when the next
+    call starts the prepared statement is gone and the temporary table too, so the same
+    procedure runs again as on a reset connection (no 1050)."""
+    _skip_as_root()
+    with _pooled_factory() as factory:
+        target = _opened(factory, _OBJECTS)
+        target.begin_call(_frozen(), 0.25)
+        first = de.execute(target._handle, "SELECT CONNECTION_ID()").rows
+        assert target.run(_call("leave_objects")).error is None
+        assert de.execute(target._handle, "SELECT IS_FREE_LOCK('mdz_lock')").rows == [[1]]
+        target.end_call()
+        target.begin_call(_frozen(), 0.5)
+        assert de.execute(target._handle, "SELECT CONNECTION_ID()").rows == first  # pooled
+        assert de.execute(target._handle, "EXECUTE mdz_s").error is not None
+        assert target.run(_call("leave_objects")).error is None
+        target.end_call()
+        target.close()
+
+
+#: Refused for its row limit, it also leaves a setting no harness read depends on (a function
+#: keeps ``lc_time_names``).
+_LIMIT_AND_LOCALE = (
+    "CREATE FUNCTION g() RETURNS INT DETERMINISTIC BEGIN SET SESSION lc_time_names = 'de_DE'; "
+    "SET SESSION sql_select_limit = 2; RETURN 1; END"
+)
+
+
+@pytest.mark.integration
+@needs_mysql
+def test_a_refused_calls_pooled_session_is_set_back_before_it_is_handed_back():
+    _skip_as_root()
+    with _data_api_target(pooled=True) as (target, as_runner):
+        _plant(as_runner, _LIMIT_AND_LOCALE)
+        target.prepare_calls()
+        target.begin_call(_frozen(), 0.25)
+        with pytest.raises(_tampered()):
+            target.run(_function("g"))
+        assert de.execute(target._handle, "SELECT @@SESSION.lc_time_names").rows == [["en_US"]]
+        target.end_call()
+
+
 @pytest.mark.integration
 @needs_mysql
 @pytest.mark.passes_on_main  # the setup-table check of #2337 is engine-agnostic; guarded here
@@ -375,6 +535,10 @@ def test_the_mysql_round_trips_are_deselected_not_skipped_in_a_gated_run():
         test_session_settings_a_call_left_never_change_a_harness_read,
         test_a_row_limit_a_function_left_refuses_the_routine,
         test_settings_a_function_left_are_put_back_before_a_harness_read,
+        test_a_setting_a_call_left_never_reaches_the_next_call_on_a_pooled_session,
+        test_a_refused_calls_pooled_session_is_set_back_before_it_is_handed_back,
+        test_a_timed_out_calls_session_never_reaches_the_next_targets_setup,
+        test_a_lock_a_temporary_table_or_a_prepared_statement_a_call_left_never_reaches_the_next,
         test_a_setup_table_swapped_for_a_view_refuses_the_routine_on_mysql,
         test_a_routine_cannot_make_an_event_or_drop_a_procedure_and_the_local_scheduler_is_off,
         test_a_source_database_named_like_the_harness_database_is_refused,
@@ -397,6 +561,177 @@ def _mysql_lifecycle(client: FakeDataApi) -> Any:
     t.transaction_state()
     t.end_call()
     return t
+
+
+def _mysql_started(client: FakeDataApi, factory: Any = None) -> Any:
+    """A MySQL target on the fake, its first call begun (the run's session baseline read)."""
+    t = (factory or _factory(client, "mysql"))()
+    t.load_setup(ProofSetup("mysql", ("CREATE TABLE t (id INT PRIMARY KEY)",),
+                            (("t", ({"id": 1},)),), ("src.t",)))  # fmt: skip
+    t.prepare_calls()
+    t.begin_call(_frozen(), 0.25)
+    return t
+
+
+def _set_back(client: FakeDataApi, name: str) -> list[Any]:
+    """The statements sent to set ``name`` back, with their parameters."""
+    return [(s.sql, s.parameters) for s in client.sent
+            if s.op == "execute" and s.sql.startswith(f"SET SESSION `{name}` =")]  # fmt: skip
+
+
+_F = ProofCall("r", "r", "call", "f", "function", (1,))
+
+
+def test_a_setting_a_call_left_is_set_back_to_the_baseline_after_the_call():
+    client = FakeDataApi("mysql")
+    client.session["innodb_lock_wait_timeout"] = "5"  # as the harness sets it, not the global
+    t = _mysql_started(client)
+    client.session.update(foreign_key_checks="OFF", innodb_lock_wait_timeout="1")  # the call's
+    assert t.run(_F).error is None
+    assert client.session["foreign_key_checks"] == "ON"
+    assert client.session["innodb_lock_wait_timeout"] == "5"
+    assert _set_back(client, "foreign_key_checks") == [
+        ("SET SESSION `foreign_key_checks` = @@GLOBAL.`foreign_key_checks`", [])
+    ]
+    assert _set_back(client, "innodb_lock_wait_timeout") == [
+        (
+            "SET SESSION `innodb_lock_wait_timeout` = :p0",
+            [{"name": "p0", "value": {"longValue": 5}}],
+        )
+    ]
+    t.end_call()
+
+
+def test_a_setting_the_harness_cannot_put_back_refuses_the_routine():
+    client = FakeDataApi("mysql")
+    t = _mysql_started(client)
+    client.session["sql_safe_updates"] = "ON"
+    client.stuck = {"sql_safe_updates"}
+    with pytest.raises(_tampered()):
+        t.run(_F)
+    assert _set_back(client, "sql_safe_updates")  # tried, and read again
+    t.end_call()
+
+
+@pytest.mark.parametrize(
+    ("held", "left"),
+    [({}, {"autocommit": "ON"}), ({}, {"weird`name": "1"}),
+     ({"weird`name": "0"}, {"weird`name": "1"})],
+    ids=["autocommit", "an_unplain_name", "an_unplain_name_the_baseline_holds"],
+)  # fmt: skip
+def test_a_session_variable_the_harness_never_sets_refuses_the_routine(held, left):
+    """``autocommit`` set in the call's transaction would commit it, a variable the baseline
+    does not hold has nothing to go back to, and a name that is not plain never goes into a
+    statement, even one the baseline holds: none is set, all refuse."""
+    client = FakeDataApi("mysql")
+    client.session.update(held)
+    t = _mysql_started(client)
+    client.session.update(left)
+    with pytest.raises(_tampered()):
+        t.run(_F)
+    assert not [s for s in client.sent if s.sql.startswith("SET SESSION `")]
+    t.end_call()
+
+
+def test_a_target_opened_again_compares_with_the_runs_first_baseline():
+    """A target the same factory opens after another (a refused or timed-out call reopens the
+    side) puts a session a call left back to the run's first baseline before its setup, never
+    takes it as its own, and fails (the harness's failure, no routine's) on one it cannot put
+    back, its transaction rolled back."""
+    client = FakeDataApi("mysql")
+    factory = _factory(client, "mysql")
+    first = _mysql_started(client, factory)
+    first.end_call()
+    first.close()
+    client.session["foreign_key_checks"] = "OFF"  # a pooled session a timed-out call left
+    second = _mysql_started(client, factory)
+    assert client.session["foreign_key_checks"] == "ON"
+    second.end_call()
+    second.close()
+    client.session["foreign_key_checks"] = "OFF"
+    client.stuck = {"foreign_key_checks"}
+    with pytest.raises(ProofTargetError) as refused:
+        _mysql_started(client, factory)
+    assert not isinstance(refused.value, _tampered())
+    assert client.sent[-1].op == "rollback"
+
+
+def test_a_target_opened_again_resets_the_session_before_each_create_and_its_counters():
+    client = FakeDataApi("mysql")
+    factory = _factory(client, "mysql")
+    first = _mysql_started(client, factory)
+    first.end_call()
+    first.close()
+    second = factory()
+    second.load_setup(ProofSetup("mysql", ("CREATE TABLE t (id INT PRIMARY KEY)",),
+                                 (("t", ({"id": 1},)),), ("src.t",)))  # fmt: skip
+    client.session["foreign_key_checks"] = "OFF"
+    assert (
+        second.create(
+            de.SourceRoutine("src.f", "function", "CREATE FUNCTION f() RETURNS INT RETURN 1")
+        )
+        is None
+    )
+    assert client.session["foreign_key_checks"] == "ON"
+    client.session["foreign_key_checks"] = "OFF"
+    second.prepare_calls()
+    assert client.session["foreign_key_checks"] == "ON"
+    second.close()
+
+
+def test_a_session_left_stuck_is_the_harnesss_failure_when_a_call_starts():
+    """A setting found when a call starts was not set by that call's routine: never a
+    refusal of it, the call's transaction rolled back."""
+    client = FakeDataApi("mysql")
+    t = _mysql_started(client)
+    t.end_call()
+    client.session["foreign_key_checks"] = "OFF"
+    client.stuck = {"foreign_key_checks"}
+    with pytest.raises(ProofTargetError) as refused:
+        t.begin_call(_frozen(), 0.5)
+    assert not isinstance(refused.value, _tampered())
+    assert client.sent[-1].op == "rollback"
+
+
+def test_the_insert_ids_start_every_call_at_zero():
+    """As on a reset connection on the source side, whatever the first call's session held."""
+    client = FakeDataApi("mysql")
+    client.session.update(last_insert_id="5", insert_id="5")
+    t = _mysql_started(client)
+    assert (client.session["last_insert_id"], client.session["insert_id"]) == ("0", "0")
+    assert _set_back(client, "last_insert_id") == [
+        ("SET SESSION `last_insert_id` = :p0", [{"name": "p0", "value": {"longValue": 0}}])
+    ]
+    t.end_call()
+
+
+@pytest.mark.parametrize(
+    "made",
+    [{"engines": {"t": "MEMORY"}}, {"program_modes": [("ANSI_QUOTES", "utf8mb4", "utf8mb4_0900_ai_ci")]},
+     {"program_modes": [("STRICT_TRANS_TABLES", "latin1", "latin1_swedish_ci")]}],
+    ids=["a_table_engine", "a_programs_sql_mode", "a_programs_character_set"],
+)  # fmt: skip
+def test_a_setup_made_on_a_session_a_call_left_fails_the_target(made):
+    """A statement outside a transaction may run on any pooled session: a table or a stored
+    program made with other settings than the baseline's fails the target before any call."""
+    client = FakeDataApi("mysql")
+    t = _factory(client, "mysql")()
+    t.load_setup(ProofSetup("mysql", ("CREATE TABLE t (id INT PRIMARY KEY)",),
+                            (("t", ({"id": 1},)),), ("src.t",)))  # fmt: skip
+    for name, value in made.items():
+        setattr(client, name, value)
+    with pytest.raises(ProofTargetError, match="made on a session a call left"):
+        t.prepare_calls()
+    t.close()
+
+
+@pytest.mark.passes_on_main  # the negative case: what must keep loading
+def test_a_setup_made_as_the_baseline_has_it_passes_the_check():
+    client = FakeDataApi("mysql")
+    client.program_modes = [("STRICT_TRANS_TABLES", "utf8mb4", "utf8mb4_0900_ai_ci")]
+    t = _mysql_started(client)
+    t.end_call()
+    t.close()
 
 
 def test_the_master_user_makes_the_mysql_harness_database_before_the_runner_gets_anything():

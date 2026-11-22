@@ -72,7 +72,14 @@ sends an untyped literal, so a PostgreSQL row is inserted, changed or matched th
 as an untyped literal is. Each call runs in one Data API transaction (the connection is held
 for it), opened with the session settings the disposable engine applies (time zone
 ``+05:47``, lock and statement timeouts; on MySQL also ``SET TIMESTAMP`` and the random seed),
-and rolled back.
+and rolled back. A MySQL session the Data API pools keeps what a call set in it, so the
+target reads every session variable (``SHOW SESSION VARIABLES``) after each call that ends and
+when each call starts, and sets each one that differs from the run's baseline back
+(``SessionBaseline``, #2574); it releases the session's named locks, and when a call starts
+deallocates the prepared statements and drops the temporary tables the routines name. After a
+timed-out call, and before a reopened target's setup, ``CREATE``s and counters, it does the
+same in a transaction of its own, and checks what the setup and the creates made
+(``_check_made``), since a statement outside a transaction runs on any pooled session.
 
 Errors come back as the Data API's ``DatabaseErrorException`` text, from which the SQLSTATE,
 MySQL's error number and the primary message are read; the detail, hint and the constraint
@@ -106,7 +113,7 @@ import re
 import secrets
 import time
 from collections.abc import Callable, Mapping, Sequence
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from decimal import Decimal
 from pathlib import Path
 from typing import Any, Protocol
@@ -118,6 +125,7 @@ from src.tools.routines.proof_targets import (
     CALL_TIMEOUT_S,
     HARNESS_TAMPERED,
     SESSION_TIME_ZONE,
+    SESSION_VOLATILE,
     DisposableEngineTarget,
     HarnessTampered,
     ProofTarget,
@@ -126,11 +134,13 @@ from src.tools.routines.proof_targets import (
     TargetFactory,
     my_sentinel_sql,
 )
+from src.tools.sql.facade import RoutineTokenError, routine_tokens
 
 __all__ = [
     "SCRATCH_PREFIX",
     "DataApiClient",
     "DataApiTarget",
+    "SessionBaseline",
     "StrictFindings",
     "data_api_target",
     "drop_scratch",
@@ -147,6 +157,32 @@ _SWEPT = {"postgresql": _SCRATCH,
 #: The MySQL harness database's name: the scratch database's, then this.
 MY_HARNESS_SUFFIX = "_harness"
 _PREFIX = re.compile(r"^mdz_proof_[0-9a-f]{10}_$")
+#: A MySQL session's variables, which any account may read (#2574). A pooled Data API session
+#: has no reset between transactions, so the harness reads them after and before every call.
+_MY_SESSION_VARIABLES = "SHOW SESSION VARIABLES"
+_MY_GLOBAL_VARIABLES = "SHOW GLOBAL VARIABLES"
+#: Never put back: in the call's transaction, setting ``autocommit`` would commit it.
+_MY_NEVER_SET = frozenset({"autocommit"})
+#: Always 0 when a call starts, as a reset connection has them on the source side.
+_MY_INSERT_IDS = ("identity", "insert_id", "last_insert_id")
+#: The session's named locks, which a call may leave held (#2574): the session's own only.
+_MY_RELEASE_LOCKS = "DO RELEASE_ALL_LOCKS()"
+#: What every table and stored program the setup and the creates made must have been made
+#: with: the session's storage engine, and a stored program's SQL mode and character sets.
+_MY_ENGINES = ("SELECT TABLE_NAME, ENGINE FROM information_schema.TABLES WHERE TABLE_SCHEMA IN "
+               "({marks}) AND TABLE_TYPE = 'BASE TABLE'")  # fmt: skip
+_MY_PROGRAM_MODES = (
+    "SELECT DISTINCT SQL_MODE, CHARACTER_SET_CLIENT, COLLATION_CONNECTION FROM ("
+    "SELECT SQL_MODE, CHARACTER_SET_CLIENT, COLLATION_CONNECTION FROM information_schema.ROUTINES "
+    "WHERE ROUTINE_SCHEMA IN ({marks}) UNION ALL "
+    "SELECT SQL_MODE, CHARACTER_SET_CLIENT, COLLATION_CONNECTION FROM information_schema.TRIGGERS "
+    "WHERE TRIGGER_SCHEMA IN ({marks}) UNION ALL "
+    "SELECT SQL_MODE, CHARACTER_SET_CLIENT, COLLATION_CONNECTION FROM information_schema.EVENTS "
+    "WHERE EVENT_SCHEMA IN ({marks})) AS made"
+)
+_MY_VARIABLE = re.compile(r"[a-z][a-z0-9_]*")
+_MY_INTEGER = re.compile(r"-?[0-9]{1,19}")
+_MY_DECIMAL = re.compile(r"-?[0-9]{1,19}\.[0-9]{1,12}")
 _SQLSTATE = re.compile(r"SQLState:\s*([0-9A-Z]{5})")
 _ERRNO = re.compile(r"(?:Error code|error code|ErrorCode|errno)\s*[:=]?\s*(\d+)")
 _PG_PREFIX = re.compile(r"^\s*(?:ERROR|FATAL):\s*")
@@ -987,6 +1023,63 @@ class _DataApiBackend(de._Backend):
 # --------------------------------------------------------------------------- target
 
 
+@dataclass
+class SessionBaseline:
+    """The MySQL session the run's first call starts on, read once the harness's settings are
+    applied (#2574), and the server's global values, read when first needed. Every target a
+    factory opens compares with the same baseline, so a target opened again after a refused
+    or timed-out call never takes a session a call left as its own."""
+
+    variables: dict[str, str | None] | None = None
+    globals: dict[str, str | None] | None = None
+    #: The prepared statements the run's routines may leave in a session (``PREPARE name``
+    #: in their text: a ``PREPARE`` cannot itself be prepared, so every name is there).
+    prepared: set[str] = field(default_factory=set)
+
+
+def _made_names(text: str) -> tuple[set[str], set[str]]:
+    """The prepared statements (``PREPARE name``) and temporary tables (``CREATE TEMPORARY
+    TABLE [IF NOT EXISTS] [db.]name``) a MySQL routine's text names, read from its tokens,
+    so a comment between the words hides nothing. A text that does not tokenize names none.
+    A temporary table made by a statement built at run time is not named here (#2579)."""
+    try:
+        tokens = routine_tokens(text, "mysql")
+    except RoutineTokenError:
+        return set(), set()
+    prepared: set[str] = set()
+    temporary: set[str] = set()
+    names = ("VAR", "IDENTIFIER")
+    for i, tok in enumerate(tokens):
+        if tok.text.upper() == "PREPARE" and i + 1 < len(tokens):
+            rest = tokens[i + 1]
+            with contextlib.suppress(RoutineTokenError):
+                inner = routine_tokens(rest.text, "mysql") if rest.command_rest else (rest,)
+                if inner and inner[0].kind in names:
+                    prepared.add(inner[0].text.lower())
+        words = [t.text.upper() for t in tokens[i : i + 3]]
+        if words == ["CREATE", "TEMPORARY", "TABLE"]:
+            j = i + 3
+            if [t.text.upper() for t in tokens[j : j + 3]] == ["IF", "NOT", "EXISTS"]:
+                j += 3
+            while j + 2 < len(tokens) and tokens[j + 1].kind == "DOT":
+                j += 2  # a qualified name: the table is its last part
+            if j < len(tokens) and tokens[j].kind in names:
+                temporary.add(tokens[j].text)  # a table name's case can matter
+    return prepared, temporary
+
+
+def _session_value(text: str | None) -> Any:
+    """A baseline value as the parameter that sets it back: a whole or decimal number as a
+    number (a numeric variable refuses a string), anything else as text."""
+    if text is None:
+        return None
+    if _MY_INTEGER.fullmatch(text) and -(2**63) <= int(text) < 2**63:
+        return int(text)
+    if _MY_DECIMAL.fullmatch(text):
+        return float(text)
+    return text
+
+
 class DataApiTarget(DisposableEngineTarget):
     """The carried side on the Aurora test cluster (module docstring)."""
 
@@ -997,7 +1090,8 @@ class DataApiTarget(DisposableEngineTarget):
                  call_timeout_s: float = CALL_TIMEOUT_S, strict: StrictFindings | None = None,
                  strict_check: list[str] | None = None,
                  routine_ids: Mapping[str, str] | None = None,
-                 runner: RunnerAccount | None = None) -> None:  # fmt: skip
+                 runner: RunnerAccount | None = None,
+                 session_baseline: SessionBaseline | None = None) -> None:  # fmt: skip
         if engine not in _MARK:
             raise ValueError(f"not an engine the proof runs on: {engine!r}")
         self.engine = engine
@@ -1022,6 +1116,9 @@ class DataApiTarget(DisposableEngineTarget):
         self._strict = strict if strict is not None else {}
         self._strict_check = strict_check if strict_check is not None else []
         self._routine_ids = dict(routine_ids or {})
+        self._baseline = session_baseline if session_baseline is not None else SessionBaseline()
+        #: The temporary tables this target's routines name, dropped when each call starts.
+        self._temporary: set[str] = set()
         self._admin = _DataApiBackend(client, cluster_arn, secret_arn, engine, admin_database or "",
                                       None, call_timeout_s)  # fmt: skip
         if runner is None or runner.engine != engine:
@@ -1166,6 +1263,7 @@ class DataApiTarget(DisposableEngineTarget):
         self._schemas = tuple(made)
 
     def load_setup(self, setup: ProofSetup) -> None:
+        self._clean_session()  # the setup runs outside a transaction, on any pooled session
         if setup.schemas:
             self._create_schemas(setup.schemas)
         try:
@@ -1206,7 +1304,12 @@ class DataApiTarget(DisposableEngineTarget):
                                  if str(level).lower() == "error"]  # fmt: skip
 
     def create(self, routine: de.SourceRoutine) -> str | None:
+        self._clean_session()
         found = super().create(routine)
+        if found is None and self.engine == "mysql":
+            prepared, temporary = _made_names(routine.create_sql)
+            self._baseline.prepared |= prepared
+            self._temporary |= temporary
         if (
             found is None
             and self.engine == "postgresql"
@@ -1250,6 +1353,9 @@ class DataApiTarget(DisposableEngineTarget):
     def prepare_calls(self) -> None:
         # Session settings are applied per call, in its transaction (begin_call). The master
         # user made the sentinel in the harness's schema or database (_create).
+        self._clean_session()
+        if self.engine == "mysql":
+            self._check_made()
         try:
             self._counters = self._backend.counters()
         except de.EngineError as exc:
@@ -1294,7 +1400,141 @@ class DataApiTarget(DisposableEngineTarget):
             whole = int(abs(seed) * 1_000_000) + 1
             self._execute("SET rand_seed1 = %s, rand_seed2 = %s", [whole, whole + 1])
         self._pin_reads()  # a pooled connection may carry an earlier call's settings
+        try:
+            self._put_session_back("the call starts on", starting=True)
+        except BaseException:
+            with contextlib.suppress(Exception):
+                self.end_call()
+            raise
         self._execute(self._sentinel[0])
+
+    # ---- the MySQL session (#2574)
+    def _my_session(self, sql: str = _MY_SESSION_VARIABLES) -> dict[str, str | None]:
+        """Every MySQL session variable but the volatile ones (``SESSION_VOLATILE``), in the
+        call's transaction; or (``_MY_GLOBAL_VARIABLES``) the server's global values."""
+        try:
+            rows = self._backend._rows(self._backend._guarded(sql, meta=True), as_text=True)[0]
+        except de.EngineError as exc:
+            raise ProofTargetError(f"{self.description} could not read its session",
+                                   exc.sqlstate) from None  # fmt: skip
+        read = {str(n).lower(): (None if v is None else str(v)) for n, v in rows}
+        if not read:
+            raise ProofTargetError(f"{self.description} could not read its session")
+        return {n: v for n, v in read.items() if n not in SESSION_VOLATILE}
+
+    def _put_session_back(self, when: str, *, check: bool = True, starting: bool = False) -> None:
+        """MySQL: the session back to the run's baseline (``SessionBaseline``), which the first
+        call records with ``last_insert_id``, ``insert_id`` and ``identity`` at 0. Its named
+        locks are released; when a call starts (``starting``), its prepared statements the
+        run's routines name are deallocated and the temporary tables this target's routines
+        name are dropped. A variable that differs is set back to the server's global value
+        when the baseline holds that, else to the baseline's value (bound); ``autocommit`` is
+        never set, nor a name that is not plain. With ``check``, a session that still differs
+        from the baseline, a variable missing or added included, fails: after a call it
+        refuses the routine (:class:`HarnessTampered`); anywhere else it is the harness's
+        failure (:class:`ProofTargetError`), since no routine of this call set it."""
+        base = self._baseline
+        with contextlib.suppress(de.EngineError):
+            self._backend._guarded(_MY_RELEASE_LOCKS)
+        if starting:
+            for name in sorted(base.prepared):
+                with contextlib.suppress(de.EngineError):  # 1243: none of that name
+                    self._backend._guarded(f"DEALLOCATE PREPARE {de._quote(name, '`')}")
+            for name in sorted(self._temporary):
+                with contextlib.suppress(de.EngineError):
+                    self._backend._guarded(
+                        f"DROP TEMPORARY TABLE IF EXISTS {de._quote(name, '`')}"
+                    )  # no implicit commit
+        now = self._my_session()
+        if base.variables is None:
+            base.variables = {**now, **{n: "0" for n in _MY_INSERT_IDS if n in now}}
+        changed = sorted(n for n in base.variables.keys() | now.keys()
+                         if base.variables.get(n) != now.get(n))  # fmt: skip
+        if not changed:
+            return
+        for name in changed:
+            if name in base.variables and name not in _MY_NEVER_SET \
+                    and _MY_VARIABLE.fullmatch(name):  # fmt: skip
+                with contextlib.suppress(de.EngineError):  # the read below decides
+                    self._backend._guarded(*self._set_back(name, base.variables[name]))
+        if check and self._my_session() != base.variables:
+            if when == "after the call":
+                raise HarnessTampered(f"{self.description}'s session {when}: a call "
+                                      f"{HARNESS_TAMPERED}")  # fmt: skip
+            raise ProofTargetError(f"{self.description} could not put back the session "
+                                   f"{when}")  # fmt: skip
+
+    def _clean_session(self, *, check: bool = True) -> None:
+        """MySQL, outside a call: the session a transaction of its own gets put back as when a
+        call starts, before statements that run outside one (the setup, each ``CREATE``,
+        reading the counters) or after a timed-out call. A statement outside a transaction may
+        still run on another pooled session, so ``_check_made`` also checks what the setup and
+        the creates made. Nothing to do before the run's first call: no routine has run."""
+        if self.engine != "mysql" or self._baseline.variables is None or self._open:
+            return
+        self._backend.begin()
+        try:
+            self._backend._guarded("SET SESSION sql_select_limit = DEFAULT")  # caps the read
+            if self._reads is not None:
+                self._pin_reads()
+            self._put_session_back("outside a call", check=check, starting=True)
+        finally:
+            self._backend.rollback()
+
+    def _check_made(self) -> None:
+        """MySQL, before the first call: every base table of the target's databases has the
+        session's storage engine, and every stored program its SQL mode and character sets,
+        as the baseline (or, before the run's first call, a session of its own) has them; any
+        other was made on a session a call left, and the target fails (#2574)."""
+        expected = self._baseline.variables
+        if expected is None:
+            self._backend.begin()
+            try:
+                expected = self._my_session()
+            finally:
+                self._backend.rollback()
+        databases = [self.database, *(d for d in self._schemas if d != self.database)]
+        marks = ", ".join(["%s"] * len(databases))
+        try:
+            engines = self._backend._rows(self._backend._guarded(
+                _MY_ENGINES.format(marks=marks), databases, meta=True), as_text=True)[0]  # fmt: skip
+            modes = self._backend._rows(self._backend._guarded(
+                _MY_PROGRAM_MODES.format(marks=marks), databases * 3, meta=True), as_text=True)[0]  # fmt: skip
+        except de.EngineError as exc:
+            raise ProofTargetError(f"{self.description} could not read what its setup made",
+                                   exc.sqlstate) from None  # fmt: skip
+        engine = str(expected.get("default_storage_engine") or "").lower()
+        program = (expected.get("sql_mode"), expected.get("character_set_client"),
+                   expected.get("collation_connection"))  # fmt: skip
+        if any(str(e or "").lower() != engine for _, e in engines) or any(
+            tuple(None if v is None else str(v) for v in row) != program for row in modes
+        ):
+            raise ProofTargetError(f"{self.description}'s setup or routines were made on a "
+                                   "session a call left")  # fmt: skip
+
+    def _set_back(self, name: str, value: str | None) -> tuple[str, list[Any]]:
+        """The statement that sets one session variable (a checked name) back to ``value``."""
+        if self._baseline.globals is None:
+            self._baseline.globals = self._my_session(_MY_GLOBAL_VARIABLES)
+        found = self._baseline.globals
+        if name in found and found[name] == value:
+            return f"SET SESSION `{name}` = @@GLOBAL.`{name}`", []
+        return f"SET SESSION `{name}` = %s", [_session_value(value)]
+
+    def _after_call(self) -> None:
+        """The base class's checks and pin, then (MySQL) every session variable back to the
+        baseline: refused when one does not come back, and set back on a best-effort basis
+        when the call is refused for another reason, so the session the Data API hands back
+        to its pool carries nothing of the call's (#2574)."""
+        if self.engine != "mysql":
+            return
+        try:
+            super()._after_call()
+        except BaseException:
+            with contextlib.suppress(Exception):
+                self._put_session_back("after the call", check=False)
+            raise
+        self._put_session_back("after the call")
 
     def run(self, call: ProofCall) -> de.CallResult:
         postgres = self.engine == "postgresql"
@@ -1308,6 +1548,8 @@ class DataApiTarget(DisposableEngineTarget):
         if result.timed_out:
             self._open = False
             self._pin_after_failure()
+            with contextlib.suppress(Exception):  # best effort: the Data API ended the call
+                self._clean_session(check=False)
             return result
         if postgres and result.error is not None:
             # Taken on the harness's path, the savepoint puts it back too.
@@ -1383,14 +1625,17 @@ def data_api_target(client: DataApiClient, *, cluster_arn: str, secret_arn: str,
                     runner: RunnerAccount | None = None) -> TargetFactory:  # fmt: skip
     """A factory for :class:`DataApiTarget`: each target is a new scratch database.
     ``strict`` collects the strict check's findings and ``strict_check`` what ran
-    (``plpgsql_check`` or ``not_available``) across every target the factory opens."""
+    (``plpgsql_check`` or ``not_available``) across every target the factory opens. On MySQL
+    every target compares its session with the one baseline the factory's first call records
+    (``SessionBaseline``, #2574)."""
+    baseline = SessionBaseline()
 
     def open_target() -> ProofTarget:
         return DataApiTarget(client, cluster_arn=cluster_arn, secret_arn=secret_arn,
                              engine=engine, version=version, job_id=job_id,
                              admin_database=admin_database, call_timeout_s=call_timeout_s,
                              strict=strict, strict_check=strict_check, routine_ids=routine_ids,
-                             runner=runner)  # fmt: skip
+                             runner=runner, session_baseline=baseline)  # fmt: skip
 
     return open_target
 

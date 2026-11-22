@@ -24,6 +24,15 @@ from botocore.exceptions import ClientError
 MASTER = "proofadmin"
 
 
+#: A MySQL session's variables as the fake answers them (#2574): ``timestamp`` is volatile and
+#: never compared.
+MY_SESSION = {"autocommit": "OFF", "foreign_key_checks": "ON", "innodb_lock_wait_timeout": "50",
+              "sql_safe_updates": "OFF", "timestamp": "1717243200.000000",
+              "default_storage_engine": "InnoDB", "sql_mode": "STRICT_TRANS_TABLES",
+              "character_set_client": "utf8mb4", "collation_connection": "utf8mb4_0900_ai_ci",
+              "last_insert_id": "0"}  # fmt: skip
+
+
 def db_error(sqlstate: str = "42601", message: str = "ERROR: syntax error") -> ClientError:
     return ClientError(
         {
@@ -112,6 +121,19 @@ class FakeDataApi:
         #: The transactions that wrote the sentinel row: only they see it.
         self._sentinel_tx: set[str] = set()
         self._tx = 0
+        #: MySQL (#2574): what ``SHOW SESSION VARIABLES`` and ``SHOW GLOBAL VARIABLES`` answer,
+        #: one session for every connection. ``SET SESSION `name` = ...`` sets a variable in
+        #: ``session``, except one in ``stuck``, which keeps its value.
+        self.session: dict[str, str] = dict(MY_SESSION)
+        self.globals: dict[str, str] = {**{k: v for k, v in MY_SESSION.items()
+                                           if k not in ("last_insert_id", "insert_id")},
+                                        "autocommit": "ON"}  # fmt: skip
+        self.stuck: set[str] = set()
+        #: What the made-objects check reads: each table's storage engine (``InnoDB`` when
+        #: not named) and each stored program's ``(sql_mode, character_set_client,
+        #: collation_connection)``.
+        self.engines: dict[str, str] = {}
+        self.program_modes: list[tuple[str, str, str]] = []
 
     # ---- what the target calls
     def begin_transaction(self, **kw: Any) -> dict[str, Any]:
@@ -264,6 +286,22 @@ class FakeDataApi:
                          "utf8mb4_0900_ai_ci", "utf8mb4"], types=("VARCHAR",) * 6)  # fmt: skip
         if sql.startswith("SELECT @@SESSION.sql_select_limit = @@GLOBAL"):
             return rows([1], types=("BIGINT",))  # a call left the row limit as it was
+        if sql.startswith("SELECT TABLE_NAME, ENGINE FROM information_schema.TABLES"):
+            return rows(*[[t, self.engines.get(t, "InnoDB")] for t in sorted(self.tables.get(db, set()))],
+                        types=("VARCHAR", "VARCHAR"))  # fmt: skip
+        if sql.startswith("SELECT DISTINCT SQL_MODE, CHARACTER_SET_CLIENT"):
+            return rows(*[list(m) for m in self.program_modes], types=("VARCHAR",) * 3)
+        if sql.startswith(("SHOW SESSION VARIABLES", "SHOW GLOBAL VARIABLES")):
+            held = self.session if "SESSION" in sql else self.globals
+            return rows(*[[k, v] for k, v in held.items()], types=("VARCHAR", "VARCHAR"))
+        put = re.fullmatch(r"SET SESSION `(\w+)` = (?:@@GLOBAL\.`(\w+)`|:(\w+))", sql)
+        if put:
+            name = put.group(1)
+            if name not in self.stuck:
+                value = self.globals[name] if put.group(2) else \
+                    next(iter(params[0]["value"].values()))  # fmt: skip
+                self.session[name] = str(value)
+            return {}
         if sql.startswith("SHOW CREATE TABLE "):
             return rows(["t", "CREATE TABLE `t` (`id` int)"], types=("VARCHAR", "VARCHAR"))
         if "@@GLOBAL.event_scheduler" in sql:
