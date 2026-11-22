@@ -68,11 +68,16 @@ def script_problems(text: str) -> list[str]:
     url = next((c for c in code if c.startswith("MYSQL_URL=")), "")
     if not url.startswith('MYSQL_URL="https://cdn.mysql.com/'):
         problems.append("MYSQL_URL must be https from cdn.mysql.com")
-    if not any(re.fullmatch(r'MYSQL_VERSION="8\.0\.\d+"', c) for c in code):
-        problems.append("MYSQL_VERSION must be pinned to an exact 8.0.x")
+    for series in ("8.0", "8.4"):
+        pattern = rf'MYSQL_VERSION="{re.escape(series)}\.\d+"'
+        if sum(bool(re.fullmatch(pattern, c)) for c in code) != 1:
+            problems.append(f"MYSQL_VERSION must be pinned to one exact {series}.x")
     for name in ("MYSQL_SHA256", "MYSQLD_BIN_SHA256", "MYSQL_BIN_SHA256"):
-        if not any(re.fullmatch(rf'{name}="[0-9a-f]{{64}}"', c) for c in code):
-            problems.append(f"{name} must be a SHA-256")
+        pins = [c for c in code if re.fullmatch(rf'{name}="[0-9a-f]{{64}}"', c)]
+        if len(pins) != 2 or len(set(pins)) != 2:
+            problems.append(f"{name} must be a SHA-256, one per series (8.0 and 8.4)")
+    if "https://cdn.mysql.com/archives/mysql-${MYSQL_SERIES}/" not in url:
+        problems.append("MYSQL_URL must follow the series")
     check = next(
         (
             n
@@ -164,6 +169,16 @@ def _mutations() -> dict[str, Callable[[str], str]]:
         "http url": lambda t: t.replace('MYSQL_URL="https://', 'MYSQL_URL="http://'),
         "other host": lambda t: t.replace("https://cdn.mysql.com/", "https://example.org/"),
         "unpinned version": lambda t: t.replace('MYSQL_VERSION="8.0.45"', 'MYSQL_VERSION="8.0"'),
+        "unpinned 8.4 version": lambda t: t.replace(
+            'MYSQL_VERSION="8.4.11"', 'MYSQL_VERSION="8.4"'
+        ),
+        "8.4 shares the 8.0 archive checksum": lambda t: t.replace(
+            "94e204cc94dede3746d2773fa5818f28f555cd8368c75ca0612eac124e6f3e58",
+            "c09137539ab42590c8682d498716e6b97a45d83d2188339fa2e980dd54b6e0af",
+        ),
+        "8.4 has no binary checksum": lambda t: t.replace(
+            "0ae85e8c4efb8457e9230e42a1b54b9b542a3b27a711f0ac4b190649bc857dc9", "0"
+        ),
         "binaries not rechecked": lambda t: t.replace("if ! binaries_ok", "if false"),
     }
 
@@ -173,6 +188,18 @@ def test_each_script_guard_fails_when_its_property_is_removed(name: str) -> None
     mutated = _mutations()[name](SCRIPT.read_text())
     assert mutated != SCRIPT.read_text(), "the mutation must change the script"
     assert script_problems(mutated), name
+
+
+def test_an_unknown_series_exits_before_any_download() -> None:
+    run = subprocess.run(
+        ["bash", str(SCRIPT)],
+        env={**os.environ, "MYSQL_SERIES": "8.5", "CI": "1"},
+        capture_output=True,
+        text=True,
+        timeout=60,
+    )
+    assert run.returncode == 2
+    assert "MYSQL_SERIES must be 8.0 or 8.4" in run.stderr
 
 
 def test_a_comment_does_not_satisfy_a_guard() -> None:
@@ -255,6 +282,21 @@ def _job_problems(workflow: dict) -> list[str]:
         problems.append("the job must run ./ci/test-mysqld.sh")
     if any("pytest" in r or ("mysqld" in r and r != "./ci/test-mysqld.sh") for r in runs):
         problems.append("the job must inline no mysqld or pytest command")
+    matrix = job.get("strategy", {}).get("matrix", {}).get("mysql-series")
+    if matrix != ["8.0", "8.4"]:
+        problems.append("the job must run a mysql-series matrix of 8.0 and 8.4")
+    if not any(
+        step.get("env", {}).get("MYSQL_SERIES") == "${{ matrix.mysql-series }}"
+        for step in steps
+        if step.get("run") == "./ci/test-mysqld.sh"
+    ):
+        problems.append("the script step must pass MYSQL_SERIES from the matrix")
+    if any(
+        "matrix.mysql-series" not in str(step.get("with", {}).get("key", ""))
+        for step in steps
+        if str(step.get("uses", "")).startswith("actions/cache@")
+    ):
+        problems.append("the server cache key must include the series")
     if "continue-on-error" in job or any("continue-on-error" in step for step in steps):
         problems.append("the job and its steps must not set continue-on-error")
     test = jobs.get("test", {})
@@ -301,6 +343,17 @@ def test_the_job_guard_fails_on_each_weakening() -> None:
     def step_continue(w: dict) -> None:
         w["jobs"]["mysqld-tests"]["steps"][-1]["continue-on-error"] = True
 
+    def one_series(w: dict) -> None:
+        w["jobs"]["mysqld-tests"]["strategy"]["matrix"]["mysql-series"] = ["8.0"]
+
+    def series_not_passed(w: dict) -> None:
+        w["jobs"]["mysqld-tests"]["steps"][-1]["env"].pop("MYSQL_SERIES")
+
+    def shared_cache(w: dict) -> None:
+        for step in w["jobs"]["mysqld-tests"]["steps"]:
+            if "key" in step.get("with", {}):
+                step["with"]["key"] = "mysql-${{ runner.os }}"
+
     def inline(w: dict) -> None:
         w["jobs"]["mysqld-tests"]["steps"][-1]["run"] = "pytest -m integration"
 
@@ -321,6 +374,9 @@ def test_the_job_guard_fails_on_each_weakening() -> None:
         drop_result,
         job_continue,
         step_continue,
+        one_series,
+        series_not_passed,
+        shared_cache,
         inline,
         ignore_mysqld_result,
         accept_skipped,

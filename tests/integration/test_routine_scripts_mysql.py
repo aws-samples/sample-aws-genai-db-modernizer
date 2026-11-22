@@ -77,6 +77,21 @@ def mysql_socket():
             shutil.rmtree(work, ignore_errors=True)
 
 
+@pytest.mark.passes_on_main
+def test_the_server_is_the_series_the_job_asked_for(mysql_socket):
+    """ci/test-mysqld.sh sets MYSQL_SERIES per matrix entry (#2348): a job named 8.4 must run 8.4."""
+    import os
+
+    series = os.environ.get("MYSQL_SERIES")
+    if not series:
+        pytest.skip("MYSQL_SERIES is set by ci/test-mysqld.sh only")
+    client, sock = mysql_socket
+    ran = _mysql(
+        client, sock, "SELECT SUBSTRING_INDEX(VERSION(), '.', 2)", "--batch", "--skip-column-names"
+    )
+    assert ran.stdout.decode().strip() == series
+
+
 def _mysql(client, sock, sql: str | None = None, *args: str, stdin: Path | None = None):
     argv = [client, "--no-defaults", "-uroot", f"--socket={sock}", *args]
     if sql is not None:
