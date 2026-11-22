@@ -76,7 +76,8 @@ and rolled back. A MySQL session the Data API pools keeps what a call set in it,
 target reads every session variable (``SHOW SESSION VARIABLES``) after each call that ends and
 when each call starts, and sets each one that differs from the run's baseline back
 (``SessionBaseline``, #2574); it releases the session's named locks, and when a call starts
-deallocates the prepared statements and drops the temporary tables the routines name. After a
+deallocates the prepared statements and drops the temporary tables the routines name, in
+their text or in a string they prepare (#2579). After a
 timed-out call, and before a reopened target's setup, ``CREATE``s and counters, it does the
 same in a transaction of its own, and checks what the setup and the creates made
 (``_check_made``), since a statement outside a transaction runs on any pooled session.
@@ -112,7 +113,7 @@ import json
 import re
 import secrets
 import time
-from collections.abc import Callable, Mapping, Sequence
+from collections.abc import Callable, Iterator, Mapping, Sequence
 from dataclasses import dataclass, field
 from decimal import Decimal
 from pathlib import Path
@@ -134,7 +135,7 @@ from src.tools.routines.proof_targets import (
     TargetFactory,
     my_sentinel_sql,
 )
-from src.tools.sql.facade import RoutineTokenError, routine_tokens
+from src.tools.sql.facade import RoutineToken, RoutineTokenError, routine_tokens
 
 __all__ = [
     "SCRATCH_PREFIX",
@@ -181,6 +182,8 @@ _MY_PROGRAM_MODES = (
     "WHERE EVENT_SCHEMA IN ({marks})) AS made"
 )
 _MY_VARIABLE = re.compile(r"[a-z][a-z0-9_]*")
+#: How deep a routine's strings are read for the names they hold (a ``PREPARE`` literal).
+_MADE_DEPTH = 3
 _MY_INTEGER = re.compile(r"-?[0-9]{1,19}")
 _MY_DECIMAL = re.compile(r"-?[0-9]{1,19}\.[0-9]{1,12}")
 _SQLSTATE = re.compile(r"SQLState:\s*([0-9A-Z]{5})")
@@ -1037,35 +1040,60 @@ class SessionBaseline:
     prepared: set[str] = field(default_factory=set)
 
 
-def _made_names(text: str) -> tuple[set[str], set[str]]:
-    """The prepared statements (``PREPARE name``) and temporary tables (``CREATE TEMPORARY
-    TABLE [IF NOT EXISTS] [db.]name``) a MySQL routine's text names, read from its tokens,
-    so a comment between the words hides nothing. A text that does not tokenize names none.
-    A temporary table made by a statement built at run time is not named here (#2579)."""
-    try:
-        tokens = routine_tokens(text, "mysql")
-    except RoutineTokenError:
-        return set(), set()
-    prepared: set[str] = set()
-    temporary: set[str] = set()
-    names = ("VAR", "IDENTIFIER")
-    for i, tok in enumerate(tokens):
-        if tok.text.upper() == "PREPARE" and i + 1 < len(tokens):
-            rest = tokens[i + 1]
+@dataclass
+class _MadeNames:
+    """What a MySQL routine's text names that it may leave in a session."""
+
+    prepared: set[str] = field(default_factory=set)
+    temporary: set[str] = field(default_factory=set)
+
+
+def _token_levels(text: str, depth: int = 0) -> Iterator[tuple[str, tuple[RoutineToken, ...]]]:
+    """``text`` and its MySQL tokens, then each string in it (the rest of a ``PREPARE``, the
+    literal it prepares) with its own, down to ``_MADE_DEPTH`` levels. Raises
+    ``RoutineTokenError`` when ``text`` itself does not tokenize; a string that does not is
+    not SQL, and is skipped."""
+    tokens = routine_tokens(text, "mysql")
+    yield text, tokens
+    if depth >= _MADE_DEPTH:
+        return
+    for tok in tokens:
+        if tok.command_rest or tok.kind.endswith("STRING"):
             with contextlib.suppress(RoutineTokenError):
-                inner = routine_tokens(rest.text, "mysql") if rest.command_rest else (rest,)
-                if inner and inner[0].kind in names:
-                    prepared.add(inner[0].text.lower())
-        words = [t.text.upper() for t in tokens[i : i + 3]]
-        if words == ["CREATE", "TEMPORARY", "TABLE"]:
-            j = i + 3
-            if [t.text.upper() for t in tokens[j : j + 3]] == ["IF", "NOT", "EXISTS"]:
-                j += 3
-            while j + 2 < len(tokens) and tokens[j + 1].kind == "DOT":
-                j += 2  # a qualified name: the table is its last part
-            if j < len(tokens) and tokens[j].kind in names:
-                temporary.add(tokens[j].text)  # a table name's case can matter
-    return prepared, temporary
+                yield from _token_levels(tok.text, depth + 1)
+
+
+def _made_names(text: str) -> _MadeNames:
+    """The prepared statements (``PREPARE name``) and temporary tables (``CREATE TEMPORARY
+    TABLE [IF NOT EXISTS] [db.]name``) a MySQL routine's text names, read from its tokens, so
+    a comment between the words hides nothing, and from every string in it, so a statement a
+    ``PREPARE`` literal holds is read too (#2579). A ``PREPARE`` of anything but one literal is never called
+    (``proof_screen.dynamic_sql``), and MySQL builds no name at run time any other way. A
+    text that does not tokenize names none; such a text does not load either."""
+    made = _MadeNames()
+    try:
+        levels = list(_token_levels(text))
+    except RoutineTokenError:
+        return made
+    names = ("VAR", "IDENTIFIER")
+    for _, tokens in levels:
+        for i, tok in enumerate(tokens):
+            if tok.text.upper() == "PREPARE" and i + 1 < len(tokens):
+                rest = tokens[i + 1]
+                with contextlib.suppress(RoutineTokenError):
+                    inner = routine_tokens(rest.text, "mysql") if rest.command_rest else (rest,)
+                    if inner and inner[0].kind in names:
+                        made.prepared.add(inner[0].text.lower())
+            words = [t.text.upper() for t in tokens[i : i + 3]]
+            if words == ["CREATE", "TEMPORARY", "TABLE"]:
+                j = i + 3
+                if [t.text.upper() for t in tokens[j : j + 3]] == ["IF", "NOT", "EXISTS"]:
+                    j += 3
+                while j + 2 < len(tokens) and tokens[j + 1].kind == "DOT":
+                    j += 2  # a qualified name: the table is its last part
+                if j < len(tokens) and tokens[j].kind in names:
+                    made.temporary.add(tokens[j].text)  # a table name's case can matter
+    return made
 
 
 def _session_value(text: str | None) -> Any:
@@ -1307,9 +1335,9 @@ class DataApiTarget(DisposableEngineTarget):
         self._clean_session()
         found = super().create(routine)
         if found is None and self.engine == "mysql":
-            prepared, temporary = _made_names(routine.create_sql)
-            self._baseline.prepared |= prepared
-            self._temporary |= temporary
+            made = _made_names(routine.create_sql)
+            self._baseline.prepared |= made.prepared
+            self._temporary |= made.temporary
         if (
             found is None
             and self.engine == "postgresql"
