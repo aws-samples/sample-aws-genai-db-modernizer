@@ -66,37 +66,49 @@ def test_an_unknown_layout_reads_as_no_segments():
     assert shm._linux_segments("nothing useful", "nothing useful") == []
 
 
-def _ids() -> set[str]:
-    return {row["ID"] for row in shm.segments()}
+def _own_segment(srv: pg_server.PgTestServer) -> tuple[int, int, int]:
+    """The (postmaster pid, key, id) the note recorded for this test's own server."""
+    pid, key, ident = (int(part) for part in (srv.workdir / shm.NOTE_FILE).read_text().split())
+    return pid, key, ident
 
 
-def _own_segment(srv: pg_server.PgTestServer) -> str:
-    line = (srv.workdir / shm.NOTE_FILE).read_text().split()
-    return line[2]
+def _present(own: tuple[int, int, int]) -> bool:
+    """Whether a segment with this server's id, key and creator pid is on the machine.
+
+    Other servers' segments are ignored, so a parallel worker starting or stopping its
+    own server cannot change the answer.
+    """
+    pid, key, ident = own
+    for row in shm.segments():
+        try:
+            if int(row["ID"]) == ident and int(row["KEY"], 16) == key and int(row["CPID"]) == pid:
+                return True
+        except ValueError:
+            continue
+    return False
 
 
 @live
-def test_a_start_and_stop_leaves_ipcs_unchanged():
+@pytest.mark.passes_on_main  # the race needs another worker's server, so main passes alone
+def test_a_start_and_stop_leaves_none_of_its_own_segment():
     pytest.importorskip("pgserver")
-    before = _ids()
     srv = pg_server.start_pg_server()
-    ident = _own_segment(srv)
-    assert ident in _ids(), "the server's segment is what the test watches"
+    own = _own_segment(srv)
+    assert _present(own), "the server's segment is what the test watches"
     srv.cleanup()
-    assert ident not in _ids()
-    # Segments that were there before are the maintainer's or another worker's: untouched.
-    assert before & _ids() == before - {ident}
+    assert not _present(own)
 
 
 @live
+@pytest.mark.passes_on_main  # same check as before, now through _present
 def test_a_server_killed_with_sigkill_leaves_no_segment():
     pytest.importorskip("pgserver")
     srv = pg_server.start_pg_server()
-    ident = _own_segment(srv)
+    own = _own_segment(srv)
     os.kill(srv.get_pid(), signal.SIGKILL)
     srv._server._proc.wait()  # the postmaster is our child: wait for it to be gone
     srv.cleanup()
-    assert ident not in _ids()
+    assert not _present(own)
 
 
 def _row(**fields: str) -> dict[str, str]:
