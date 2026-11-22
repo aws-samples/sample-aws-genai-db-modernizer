@@ -763,6 +763,44 @@ def test_replay_sh_keeps_going_after_a_failed_fixture_and_fails_at_the_end(
     ), proc.stdout
 
 
+def _replay_sh_without_output(tmp_path: Path, name: str) -> tuple[str, Path]:
+    """Run replay.sh with E2E_OUTPUT unset over a broken fixture; return its stdout and
+    the output folder it names."""
+    broken = tmp_path / name
+    broken.mkdir()
+    (broken / "run.json").write_text("{}")
+    env = {k: v for k, v in os.environ.items() if k != "E2E_OUTPUT"}
+    proc = subprocess.run(  # nosec B603 -- fixed argv, the repo's own script
+        ["bash", str(REPO_ROOT / "ci" / "replay.sh")],
+        env={**env, "REPLAY_FIXTURES": str(broken), "TMPDIR": str(tmp_path)},
+        capture_output=True,
+        text=True,
+        timeout=240,
+    )
+    named = re.search(r"^replay: output folder (.+)$", proc.stdout, re.M)
+    assert named, proc.stdout + proc.stderr
+    return proc.stdout, Path(named.group(1))
+
+
+def test_replay_sh_without_an_output_folder_uses_one_of_its_own(tmp_path: Path) -> None:
+    """#2568: the default folder was ``test-results/`` of the checkout, which every pytest
+    session with pytest-playwright (no ``--output``) deletes at its start, so a replay
+    running next to any other test run in the same checkout lost its job folder mid-run
+    ("Required artifact missing", then green on rerun). Each run now gets a folder of its
+    own, outside the checkout's ``test-results/``, and two runs never share one."""
+    shared = REPO_ROOT / "test-results"
+    _, first = _replay_sh_without_output(tmp_path, "one")
+    _, second = _replay_sh_without_output(tmp_path, "two")
+    try:
+        assert first != second
+        for folder in (first, second):
+            assert shared not in (folder, *folder.parents), folder
+            assert folder.parent == tmp_path, folder
+    finally:
+        shutil.rmtree(shared / "replay" / "one", ignore_errors=True)
+        shutil.rmtree(shared / "replay" / "two", ignore_errors=True)
+
+
 def test_an_explicit_replay_fixture_must_exist(tmp_path: Path) -> None:
     proc = _replay_sh({"REPLAY_FIXTURE": str(tmp_path / "nope")}, tmp_path)
     assert proc.returncode == 2 and "has no run.json" in proc.stderr

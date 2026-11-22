@@ -16,7 +16,9 @@
 #                     Default: tests/fixtures/real_runs/wordpress-both and
 #                     tests/fixtures/real_runs/discourse-both (replay.py's FIXTURES).
 #   E2E_OUTPUT      - each fixture's replayed job, junit and summary land in
-#                     $E2E_OUTPUT/replay/<fixture name>/. Default: test-results/.
+#                     $E2E_OUTPUT/replay/<fixture name>/. Default: a new folder under
+#                     $TMPDIR, named on the first line; removed when the replay passes,
+#                     kept when it fails (#2568).
 source "$(dirname "$0")/lib.sh"
 
 DEFAULT_FIXTURES="tests/fixtures/real_runs/wordpress-both tests/fixtures/real_runs/discourse-both"
@@ -59,7 +61,18 @@ replay_one() {
     --junitxml="$out/replay-junit.xml" -q ${pw_args[@]+"${pw_args[@]}"}
 }
 
-OUT="${E2E_OUTPUT:-test-results}/replay"
+# The default is a folder of this run's own. `test-results/` is what every pytest session
+# with pytest-playwright deletes at its start (its default --output), so a replay there
+# lost its job folder to any other test run in the same checkout, and two replays shared
+# one (#2568). Exported, so each fixture's own process uses the same folder.
+if [ -z "${E2E_OUTPUT:-}" ]; then
+  E2E_OUTPUT="$(mktemp -d "${TMPDIR:-/tmp}/replay.XXXXXX")"
+  export E2E_OUTPUT
+  echo "replay: output folder $E2E_OUTPUT"
+  trap '[ "$?" -eq 0 ] && rm -rf "$E2E_OUTPUT"' EXIT
+fi
+
+OUT="$E2E_OUTPUT/replay"
 
 if [ -n "${REPLAY_FIXTURE:-}" ]; then
   if [ ! -f "$REPLAY_FIXTURE/run.json" ]; then
