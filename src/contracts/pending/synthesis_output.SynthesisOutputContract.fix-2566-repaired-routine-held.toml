@@ -1,0 +1,6 @@
+# A pending contract version bump (ADR-008 Decision 8). The number is assigned by
+# uv run python scripts/resolve_contract_versions.py --release at release (a MAJOR: in its pull request).
+contract = "synthesis_output.SynthesisOutputContract"
+kind = "minor"
+reason = "Added the depends_on_needs_attention value to facts.routines.interventions[].deploy_gate: a model-repaired routine that calls a routine that is not carried is not carried either, and step 1 holds it with the same reason (#2566). Backward compatible: a report written before never has it."
+issue = 2566

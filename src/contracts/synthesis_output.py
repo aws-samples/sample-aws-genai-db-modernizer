@@ -3581,6 +3581,7 @@ class RoutineInterventionFact(BaseModel):
             "needs_attention",
             "depends_on_held",
             "rebuild_differs",
+            "depends_on_needs_attention",
         ]
         | None
     ) = Field(
@@ -3588,7 +3589,9 @@ class RoutineInterventionFact(BaseModel):
         description=(
             "model_repaired (#2384): deployed when step 1 deploys the repair, else why its "
             "deploy gate holds it back (not_tested, not_proved, needs_attention, "
-            "depends_on_held, rebuild_differs); None in a report written before it"
+            "depends_on_held, rebuild_differs), or depends_on_needs_attention when a routine "
+            "it calls is not carried, so neither is it (#2566); None in a report written "
+            "before it"
         ),
     )
     attempts: list[RoutineAttemptFact] = Field(

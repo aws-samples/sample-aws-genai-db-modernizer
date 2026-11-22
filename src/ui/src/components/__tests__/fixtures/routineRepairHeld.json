@@ -1,0 +1,541 @@
+{
+  "assignment_version": 1,
+  "source_engine": "postgresql",
+  "target_engine": "aurora_postgresql",
+  "wave": null,
+  "routine_count": 9,
+  "carried_count": 1,
+  "as_is_count": 0,
+  "rewritten_count": 1,
+  "repaired_count": 0,
+  "needs_repair_count": 8,
+  "not_exact_count": 0,
+  "not_checked_count": 0,
+  "opted_out_count": 0,
+  "not_readable_count": 0,
+  "unknown_checks_count": 1,
+  "rewritten_carried_count": 1,
+  "migrate_yourself_count": 8,
+  "behaves_differently_count": 0,
+  "carried_review_count": 1,
+  "migrate_yourself_line": "we could not translate 8 routines automatically; migrate them yourself; the cutover is your responsibility",
+  "migrate_yourself_step": "migrate these routines yourself, then check them again; the cutover is your responsibility",
+  "counts_by_kind": {
+    "function": 9
+  },
+  "reason_counts": {
+    "dependency_cycle": 2,
+    "depends_on_needs_attention": 5,
+    "depends_on_table_not_collected": 1,
+    "postgresql-routine-dependency-not-moved": 1,
+    "postgresql-routine-v10-renamed-functions": 5
+  },
+  "proof": "checked, not tested yet",
+  "proof_counts": null,
+  "line": "1 of 9 routines carry over: 1 rewritten. 8 were not carried automatically: 8 need repair. For 1 carried routine not every check could run. The carried routine is not tested yet; test it on a test Aurora with /test-routines before it is deployed.",
+  "executive_line": "your routines can move to Aurora with the database: 1 of 9 for this database, 1 rewritten; 8 need work. Before it is deployed, test it on a throwaway Aurora with the /test-routines command.",
+  "routines": [
+    {
+      "routine_id": "public.cyc_x(integer)",
+      "kind": "function",
+      "status": "needs_attention",
+      "category": "needs_repair",
+      "risk_classes": [
+        "migrate_yourself"
+      ],
+      "severity": "HIGH",
+      "severity_basis": [
+        "postgresql-routine-v10-renamed-functions",
+        "dependency_cycle",
+        "depends_on_needs_attention"
+      ],
+      "reasons": [
+        "postgresql-routine-v10-renamed-functions",
+        "dependency_cycle",
+        "depends_on_needs_attention"
+      ],
+      "blocked_by": [
+        {
+          "kind": "function",
+          "routine_id": "public.cyc_y(integer)"
+        }
+      ],
+      "rewrites": [
+        "postgresql-routine-owner-to-target-user"
+      ],
+      "unknown_checks": [
+        "postgresql-routine-dependency-not-moved"
+      ],
+      "notes": [],
+      "tables": [],
+      "deploy_order": 1,
+      "held_back": null,
+      "status_text": "Not carried: needs repair",
+      "why": [
+        "A check failed: PostgreSQL 10 renamed the functions with xlog in their names to wal (and location to lsn), so on every Aurora PostgreSQL line the call fails with an unknown function when the routine runs. Fix: Call the new name: pg_current_wal_lsn() for pg_current_xlog_location(), pg_walfile_name() for pg_xlogfile_name(), pg_wal_lsn_diff() for pg_xlog_location_diff(), pg_last_wal_replay_lsn() for pg_last_xlog_replay_location(), and so on.",
+        "It is in a dependency cycle.",
+        "It names a routine that is not translated."
+      ],
+      "listed": true
+    },
+    {
+      "routine_id": "public.cyc_y(integer)",
+      "kind": "function",
+      "status": "needs_attention",
+      "category": "needs_repair",
+      "risk_classes": [
+        "migrate_yourself"
+      ],
+      "severity": "HIGH",
+      "severity_basis": [
+        "postgresql-routine-v10-renamed-functions",
+        "dependency_cycle",
+        "depends_on_needs_attention"
+      ],
+      "reasons": [
+        "postgresql-routine-v10-renamed-functions",
+        "dependency_cycle",
+        "depends_on_needs_attention"
+      ],
+      "blocked_by": [
+        {
+          "kind": "function",
+          "routine_id": "public.cyc_x(integer)"
+        }
+      ],
+      "rewrites": [
+        "postgresql-routine-owner-to-target-user"
+      ],
+      "unknown_checks": [
+        "postgresql-routine-dependency-not-moved"
+      ],
+      "notes": [],
+      "tables": [],
+      "deploy_order": 2,
+      "held_back": null,
+      "status_text": "Not carried: needs repair",
+      "why": [
+        "A check failed: PostgreSQL 10 renamed the functions with xlog in their names to wal (and location to lsn), so on every Aurora PostgreSQL line the call fails with an unknown function when the routine runs. Fix: Call the new name: pg_current_wal_lsn() for pg_current_xlog_location(), pg_walfile_name() for pg_xlogfile_name(), pg_wal_lsn_diff() for pg_xlog_location_diff(), pg_last_wal_replay_lsn() for pg_last_xlog_replay_location(), and so on.",
+        "It is in a dependency cycle.",
+        "It names a routine that is not translated."
+      ],
+      "listed": true
+    },
+    {
+      "routine_id": "public.hidden(integer)",
+      "kind": "function",
+      "status": "needs_attention",
+      "category": "needs_repair",
+      "risk_classes": [
+        "migrate_yourself"
+      ],
+      "severity": "HIGH",
+      "severity_basis": [
+        "postgresql-routine-v10-renamed-functions"
+      ],
+      "reasons": [
+        "postgresql-routine-v10-renamed-functions"
+      ],
+      "blocked_by": [],
+      "rewrites": [
+        "postgresql-routine-owner-to-target-user"
+      ],
+      "unknown_checks": [
+        "postgresql-routine-dependency-not-moved"
+      ],
+      "notes": [],
+      "tables": [],
+      "deploy_order": 3,
+      "held_back": null,
+      "status_text": "Not carried: needs repair",
+      "why": [
+        "A check failed: PostgreSQL 10 renamed the functions with xlog in their names to wal (and location to lsn), so on every Aurora PostgreSQL line the call fails with an unknown function when the routine runs. Fix: Call the new name: pg_current_wal_lsn() for pg_current_xlog_location(), pg_walfile_name() for pg_xlogfile_name(), pg_wal_lsn_diff() for pg_xlog_location_diff(), pg_last_wal_replay_lsn() for pg_last_xlog_replay_location(), and so on."
+      ],
+      "listed": true
+    },
+    {
+      "routine_id": "public.ok(integer)",
+      "kind": "function",
+      "status": "rewritten",
+      "category": "rewritten",
+      "risk_classes": [
+        "carried_review"
+      ],
+      "severity": "LOW",
+      "severity_basis": [
+        "postgresql-routine-owner-to-target-user",
+        "postgresql-routine-dependency-not-moved"
+      ],
+      "reasons": [],
+      "blocked_by": [],
+      "rewrites": [
+        "postgresql-routine-owner-to-target-user"
+      ],
+      "unknown_checks": [
+        "postgresql-routine-dependency-not-moved"
+      ],
+      "notes": [],
+      "tables": [],
+      "deploy_order": 4,
+      "held_back": null,
+      "status_text": "Carried with a rewrite",
+      "why": [],
+      "listed": false
+    },
+    {
+      "routine_id": "public.orphan(integer)",
+      "kind": "function",
+      "status": "needs_attention",
+      "category": "needs_repair",
+      "risk_classes": [
+        "migrate_yourself"
+      ],
+      "severity": "HIGH",
+      "severity_basis": [
+        "postgresql-routine-dependency-not-moved",
+        "depends_on_table_not_collected"
+      ],
+      "reasons": [
+        "postgresql-routine-dependency-not-moved",
+        "depends_on_table_not_collected"
+      ],
+      "blocked_by": [],
+      "rewrites": [
+        "postgresql-routine-owner-to-target-user"
+      ],
+      "unknown_checks": [],
+      "notes": [],
+      "tables": [
+        "public.missing_table"
+      ],
+      "deploy_order": 5,
+      "held_back": null,
+      "status_text": "Not carried: needs repair",
+      "why": [
+        "A check failed: The routine reads, writes or calls an object that is not created on the target in the same step, so it fails when it runs (or, for a trigger, cannot be created) until that object moves too. Fix: Move the named tables and routines in the same step as this routine, or move the routine in the step that moves them.",
+        "It names a table the collection does not have."
+      ],
+      "listed": true
+    },
+    {
+      "routine_id": "public.wal_pos(integer)",
+      "kind": "function",
+      "status": "needs_attention",
+      "category": "needs_repair",
+      "risk_classes": [
+        "migrate_yourself"
+      ],
+      "severity": "HIGH",
+      "severity_basis": [
+        "postgresql-routine-v10-renamed-functions"
+      ],
+      "reasons": [
+        "postgresql-routine-v10-renamed-functions"
+      ],
+      "blocked_by": [],
+      "rewrites": [
+        "postgresql-routine-owner-to-target-user"
+      ],
+      "unknown_checks": [
+        "postgresql-routine-dependency-not-moved"
+      ],
+      "notes": [],
+      "tables": [],
+      "deploy_order": 6,
+      "held_back": null,
+      "status_text": "Not carried: needs repair",
+      "why": [
+        "A check failed: PostgreSQL 10 renamed the functions with xlog in their names to wal (and location to lsn), so on every Aurora PostgreSQL line the call fails with an unknown function when the routine runs. Fix: Call the new name: pg_current_wal_lsn() for pg_current_xlog_location(), pg_walfile_name() for pg_xlogfile_name(), pg_wal_lsn_diff() for pg_xlog_location_diff(), pg_last_wal_replay_lsn() for pg_last_xlog_replay_location(), and so on."
+      ],
+      "listed": true
+    },
+    {
+      "routine_id": "public.own_bad(integer)",
+      "kind": "function",
+      "status": "needs_attention",
+      "category": "needs_repair",
+      "risk_classes": [
+        "migrate_yourself"
+      ],
+      "severity": "HIGH",
+      "severity_basis": [
+        "depends_on_needs_attention"
+      ],
+      "reasons": [
+        "depends_on_needs_attention"
+      ],
+      "blocked_by": [
+        {
+          "kind": "function",
+          "routine_id": "public.wal_pos(integer)"
+        }
+      ],
+      "rewrites": [
+        "postgresql-routine-owner-to-target-user"
+      ],
+      "unknown_checks": [
+        "postgresql-routine-dependency-not-moved"
+      ],
+      "notes": [],
+      "tables": [],
+      "deploy_order": 7,
+      "held_back": null,
+      "status_text": "Not carried: needs repair",
+      "why": [
+        "It names a routine that is not translated."
+      ],
+      "listed": true
+    },
+    {
+      "routine_id": "public.bad_top(integer)",
+      "kind": "function",
+      "status": "needs_attention",
+      "category": "needs_repair",
+      "risk_classes": [
+        "migrate_yourself"
+      ],
+      "severity": "HIGH",
+      "severity_basis": [
+        "postgresql-routine-v10-renamed-functions",
+        "depends_on_needs_attention"
+      ],
+      "reasons": [
+        "postgresql-routine-v10-renamed-functions",
+        "depends_on_needs_attention"
+      ],
+      "blocked_by": [
+        {
+          "kind": "function",
+          "routine_id": "public.own_bad(integer)"
+        }
+      ],
+      "rewrites": [
+        "postgresql-routine-owner-to-target-user"
+      ],
+      "unknown_checks": [
+        "postgresql-routine-dependency-not-moved"
+      ],
+      "notes": [],
+      "tables": [],
+      "deploy_order": 8,
+      "held_back": null,
+      "status_text": "Not carried: needs repair",
+      "why": [
+        "A check failed: PostgreSQL 10 renamed the functions with xlog in their names to wal (and location to lsn), so on every Aurora PostgreSQL line the call fails with an unknown function when the routine runs. Fix: Call the new name: pg_current_wal_lsn() for pg_current_xlog_location(), pg_walfile_name() for pg_xlogfile_name(), pg_wal_lsn_diff() for pg_xlog_location_diff(), pg_last_wal_replay_lsn() for pg_last_xlog_replay_location(), and so on.",
+        "It names a routine that is not translated."
+      ],
+      "listed": true
+    },
+    {
+      "routine_id": "public.uses_own_bad(integer)",
+      "kind": "function",
+      "status": "needs_attention",
+      "category": "needs_repair",
+      "risk_classes": [
+        "migrate_yourself"
+      ],
+      "severity": "HIGH",
+      "severity_basis": [
+        "depends_on_needs_attention"
+      ],
+      "reasons": [
+        "depends_on_needs_attention"
+      ],
+      "blocked_by": [
+        {
+          "kind": "function",
+          "routine_id": "public.own_bad(integer)"
+        }
+      ],
+      "rewrites": [
+        "postgresql-routine-owner-to-target-user"
+      ],
+      "unknown_checks": [
+        "postgresql-routine-dependency-not-moved"
+      ],
+      "notes": [],
+      "tables": [],
+      "deploy_order": 9,
+      "held_back": null,
+      "status_text": "Not carried: needs repair",
+      "why": [
+        "It names a routine that is not translated."
+      ],
+      "listed": true
+    }
+  ],
+  "rules": [
+    {
+      "rule_id": "postgresql-routine-dependency-not-moved",
+      "rule": "check",
+      "impact": "blocks_move",
+      "reason": "The routine reads, writes or calls an object that is not created on the target in the same step, so it fails when it runs (or, for a trigger, cannot be created) until that object moves too.",
+      "fix_hint": "Move the named tables and routines in the same step as this routine, or move the routine in the step that moves them."
+    },
+    {
+      "rule_id": "postgresql-routine-owner-to-target-user",
+      "rule": "rewrite",
+      "impact": null,
+      "reason": "A function's CREATE statement names no owner, so on Aurora PostgreSQL the routine is owned by the user that creates it; the record names that user in place of the source owner, and the statement does not change; a SECURITY DEFINER routine then runs with the target user's privileges, and its record says so.",
+      "fix_hint": null
+    },
+    {
+      "rule_id": "postgresql-routine-v10-renamed-functions",
+      "rule": "check",
+      "impact": "needs_rewrite",
+      "reason": "PostgreSQL 10 renamed the functions with xlog in their names to wal (and location to lsn), so on every Aurora PostgreSQL line the call fails with an unknown function when the routine runs.",
+      "fix_hint": "Call the new name: pg_current_wal_lsn() for pg_current_xlog_location(), pg_walfile_name() for pg_xlogfile_name(), pg_wal_lsn_diff() for pg_xlog_location_diff(), pg_last_wal_replay_lsn() for pg_last_xlog_replay_location(), and so on."
+    }
+  ],
+  "interventions": [
+    {
+      "kind": "function",
+      "routine_id": "public.own_bad(integer)",
+      "state": "model_repaired",
+      "reasons": [
+        "postgresql-version-renamed-function"
+      ],
+      "change_note": "Calls the name PostgreSQL 10 gave the function.",
+      "proof_source": "a disposable postgresql 9 engine",
+      "attention": null,
+      "attention_detail": null,
+      "deploy_gate": "depends_on_needs_attention",
+      "attempts": [
+        {
+          "attempt": 1,
+          "stage": "proof",
+          "outcome": "proved",
+          "code": null,
+          "error": null
+        }
+      ],
+      "line": "A model repaired it. Its repair was compared with the original on a disposable postgresql 9 engine, a local engine of the source, and gave the same results on the calls compared. What changed: Calls the name PostgreSQL 10 gave the function. It is not carried: it calls a routine that still needs attention, and step 1 carries it only once that routine is carried.",
+      "attempt_lines": []
+    }
+  ],
+  "to_do_routines": [
+    {
+      "kind": "function",
+      "routine_id": "public.cyc_x(integer)"
+    },
+    {
+      "kind": "function",
+      "routine_id": "public.cyc_y(integer)"
+    },
+    {
+      "kind": "function",
+      "routine_id": "public.hidden(integer)"
+    },
+    {
+      "kind": "function",
+      "routine_id": "public.orphan(integer)"
+    },
+    {
+      "kind": "function",
+      "routine_id": "public.wal_pos(integer)"
+    },
+    {
+      "kind": "function",
+      "routine_id": "public.own_bad(integer)"
+    },
+    {
+      "kind": "function",
+      "routine_id": "public.bad_top(integer)"
+    },
+    {
+      "kind": "function",
+      "routine_id": "public.uses_own_bad(integer)"
+    }
+  ],
+  "check_notes": [
+    {
+      "note": "rewrite",
+      "rule_id": "postgresql-routine-owner-to-target-user",
+      "label": "Owner set to the target user",
+      "text": "A function's CREATE statement names no owner, so on Aurora PostgreSQL the routine is owned by the user that creates it; the record names that user in place of the source owner, and the statement does not change; a SECURITY DEFINER routine then runs with the target user's privileges, and its record says so.",
+      "note_count": 9,
+      "routines": [
+        {
+          "kind": "function",
+          "routine_id": "public.cyc_x(integer)"
+        },
+        {
+          "kind": "function",
+          "routine_id": "public.cyc_y(integer)"
+        },
+        {
+          "kind": "function",
+          "routine_id": "public.hidden(integer)"
+        },
+        {
+          "kind": "function",
+          "routine_id": "public.ok(integer)"
+        },
+        {
+          "kind": "function",
+          "routine_id": "public.orphan(integer)"
+        },
+        {
+          "kind": "function",
+          "routine_id": "public.wal_pos(integer)"
+        },
+        {
+          "kind": "function",
+          "routine_id": "public.own_bad(integer)"
+        },
+        {
+          "kind": "function",
+          "routine_id": "public.bad_top(integer)"
+        },
+        {
+          "kind": "function",
+          "routine_id": "public.uses_own_bad(integer)"
+        }
+      ],
+      "more_count": 0
+    },
+    {
+      "note": "check_not_run",
+      "rule_id": "postgresql-routine-dependency-not-moved",
+      "label": "A check could not run",
+      "text": "The routine reads, writes or calls an object that is not created on the target in the same step, so it fails when it runs (or, for a trigger, cannot be created) until that object moves too.",
+      "note_count": 8,
+      "routines": [
+        {
+          "kind": "function",
+          "routine_id": "public.cyc_x(integer)"
+        },
+        {
+          "kind": "function",
+          "routine_id": "public.cyc_y(integer)"
+        },
+        {
+          "kind": "function",
+          "routine_id": "public.hidden(integer)"
+        },
+        {
+          "kind": "function",
+          "routine_id": "public.ok(integer)"
+        },
+        {
+          "kind": "function",
+          "routine_id": "public.wal_pos(integer)"
+        },
+        {
+          "kind": "function",
+          "routine_id": "public.own_bad(integer)"
+        },
+        {
+          "kind": "function",
+          "routine_id": "public.bad_top(integer)"
+        },
+        {
+          "kind": "function",
+          "routine_id": "public.uses_own_bad(integer)"
+        }
+      ],
+      "more_count": 0
+    }
+  ],
+  "others_line": null
+}
