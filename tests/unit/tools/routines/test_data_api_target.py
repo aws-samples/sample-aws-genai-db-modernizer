@@ -300,7 +300,7 @@ def test_the_strict_check_records_plpgsql_check_errors_by_routine_id():
     target.prepare_calls()
     target.close()
     assert ran == ["plpgsql_check"] and strict == {"public.f(integer)": [("error", "42703")]}
-    assert any(s.sql == "CREATE EXTENSION IF NOT EXISTS plpgsql_check SCHEMA public"
+    assert any(s.sql == 'CREATE EXTENSION IF NOT EXISTS plpgsql_check SCHEMA "modernizer_harness"'
                and s.secret == ARNS["secret_arn"] for s in client.sent)  # fmt: skip
 
     strict2: dict[str, list[tuple[str, str]]] = {}
@@ -329,7 +329,8 @@ def test_without_plpgsql_check_each_plpgsql_routine_is_compiled_with_extra_error
     assert ran == ["plpgsql_extra_errors"] and strict == {"public.k(integer)": [("error", "42702")]}
     checked = [s for s in client.sent if s.sql == "SET LOCAL plpgsql.extra_errors = 'all'"]
     assert len(checked) == 1
-    assert client.sent[client.sent.index(checked[0]) + 2].op == "rollback"  # never kept
+    # then the routines' path (#2337) and the CREATE, then the rollback: never kept
+    assert client.sent[client.sent.index(checked[0]) + 3].op == "rollback"
 
 
 def test_a_paused_cluster_is_retried_while_it_resumes(monkeypatch):
@@ -920,14 +921,22 @@ def test_the_postgresql_runner_is_granted_its_scratch_database_only_and_runs_as_
     role = f'"{runner.username}"'
     master = [s.sql for s in client.sent if s.op == "execute" and s.secret == ARNS["secret_arn"]
               and s.database == t.database]  # fmt: skip
+    harness = '"modernizer_harness"'
     assert [m for m in master if m != PIN] == [
-        "SELECT count(*) FROM pg_catalog.pg_available_extensions WHERE name = :p0",
+        f"CREATE SCHEMA {harness}",
+        f"REVOKE ALL ON SCHEMA {harness} FROM PUBLIC",
+        f"GRANT USAGE ON SCHEMA {harness} TO {role}",
+        f'CREATE TABLE {harness}."modernizer_sentinel" (id pg_catalog.int4 PRIMARY KEY)',
+        f'GRANT SELECT, INSERT ON {harness}."modernizer_sentinel" TO {role}',
+        "SELECT pg_catalog.count(*) FROM pg_catalog.pg_available_extensions WHERE name = :p0",
         f"ALTER SCHEMA public OWNER TO {role}",
         "REVOKE ALL ON SCHEMA public FROM PUBLIC",
     ]
     grants = [s.sql for s in client.sent if s.sql.startswith("GRANT")]
     assert grants == [f"GRANT {role} TO CURRENT_USER",
-                      f'GRANT CONNECT, TEMPORARY ON DATABASE "{t.database}" TO {role}']  # fmt: skip
+                      f'GRANT CONNECT, TEMPORARY ON DATABASE "{t.database}" TO {role}',
+                      f"GRANT USAGE ON SCHEMA {harness} TO {role}",
+                      f'GRANT SELECT, INSERT ON {harness}."modernizer_sentinel" TO {role}']  # fmt: skip
     work = [s for s in client.sent if s.op in ("execute", "batch") and s.database == t.database
             and s.sql not in master]  # fmt: skip
     assert any(s.sql.startswith("CREATE OR REPLACE FUNCTION public.f") for s in work)
@@ -1071,7 +1080,7 @@ def test_a_postgresql_target_that_is_not_signed_in_as_its_runner_runs_no_call():
 
 # --------------------------------------------------------------------------- review of #2417
 
-PIN = "SET LOCAL search_path = pg_catalog"
+PIN = getattr(de, "PG_PIN", None)  # the harness path, row_security off (#2337); None on main
 
 
 def _whole_target(client: FakeDataApi) -> tuple[Any, Any]:
@@ -1103,14 +1112,16 @@ def test_no_master_statement_runs_in_a_scratch_database_after_the_runner_loads_i
     first = next(i for i, s in enumerate(scratch) if s.secret == runner.secret_arn)
     assert [s.sql for s in scratch[first:] if s.secret == ARNS["secret_arn"]] == []
     master = [s.sql for s in scratch[:first] if s.sql != PIN]
-    extension = master.index("CREATE EXTENSION IF NOT EXISTS plpgsql_check SCHEMA public")
+    extension = master.index(
+        'CREATE EXTENSION IF NOT EXISTS plpgsql_check SCHEMA "modernizer_harness"'
+    )
     assert extension < master.index(f'ALTER SCHEMA public OWNER TO "{runner.username}"')
     assert any(m.startswith('CREATE SCHEMA "sales"') for m in master)
 
 
 def test_every_master_statement_in_a_scratch_database_runs_with_its_search_path_pinned():
     """Review of #2417: each master statement in a scratch database runs in a transaction
-    whose first statement pins ``search_path`` to ``pg_catalog``, so no name resolves to a
+    whose first statement pins ``search_path`` to ``pg_catalog, pg_temp``, so no name resolves to a
     schema the runner owns."""
     client = FakeDataApi(plpgsql_check=True, calls={'"public"."f"': [1]})
     t, _ = _whole_target(client)

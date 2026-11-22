@@ -120,6 +120,14 @@ _SAVEPOINT = "modernizer_call"
 _CREATE_SENTINEL = "CREATE TABLE modernizer_sentinel (id INTEGER PRIMARY KEY)"
 _WRITE_SENTINEL = "INSERT INTO modernizer_sentinel (id) VALUES (1)"
 _READ_SENTINEL = "SELECT count(*) FROM modernizer_sentinel"
+#: PostgreSQL: the sentinel in the harness's own schema, which the superuser (on the test
+#: cluster the master user) made before the runner owns anything (#2337).
+_PG_WRITE_SENTINEL = f"INSERT INTO {de.PG_SENTINEL} (id) VALUES (1)"  # nosec B608 - a constant
+_PG_READ_SENTINEL = f"SELECT pg_catalog.count(*) FROM {de.PG_SENTINEL}"  # nosec B608 - a constant
+#: Why a call that changed what the harness reads refuses the routine (#2337).
+HARNESS_TAMPERED = ("changed what the comparison reads (a cast, a row-level security policy, a "
+                    "privilege on a table, or a setup table dropped, moved or replaced by a "
+                    "view), so the routine is refused and that call is not counted")  # fmt: skip
 _PG_SESSION = (
     "SET TIME ZONE INTERVAL '+05:47' HOUR TO MINUTE",
     "SET lock_timeout = '5s'",
@@ -131,7 +139,7 @@ _MY_SESSION = (
 _MY_SEED = "SET rand_seed1 = %s, rand_seed2 = %s"
 # What a call may leave in the session: PostgreSQL settings set in it, MySQL session and
 # user variables (its own thread only).
-_PG_SESSION_STATE = "SELECT name, setting FROM pg_settings WHERE source = 'session'"
+_PG_SESSION_STATE = "SELECT name, setting FROM pg_catalog.pg_settings WHERE source = 'session'"
 _MY_SESSION_STATE = "SELECT VARIABLE_NAME, VARIABLE_VALUE FROM performance_schema.session_variables"
 _MY_USER_VARIABLES = (
     "SELECT VARIABLE_NAME, VARIABLE_VALUE FROM performance_schema.user_variables_by_thread "
@@ -159,6 +167,18 @@ class RoleChanged(ProofTargetError):
     """A call left the role it was confined to (``current_user`` is no longer the runner
     role, or ``session_user`` changed), read after the call and before its rollback (#1945):
     the routine is refused, and the call is neither counted nor run again."""
+
+    reason_code = "role_changed"
+
+
+class HarnessTampered(RoleChanged):
+    """A call made something that changes what the harness's own reads return without going
+    through ``search_path`` (#2337): a cast the read would use, a row-level security policy
+    that hides rows (the pinned ``row_security = off`` turns that read into 42501), or a
+    privilege taken away. Refused like a role change: the call is neither counted nor run
+    again."""
+
+    reason_code = "harness_tampered"
 
 
 class CreateRefused(ValueError):
@@ -325,7 +345,8 @@ class DisposableEngineTarget:
         return None
 
     def prepare_calls(self) -> None:
-        self._execute(_CREATE_SENTINEL)
+        if self.engine == "mysql":  # on PostgreSQL the engine made it, in its own schema
+            self._execute(_CREATE_SENTINEL)
         try:
             self._counters = de.counters(self._handle)
         except de.EngineError as exc:
@@ -347,10 +368,10 @@ class DisposableEngineTarget:
                 f"{self.description} could not reset its session", exc.sqlstate
             ) from exc
         if self.engine == "postgresql":
-            self._execute("BEGIN")
+            self._execute("BEGIN")  # on the harness's path (#2337)
             self._open = True
-            self._execute("SELECT setseed(%s)", [seed])
-            self._execute(_WRITE_SENTINEL)
+            self._execute("SELECT pg_catalog.setseed(%s)", [seed])
+            self._execute(_PG_WRITE_SENTINEL)
             return
         self._session()
         # to the microsecond, so a carry that loses the fraction of a second differs
@@ -380,6 +401,7 @@ class DisposableEngineTarget:
             # A failed statement aborts a PostgreSQL transaction: the savepoint keeps it
             # usable for the snapshot after the call (the failed statement left no change).
             self._execute(f"SAVEPOINT {_SAVEPOINT}")
+            de.routine_path(self._handle)  # the call is the routines' own (#2337)
         with de.time_limit(self._handle, self._timeout) as limit:
             result = run_call(self._handle, call)
         if limit.fired:
@@ -387,14 +409,18 @@ class DisposableEngineTarget:
             return de.CallResult(error="the call ran past its time limit", timed_out=True)
         if postgres and result.error is not None:
             self._execute(f"ROLLBACK TO SAVEPOINT {_SAVEPOINT}")
+            de.after_rollback_to_savepoint(self._handle)
+        if postgres:
+            de.pin(self._handle)
         return result
 
     def transaction_state(self) -> str:
         """``open`` (the call left the transaction as it found it), ``committed`` (a second
         connection sees the sentinel row) or ``rolled back`` (the call's own session no
         longer sees it: a ``ROLLBACK``, ``ROLLBACK AND CHAIN``)."""
-        aside = de.execute_aside(self._handle, _READ_SENTINEL)
-        own = de.execute(self._handle, _READ_SENTINEL)
+        read = _PG_READ_SENTINEL if self.engine == "postgresql" else _READ_SENTINEL
+        aside = de.execute_aside(self._handle, read)
+        own = de.execute(self._handle, read)
         for seen in (aside, own):
             if seen.error is not None:
                 raise ProofTargetError(
@@ -418,6 +444,10 @@ class DisposableEngineTarget:
         try:
             return de.snapshot(self._handle, tables)
         except de.EngineError as exc:
+            if self.engine == "postgresql" and exc.sqlstate == "42501":
+                # A policy the pinned row_security = off refuses, or a privilege taken away
+                raise HarnessTampered(f"{self.description} could not read its tables: a call "
+                                      f"{HARNESS_TAMPERED}", exc.sqlstate) from None  # fmt: skip
             raise ProofTargetError(
                 f"{self.description} could not read its tables", exc.sqlstate
             ) from exc

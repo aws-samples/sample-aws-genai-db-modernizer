@@ -290,13 +290,13 @@ def test_a_postgresql_scratch_database_gets_each_source_schema_owned_by_the_runn
     assert all(s.database == name for s in client.sent
                if "sales" in s.sql and s.op in ("execute", "batch"))  # fmt: skip
     # the search path puts public first, then the schema, so an unqualified body still resolves
+    # (the routines' path, set beside the harness's pin, #2337)
     path = [
         s
         for s in client.sent
-        if s.sql.startswith("SET LOCAL search_path")
-        and s.sql != "SET LOCAL search_path = pg_catalog"
-    ]  # the master user's pin
-    assert path and path[0].sql == 'SET LOCAL search_path = "public", "sales"'
+        if s.sql.startswith("SELECT pg_catalog.set_config('search_path', :p0")
+    ]
+    assert path and path[0].parameters[0]["value"]["stringValue"] == '"public", "sales"'
     target.close()
 
 
@@ -306,7 +306,7 @@ def test_a_postgresql_target_lists_and_reads_the_schemas_tables():
     target.load_setup(_sales_setup())
     target.prepare_calls()
     target.tables()
-    listing = next(s.sql for s in client.sent if "FROM pg_tables" in s.sql)
+    listing = next(s.sql for s in client.sent if "FROM pg_catalog.pg_tables" in s.sql)
     assert "'sales'" in listing and "'public'" in listing
     client.sent.clear()
     target.snapshot(["sales.orders"])

@@ -95,3 +95,17 @@ def test_the_script_resolves_auto_before_the_loop_runs(
         (tmp_path / fx.DB / fx.JOB / "routines" / "v1" / "repair" / "loop_state.json").read_text()
     )
     assert saved["proof"] == proof
+
+
+def test_a_candidate_that_changes_what_the_comparison_reads_fails_as_its_own_fault():
+    """#2337: a repair candidate whose call changed what the comparison reads (a cast, a
+    policy, a setup table swapped for a view) fails as the candidate's own fault, so the
+    next attempt hears why, never ``pending`` as a proof that could not run."""
+    from src.tools.routines.comparison import RoutineComparison
+    from src.tools.routines.repair_proof import _verdict
+
+    found = RoutineComparison(routine_id="public.f(integer)", outcome="could_not_compare",
+                              reason="call 1 changed what the comparison reads",
+                              reason_code="harness_tampered")  # fmt: skip
+    check = _verdict(found, "a disposable postgresql 16 engine")
+    assert (check.outcome, check.code) == ("failed", "harness_tampered")

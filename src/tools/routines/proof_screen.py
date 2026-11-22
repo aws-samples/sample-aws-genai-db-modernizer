@@ -27,7 +27,9 @@ holds routine text.
   with such schemas, a call into one (also a ``CALL`` or ``PERFORM``, read from the tokens), a
   MySQL statement naming one that creates, alters, drops, renames or truncates, writes a file
   or runs ``USE``, and a function, procedure, operator or aggregate created or altered from a
-  body (on PostgreSQL, whatever the schemas) are refused too. On MySQL only reads and row
+  body (on PostgreSQL, whatever the schemas) are refused too, and so are a cast, a
+  row-level security policy and ``ROW LEVEL SECURITY`` from a PostgreSQL body (#2337),
+  which change what the comparison's own reads see. On MySQL only reads and row
   changes of a setup database's tables remain; on PostgreSQL DDL on those tables passes the
   screen and is undone by the call's ``ROLLBACK``;
 - a name written so that the text and the server read it differently: a PostgreSQL
@@ -543,6 +545,12 @@ _MY_CHANGES = {"CREATE", "ALTER", "DROP", "RENAME", "TRUNCATE", "OUTFILE", "DUMP
 #: A word before ``schema.name (`` that makes it a table with a column list, not a call.
 _PG_TABLE_BEFORE = {"INTO", "ON", "TABLE", "COPY", "ANALYZE", "ANALYSE", "VACUUM", "ONLY"}
 _PG_CREATED = {"FUNCTION", "PROCEDURE", "OPERATOR", "AGGREGATE"}
+#: What changes how a harness read sees a table without resolving through ``search_path``
+#: (#2337): a cast (``pg_cast`` is global) and a row-level security policy. Read one level
+#: into a ``DO`` block and into a single-literal ``EXECUTE``, not into an ``EXECUTE`` literal
+#: inside a ``DO``: a known limit, which the runtime checks catch (the test cluster refuses
+#: a read after a cast, and a policy's read fails with ``row_security`` off).
+_PG_READ_CHANGERS = {"CAST", "POLICY"}
 
 
 def _setup_name(tok: RoutineToken, schema: str, engine: str) -> bool:
@@ -643,6 +651,12 @@ def _setup_schema_refusal(text: str, engine: str, schemas: Collection[str]) -> s
                         after = after[2:]
                     if after and after[0] in _PG_CREATED:
                         return "its body creates or alters a function, procedure, operator or aggregate"
+                    if after and after[0] in _PG_READ_CHANGERS:
+                        return "its body creates a cast or a row-level security policy"
+                if (depth, i) != (0, 0) and [t.text.upper() for t in toks[i : i + 3]] == [
+                    "ROW", "LEVEL", "SECURITY"
+                ]:  # fmt: skip
+                    return "its body turns on row-level security"
                 if (
                     _names_schema(toks, i, schemas, engine)
                     and i + 3 < len(toks)

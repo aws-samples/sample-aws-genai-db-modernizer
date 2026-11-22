@@ -183,7 +183,9 @@ from src.tools.routines.proof_screen import (
     touched_tables,
 )
 from src.tools.routines.proof_targets import (
+    HARNESS_TAMPERED,
     CreateRefused,
+    HarnessTampered,
     ProofTarget,
     ProofTargetError,
     ProofTargetUnavailable,
@@ -298,6 +300,7 @@ ReasonCode = Literal[
     "mostly_errors",
     "call_refused",
     "role_changed",
+    "harness_tampered",
     "definer_refused",
 ]
 
@@ -1083,7 +1086,13 @@ class _Side:
             if result.timed_out or result.sqlstate in _TIMEOUTS:
                 # nothing after an interrupted call is read: the side is opened again
                 return CallRun(result, before, before, now)
-            created = sorted(t for t in target.tables() if t not in self.baseline_names)
+            listed = set(target.tables())
+            if self.baseline_names - listed:
+                # A setup table dropped, moved to another schema or replaced by a view: a
+                # read by its name would return what the routine says (#2337).
+                raise HarnessTampered(f"the {self.which} side's setup tables after the call: "
+                                      f"it {HARNESS_TAMPERED}")  # fmt: skip
+            created = sorted(t for t in listed if t not in self.baseline_names)
             after = target.snapshot([*self.tables, *created])
             types = target.column_types([*self.tables, *created])
             state = target.transaction_state()  # committed, or rolled back in its session
@@ -1457,10 +1466,11 @@ def _compare_one(routine: ComparedRoutine, shared: _Batchwide) -> RoutineCompari
         except ValueError:
             return not_compared("call_refused", f"call {index} ({call.label}) was refused "
                                 "before it ran", done, succeeded)  # fmt: skip
-        except RoleChanged:
+        except RoleChanged as exc:
             # rolled back already; the next routine starts clean
-            _reopen(sides.values(), f"after call {index} changed its role")
-            return not_compared("role_changed", f"call {index} ({call.label}) {ROLE_CHANGED}",
+            refused, why, short = _refusal(exc)
+            _reopen(sides.values(), f"after call {index} {short}")
+            return not_compared(refused, f"call {index} ({call.label}) {why}",
                                 done, succeeded)  # fmt: skip
         except ProofTargetError as exc:
             state = f" (SQLSTATE {exc.sqlstate})" if exc.sqlstate else ""
@@ -1651,11 +1661,20 @@ RunReasonCode = Literal[
     "engine_failed",
     "call_refused",
     "role_changed",
+    "harness_tampered",
 ]
 
 #: Why a call that left its role refuses the routine (#1945 review): never a result.
 ROLE_CHANGED = ("changed the role it runs as (current_user or session_user after the call), "
                 "so the routine is refused and that call is not counted")  # fmt: skip
+
+
+def _refusal(exc: RoleChanged) -> tuple[Literal["role_changed", "harness_tampered"], str, str]:
+    """The reason code, the words and the short words of a call that refuses its routine: a
+    role change, or a change to what the comparison reads (#2337)."""
+    if isinstance(exc, HarnessTampered):
+        return "harness_tampered", HARNESS_TAMPERED, "changed what the comparison reads"
+    return "role_changed", ROLE_CHANGED, "changed its role"
 
 
 class RoutineRun(BaseModel):
@@ -1725,10 +1744,11 @@ def _run_one(
         except ValueError:
             return not_run("call_refused", f"call {index} ({call.label}) was refused before it ran",
                            calls_run=ran, calls_succeeded=ok)  # fmt: skip
-        except RoleChanged:
+        except RoleChanged as exc:
             # its transaction was rolled back; the next routine starts clean
-            _reopen([side], f"after call {index} changed its role")
-            return not_run("role_changed", f"call {index} ({call.label}) {ROLE_CHANGED}",
+            refused, why, short = _refusal(exc)
+            _reopen([side], f"after call {index} {short}")
+            return not_run(refused, f"call {index} ({call.label}) {why}",
                            calls_run=ran, calls_succeeded=ok)  # fmt: skip
         result = run.result
         ran += 1

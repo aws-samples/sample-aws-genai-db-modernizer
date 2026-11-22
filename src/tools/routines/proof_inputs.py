@@ -1260,7 +1260,7 @@ def run_call(handle: de.EngineHandle, call: ProofCall) -> de.CallResult:
             which = "enum_last" if value["enum_label"] == "last" else "enum_first"
             found = de.execute(
                 handle,
-                f"SELECT {which}(NULL::{casts[i]})::text",  # nosec B608 - a fixed function, a checked type name
+                f"SELECT pg_catalog.{which}(NULL::{casts[i]})::text",  # nosec B608 - a fixed function, a checked type name
             )
             if found.error is not None:
                 return found
