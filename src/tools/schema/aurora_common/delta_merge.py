@@ -25,6 +25,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+from collections.abc import Mapping
 from dataclasses import dataclass, field
 
 from pydantic import BaseModel, ValidationError
@@ -133,6 +134,10 @@ class AuroraDesignBase:
     from ``tables`` (more than one schema among them); step 1 passes False. With it, the
     draft names each table ``<schema>.<table>`` (``name_of``), and ``source_data_types``
     and the type overrides are keyed on that name."""
+    design_names: Mapping[tuple[str, str], str] | None = None
+    """Step 1 only (#2545): (table id, collected index name) -> the name the saved design
+    stores for that index (``ddl_generator.unique_index_names``); None for a design, and
+    for a step with none."""
 
     def __post_init__(self) -> None:
         if self.schema_qualified is None:
@@ -144,7 +149,7 @@ class AuroraDesignBase:
         )
         self.left_out = [*self.left_out, *left_out]
         self.tables, renamed = unique_index_names(
-            self.tables, self.dialect, self.qualified, self.source_engine
+            self.tables, self.dialect, self.qualified, self.source_engine, self.design_names
         )
         self.renamed = [*self.renamed, *renamed]
 

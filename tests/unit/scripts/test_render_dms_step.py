@@ -54,7 +54,7 @@ def test_bundle_writes_the_inputs(tmp_path, capsys):
     assert script.main(_args(tmp_path, "--bundle", str(target))) == 0
     data = json.loads(target.read_text())
     assert set(data) == {"plan", "contract", "ddl", "zero_date_defaults", "identity_columns",
-                         "source_objects", "extensions", "left_out_objects"}  # fmt: skip
+                         "source_objects", "extensions", "left_out_objects", "renamed_indexes"}  # fmt: skip
     assert data["zero_date_defaults"] == ["shop.orders.created"]
     assert data["source_objects"] == {"procedures": 0, "functions": 0, "triggers": 0, "views": 1}
 
@@ -76,6 +76,27 @@ def test_a_postgresql_bundle_round_trips_its_sequences_and_extensions(tmp_path, 
     assert "step-1.sequences.sql" in rendered
     for name, text in rendered.items():
         assert store.read_bytes(f"shop/job1/data-movement/step-1/{name}").decode() == text, name
+
+
+def test_a_bundle_round_trips_the_renamed_indexes(tmp_path, capsys):
+    """#2545: the bundle carries the indexes step 1 renames, so an example's DDL file
+    lists them as the job's does."""
+    ix = {"columns": ["msg"], "is_unique": False, "index_type": "btree"}
+    store = write_pg_job(tmp_path, indexes={"audit_log": [{**ix, "index_name": "ix"}],
+                                            "orders": [{**ix, "index_name": "ix", "columns": ["note"]}]})  # fmt: skip
+    target = tmp_path / "input.json"
+    assert script.main(_args(tmp_path, "--bundle", str(target))) == 0
+    data = json.loads(target.read_text())
+    assert [(r["table_id"], r["name"], r["new_name"]) for r in data["renamed_indexes"]] == [
+        ("public.orders", "ix", "orders_note_idx")
+    ]
+    assert script.main(_args(tmp_path)) == 0
+    bundle_dir = tmp_path / "ex"
+    bundle_dir.mkdir()
+    (bundle_dir / "input.json").write_text(target.read_text())
+    ddl = script.render_example(bundle_dir)["step-1.ddl.sql"]
+    assert "index public.orders.ix is created as orders_note_idx" in ddl
+    assert store.read_bytes("shop/job1/data-movement/step-1/step-1.ddl.sql").decode() == ddl
 
 
 def test_the_bundle_round_trips_to_the_same_files(tmp_path, capsys):

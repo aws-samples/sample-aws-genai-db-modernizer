@@ -22,7 +22,7 @@ from typing import Literal
 from src.contracts.aurora_design_delta import validate_aurora_type
 from src.contracts.collector_output import CollectorOutputContract, Column
 from src.contracts.lineage_ops import ColumnRef, CopyOp, TransformOp, UnsupportedOp
-from src.contracts.schema_design_input import project_schema_design_tables
+from src.contracts.schema_design_input import AgentTable, project_schema_design_tables
 from src.contracts.transformation_contract import (
     FieldRule,
     Finding,
@@ -200,15 +200,101 @@ def design_base(
     source = collector.metadata.source_database
     if qualified is None:
         qualified = keeps_schemas(collector)
+    tables = project_schema_design_tables(collector)
     return AuroraDesignBase(
         engine=engine,
         job_id=inputs.job_id,
         source_database=source.database_name or "",
         source_engine=source.engine.value,
-        tables=project_schema_design_tables(collector),
+        tables=tables,
         source_data_types=source_data_types(dict(inputs.collector), qualified=qualified),
         schema_qualified=qualified,
+        design_names=saved_design_index_names(inputs, engine, tables),
     )
+
+
+def saved_design_index_names(
+    inputs: JobInputs, engine: str, tables: list[AgentTable]
+) -> dict[tuple[str, str], str] | None:
+    """(table id, collected index name) -> the name the saved ``engine`` design stores
+    for that index in ``table_definitions[].indexes`` (#2545): the names the customer's
+    design DDL uses, whatever release or delta wrote them. None with no design or a skip
+    record. Step 1 creates each index under that name when the name is free.
+
+    A saved table that names its schema is that schema's table. One that does not (a design
+    of one schema) is the table of its name in the schema the design's other tables
+    resolve to; when nothing tells two schemas' tables apart, each of them gets the
+    design's names. Each collected index maps to the stored statement of its own name,
+    else to the one an ``index_renamed`` note gives it, else to the one stored statement
+    with its key columns that nothing else took; an index the design does not create
+    maps to nothing."""
+    from src.tools.schema.aurora_common.saved_design import stored_index
+
+    saved = inputs.schema_designs.get(engine)
+    if not saved or saved[1].get("status") == "skipped":
+        return None
+    defs = [d for d in saved[1].get("table_definitions") or [] if isinstance(d, dict)]
+    matches = [
+        [t for t in tables if t.table_name == d.get("table_name")
+         and (not d.get("schema_name") or t.schema_name == d.get("schema_name"))]
+        for d in defs
+    ]  # fmt: skip
+    schemas = {m[0].schema_name for m in matches if len(m) == 1}
+    renamed = _renamed_by_notes(saved[1].get("app_layer_notes"))
+    out: dict[tuple[str, str], str] = {}
+    for d, found in zip(defs, matches, strict=True):
+        if len(found) > 1 and len([t for t in found if t.schema_name in schemas]) == 1:
+            found = [t for t in found if t.schema_name in schemas]
+        stored = [s for s in (stored_index(i) for i in d.get("indexes") or []) if s is not None]
+        label = (
+            f"{d['schema_name']}.{d['table_name']}" if d.get("schema_name") else d.get("table_name")
+        )
+        for t in found:
+            out.update(_stored_names(t, stored, renamed, str(label)))
+    return out
+
+
+def _renamed_by_notes(notes: object) -> dict[tuple[str, str], str]:
+    """(design table, collected name) -> new name, from the design's ``index_renamed`` notes
+    (``Created as <new>: ...``, #2410)."""
+    out: dict[tuple[str, str], str] = {}
+    for n in notes if isinstance(notes, list) else []:
+        if not isinstance(n, dict) or n.get("feature") != "index_renamed":
+            continue
+        obj, text = str(n.get("source_object") or ""), str(n.get("recommendation") or "")
+        if "." in obj and text.startswith("Created as ") and ":" in text:
+            table, name = obj.rsplit(".", 1)
+            out[(table, name)] = text[len("Created as ") :].split(":", 1)[0]
+    return out
+
+
+def _stored_names(
+    t: AgentTable,
+    stored: list[tuple[str, tuple[str, ...]]],
+    renamed: dict[tuple[str, str], str],
+    label: str,
+) -> dict[tuple[str, str], str]:
+    """``t``'s collected indexes mapped to the saved table's stored index names."""
+    free = dict(stored)
+    out: dict[tuple[str, str], str] = {}
+    # An expression index is one only step 1 creates (#2547): no design stores it.
+    indexes = [i for i in t.indexes or [] if not i.has_expressions]
+    for rule in ("own", "note", "columns"):
+        for idx in indexes:
+            if (t.table_id, idx.index_name) in out:
+                continue
+            if rule == "own":
+                name = idx.index_name if idx.index_name in free else None
+            elif rule == "note":
+                name = renamed.get((label, idx.index_name))
+                name = name if name in free else None
+            else:
+                same = [n for n, cols in free.items() if list(cols) == list(idx.columns)]
+                name = same[0] if len(same) == 1 else None
+            if name is not None and not has_unprintable(name):
+                out[(t.table_id, idx.index_name)] = name
+                free.pop(name)
+    return out
 
 
 def _generated_tables(

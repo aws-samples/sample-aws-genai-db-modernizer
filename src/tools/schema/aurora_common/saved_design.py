@@ -448,6 +448,21 @@ def _index_name(statement: str) -> str | None:
     return None
 
 
+def stored_index(statement: object) -> tuple[str, tuple[str, ...]] | None:
+    """A saved Aurora PostgreSQL index statement's name and key columns (#2545), or None
+    for a string that is not a CREATE INDEX statement the generator writes."""
+    if not isinstance(statement, str):
+        return None
+    match = _INDEX_SHAPES[POSTGRES.name].fullmatch(statement)
+    if match is None:
+        return None
+    try:
+        keys = _names(POSTGRES, match["cols"])
+    except _Refused:
+        return None
+    return _unquote(POSTGRES, match["name"]), tuple(n for n, _ in keys)
+
+
 def _main_comment(table_name: str, index_name: str) -> str:
     """The skipped-index comment main wrote before #2381: its ``comment_name`` replaced
     C0, C1 and the Unicode line separators with a space and collapsed the whitespace, but

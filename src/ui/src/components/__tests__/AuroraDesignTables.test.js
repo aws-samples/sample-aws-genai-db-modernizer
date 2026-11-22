@@ -11,7 +11,7 @@ import { act } from 'react';
 import { createRoot } from 'react-dom/client';
 import createWrapper from '@cloudscape-design/components/test-utils/dom';
 import i18n from '../../i18n';
-import AuroraDesignTables, { AuroraLeftOutAlert } from '../AuroraDesignTables';
+import AuroraDesignTables, { AuroraAppLayerNotes, AuroraLeftOutAlert } from '../AuroraDesignTables';
 import { AuroraTableDetailBody } from '../AuroraTableDetailPanel';
 import { withTableDetails } from '../../utils/auroraDesign';
 
@@ -184,4 +184,32 @@ test('no alert when the design leaves nothing out', () => {
   expect(wrapper().findAlert()).toBeNull();
   act(() => root.render(<AuroraLeftOutAlert leftOut={{ ...LEFT_OUT, object_count: 0, objects: [] }} t={t} />));
   expect(wrapper().findAlert()).toBeNull();
+});
+
+describe('AuroraAppLayerNotes (#2545)', () => {
+  const NOTES = [
+    { label: 'Index renamed', object: 'usermeta.meta_key', text: 'Created as usermeta_b_idx: postmeta already has an index named meta_key in this schema.' },
+    { label: 'Trigger', object: '<img src=x onerror=alert(1)>', text: 'Run `UPDATE` from the application.' },
+  ];
+
+  test('a collapsed section lists each note: its kind, its object and its text', () => {
+    act(() => root.render(<AuroraAppLayerNotes notes={NOTES} t={t} />));
+    const section = wrapper().findExpandableSection();
+    expect(section).not.toBeNull();
+    expect(section.findHeader().getElement().textContent).toBe('Application-layer notes');
+    expect(section.findExpandButton().getElement().getAttribute('aria-expanded')).toBe('false');
+    act(() => section.findExpandButton().click());
+    const items = [...container.querySelectorAll('#aurora-design-app-layer-notes li')].map(li => li.textContent);
+    expect(items).toEqual([
+      'Index renamed on usermeta.meta_key: Created as usermeta_b_idx: postmeta already has an index named meta_key in this schema.',
+      'Trigger on <img src=x onerror=alert(1)>: Run UPDATE from the application.',
+    ]);
+    expect(container.querySelector('img')).toBeNull();
+    expect(container.querySelector('#aurora-design-app-layer-notes code')).not.toBeNull();
+  });
+
+  test('no section when the design has no notes', () => {
+    act(() => root.render(<AuroraAppLayerNotes notes={[]} t={t} />));
+    expect(wrapper().findExpandableSection()).toBeNull();
+  });
 });

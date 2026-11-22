@@ -277,3 +277,15 @@ def test_a_renamed_index_named_by_its_old_name_gets_the_new_name(change: str) ->
         "; the design creates it as 'usermeta_b_idx', because another object of the schema "
         "has the name, so use that name"
     )
+
+
+@pytest.mark.passes_on_main
+def test_the_carried_indexes_are_the_tables_own_objects() -> None:
+    """``unique_index_names`` marks the indexes to rename by object, reading them from
+    ``carried_indexes`` and renaming them in ``table.indexes`` (#2545 review): the two
+    must hand back the same objects, or no clashing index is ever renamed."""
+    from src.tools.schema.aurora_common.ddl_generator import POSTGRES, carried_indexes
+
+    t = _table("postmeta", [_index("meta_key", ["a"]), _index("b_idx", ["b"])])
+    carried = carried_indexes(t, POSTGRES)
+    assert carried and all(any(c is i for i in t.indexes or []) for c in carried)

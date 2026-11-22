@@ -9,6 +9,7 @@ turn into a step 1 contract and plan (``write_step1``, ``write_plans``), for the
 
 from __future__ import annotations
 
+import contextlib
 from pathlib import Path
 from typing import Any
 
@@ -205,13 +206,20 @@ def write_pg_job(
     indexes: dict[str, list[dict[str, Any]]] | None = None,
     columns: dict[str, list[dict[str, Any]]] | None = None,
     extra_tables: list[dict[str, Any]] | None = None,
+    design: list[str] | None = None,
+    design_delta: dict[str, Any] | None = None,
+    design_before_2548: bool = False,
 ) -> LocalArtifactStore:
     """A finished PostgreSQL job ``shop/job1`` (assignment v2) with its step 1 contract and
     plan: ``public.orders`` has an identity column ``id`` (a ``nextval`` default) and a
     ``halfvec`` column, ``public.tags`` a quoted-name identity column, ``public.audit_log``
     no key and no identity, and one view. ``extensions`` are the collection's installed
     extensions; ``procedures`` and ``triggers`` its routines and triggers; ``indexes`` its
-    indexes by table name; ``columns`` more columns by table name; ``extra_tables`` more collector tables.
+    indexes by table name; ``columns`` more columns by table name; ``extra_tables`` more collector tables;
+    ``design`` the tables of a saved Aurora PostgreSQL design, built by the design merge
+    from those collector tables only, as a design covers only the engine's tables (an
+    empty list: the design's skip record), with ``design_delta`` merged, or as a release
+    before #2548 saved it (``design_before_2548``).
     """
     seq = "nextval('orders_id_seq'::regclass)"
     tables = [
@@ -244,9 +252,57 @@ def write_pg_job(
         "shop/job1/assignment/v2/assignment.json", {"version": 2, "query_assignments": []}
     )
     store.write_json("shop/job1/collector/output.json", coll)
+    if design is not None:
+        store.write_json("shop/job1/schema-aurora_postgresql/v2/schema_output.json",
+                         _pg_design(coll, design, design_delta, design_before_2548)
+                         if design else _skipped_design())  # fmt: skip
     write_step1(store, "shop", "job1")
     write_plans(store, "shop", "job1")
     return store
+
+
+def _skipped_design() -> dict[str, Any]:
+    from src.contracts.skipped_placeholders import SkippedSchemaOutput
+
+    return SkippedSchemaOutput(
+        target_type="aurora_postgresql", reason="skipped by the user", assignment_version=2
+    ).model_dump(mode="json")
+
+
+def _pg_design(
+    coll: dict[str, Any],
+    names: list[str],
+    delta: dict[str, Any] | None = None,
+    before_2548: bool = False,
+) -> dict[str, Any]:
+    """The saved Aurora PostgreSQL design of the collector tables ``names`` (a bare name, or
+    ``schema.table`` for that table only), as the merge writes it with ``delta`` (default
+    none); ``before_2548``: as a release before #2548 wrote it, every collected index name
+    kept as collected."""
+    from unittest import mock
+
+    from src.contracts.collector_output import CollectorOutputContract
+    from src.contracts.schema_design_input import project_schema_design_tables
+    from src.tools.schema.aurora_common import delta_merge
+    from src.tools.schema.aurora_common.delta_merge import AuroraDesignBase, merge_design_delta
+
+    kept = [t for t in coll["database_schema"]["tables"]
+            if t["table_name"] in names or t["table_id"] in names]  # fmt: skip
+    projected = CollectorOutputContract.model_validate(
+        {**coll, "database_schema": {**coll["database_schema"], "tables": kept}}
+    )
+    keep_names: contextlib.AbstractContextManager[Any] = (
+        mock.patch.object(delta_merge, "unique_index_names", lambda t, *a, **k: (t, []))
+        if before_2548
+        else contextlib.nullcontext()
+    )
+    with keep_names:
+        base = AuroraDesignBase(engine="aurora_postgresql", job_id="job1", source_database="shop",
+                                source_engine="postgresql",
+                                tables=project_schema_design_tables(projected))  # fmt: skip
+        output = merge_design_delta(base, delta or {"delta_version": "1.0"}, strict=False).output
+    assert output is not None
+    return output
 
 
 def rewrite_contract(store: LocalArtifactStore, contract: StepContract) -> None:

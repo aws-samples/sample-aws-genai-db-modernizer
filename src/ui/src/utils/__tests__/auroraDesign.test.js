@@ -19,6 +19,8 @@ import {
   buildAuroraDesign,
   buildAuroraDesigns,
   reasonTextFor,
+  LEFT_OUT_FEATURES,
+  LEFT_OUT_OBJECTS,
 } from '../auroraDesign';
 
 const AURORA_CONTENT = {
@@ -356,5 +358,74 @@ describe('left-out objects (#2484)', () => {
       [{ ...LEFT_OUT[0], object_count: 0, objects: [] }],
     );
     expect(empty.leftOut).toBeNull();
+  });
+});
+
+describe('app-layer notes (#2545)', () => {
+  const content = (notes) => ({ ...AURORA_CONTENT, app_layer_notes: notes });
+  const RENAMED = {
+    feature: 'index_renamed',
+    source_object: 'usermeta.meta_key',
+    recommendation: 'Created as usermeta_b_idx: postmeta already has an index named meta_key in this schema.',
+  };
+
+  test("each note the design states, as its kind, its object and its text", () => {
+    const design = buildAuroraDesign('aurora_postgresql', { target_type: 'aurora_postgresql', content: content([
+      RENAMED,
+      { feature: 'trigger', source_object: 'wp_posts_after_insert', recommendation: 'Run the update from the application.' },
+    ]) }, QUERY_GROUPS);
+    expect(design.appLayerNotes).toEqual([
+      { label: 'Index renamed', object: 'usermeta.meta_key', text: RENAMED.recommendation },
+      { label: 'Trigger', object: 'wp_posts_after_insert', text: 'Run the update from the application.' },
+    ]);
+  });
+
+  test('a note for an object the design leaves out is not repeated: the left-out alert shows it', () => {
+    const design = buildAuroraDesign('aurora_postgresql', { target_type: 'aurora_postgresql', content: content([
+      { feature: 'duplicate_index_name', source_object: 'wp_posts.ix', recommendation: 'Index not created: wp_posts already has an index named ix.' },
+      { feature: 'system_schema', source_object: 'pg_catalog.audit', recommendation: 'Table not created: it is in a system schema.' },
+      RENAMED,
+    ]) }, QUERY_GROUPS);
+    expect(design.appLayerNotes.map(n => n.label)).toEqual(['Index renamed']);
+  });
+
+  test('a note with a left-out feature but other text is still shown, as the engineering report does', () => {
+    const odd = { feature: 'unsafe_name', source_object: 'x', recommendation: 'Rename x on the source first.' };
+    const design = buildAuroraDesign('aurora_postgresql', { target_type: 'aurora_postgresql', content: content([odd]) }, QUERY_GROUPS);
+    expect(design.appLayerNotes).toEqual([{ label: 'Unsafe name', object: 'x', text: 'Rename x on the source first.' }]);
+  });
+
+  test('no notes, or entries that are not notes, give an empty list', () => {
+    expect(buildAuroraDesign('aurora_mysql', null, QUERY_GROUPS).appLayerNotes).toEqual([]);
+    const design = buildAuroraDesign('aurora_mysql', { target_type: 'aurora_mysql', content: content([null, 'text', 3]) }, QUERY_GROUPS);
+    expect(design.appLayerNotes).toEqual([]);
+  });
+
+  test('a note with no feature or no object reads as a note, as the engineering report names it', () => {
+    const design = buildAuroraDesign('aurora_mysql', { target_type: 'aurora_mysql', content: content([{ recommendation: 'Check the time zone.' }]) }, QUERY_GROUPS);
+    expect(design.appLayerNotes).toEqual([{ label: 'Note', object: '?', text: 'Check the time zone.' }]);
+  });
+});
+
+describe('the left-out note kinds match the Python reader (#2545 review)', () => {
+  // src/shared/left_out_objects.py is the one reader of these notes; the UI's copy must
+  // name the same features and object kinds, or a left-out note shows twice or not at all.
+  const fs = require('fs');
+  const path = require('path');
+  const source = fs.readFileSync(
+    path.resolve(__dirname, '../../../../shared/left_out_objects.py'), 'utf8',
+  );
+  const strings = (text) => [...text.matchAll(/"([^"]+)"/g)].map((m) => m[1]);
+
+  test('the features', () => {
+    const block = source.match(/LEFT_OUT_FEATURES = frozenset\(\s*\{([^}]*)\}/);
+    expect(block).not.toBeNull();
+    expect([...LEFT_OUT_FEATURES].sort()).toEqual(strings(block[1]).sort());
+  });
+
+  test('the object kinds a note head names', () => {
+    const block = source.match(/_OBJECTS = \(([^)]*)\)/);
+    expect(block).not.toBeNull();
+    expect(LEFT_OUT_OBJECTS).toEqual(strings(block[1]));
   });
 });
