@@ -463,6 +463,63 @@ def test_a_lock_a_temporary_table_or_a_prepared_statement_a_call_left_never_reac
         target.close()
 
 
+#: Makes a temporary table through a statement it prepares from a string literal: the table's
+#: name is only in the literal (#2579).
+_PREPARED_TEMPORARY = (
+    "CREATE PROCEDURE built_temporary() BEGIN "
+    "PREPARE mdz_make FROM 'CREATE TEMPORARY TABLE mdz_built (id INT)'; EXECUTE mdz_make; "
+    "DEALLOCATE PREPARE mdz_make; INSERT INTO mdz_built (id) VALUES (1); END"
+)
+
+
+@pytest.mark.integration
+@needs_mysql
+def test_a_temporary_table_a_prepared_literal_makes_never_reaches_the_next_call():
+    """On the same pooled session, the procedure that makes ``mdz_built`` through a prepared
+    literal runs again with no 1050, as on a reset connection, and the table it left is gone
+    when the next call starts."""
+    _skip_as_root()
+    with _pooled_factory() as factory:
+        target = _opened(factory, _PREPARED_TEMPORARY)
+        target.begin_call(_frozen(), 0.25)
+        first = de.execute(target._handle, "SELECT CONNECTION_ID()").rows
+        assert target.run(_call("built_temporary")).error is None
+        target.end_call()
+        target.begin_call(_frozen(), 0.5)
+        assert de.execute(target._handle, "SELECT CONNECTION_ID()").rows == first  # pooled
+        assert de.execute(target._handle, "SELECT COUNT(*) FROM mdz_built").error is not None
+        assert target.run(_call("built_temporary")).error is None
+        target.end_call()
+        target.close()
+
+
+#: Builds the statement that makes a temporary table at run time: no text names the table.
+_BUILT_AT_RUN_TIME = (
+    "CREATE PROCEDURE built_at_run_time() BEGIN "
+    "SET @mdz_sql = CONCAT('CREATE TEMPORARY TABLE ', 'mdz_dyn', ' (id INT)'); "
+    "PREPARE mdz_dyn_s FROM @mdz_sql; EXECUTE mdz_dyn_s; END"
+)
+
+
+@pytest.mark.integration
+@needs_mysql
+@pytest.mark.passes_on_main  # the dynamic_sql screen ADR-034 Decision 5 now relies on (#2579)
+def test_a_routine_that_builds_a_statement_at_run_time_is_never_called_on_the_test_cluster():
+    """Load and run on the pooled stand-in: the routine loads, is never called (no
+    temporary table it could leave), and is reported as ``dynamic_sql``."""
+    _skip_as_root()
+    from src.tools.routines.comparison import run_routines
+    from tests.unit.tools.routines.test_routine_comparison_engine import _col, _pair, _proof
+
+    tables = [{"table_id": "src.t", "table_name": "t", "row_count": 2, "primary_key": ["id"],
+               "columns": [_col("id", "int")]}]  # fmt: skip
+    proof = _proof("src.built_at_run_time", "procedure", "built_at_run_time", tables=("t",))
+    with _pooled_factory() as factory:
+        (run,) = run_routines([_pair(proof, _BUILT_AT_RUN_TIME, _BUILT_AT_RUN_TIME)], tables,
+                              target=factory, dialect="mysql")  # fmt: skip
+    assert (run.outcome, run.reason_code, run.calls_run) == ("not_run", "dynamic_sql", 0), run
+
+
 #: Refused for its row limit, it also leaves a setting no harness read depends on (a function
 #: keeps ``lc_time_names``).
 _LIMIT_AND_LOCALE = (
@@ -539,6 +596,8 @@ def test_the_mysql_round_trips_are_deselected_not_skipped_in_a_gated_run():
         test_a_refused_calls_pooled_session_is_set_back_before_it_is_handed_back,
         test_a_timed_out_calls_session_never_reaches_the_next_targets_setup,
         test_a_lock_a_temporary_table_or_a_prepared_statement_a_call_left_never_reaches_the_next,
+        test_a_temporary_table_a_prepared_literal_makes_never_reaches_the_next_call,
+        test_a_routine_that_builds_a_statement_at_run_time_is_never_called_on_the_test_cluster,
         test_a_setup_table_swapped_for_a_view_refuses_the_routine_on_mysql,
         test_a_routine_cannot_make_an_event_or_drop_a_procedure_and_the_local_scheduler_is_off,
         test_a_source_database_named_like_the_harness_database_is_refused,
@@ -723,6 +782,20 @@ def test_a_setup_made_on_a_session_a_call_left_fails_the_target(made):
     with pytest.raises(ProofTargetError, match="made on a session a call left"):
         t.prepare_calls()
     t.close()
+
+
+def test_the_names_a_routine_may_leave_are_read_from_its_text_and_the_strings_it_prepares():
+    """A temporary table a ``PREPARE`` literal names, as one the text names."""
+    made = dat._made_names(
+        "CREATE PROCEDURE p() BEGIN "
+        "PREPARE s FROM 'CREATE TEMPORARY TABLE built (id INT)'; "
+        "CREATE /* c */ TEMPORARY TABLE IF NOT EXISTS db.Plain (id INT); END"
+    )
+    assert made.temporary == {"built", "Plain"}
+    assert made.prepared == {"s"}
+    assert dat._made_names("CREATE PROCEDURE p() BEGIN SELECT 'unterminated; END") == (
+        dat._MadeNames()
+    )
 
 
 @pytest.mark.passes_on_main  # the negative case: what must keep loading
