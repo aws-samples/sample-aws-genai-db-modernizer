@@ -69,8 +69,8 @@ What each engine freezes, and nothing more:
   table a ``TEMPORARY`` table hides (:class:`HarnessTampered`, #2560). On the test cluster,
   where a pooled Data API session has no reset, every session variable is also put back to
   the run's baseline after each call that ends and when each call starts, with the session's
-  named locks, and the prepared statements and temporary tables its routines name, in their
-  text or in a string they prepare (#2574, #2579).
+  named locks, and the prepared statements, temporary tables and user variables its
+  routines name, in their text or in a string they prepare (#2574, #2577, #2579).
 - **PostgreSQL:** ``setseed`` for ``random()``, the same draws only on the same major.
   ``now()`` and ``CURRENT_TIMESTAMP`` read the transaction's start; the comparison
   writes a value relative to it with its exact offset. Every other clock and every

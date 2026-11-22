@@ -520,6 +520,40 @@ def test_a_routine_that_builds_a_statement_at_run_time_is_never_called_on_the_te
     assert (run.outcome, run.reason_code, run.calls_run) == ("not_run", "dynamic_sql", 0), run
 
 
+#: Leaves user variables set every way a text can name one (#2577), one of them only in a
+#: string it prepares.
+_USER_VARIABLES = (
+    "CREATE PROCEDURE leave_variables() BEGIN SET @mdz_x = 1, @Mdz_Mixed = 'a', @mdz.dotted = 2, "
+    "@`mdz odd` = 3, @'mdz_quoted' = 4, @mdz$d = 5; SELECT 6 INTO @mdz_into; "
+    "PREPARE mdz_set FROM 'SET @mdz_inner = 7'; EXECUTE mdz_set; DEALLOCATE PREPARE mdz_set; END"
+)
+_READ_USER_VARIABLES = (
+    "SELECT @mdz_x, @mdz_mixed, @mdz.dotted, @`mdz odd`, @mdz_quoted, @mdz$d, @mdz_into, "
+    "@mdz_inner"
+)
+
+
+@pytest.mark.integration
+@needs_mysql
+def test_a_user_variable_a_call_left_reads_null_in_the_next_call_on_a_pooled_session():
+    """The runner cannot list a session's user variables on the test cluster; every one the
+    routines name is NULL when the next call starts on the same pooled session, as on a reset
+    connection on the source side."""
+    _skip_as_root()
+    with _pooled_factory() as factory:
+        target = _opened(factory, _USER_VARIABLES)
+        target.begin_call(_frozen(), 0.25)
+        first = de.execute(target._handle, "SELECT CONNECTION_ID()").rows
+        assert target.run(_call("leave_variables")).error is None
+        assert de.execute(target._handle, _READ_USER_VARIABLES).rows == [[1, "a", 2, 3, 4, 5, 6, 7]]
+        target.end_call()
+        target.begin_call(_frozen(), 0.5)
+        assert de.execute(target._handle, "SELECT CONNECTION_ID()").rows == first  # pooled
+        assert de.execute(target._handle, _READ_USER_VARIABLES).rows == [[None] * 8]
+        target.end_call()
+        target.close()
+
+
 #: Refused for its row limit, it also leaves a setting no harness read depends on (a function
 #: keeps ``lc_time_names``).
 _LIMIT_AND_LOCALE = (
@@ -598,6 +632,7 @@ def test_the_mysql_round_trips_are_deselected_not_skipped_in_a_gated_run():
         test_a_lock_a_temporary_table_or_a_prepared_statement_a_call_left_never_reaches_the_next,
         test_a_temporary_table_a_prepared_literal_makes_never_reaches_the_next_call,
         test_a_routine_that_builds_a_statement_at_run_time_is_never_called_on_the_test_cluster,
+        test_a_user_variable_a_call_left_reads_null_in_the_next_call_on_a_pooled_session,
         test_a_setup_table_swapped_for_a_view_refuses_the_routine_on_mysql,
         test_a_routine_cannot_make_an_event_or_drop_a_procedure_and_the_local_scheduler_is_off,
         test_a_source_database_named_like_the_harness_database_is_refused,
@@ -785,17 +820,73 @@ def test_a_setup_made_on_a_session_a_call_left_fails_the_target(made):
 
 
 def test_the_names_a_routine_may_leave_are_read_from_its_text_and_the_strings_it_prepares():
-    """A temporary table a ``PREPARE`` literal names, as one the text names."""
+    """``@name`` in every spelling, a temporary table or a user variable a ``PREPARE`` literal
+    names; never a system variable (``@@``), and a user variable's name in lower case."""
     made = dat._made_names(
-        "CREATE PROCEDURE p() BEGIN "
-        "PREPARE s FROM 'CREATE TEMPORARY TABLE built (id INT)'; "
+        "CREATE PROCEDURE p() BEGIN SET @x = 1, @Mixed = 2, @a.b = 3, @`odd name` = 4, "
+        "@'q' = 5, @$d = 6; SELECT @@SESSION.sql_mode, @@y; SELECT 1 INTO @into; "
+        "PREPARE s FROM 'SET @inner = 5'; PREPARE s2 FROM 'CREATE TEMPORARY TABLE built (id INT)'; "
         "CREATE /* c */ TEMPORARY TABLE IF NOT EXISTS db.Plain (id INT); END"
     )
+    assert made.user_variables == {"x", "mixed", "a.b", "odd name", "q", "$d", "into", "inner"}
     assert made.temporary == {"built", "Plain"}
-    assert made.prepared == {"s"}
+    assert made.prepared == {"s", "s2"}
     assert dat._made_names("CREATE PROCEDURE p() BEGIN SELECT 'unterminated; END") == (
         dat._MadeNames()
     )
+
+
+def _user_variable_sets(client: FakeDataApi) -> list[str]:
+    return [s.sql for s in client.sent if s.op == "execute" and s.sql.startswith("SET @")]
+
+
+def _with_routine(client: FakeDataApi, factory: Any, text: str) -> Any:
+    t = factory()
+    t.load_setup(ProofSetup("mysql", ("CREATE TABLE t (id INT PRIMARY KEY)",),
+                            (("t", ({"id": 1},)),), ("src.t",)))  # fmt: skip
+    assert t.create(de.SourceRoutine("src.p", "procedure", text)) is None
+    return t
+
+
+def test_every_user_variable_the_routines_name_is_set_to_null_when_each_call_starts():
+    """Quoted, one statement, before the sentinel is written; a target the run opens again
+    clears the names the first target's routines named too, since its session may be one
+    they left."""
+    client = FakeDataApi("mysql")
+    factory = _factory(client, "mysql")
+    t = _with_routine(client, factory, "CREATE PROCEDURE p() BEGIN SET @b = 1, @`a``x` = 2; END")
+    t.prepare_calls()
+    t.begin_call(_frozen(), 0.25)
+    assert _user_variable_sets(client) == ["SET @`a``x` = NULL, @`b` = NULL"]
+    t.end_call()
+    t.close()
+    again = factory()
+    again.load_setup(ProofSetup("mysql", ("CREATE TABLE t (id INT PRIMARY KEY)",),
+                                (("t", ({"id": 1},)),), ("src.t",)))  # fmt: skip
+    again.prepare_calls()
+    client.sent.clear()
+    again.begin_call(_frozen(), 0.5)
+    assert _user_variable_sets(client) == ["SET @`a``x` = NULL, @`b` = NULL"]
+    again.end_call()
+    again.close()
+
+
+@pytest.mark.passes_on_main  # the negative case: nothing to clear sends nothing
+def test_routines_that_name_no_user_variable_send_no_user_variable_set():
+    client = FakeDataApi("mysql")
+    t = _mysql_started(client)
+    assert _user_variable_sets(client) == []
+    t.end_call()
+
+
+def test_user_variables_the_harness_cannot_clear_fail_the_call_as_the_harnesss_failure():
+    client = FakeDataApi("mysql", fail_on={"SET @`v` = NULL": "HY000"})
+    t = _with_routine(client, _factory(client, "mysql"), "CREATE PROCEDURE p() SET @v = 1")
+    t.prepare_calls()
+    with pytest.raises(ProofTargetError, match="could not clear its user variables") as failed:
+        t.begin_call(_frozen(), 0.25)
+    assert not isinstance(failed.value, _tampered())
+    t.close()
 
 
 @pytest.mark.passes_on_main  # the negative case: what must keep loading
