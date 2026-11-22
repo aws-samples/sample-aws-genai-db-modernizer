@@ -134,12 +134,20 @@ def test_a_mysql_target_uses_its_scratch_database_as_the_namespace():
     t = target()
     assert t.namespace == t.database and client.sent[0].sql == f"CREATE DATABASE `{t.database}`"
     runner = _runner()
+    harness = f"`{t.database}_harness`"  # the harness's own database first (#2560)
+    assert [s.sql for s in client.sent[1:4]] == [
+        f"CREATE DATABASE {harness}",
+        f"CREATE TABLE {harness}.`modernizer_sentinel` (id INTEGER PRIMARY KEY)",
+        f"GRANT SELECT, INSERT ON {harness}.`modernizer_sentinel` TO '{runner.username}'@'%'",
+    ]
     assert (
-        client.sent[1].sql
+        client.sent[4].sql
         == f"GRANT ALL PRIVILEGES ON `{t.database.replace('_', chr(92) + '_')}`.* TO '{runner.username}'@'%'"
     )
     t.close()
-    assert client.sent[-1].sql == f"DROP DATABASE IF EXISTS `{t.database}`" and not client.databases
+    assert [s.sql for s in client.sent[-2:]] == [f"DROP DATABASE IF EXISTS `{t.database}`",
+                                                 f"DROP DATABASE IF EXISTS {harness}"]  # fmt: skip
+    assert not client.databases
 
 
 def test_the_scratch_database_is_dropped_when_its_setup_fails():
@@ -522,7 +530,9 @@ def test_a_mysql_target_runs_everything_but_its_own_database_as_the_restricted_r
     t.prepare_calls()
     t.close()
     master = [s.sql for s in client.sent if s.op == "execute" and s.secret == ARNS["secret_arn"]]
-    assert [m.split()[0] for m in master] == ["CREATE", "GRANT", "DROP"]
+    # the scratch database, the harness's database, its sentinel and grant (#2560)
+    assert [m.split()[0] for m in master] == ["CREATE", "CREATE", "CREATE", "GRANT", "GRANT",
+                                              "DROP", "DROP"]  # fmt: skip
     assert all(s.secret == RUNNER_ARN for s in client.sent
                if s.op in ("execute", "batch") and s.sql not in master)  # fmt: skip
 
@@ -582,9 +592,11 @@ def test_the_runner_is_granted_its_scratch_database_only_and_runs_as_itself():
     t = _factory(client, "mysql", runner=runner)()
     grants = [s for s in client.sent if s.sql.startswith("GRANT")]
     assert [g.sql for g in grants] == [
+        f"GRANT SELECT, INSERT ON `{t.database}_harness`.`modernizer_sentinel` TO "
+        f"'{runner.username}'@'%'",  # the harness's sentinel rows only (#2560)
         f"GRANT ALL PRIVILEGES ON `{t.database.replace('_', chr(92) + '_')}`.* TO "
         f"'{runner.username}'@'%'"]  # fmt: skip
-    assert grants[0].secret == ARNS["secret_arn"]
+    assert all(g.secret == ARNS["secret_arn"] for g in grants)
     t.load_setup(ProofSetup(dialect="mysql", ddl=("CREATE TABLE `t` (id int)",), rows=()))
     in_scratch = [s for s in client.sent if s.database == t.database]
     assert in_scratch and all(s.secret == runner.secret_arn for s in in_scratch)
