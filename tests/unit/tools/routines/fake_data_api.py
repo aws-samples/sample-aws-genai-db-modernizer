@@ -219,6 +219,8 @@ class FakeDataApi:
         # "modernizer_sentinel"`` reads as ``count(*) FROM modernizer_sentinel``.
         sql = (sql.replace("pg_catalog.", "").replace('"modernizer_harness".', "")
                .replace('"modernizer_sentinel"', "modernizer_sentinel"))  # fmt: skip
+        # MySQL names the sentinel with the harness's database (#2560): `<db>`.`modernizer_sentinel`.
+        sql = re.sub(r"`\w+`\.`modernizer_sentinel`", "modernizer_sentinel", sql)
 
         def rows(*values: Any, types: tuple[str, ...] = ()) -> dict[str, Any]:
             records = [[self._field(v) for v in row] for row in values]
@@ -257,6 +259,13 @@ class FakeDataApi:
             elif user.group(1) == "DROP":
                 self.auth.pop(user.group(2), None)
             return {}
+        if sql.startswith("SELECT @@SESSION.sql_mode"):  # the harness's read settings (#2560)
+            return rows(["STRICT_TRANS_TABLES", "+05:47", "utf8mb4", "utf8mb4",
+                         "utf8mb4_0900_ai_ci", "utf8mb4"], types=("VARCHAR",) * 6)  # fmt: skip
+        if sql.startswith("SELECT @@SESSION.sql_select_limit = @@GLOBAL"):
+            return rows([1], types=("BIGINT",))  # a call left the row limit as it was
+        if sql.startswith("SHOW CREATE TABLE "):
+            return rows(["t", "CREATE TABLE `t` (`id` int)"], types=("VARCHAR", "VARCHAR"))
         if "@@GLOBAL.event_scheduler" in sql:
             return rows([self.scheduler], types=("VARCHAR",))
         if "FROM mysql.user" in sql:

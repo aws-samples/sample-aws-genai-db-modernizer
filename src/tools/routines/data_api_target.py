@@ -14,7 +14,10 @@ Scratch database. Each target creates one database with a job-scoped name
 (:func:`scratch_name`: ``mdz_proof_<job hash>_<random>``, lower-case letters, digits and
 underscores), loads the synthetic rows and the carried routines into it, and drops it in
 :meth:`DataApiTarget.close`, which the comparison calls in a ``finally`` block, and again in
-the constructor when anything after the create fails. :func:`drop_scratch` drops every
+the constructor when anything after the create fails. On Aurora MySQL the master user also
+makes the harness's own database beside it (``<scratch>_harness``, #2560) with the sentinel
+table, on which the runner gets ``SELECT`` and ``INSERT`` only, before the runner has any
+grant, and drops it with the scratch database. :func:`drop_scratch` drops every
 scratch database of a job (what a killed run left), and the proof calls it in its own
 ``finally``. On Aurora MySQL the scratch database is the routines' namespace, as the
 disposable engine's ``src`` database is. On Aurora PostgreSQL it is a scratch database too,
@@ -121,6 +124,7 @@ from src.tools.routines.proof_targets import (
     ProofTargetError,
     RoleChanged,
     TargetFactory,
+    my_sentinel_sql,
 )
 
 __all__ = [
@@ -137,6 +141,11 @@ __all__ = [
 
 SCRATCH_PREFIX = "mdz_proof_"
 _SCRATCH = re.compile(r"^mdz_proof_[0-9a-f]{10}_[0-9a-f]{8}$")
+#: What a sweep drops: a scratch database, and on MySQL the harness's own one beside it (#2560).
+_SWEPT = {"postgresql": _SCRATCH,
+          "mysql": re.compile(r"^mdz_proof_[0-9a-f]{10}_[0-9a-f]{8}(?:_harness)?$")}  # fmt: skip
+#: The MySQL harness database's name: the scratch database's, then this.
+MY_HARNESS_SUFFIX = "_harness"
 _PREFIX = re.compile(r"^mdz_proof_[0-9a-f]{10}_$")
 _SQLSTATE = re.compile(r"SQLState:\s*([0-9A-Z]{5})")
 _ERRNO = re.compile(r"(?:Error code|error code|ErrorCode|errno)\s*[:=]?\s*(\d+)")
@@ -887,6 +896,12 @@ class _DataApiBackend(de._Backend):
                     for r in rows
                 ]
             else:
+                # A temporary table of the same name, or a view, never stands in (#2560).
+                shown = self._rows(self._guarded(de.my_show_create_sql(table), meta=True),
+                                   as_text=True)[0]  # fmt: skip
+                if not de.my_base_table(shown):
+                    raise HarnessTampered(f"the test cluster's read of its tables: a call "
+                                          f"{HARNESS_TAMPERED}")  # fmt: skip
                 columns = self._my_columns(table)
                 if not columns:
                     out[table] = []
@@ -991,6 +1006,13 @@ class DataApiTarget(DisposableEngineTarget):
         self.description = f"an Aurora {'PostgreSQL' if engine == 'postgresql' else 'MySQL'} " \
                            f"{version} test cluster"  # fmt: skip
         self.namespace = "public" if engine == "postgresql" else self.database
+        #: The harness's own objects (#2337, #2560): on PostgreSQL a schema in the scratch
+        #: database, on MySQL a database beside it, each made by the master user.
+        self.harness_database = (HARNESS_SCHEMA if engine == "postgresql"
+                                 else self.database + MY_HARNESS_SUFFIX)  # fmt: skip
+        self._sentinel = my_sentinel_sql(self.harness_database)
+        self._reads = None
+        self._left = None
         self.random_seeded = engine == "postgresql"
         self.named_time_zones = True
         self.notes = ()
@@ -1045,6 +1067,10 @@ class DataApiTarget(DisposableEngineTarget):
                 self._as_owner([(f"ALTER SCHEMA public OWNER TO {role}", []),
                                 ("REVOKE ALL ON SCHEMA public FROM PUBLIC", [])])  # fmt: skip
             elif self._runner is not None:
+                # The harness's own database first, before the runner has any grant (#2560).
+                for statement in de.my_harness_sql(self.harness_database,
+                                                   self._runner.account_sql):  # fmt: skip
+                    self._admin._guarded(statement)
                 self._admin._guarded(
                     f"GRANT ALL PRIVILEGES ON {grant_database(self.database)}.* TO "
                     f"{self._runner.account_sql}"
@@ -1089,15 +1115,22 @@ class DataApiTarget(DisposableEngineTarget):
             self._backend.close()
         if not getattr(self, "_created", False):
             return
-        db = de._quote(self.database, _MARK[self.engine])
-        drop = f"DROP DATABASE IF EXISTS {db}"
-        if self.engine == "postgresql":
-            drop += " WITH (FORCE)"
-        try:
-            self._admin._guarded(drop)
+        names = [self.database]
+        if self.engine == "mysql":
+            names.append(self.harness_database)  # IF EXISTS: it may not have been made
+        failed = False
+        for name in names:
+            drop = f"DROP DATABASE IF EXISTS {de._quote(name, _MARK[self.engine])}"
+            if self.engine == "postgresql":
+                drop += " WITH (FORCE)"
+            try:
+                self._admin._guarded(drop)
+            except de.EngineError:
+                failed = True  # the proof's final drop_scratch sweep tries again
+        if failed:
+            self.drop_failed = True
+        else:
             self._created = False
-        except de.EngineError:
-            self.drop_failed = True  # the proof's final drop_scratch sweep tries again
 
     # ---- the protocol, where the Data API differs
     def _create_schemas(self, names: Sequence[str]) -> None:
@@ -1215,14 +1248,8 @@ class DataApiTarget(DisposableEngineTarget):
         return _PLPGSQL_CHECK if got and got[0][0] else EXTRA_ERRORS
 
     def prepare_calls(self) -> None:
-        # Session settings are applied per call, in its transaction (begin_call). On
-        # PostgreSQL the master user made the sentinel in the harness's schema (_create).
-        if self.engine == "mysql":
-            try:
-                self._execute("CREATE TABLE modernizer_sentinel (id INTEGER PRIMARY KEY)")
-                self._backend.commit()
-            finally:
-                self._backend.rollback()
+        # Session settings are applied per call, in its transaction (begin_call). The master
+        # user made the sentinel in the harness's schema or database (_create).
         try:
             self._counters = self._backend.counters()
         except de.EngineError as exc:
@@ -1266,7 +1293,8 @@ class DataApiTarget(DisposableEngineTarget):
         if self.random_seeded:
             whole = int(abs(seed) * 1_000_000) + 1
             self._execute("SET rand_seed1 = %s, rand_seed2 = %s", [whole, whole + 1])
-        self._execute("INSERT INTO modernizer_sentinel (id) VALUES (1)")
+        self._pin_reads()  # a pooled connection may carry an earlier call's settings
+        self._execute(self._sentinel[0])
 
     def run(self, call: ProofCall) -> de.CallResult:
         postgres = self.engine == "postgresql"
@@ -1279,6 +1307,7 @@ class DataApiTarget(DisposableEngineTarget):
             result = run_call(self._handle, call)
         if result.timed_out:
             self._open = False
+            self._pin_after_failure()
             return result
         if postgres and result.error is not None:
             # Taken on the harness's path, the savepoint puts it back too.
@@ -1287,6 +1316,7 @@ class DataApiTarget(DisposableEngineTarget):
         if postgres:
             self._backend.pin()
             self._check_role()
+        self._after_call()
         return result
 
     def _who(self) -> tuple[str, str]:
@@ -1395,7 +1425,7 @@ def drop_scratch(client: DataApiClient, *, cluster_arn: str, secret_arn: str, en
     except Exception:  # noqa: BLE001 - reported, never raised
         return dropped, [f"the databases of prefix {prefix} (could not be listed)"]
     for name in names:
-        if not _SCRATCH.fullmatch(name):
+        if not _SWEPT[engine].fullmatch(name):
             continue
         drop = f"DROP DATABASE IF EXISTS {de._quote(name, mark)}" + (
             " WITH (FORCE)" if engine == "postgresql" else ""

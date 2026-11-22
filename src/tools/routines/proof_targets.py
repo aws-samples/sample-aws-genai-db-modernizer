@@ -37,9 +37,11 @@ What a target does, in the order the comparison calls it:
    not make is :class:`DefinerRefused`. A routine that then runs as its definer (``SQL
    SECURITY DEFINER``, the default, and every trigger and event) gets a note in
    ``routine_notes`` (:data:`DEFINER_NOTE`), which the comparison adds to its reason.
-3. ``prepare_calls()``: create the sentinel table, record every counter a rollback does
-   not undo (sequences, ``AUTO_INCREMENT``), and find out whether the random seed is
-   taken (``random_seeded``).
+3. ``prepare_calls()``: record every counter a rollback does not undo (sequences,
+   ``AUTO_INCREMENT``), and find out whether the random seed is taken (``random_seeded``).
+   The sentinel table is the engine's own, in the harness's schema (PostgreSQL) or database
+   (MySQL, #2560), which the engine's admin made and where the runner may only read and
+   insert its rows (``harness_database``).
 4. Per call: ``begin_call(frozen_at, seed)`` (reset the session, apply the session
    settings, put the counters back, freeze what the engine lets us freeze, open a
    transaction and write a sentinel row in it), ``now()`` (the instant the call's clock
@@ -62,6 +64,9 @@ What each engine freezes, and nothing more:
   both sides, and ``rand_seed1``/``rand_seed2`` for ``RAND()`` when the server takes them.
   The session is reset before every call (``COM_RESET_CONNECTION``: user variables,
   temporary tables, session settings).
+  After each call the session it left is read for ``session_state``, then the settings a
+  harness read depends on (``de.MY_READ_STATE``) are put back, and every snapshot refuses a
+  table a ``TEMPORARY`` table hides (:class:`HarnessTampered`, #2560).
 - **PostgreSQL:** ``setseed`` for ``random()``, the same draws only on the same major.
   ``now()`` and ``CURRENT_TIMESTAMP`` read the transaction's start; the comparison
   writes a value relative to it with its exact offset. Every other clock and every
@@ -105,6 +110,7 @@ __all__ = [
     "ProofTargetUnavailable",
     "TargetFactory",
     "disposable_target",
+    "my_sentinel_sql",
 ]
 
 UNKNOWN_SQLSTATE = "?????"
@@ -117,17 +123,25 @@ SESSION_TIME_ZONE = "+05:47"
 SENTINEL_TABLE = "modernizer_sentinel"
 _SAVEPOINT = "modernizer_call"
 # Module constants, never customer text.
-_CREATE_SENTINEL = "CREATE TABLE modernizer_sentinel (id INTEGER PRIMARY KEY)"
-_WRITE_SENTINEL = "INSERT INTO modernizer_sentinel (id) VALUES (1)"
-_READ_SENTINEL = "SELECT count(*) FROM modernizer_sentinel"
 #: PostgreSQL: the sentinel in the harness's own schema, which the superuser (on the test
 #: cluster the master user) made before the runner owns anything (#2337).
 _PG_WRITE_SENTINEL = f"INSERT INTO {de.PG_SENTINEL} (id) VALUES (1)"  # nosec B608 - a constant
 _PG_READ_SENTINEL = f"SELECT pg_catalog.count(*) FROM {de.PG_SENTINEL}"  # nosec B608 - a constant
+
+
+def my_sentinel_sql(database: str) -> tuple[str, str]:
+    """The statement that writes, and the one that reads, a MySQL sentinel row (#2560): the
+    sentinel in the harness's own ``database``, which the server's admin made."""
+    sentinel = de.my_sentinel(database)
+    write = f"INSERT INTO {sentinel} (id) VALUES (1)"  # nosec B608 - a checked, quoted name
+    return write, f"SELECT COUNT(*) FROM {sentinel}"  # nosec B608 - a checked, quoted name
+
+
 #: Why a call that changed what the harness reads refuses the routine (#2337).
 HARNESS_TAMPERED = ("changed what the comparison reads (a cast, a row-level security policy, a "
-                    "privilege on a table, or a setup table dropped, moved or replaced by a "
-                    "view), so the routine is refused and that call is not counted")  # fmt: skip
+                    "privilege on a table, a setup table dropped, moved or replaced by a "
+                    "view, or one a temporary table hides, or a session limit on the rows a "
+                    "read returns), so the routine is refused and that call is not counted")  # fmt: skip
 _PG_SESSION = (
     "SET TIME ZONE INTERVAL '+05:47' HOUR TO MINUTE",
     "SET lock_timeout = '5s'",
@@ -174,9 +188,9 @@ class RoleChanged(ProofTargetError):
 class HarnessTampered(RoleChanged):
     """A call made something that changes what the harness's own reads return without going
     through ``search_path`` (#2337): a cast the read would use, a row-level security policy
-    that hides rows (the pinned ``row_security = off`` turns that read into 42501), or a
-    privilege taken away. Refused like a role change: the call is neither counted nor run
-    again."""
+    that hides rows (the pinned ``row_security = off`` turns that read into 42501), a
+    privilege taken away, or on MySQL a ``TEMPORARY`` table that hides a setup table (#2560).
+    Refused like a role change: the call is neither counted nor run again."""
 
     reason_code = "harness_tampered"
 
@@ -284,6 +298,13 @@ class DisposableEngineTarget:
         self.version = self._handle.version
         self.description = f"a disposable {self.engine} {self.version} engine"
         self.namespace = de.NAMESPACE[self.engine]
+        #: The schema (PostgreSQL) or database (MySQL) of the harness's own objects (#2337,
+        #: #2560), which the engine's admin owns.
+        self.harness_database = de.HARNESS_SCHEMA
+        self._sentinel = my_sentinel_sql(self.harness_database)
+        self._reads: tuple[Any, ...] | None = None
+        #: MySQL: the session a call left, read before the harness's settings went back.
+        self._left: tuple[Mapping[str, str] | None] | None = None
         self.random_seeded = self.engine == "postgresql"
         self.named_time_zones = de.time_zones_loaded(self._handle)
         self.notes: tuple[str, ...] = ()
@@ -345,8 +366,7 @@ class DisposableEngineTarget:
         return None
 
     def prepare_calls(self) -> None:
-        if self.engine == "mysql":  # on PostgreSQL the engine made it, in its own schema
-            self._execute(_CREATE_SENTINEL)
+        # The engine made the sentinel, in the harness's own schema or database (#2560).
         try:
             self._counters = de.counters(self._handle)
         except de.EngineError as exc:
@@ -374,6 +394,7 @@ class DisposableEngineTarget:
             self._execute(_PG_WRITE_SENTINEL)
             return
         self._session()
+        self._pin_reads()
         # to the microsecond, so a carry that loses the fraction of a second differs
         self._execute("SET TIMESTAMP = %s", [round(frozen_at.timestamp(), 6)])
         if self.random_seeded:
@@ -381,15 +402,53 @@ class DisposableEngineTarget:
             self._execute(_MY_SEED, [whole, whole + 1])
         self._execute("START TRANSACTION")
         self._open = True
-        self._execute(_WRITE_SENTINEL)
+        self._execute(self._sentinel[0])
+
+    def _pin_reads(self) -> None:
+        """MySQL: the session settings a harness read depends on (``de.MY_READ_STATE``) as they
+        were before the first call, put back (#2560)."""
+        if self.engine != "mysql":
+            return
+        if self._reads is None:
+            got = self._execute(de.MY_READ_STATE)
+            if not got.rows:
+                raise ProofTargetError(f"{self.description} could not read its session settings")
+            self._reads = tuple(got.rows[0])
+        self._execute(de.MY_READ_PIN, list(self._reads))
+
+    def _after_call(self) -> None:
+        """MySQL, after a call: refused when it left ``sql_select_limit`` changed, which caps
+        every read; else the session it left read for the comparison (``session_state``). The
+        harness's read settings go back either way, a refused call's session included, so the
+        connection it hands back carries none of the call's settings (#2560)."""
+        if self.engine != "mysql":
+            return
+        try:
+            kept = de.execute(self._handle, de.MY_SELECT_LIMIT_KEPT)
+            if kept.error is not None or not kept.rows or not kept.rows[0][0]:
+                raise HarnessTampered(f"{self.description}'s session after the call: it "
+                                      f"{HARNESS_TAMPERED}")  # fmt: skip
+            self._left = (self.session_state(),)
+        except BaseException:
+            self._pin_after_failure()
+            raise
+        self._pin_reads()
+
+    def _pin_after_failure(self) -> None:
+        """The read settings put back on a best-effort basis, after a refused or timed-out
+        call: an error here never hides the one that brought it (a timed-out call's
+        connection may be gone)."""
+        if self.engine == "mysql" and self._reads is not None:
+            with contextlib.suppress(Exception):
+                self._execute(de.MY_READ_PIN, list(self._reads))
 
     def now(self) -> datetime.datetime:
         sql = "SELECT pg_catalog.now()" if self.engine == "postgresql" else "SELECT NOW(6)"
         return _utc(self._execute(sql).rows[0][0])
 
     def tables(self) -> list[str]:
-        try:
-            return [t for t in de.tables(self._handle) if t != SENTINEL_TABLE]
+        try:  # the sentinel sits in the harness's own schema or database, never listed
+            return de.tables(self._handle)
         except de.EngineError as exc:
             raise ProofTargetError(
                 f"{self.description} could not list its tables", exc.sqlstate
@@ -406,19 +465,21 @@ class DisposableEngineTarget:
             result = run_call(self._handle, call)
         if limit.fired:
             self._open = postgres  # MySQL: the connection, and its transaction, are gone
+            self._pin_after_failure()
             return de.CallResult(error="the call ran past its time limit", timed_out=True)
         if postgres and result.error is not None:
             self._execute(f"ROLLBACK TO SAVEPOINT {_SAVEPOINT}")
             de.after_rollback_to_savepoint(self._handle)
         if postgres:
             de.pin(self._handle)
+        self._after_call()
         return result
 
     def transaction_state(self) -> str:
         """``open`` (the call left the transaction as it found it), ``committed`` (a second
         connection sees the sentinel row) or ``rolled back`` (the call's own session no
         longer sees it: a ``ROLLBACK``, ``ROLLBACK AND CHAIN``)."""
-        read = _PG_READ_SENTINEL if self.engine == "postgresql" else _READ_SENTINEL
+        read = _PG_READ_SENTINEL if self.engine == "postgresql" else self._sentinel[1]
         aside = de.execute_aside(self._handle, read)
         own = de.execute(self._handle, read)
         for seen in (aside, own):
@@ -443,6 +504,9 @@ class DisposableEngineTarget:
     def snapshot(self, tables: Sequence[str]) -> Mapping[str, list[dict[str, Any]]]:
         try:
             return de.snapshot(self._handle, tables)
+        except de.NotABaseTable:  # a temporary table or a view in its place (#2560)
+            raise HarnessTampered(f"{self.description} could not read its tables: a call "
+                                  f"{HARNESS_TAMPERED}") from None  # fmt: skip
         except de.EngineError as exc:
             if self.engine == "postgresql" and exc.sqlstate == "42501":
                 # A policy the pinned row_security = off refuses, or a privilege taken away
@@ -453,13 +517,18 @@ class DisposableEngineTarget:
             ) from exc
 
     def end_call(self) -> None:
+        self._left = None
         if self._open:
             self._open = False
             self._execute("ROLLBACK")
 
     def session_state(self) -> Mapping[str, str] | None:
         """The session's settings and (MySQL) user variables as the call left them, or
-        None when the engine does not let the runner read them."""
+        None when the engine does not let the runner read them. On MySQL, after a call, the
+        session as the call left it, read before the harness put its read settings back."""
+        if self._left is not None:
+            (left,), self._left = self._left, None
+            return left
         if self.engine == "postgresql":
             reads = [_PG_SESSION_STATE]
         else:

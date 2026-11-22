@@ -267,6 +267,63 @@ def pg_harness_schema_sql(role: str) -> list[str]:
     ]
 
 
+#: MySQL: the harness's own database (#2560), made by the server's admin (on the Aurora test
+#: cluster the master user, one per scratch database) before any routine exists. It holds the
+#: sentinel table, on which the runner gets ``SELECT`` and ``INSERT`` only, so no routine can
+#: drop, replace, alter, empty or put a trigger on it, or hide it behind a ``TEMPORARY`` table
+#: (that needs ``CREATE TEMPORARY TABLES`` on the database). The harness names it with its
+#: database in every statement.
+MY_SENTINEL_TABLE = "modernizer_sentinel"
+
+
+def my_sentinel(database: str) -> str:
+    """The sentinel table as a MySQL harness statement names it: ``database``.``table``."""
+    return f"{_quote(database, '`')}.`{MY_SENTINEL_TABLE}`"
+
+
+def my_harness_sql(database: str, account: str) -> list[str]:
+    """The admin's statements that make the harness's MySQL ``database`` and its sentinel, and
+    let ``account`` (an already quoted account) read and insert the sentinel's rows, nothing
+    more (a table-level grant: the database's name is never a pattern there)."""
+    sentinel = my_sentinel(database)
+    return [
+        f"CREATE DATABASE {_quote(database, '`')}",
+        f"CREATE TABLE {sentinel} (id INTEGER PRIMARY KEY)",
+        f"GRANT SELECT, INSERT ON {sentinel} TO {account}",
+    ]
+
+
+#: The MySQL session settings a harness read depends on (#2560): how a ``TIMESTAMP`` reads
+#: (``time_zone``), how a statement and its result are encoded (the character sets and the
+#: connection's collation) and the SQL mode, read once before the first call. A routine's
+#: caller gets its ``sql_mode`` back on return, but a call can leave the others set, and a
+#: stored function (called through ``SELECT f()``) also ``sql_select_limit``, which caps every
+#: top-level ``SELECT``, ``max_join_size``, which makes a read fail, and settings that change
+#: what an expression or a sort returns (``group_concat_max_len``, ``div_precision_increment``,
+#: ``sql_auto_is_null``, ``max_sort_length``) or what another session's read sees of an open
+#: call (``transaction_isolation``, ``transaction_read_only``: the sentinel read aside runs on
+#: any session, which on the Data API may be one a call left). ``MY_READ_PIN`` puts the first
+#: ones back as they were and the others back to the server's defaults (which the runner
+#: cannot change), before
+#: each call and after it, before the harness reads anything, once the session the call left
+#: has been read for the comparison.
+MY_READ_STATE = (
+    "SELECT @@SESSION.sql_mode, @@SESSION.time_zone, @@SESSION.character_set_client, "
+    "@@SESSION.character_set_connection, @@SESSION.collation_connection, "
+    "@@SESSION.character_set_results"
+)
+MY_READ_PIN = (
+    "SET SESSION sql_mode = %s, time_zone = %s, character_set_client = %s, "
+    "character_set_connection = %s, collation_connection = %s, character_set_results = %s, "
+    "sql_select_limit = DEFAULT, max_join_size = DEFAULT, group_concat_max_len = DEFAULT, "
+    "div_precision_increment = DEFAULT, sql_auto_is_null = DEFAULT, max_sort_length = DEFAULT, "
+    "transaction_isolation = DEFAULT, transaction_read_only = DEFAULT"
+)
+#: Whether a call left ``sql_select_limit`` at the server's default (#2560): one that did not
+#: would cap the session's own read for the comparison too, so it refuses the routine. Read
+#: as one row, which a limit of 1 or more still returns; a limit of 0 returns none.
+MY_SELECT_LIMIT_KEPT = "SELECT @@SESSION.sql_select_limit = @@GLOBAL.sql_select_limit"
+
 _MY_CREATE_DB = f"CREATE DATABASE `{_DATABASE}`"
 _MY_CREATE_USER = f"CREATE USER '{_RUNNER}'@'localhost' IDENTIFIED BY %s"
 # Only this one schema: no FILE, no SUPER, no other global privilege.
@@ -399,6 +456,12 @@ class EngineStartError(EngineError):
     Never "no engine": the version is installed, so the comparison must report an
     infrastructure failure, not a verdict about the routine.
     """
+
+
+class NotABaseTable(EngineError):
+    """A MySQL harness read names a table that is not the base table it read before: a
+    ``TEMPORARY`` table of the same name (the session that made one reads it first) or a
+    view (#2560). The message names no table."""
 
 
 class DefinerRefused(ValueError):
@@ -592,6 +655,18 @@ def _select_all_sql(table: str, mark: str) -> str:
         _quote(table, mark) if _IDENT.match(table.split(".")[-1]) else _quote_table(table, mark)
     )
     return f"SELECT * FROM {target}"  # nosec B608 - see _SQL_NOTE
+
+
+def my_show_create_sql(table: str) -> str:
+    """``SHOW CREATE TABLE`` of a table as a snapshot reads it (the same name, the same
+    database), which answers ``CREATE TEMPORARY TABLE`` for a temporary table that hides it
+    and a view's own text for a view (#2560)."""
+    return "SHOW CREATE TABLE " + _select_all_sql(table, "`")[len("SELECT * FROM ") :]
+
+
+def my_base_table(rows: Sequence[Sequence[Any]]) -> bool:
+    """Whether ``SHOW CREATE TABLE``'s answer is a base table's."""
+    return bool(rows) and len(rows[0]) > 1 and str(rows[0][1]).startswith("CREATE TABLE ")
 
 
 _EVENT_RUNNER = "__proof_event_"
@@ -1819,6 +1894,8 @@ class _MySQLServer:
             _execute(cur, _MY_CREATE_DB)
             _execute(cur, _MY_CREATE_USER, [self.runner_password])
             _execute(cur, _MY_GRANT)
+            for statement in my_harness_sql(HARNESS_SCHEMA, f"'{_RUNNER}'@'localhost'"):
+                _execute(cur, statement)  # the harness's own database (#2560)
             # its own session's user variables, for the comparison (#1944); no other privilege
             with contextlib.suppress(self._mc.Error):
                 _execute(cur, _MY_GRANT_USER_VARIABLES)
@@ -1890,6 +1967,8 @@ class _MySQLBackend(_Backend):
         fresh = [n for n in names if n != _DATABASE and n not in made]
         if not fresh:
             return
+        if any(n.casefold() == HARNESS_SCHEMA for n in fresh):
+            raise EngineError(f"a source database is named {HARNESS_SCHEMA}, the harness's own")
         conn = None
         try:
             conn = self._mc.connect(**self._server.connect_args("root", self._server.password))
@@ -2154,6 +2233,9 @@ class _MySQLBackend(_Backend):
         cur = self._conn.cursor()
         try:
             for table in tables:
+                _execute(cur, my_show_create_sql(table))
+                if not my_base_table(cur.fetchall()):
+                    raise NotABaseTable("a table the harness reads is not its base table")
                 _execute(cur, _select_all_sql(table, "`"))
                 names = [d[0] for d in cur.description]
                 got = [
