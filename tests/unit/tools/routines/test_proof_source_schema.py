@@ -26,7 +26,7 @@ from src.tools.routines.proof_inputs import (
     build_proof_inputs,
 )
 from src.tools.routines.proof_screen import create_refusal
-from src.tools.routines.proof_targets import CreateRefused, ProofTargetError, disposable_target
+from src.tools.routines.proof_targets import CreateRefused, disposable_target
 from tests.unit.tools.routines.fake_data_api import FakeDataApi
 from tests.unit.tools.routines.test_data_api_target import _factory
 
@@ -315,15 +315,6 @@ def test_a_postgresql_target_lists_and_reads_the_schemas_tables():
     typed = [p["value"]["stringValue"] for s in client.sent for p in s.parameters]
     assert typed.count('"sales"."orders"') == 2  # the column read and the type read
     target.close()
-
-
-def test_a_mysql_setup_naming_another_database_is_refused_cleanly_on_the_test_cluster():
-    client = FakeDataApi("mysql")
-    target = _factory(client, engine="mysql")()
-    with pytest.raises(ProofTargetError, match="other than the scratch"):
-        target.load_setup(_sales_setup("mysql"))
-    target.close()
-    assert not client.databases  # nothing was left on the cluster
 
 
 def test_the_data_api_row_change_names_the_schema_of_its_table():

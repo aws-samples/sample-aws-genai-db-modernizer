@@ -8,7 +8,10 @@ statements the Data API target sends with canned results: the scratch databases 
 to create (and drop), the tables a setup created, a sentinel row only the call's own
 transaction sees, each routine call's configured result, and a ``DatabaseErrorException``
 for any statement holding one of ``fail_on``'s markers (an ``InternalFailure``, which is no
-SQL error, for one of ``internal_on``'s)."""
+SQL error, for one of ``internal_on``'s). A ``CREATE DATABASE`` of a name it holds is refused
+(1007) as MySQL refuses it; each MySQL harness database's record of the source databases its
+target made (``records``, #2336) and each database grant (``db_grants``) are kept as the
+statements write them."""
 
 from __future__ import annotations
 
@@ -134,6 +137,17 @@ class FakeDataApi:
         #: collation_connection)``.
         self.engines: dict[str, str] = {}
         self.program_modes: list[tuple[str, str, str]] = []
+        #: Per MySQL harness database, its record of the source databases (#2336): each name's
+        #: owner token and runner. A harness with no entry has no record table, and reading
+        #: one is refused (1146).
+        self.records: dict[str, dict[str, tuple[str, str]]] = {}
+        #: MySQL database grants, ``(user, database as GRANT escapes it)`` (#2336).
+        self.db_grants: set[tuple[str, str]] = set()
+        #: MySQL views per database (a source database's owner marker is one, #2336).
+        self.views: dict[str, set[str]] = {}
+        #: A ``CREATE DATABASE`` or ``DROP DATABASE`` holding one of these markers runs, then
+        #: answers with an error (a lost response).
+        self.runs_then_fails: tuple[str, ...] = ()
 
     # ---- what the target calls
     def begin_transaction(self, **kw: Any) -> dict[str, Any]:
@@ -319,12 +333,61 @@ class FakeDataApi:
             return rows(*[[r] for r in sorted(self.roles) if r.startswith(prefix)])
         created = re.match(r'CREATE DATABASE [`"](\w+)[`"]', sql)
         if created:
+            if created.group(1) in self.databases:
+                raise db_error("HY000", "Database error code: 1007. Message: Can't create "
+                               "database; database exists")  # fmt: skip
             self.databases.add(created.group(1))
+            if any(m in sql for m in self.runs_then_fails):
+                raise db_error("HY000", "Database error code: 2013. Message: Lost connection")
             return {}
         dropped = re.match(r'DROP DATABASE IF EXISTS [`"](\w+)[`"]', sql)
         if dropped:
             self.databases.discard(dropped.group(1))
+            self.tables.pop(dropped.group(1), None)
+            self.views.pop(dropped.group(1), None)
+            self.records.pop(dropped.group(1), None)
+            if any(m in sql for m in self.runs_then_fails):
+                raise db_error("HY000", "Database error code: 2013. Message: Lost connection")
             return {}
+        record = re.match(r"(CREATE TABLE|INSERT INTO|DELETE FROM|SELECT name, token, runner FROM) "
+                          r"`(\w+)`\.`modernizer_made`", sql)  # fmt: skip
+        if record:
+            verb, harness = record.groups()
+            if verb == "CREATE TABLE":
+                self.records[harness] = {}
+                return {}
+            if harness not in self.records or harness not in self.databases:
+                raise db_error("42S02", "Database error code: 1146. Message: Table doesn't exist")
+            noted = self.records[harness]
+            bound = [str(next(iter(p["value"].values()))) for p in params]
+            if verb == "INSERT INTO":
+                noted[bound[0]] = (bound[1], bound[2])
+            elif verb == "DELETE FROM":
+                noted.pop(bound[0], None)
+            else:
+                return rows(*[[n, t, r] for n, (t, r) in sorted(noted.items())],
+                            types=("VARCHAR",) * 3)  # fmt: skip
+            return {}
+        granted_on = re.match(
+            r"(GRANT|REVOKE) (.+?) ON `([^`]+)`\.\* (?:TO|FROM) '(\w+)'@'%'$", sql
+        )
+        if granted_on and self.engine == "mysql":
+            key = (granted_on.group(4), granted_on.group(3))
+            if granted_on.group(1) == "REVOKE" and key not in self.db_grants:
+                raise db_error("42000", "Database error code: 1141. Message: There is no such "
+                               "grant defined for user")  # fmt: skip
+            (self.db_grants.add if granted_on.group(1) == "GRANT" else self.db_grants.discard)(key)
+            return {}
+        if sql.startswith("SELECT COUNT(*) FROM mysql.db WHERE User"):
+            user, _host, name = (p["value"]["stringValue"] for p in params)
+            return rows([1 if (user, name) in self.db_grants else 0], types=("BIGINT",))
+        if sql.startswith("SELECT COUNT(*) FROM information_schema.TABLES WHERE TABLE_SCHEMA"):
+            schema, name = (p["value"]["stringValue"] for p in params)
+            found = self.views if "'VIEW'" in sql else self.tables
+            return rows([1 if name in found.get(schema, set()) else 0], types=("BIGINT",))
+        if sql.startswith("SELECT COUNT(*) FROM information_schema.SCHEMATA WHERE SCHEMA_NAME"):
+            name = params[0]["value"]["stringValue"]
+            return rows([1 if name in self.databases else 0], types=("BIGINT",))
         role = re.match(r'(CREATE|DROP) ROLE (?:IF EXISTS )?"(\w+)"', sql)
         if role:
             name = role.group(2)
@@ -350,6 +413,14 @@ class FakeDataApi:
         if granted:
             self.granted[granted.group(1)] = granted.group(2)
             return {}
+        view = re.match(r"CREATE VIEW `(\w+)`\.`(\w+)`", sql)
+        if view and self.engine == "mysql":
+            self.views.setdefault(view.group(1), set()).add(view.group(2))
+            return {}
+        qualified = re.match(r"CREATE TABLE `(\w+)`\.`(\w+)`", sql)
+        if qualified and self.engine == "mysql":  # a MySQL table of another database (#2336)
+            self.tables.setdefault(qualified.group(1), set()).add(qualified.group(2))
+            return {}
         table = re.match(r'CREATE TABLE (?:IF NOT EXISTS )?[`"]?(\w+)[`"]?', sql)
         if table:
             self.tables.setdefault(db, set()).add(table.group(1))
@@ -371,7 +442,9 @@ class FakeDataApi:
                 ["int4", "integer"], ["int8", "bigint"], ["text", "text"], types=("text", "text")
             )
         if "FROM pg_tables" in sql or "TABLE_TYPE = 'BASE TABLE'" in sql:
-            return rows(*[[t] for t in sorted(self.tables.get(db, set()))])
+            others = re.findall(r"'(\w+)'", sql) if self.engine == "mysql" else []
+            return rows(*[[t] for t in sorted(self.tables.get(db, set()))],
+                        *[[f"{o}.{t}"] for o in others for t in sorted(self.tables.get(o, set()))])  # fmt: skip
         if "pg_sequences" in sql or "AUTO_INCREMENT FROM" in sql or "pg_get_serial_sequence" in sql:
             return rows(types=("text", "int8", "int8"))
         if "t.typcategory::text" in sql:

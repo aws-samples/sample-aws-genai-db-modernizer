@@ -20,7 +20,19 @@ table, on which the runner gets ``SELECT`` and ``INSERT`` only, before the runne
 grant, and drops it with the scratch database. :func:`drop_scratch` drops every
 scratch database of a job (what a killed run left), and the proof calls it in its own
 ``finally``. On Aurora MySQL the scratch database is the routines' namespace, as the
-disposable engine's ``src`` database is. On Aurora PostgreSQL it is a scratch database too,
+disposable engine's ``src`` database is. A setup table of another source database sits in a
+database of that literal name (#2336), since a body names it so (``inventory.stock``): the
+master user notes the name, the target's token and the runner in the harness database's record
+(``MY_MADE_TABLE``, on which the runner has no grant), creates it (a name the cluster already
+holds is refused, never used or dropped), makes its owner marker ``modernizer_owner_<token>``
+(a view) in it and grants the runner its rows and its tables' DDL there, never ``DROP`` or
+``CREATE VIEW``, so the runner can neither make nor remove a marker. The target's close and
+the sweep revoke that grant, then drop the database only while
+``information_schema.TABLES`` lists its marker as a view, and forget a row once its
+database is gone; a row whose database exists with no marker stays, with the harness database,
+and is reported by every sweep. What is left: a database dropped and made again under its name
+by another party between the marker check and the ``DROP`` (two consecutive statements) would
+be dropped (#2582). On Aurora PostgreSQL it is a scratch database too,
 not a scratch schema: the collected ``CREATE`` text (``pg_get_functiondef``,
 ``pg_get_triggerdef``) names every object with its schema, ``public.posts``, and the
 comparison's screen refuses a ``CREATE`` that names any schema but the target's, so the
@@ -158,6 +170,39 @@ _SWEPT = {"postgresql": _SCRATCH,
           "mysql": re.compile(r"^mdz_proof_[0-9a-f]{10}_[0-9a-f]{8}(?:_harness)?$")}  # fmt: skip
 #: The MySQL harness database's name: the scratch database's, then this.
 MY_HARNESS_SUFFIX = "_harness"
+#: MySQL (#2336): the table in the harness database that records each source database a target
+#: makes by its literal name, written before its ``CREATE DATABASE``: the name, the target's
+#: random token (the database's owner marker is ``modernizer_owner_<token>``) and the runner
+#: it is granted to. The master user makes it and the runner has no grant on it.
+MY_MADE_TABLE = "modernizer_made"
+_MY_MADE_CREATE = ("CREATE TABLE {record} (name VARCHAR(64) CHARACTER SET utf8mb4 COLLATE "
+                   "utf8mb4_bin PRIMARY KEY, token CHAR(16) NOT NULL, "
+                   "runner VARCHAR(32) NOT NULL)")  # fmt: skip
+_MY_MADE_NOTE = "INSERT INTO {record} (name, token, runner) VALUES (%s, %s, %s)"
+_MY_MADE_FORGET = "DELETE FROM {record} WHERE name = %s"
+_MY_MADE_READ = "SELECT name, token, runner FROM {record} ORDER BY name"
+#: The owner marker: a view the master user makes in the source database right after creating
+#: it. The runner's grant there has no ``CREATE VIEW`` and no ``DROP``, so it can neither make
+#: one in another database of the name nor replace, rename or drop this one (it can read the
+#: token in ``information_schema``, and a base table it could make). Only ``information_schema``
+#: is asked for the marker: checking an object's name and type needs no read of it.
+MY_OWNER_PREFIX = "modernizer_owner_"
+_MY_TOKEN = re.compile(r"^[0-9a-f]{16}$")
+_MY_OWNER_CREATE = "CREATE VIEW {table} AS SELECT 1 AS id"
+_MY_OWNED = ("SELECT COUNT(*) FROM information_schema.TABLES WHERE TABLE_SCHEMA = %s "
+             "AND TABLE_NAME = %s AND TABLE_TYPE = 'VIEW'")  # fmt: skip
+#: MySQL's error for a ``REVOKE`` of a grant the account does not hold.
+_MY_NO_GRANT = 1141
+_MY_EXISTS = "SELECT COUNT(*) FROM information_schema.SCHEMATA WHERE SCHEMA_NAME = %s"
+#: Whether the runner still holds a grant on the database (as ``GRANT`` writes it, escaped).
+_MY_GRANTED = "SELECT COUNT(*) FROM mysql.db WHERE User = %s AND Host = %s AND Db = %s"
+#: What the runner gets on a source database: its rows, its tables' DDL and triggers, never
+#: ``DROP`` (a dropped source database is one another party could make again under its name).
+_MY_SOURCE_PRIVILEGES = "SELECT, INSERT, UPDATE, DELETE, CREATE, ALTER, INDEX, REFERENCES, TRIGGER"
+#: The databases the server keeps; a source database is never one of them.
+_MY_SERVER_DATABASES = frozenset({"mysql", "sys", "information_schema", "performance_schema"})
+#: MySQL's error for a database that already exists.
+_MY_DB_EXISTS = 1007
 _PREFIX = re.compile(r"^mdz_proof_[0-9a-f]{10}_$")
 #: A MySQL session's variables, which any account may read (#2574). A pooled Data API session
 #: has no reset between transactions, so the harness reads them after and before every call.
@@ -253,9 +298,21 @@ _MY_COLUMNS = (
     "SELECT COLUMN_NAME, DATA_TYPE FROM information_schema.COLUMNS "
     "WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = %s ORDER BY ORDINAL_POSITION"
 )
+#: The same, for a table of one of the setup's source databases (#2336).
+_MY_COLUMNS_IN = (
+    "SELECT COLUMN_NAME, DATA_TYPE FROM information_schema.COLUMNS "
+    "WHERE TABLE_SCHEMA = %s AND TABLE_NAME = %s ORDER BY ORDINAL_POSITION"
+)
 _MY_AUTO_INCREMENTS = (
     "SELECT TABLE_NAME, CAST(AUTO_INCREMENT AS CHAR) FROM information_schema.TABLES "
     "WHERE TABLE_SCHEMA = DATABASE() AND AUTO_INCREMENT IS NOT NULL ORDER BY TABLE_NAME"
+)
+#: The same with the setup's source databases (#2336): a table there is ``database.table``.
+_MY_AUTO_INCREMENTS_IN = (
+    "SELECT CASE WHEN TABLE_SCHEMA = DATABASE() THEN TABLE_NAME "
+    "ELSE CONCAT(TABLE_SCHEMA, '.', TABLE_NAME) END AS name, CAST(AUTO_INCREMENT AS CHAR) "
+    "FROM information_schema.TABLES WHERE TABLE_SCHEMA IN ({schemas}) "
+    "AND AUTO_INCREMENT IS NOT NULL ORDER BY name"
 )
 _MY_BYTES = {"binary", "varbinary", "tinyblob", "blob", "mediumblob", "longblob", "bit", "geometry"}
 _MY_INTEGERS = {"tinyint", "smallint", "mediumint", "int", "integer", "bigint", "year"}
@@ -968,8 +1025,12 @@ class _DataApiBackend(de._Backend):
         return out
 
     def _my_columns(self, table: str) -> list[tuple[str, str]]:
-        """Each column's name and data type, in order."""
-        got = self._guarded(_MY_COLUMNS, [table], meta=True)
+        """Each column's name and data type, in order, read in the table's own database."""
+        schema, name = de._split_table(table, self._namespaces)
+        if schema is None:
+            got = self._guarded(_MY_COLUMNS, [name], meta=True)
+        else:
+            got = self._guarded(_MY_COLUMNS_IN, [schema, name], meta=True)
         return [(str(n), str(t).lower()) for n, t in self._rows(got, as_text=True)[0]]
 
     def _pg_columns(self, table: str) -> list[tuple[str, str, str]]:
@@ -978,8 +1039,14 @@ class _DataApiBackend(de._Backend):
         return [(str(n), str(t), str(c)) for n, t, c in self._rows(got, as_text=True)[0]]
 
     def tables(self) -> list[str]:
-        sql = de.pg_tables_sql(self._namespaces) if self.engine == "postgresql" else de._MY_TABLES
+        if self.engine == "postgresql":
+            sql = de.pg_tables_sql(self._namespaces)
+        elif self._namespaces:  # the setup's source databases too (#2336)
+            sql = de._MY_TABLES_IN.format(schemas=de._my_schemas(self._namespaces))
+        else:
+            sql = de._MY_TABLES
         with self.harness():
+            # base tables only: a source database's owner marker (#2336) is a view
             return [str(r[0]) for r in self._rows(self._guarded(sql, meta=True))[0]]
 
     def column_types(self, tables):  # type: ignore[no-untyped-def]
@@ -990,7 +1057,9 @@ class _DataApiBackend(de._Backend):
                     sql = de._PG_COLUMN_TYPES.replace("%s::regclass", "CAST(%s AS regclass)")
                     got = self._guarded(sql, [self.pg_table(table)], meta=True)
                 else:
-                    got = self._guarded(de._MY_COLUMN_TYPES, [table], meta=True)
+                    schema, name = de._split_table(table, self._namespaces)
+                    got = (self._guarded(de._MY_COLUMN_TYPES, [name], meta=True) if schema is None
+                           else self._guarded(de._MY_COLUMN_TYPES_IN, [schema, name], meta=True))  # fmt: skip
                 out[table] = {str(n): str(t) for n, t in self._rows(got)[0]}
         return out
 
@@ -1003,7 +1072,9 @@ class _DataApiBackend(de._Backend):
             self._guarded(de._MY_STATS_NOW)
         except de.EngineError:
             pass
-        rows = self._rows(self._guarded(_MY_AUTO_INCREMENTS, meta=True), as_text=True)[0]
+        sql = (_MY_AUTO_INCREMENTS_IN.format(schemas=de._my_schemas(self._namespaces))
+               if self._namespaces else _MY_AUTO_INCREMENTS)  # fmt: skip
+        rows = self._rows(self._guarded(sql, meta=True), as_text=True)[0]
         return tuple((str(t), int(n), None) for t, n in rows)
 
     def restore_counters(self, state):  # type: ignore[no-untyped-def]
@@ -1015,7 +1086,7 @@ class _DataApiBackend(de._Backend):
                                   [name, value if called else start, called])  # fmt: skip
             return
         for name, value, _ in state:
-            target = de._quote_table(name, "`")
+            target = de.qualified_table(name, self._namespaces, "`")  # in its own database
             self._guarded(f"ALTER TABLE {target} AUTO_INCREMENT = {int(value)}")
 
     def reset_session(self) -> None:
@@ -1198,6 +1269,11 @@ class DataApiTarget(DisposableEngineTarget):
         self._handle = de.EngineHandle(engine, version, Path("/nonexistent"), "rds-data", None,
                                        self._backend)  # fmt: skip
         self._created = False
+        #: MySQL (#2336): the source databases this target made, by their literal names, and
+        #: whether the harness database holds its record table yet.
+        self._sources: list[str] = []
+        self._recording = False
+        self._token = secrets.token_hex(8)
         self.drop_failed = False
         self._signed_in = False  # read in the first call's transaction
         self._role_sql = de._quote(runner.username, '"')
@@ -1269,15 +1345,23 @@ class DataApiTarget(DisposableEngineTarget):
             self._strict_check[0] = "not_available"  # offered, but it could not be created
 
     def close(self) -> None:
-        """Roll back and drop the scratch database, whatever happened."""
+        """Roll back and drop the scratch database, whatever happened. On MySQL the source
+        databases this target made go first (:func:`_release_source`, #2336); when one is not
+        released, the harness database and its record stay for the sweep."""
         with contextlib.suppress(Exception):  # the drop below still runs
             self._backend.close()
         if not getattr(self, "_created", False):
             return
-        names = [self.database]
-        if self.engine == "mysql":
-            names.append(self.harness_database)  # IF EXISTS: it may not have been made
         failed = False
+        for source in list(self._sources):
+            if _release_source(self._admin, self._record, source, self._token,
+                               self._runner.username, [], []):  # fmt: skip
+                self._sources.remove(source)
+            else:
+                failed = True
+        names = [self.database]
+        if self.engine == "mysql" and not failed:
+            names.append(self.harness_database)  # IF EXISTS: it may not have been made
         for name in names:
             drop = f"DROP DATABASE IF EXISTS {de._quote(name, _MARK[self.engine])}"
             if self.engine == "postgresql":
@@ -1291,16 +1375,75 @@ class DataApiTarget(DisposableEngineTarget):
         else:
             self._created = False
 
+    @property
+    def _record(self) -> str:
+        """The harness database's record of the source databases (MySQL, #2336)."""
+        return f"{de._quote(self.harness_database, '`')}.`{MY_MADE_TABLE}`"
+
+    def _create_databases(self, names: Sequence[str]) -> None:
+        """MySQL (#2336): each source database of the setup by its literal name, since a body
+        names it so (``inventory.stock``). The master user records the name, the target's token
+        and the runner in the harness database, creates the database (never ``IF NOT EXISTS``:
+        a name the cluster already holds, a customer's or another run's, is refused and never
+        used or dropped), makes its owner marker and grants the runner the rights its setup and
+        calls need there, never ``DROP``. The names are checked."""
+        made = list(self._backend._namespaces)
+        fresh = [n for n in dict.fromkeys(names) if n != self.database and n not in made]
+        for name in fresh:
+            if not _source_database(name):
+                raise ProofTargetError(
+                    f"a source database is named {name if de._IDENT.match(name) else 'oddly'}, "
+                    f"which {self.description} keeps for the harness or the server"
+                )
+        if not fresh:
+            return
+        admin, record = self._admin, self._record
+        try:
+            if not self._recording:
+                admin._guarded(_MY_MADE_CREATE.format(record=record))
+                self._recording = True
+            for name in fresh:
+                admin._guarded(_MY_MADE_NOTE.format(record=record),
+                               [name, self._token, self._runner.username])  # fmt: skip
+                try:
+                    admin._call(f"CREATE DATABASE {de._quote(name, '`')}")
+                except Exception as exc:  # noqa: BLE001 - every failure refuses the setup
+                    found = parse_error(exc) if _code(exc) == "DatabaseErrorException" else None
+                    if found is not None and found.errno == _MY_DB_EXISTS:
+                        # Another party's: the note goes, nothing else is touched. Any other
+                        # error keeps the note, so the sweep checks the name later.
+                        with contextlib.suppress(de.EngineError):
+                            admin._guarded(_MY_MADE_FORGET.format(record=record), [name])
+                        raise ProofTargetError(
+                            f"the source database {name} already exists on {self.description}: "
+                            "a database the proof did not make is never used", found.sqlstate,
+                        ) from None  # fmt: skip
+                    self._sources.append(name)  # it may have been made: close checks its marker
+                    raise ProofTargetError(
+                        f"the source database {name} could not be made on {self.description}",
+                        found.sqlstate if found else None,
+                    ) from None
+                self._sources.append(name)
+                admin._guarded(_MY_OWNER_CREATE.format(table=_owner_table(name, self._token)))
+                # `_` and `%` are wildcards in a GRANT: the helper escapes them
+                admin._guarded(f"GRANT {_MY_SOURCE_PRIVILEGES} ON {grant_database(name)}.* TO "
+                               f"{self._runner.account_sql}")  # fmt: skip
+                made.append(name)
+        except de.EngineError as exc:
+            raise ProofTargetError(f"the source databases were not made on {self.description}",
+                                   exc.sqlstate) from None  # fmt: skip
+        self._backend._namespaces = tuple(made)
+        self._schemas = tuple(made)
+
     # ---- the protocol, where the Data API differs
     def _create_schemas(self, names: Sequence[str]) -> None:
         """Each source schema of the setup (#1970), in the scratch database, owned by the
         runner as ``public`` is, and closed to everyone else. Made by the master user in the
-        scratch database (the runner cannot create a schema there); the names are checked."""
+        scratch database (the runner cannot create a schema there); the names are checked.
+        On MySQL each is a database of its own (:meth:`_create_databases`)."""
         if self.engine != "postgresql":
-            raise ProofTargetError(
-                f"{self.description} cannot hold a source database other than the scratch "
-                "database yet: the setup's tables name one"
-            )
+            self._create_databases(names)
+            return
         made = list(self._backend._namespaces)
         if any(n.casefold() == HARNESS_SCHEMA for n in names):
             raise ProofTargetError(
@@ -1725,7 +1868,10 @@ def drop_scratch(client: DataApiClient, *, cluster_arn: str, secret_arn: str, en
     """Drop every scratch database of ``job_id`` the cluster still holds (what a run that
     was killed left). Each drop is tried on its own: one that fails never stops the others.
     Returns ``(dropped, left)``, ``left`` naming what could not be dropped or listed. The
-    run's runner is :func:`drop_runner`'s and :func:`sweep_runners`'."""
+    run's runner is :func:`drop_runner`'s and :func:`sweep_runners`'. On MySQL each harness
+    database's record goes first (:func:`_sweep_sources`, #2336): each source database it names
+    is released (its grant revoked, dropped while it holds its owner marker), and a harness
+    database whose record cannot be read, or still holds a row, is kept and named in ``left``."""
     prefix = scratch_prefix(job_id)
     if not _PREFIX.fullmatch(prefix):  # pragma: no cover - built above
         raise ValueError("not a scratch prefix")
@@ -1749,8 +1895,15 @@ def drop_scratch(client: DataApiClient, *, cluster_arn: str, secret_arn: str, en
         names = [str(r[0]) for r in admin._rows(admin._guarded(sql, params, meta=True))[0]]
     except Exception:  # noqa: BLE001 - reported, never raised
         return dropped, [f"the databases of prefix {prefix} (could not be listed)"]
+    kept: set[str] = set()
+    if engine == "mysql":
+        for name in names:
+            if _SWEPT[engine].fullmatch(name) and name.endswith(MY_HARNESS_SUFFIX):
+                if not _sweep_sources(admin, name, admin_database, dropped, left):
+                    kept.add(name)  # its record stays for the next sweep
+                    left.append(name)
     for name in names:
-        if not _SWEPT[engine].fullmatch(name):
+        if not _SWEPT[engine].fullmatch(name) or name in kept:
             continue
         drop = f"DROP DATABASE IF EXISTS {de._quote(name, mark)}" + (
             " WITH (FORCE)" if engine == "postgresql" else ""
@@ -1761,6 +1914,92 @@ def drop_scratch(client: DataApiClient, *, cluster_arn: str, secret_arn: str, en
         except Exception:  # noqa: BLE001 - the next one is still dropped
             left.append(name)
     return dropped, left
+
+
+def _source_database(name: str) -> bool:
+    """Whether ``name`` may be a MySQL source database the proof makes and drops by its
+    literal name (#2336): a plain identifier, never a database the server keeps, the
+    harness's own name or one in the scratch databases' namespace."""
+    folded = name.casefold()
+    return (bool(de._IDENT.match(name)) and len(name) <= 64
+            and folded not in _MY_SERVER_DATABASES and folded != HARNESS_SCHEMA
+            and not folded.startswith(SCRATCH_PREFIX))  # fmt: skip
+
+
+def _owner_table(name: str, token: str) -> str:
+    """The owner marker of source database ``name``: ``name``.``modernizer_owner_<token>``."""
+    if not _MY_TOKEN.fullmatch(token):
+        raise ValueError("not an owner token")
+    return f"{de._quote(name, '`')}.`{MY_OWNER_PREFIX}{token}`"
+
+
+def _count(admin: _DataApiBackend, sql: str, params: Sequence[Any]) -> int:
+    got = admin._rows(admin._guarded(sql, list(params), meta=True), as_text=True)[0]
+    return int(str(got[0][0])) if got else 0
+
+
+def _release_source(admin: _DataApiBackend, record: str, name: str, token: str, runner: str,
+                    dropped: list[str], left: list[str]) -> bool:  # fmt: skip
+    """MySQL (#2336): let go of source database ``name`` a record names. The runner's grant
+    on the name is revoked first, every time (MySQL keeps a database's grants after it is
+    dropped, so a later database of that name would be open to it), and checked gone, then the
+    database is dropped only while ``information_schema.TABLES`` lists its owner marker,
+    ``modernizer_owner_<token>``, as a view, which the runner cannot make. A database that is gone has its row forgotten.
+    One that exists with no marker (another party's, or made before a run was killed) is named
+    in ``left`` and kept with its row, so every later sweep checks it again. Returns whether
+    the row is gone."""
+    try:
+        account = RunnerAccount(runner, "", "mysql")
+        escaped = grant_database(name)[1:-1].replace("``", "`")
+        try:  # every time: a pre-check could miss a grant the server stores another way
+            admin._call(f"REVOKE ALL PRIVILEGES ON {grant_database(name)}.* FROM "
+                        f"{account.account_sql}")  # fmt: skip
+        except Exception as exc:  # noqa: BLE001 - only "no such grant" (or user) is fine
+            found = parse_error(exc) if _code(exc) == "DatabaseErrorException" else None
+            if found is None or found.errno != _MY_NO_GRANT:
+                raise
+        if _count(admin, _MY_GRANTED, [runner, "%", escaped]):
+            raise de.EngineError("the runner's grant is still there")
+        if not _count(admin, _MY_EXISTS, [name]):
+            admin._guarded(_MY_MADE_FORGET.format(record=record), [name])
+            return True
+        if not _count(admin, _MY_OWNED, [name, MY_OWNER_PREFIX + token]):
+            left.append(f"{name} (it holds no owner marker of this run, so it is not dropped)")
+            return False
+        admin._guarded(f"DROP DATABASE IF EXISTS {de._quote(name, '`')}")
+    except Exception:  # noqa: BLE001 - reported, and the row stays for the next sweep
+        left.append(name)
+        return False
+    dropped.append(name)
+    with contextlib.suppress(Exception):  # a row left names a database the next sweep finds gone
+        admin._guarded(_MY_MADE_FORGET.format(record=record), [name])
+    return True
+
+
+def _sweep_sources(admin: _DataApiBackend, harness: str, admin_database: str | None,
+                   dropped: list[str], left: list[str]) -> bool:  # fmt: skip
+    """MySQL (#2336): release each source database ``harness``'s record names
+    (:func:`_release_source`). A recorded name that is no plain source name, or is the
+    cluster's own database, is never acted on. Returns whether ``harness`` may go: its record
+    holds no row any more, or it has no record table (it made no source database)."""
+    record = f"{de._quote(harness, '`')}.`{MY_MADE_TABLE}`"
+    try:
+        rows = admin._rows(admin._guarded(_MY_MADE_READ.format(record=record), meta=True),
+                           as_text=True)[0]  # fmt: skip
+    except de.EngineError as exc:
+        return exc.sqlstate == "42S02"  # no record table: it made no source database
+    except Exception:  # noqa: BLE001 - reported by the caller, never raised
+        return False
+    clear = True
+    for raw, token, runner in rows:
+        name = str(raw)
+        if (not _source_database(name) or name == (admin_database or "")
+                or not _MY_TOKEN.fullmatch(str(token))):  # fmt: skip
+            clear = False
+            continue
+        clear = _release_source(admin, record, name, str(token), str(runner), dropped,
+                                left) and clear  # fmt: skip
+    return clear
 
 
 # --------------------------------------------------------------------------- the runner
@@ -1784,7 +2023,8 @@ _WHO = "SELECT current_user::text, session_user::text"
 @dataclass(frozen=True)
 class RunnerAccount:
     """The run's restricted account (a MySQL user, a PostgreSQL login role): granted each
-    scratch database it runs in and nothing else, reached through the Data API with its own
+    scratch database it runs in (on MySQL also each source database the target made, #2336)
+    and nothing else, reached through the Data API with its own
     Secrets Manager secret."""
 
     username: str
