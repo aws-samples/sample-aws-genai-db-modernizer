@@ -321,8 +321,8 @@ def _entry_of_comparison(c: RoutineComparison) -> RoutineProofEntry:
     outcome = {"no_differences_found": "proved", "different": "needs_attention"}.get(
         c.outcome, "not_proved"
     )
-    if c.reason_code == "role_changed":
-        outcome = "needs_attention"  # the routine left the role it runs as
+    if c.reason_code in ("role_changed", "harness_tampered"):
+        outcome = "needs_attention"  # it left its role, or changed what the comparison reads
     return RoutineProofEntry(mode="side_by_side", outcome=outcome, reason=c.reason,  # type: ignore[arg-type]
                              reason_code=c.reason_code, calls_run=c.calls_compared,
                              calls_succeeded=c.calls_succeeded, mismatches=c.differences_total)  # fmt: skip
@@ -376,7 +376,7 @@ def _entry_of_run(r: RoutineRun, source: RoutineRun | None = None) -> RoutinePro
     ]  # fmt: skip
     code: str | None = r.reason_code
     reason = r.reason
-    if r.outcome == "does_not_load" or r.reason_code == "role_changed":
+    if r.outcome == "does_not_load" or r.reason_code in ("role_changed", "harness_tampered"):
         outcome = "needs_attention"
     elif r.outcome != "ran":
         outcome = "not_proved"

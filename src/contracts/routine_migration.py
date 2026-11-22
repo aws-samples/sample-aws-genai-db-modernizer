@@ -176,7 +176,8 @@ class RoutineProofEntry(BaseModel):
             "call failing exactly the same way on the source, on identical rows and calls, left "
             "out) or, side by side, no difference was found on them; "
             "needs_attention: it did not load, the strict check found an error, a call behaved "
-            "differently, or a call left the role it runs as (role_changed); not_proved: a "
+            "differently, or a call left the role it runs as (role_changed) or changed what "
+            "the comparison reads (harness_tampered); not_proved: a "
             "call failed on the test cluster (with a feature Aurora does not support: "
             "target_gap), or it could not be run or compared"
         ),

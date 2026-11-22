@@ -231,6 +231,42 @@ _PG_CREATE_ROLE = (
     "NOREPLICATION NOBYPASSRLS PASSWORD %s"
 )
 _PG_CREATE_DB = f"CREATE DATABASE {_DATABASE} OWNER {_RUNNER}"
+#: The schema of the routine proof harness's own objects (#2337): made and owned by the
+#: superuser (on the Aurora test cluster the master user), which grants the runner ``USAGE``
+#: and, on the sentinel table, ``SELECT`` and ``INSERT`` only, so no routine can create,
+#: replace, drop or put a trigger on anything in it.
+HARNESS_SCHEMA = "modernizer_harness"
+PG_SENTINEL = f'"{HARNESS_SCHEMA}"."modernizer_sentinel"'
+#: The harness's own path on PostgreSQL (#2337): ``pg_catalog`` then the session's temporary
+#: schema, never ``public`` or a source schema, so no function, operator or relation a
+#: routine made is a candidate (PostgreSQL's CVE-2018-1058 guidance), and with ``pg_temp``
+#: named last a temporary relation never shadows a catalog one. ``row_security`` off makes a
+#: read that a row-level security policy would filter fail (42501) instead of returning
+#: fewer rows. Set for the transaction only, in one statement.
+PG_PIN = (
+    "SELECT pg_catalog.set_config('search_path', 'pg_catalog, pg_temp', true), "
+    "pg_catalog.set_config('row_security', 'off', true)"
+)
+#: The routines' own path, for the statements that are theirs; the path is bound.
+PG_ROUTINE_PATH = (
+    "SELECT pg_catalog.set_config('search_path', %s, true), "
+    "pg_catalog.set_config('row_security', 'on', true)"
+)
+
+
+def pg_harness_schema_sql(role: str) -> list[str]:
+    """The superuser's statements that make the harness's schema and sentinel for ``role``
+    (an already quoted role name)."""
+    schema = f'"{HARNESS_SCHEMA}"'
+    return [
+        f"CREATE SCHEMA {schema}",
+        f"REVOKE ALL ON SCHEMA {schema} FROM PUBLIC",
+        f"GRANT USAGE ON SCHEMA {schema} TO {role}",
+        f"CREATE TABLE {PG_SENTINEL} (id pg_catalog.int4 PRIMARY KEY)",
+        f"GRANT SELECT, INSERT ON {PG_SENTINEL} TO {role}",
+    ]
+
+
 _MY_CREATE_DB = f"CREATE DATABASE `{_DATABASE}`"
 _MY_CREATE_USER = f"CREATE USER '{_RUNNER}'@'localhost' IDENTIFIED BY %s"
 # Only this one schema: no FILE, no SUPER, no other global privilege.
@@ -279,14 +315,14 @@ _MY_SYSTEM_ACCOUNTS = frozenset(
 _PG_TABLE_SEQUENCES = (
     "SELECT attname, seq FROM (SELECT a.attname, "
     "pg_catalog.pg_get_serial_sequence(%s, a.attname) AS seq "
-    "FROM pg_attribute a WHERE a.attrelid = %s::regclass AND a.attnum > 0 "
+    "FROM pg_catalog.pg_attribute a WHERE a.attrelid = %s::regclass AND a.attnum > 0 "
     "AND NOT a.attisdropped) s WHERE seq IS NOT NULL ORDER BY attname"
 )
 # Every sequence of the database with its state, and how to put one back (#1944).
 _PG_SEQUENCE_STATE = (
     "SELECT pg_catalog.quote_ident(schemaname) || '.' || pg_catalog.quote_ident(sequencename), "
     "last_value, "
-    "start_value FROM pg_sequences ORDER BY 1"
+    "start_value FROM pg_catalog.pg_sequences ORDER BY 1"
 )
 _PG_SET_SEQUENCE = "SELECT pg_catalog.setval(%s::regclass, %s, %s)"
 _MY_STATS_NOW = "SET SESSION information_schema_stats_expiry = 0"  # 8.0+: no cached counter
@@ -302,7 +338,9 @@ _MY_AUTO_INCREMENTS_IN = (
     "AND AUTO_INCREMENT IS NOT NULL ORDER BY name"
 )
 # The base tables of the routines' own schema (PostgreSQL ``public``, the MySQL database).
-_PG_TABLES = "SELECT tablename FROM pg_tables WHERE schemaname = 'public' ORDER BY tablename"
+_PG_TABLES = (
+    "SELECT tablename FROM pg_catalog.pg_tables WHERE schemaname = 'public' ORDER BY tablename"
+)
 _MY_TABLES = (
     "SELECT TABLE_NAME FROM information_schema.TABLES WHERE TABLE_SCHEMA = DATABASE() "
     "AND TABLE_TYPE = 'BASE TABLE' ORDER BY TABLE_NAME"
@@ -311,7 +349,7 @@ _MY_TABLES = (
 # table of one of those is ``schema.table``. The names are checked identifiers.
 _PG_TABLES_IN = (
     "SELECT CASE WHEN schemaname = 'public' THEN tablename "
-    "ELSE schemaname || '.' || tablename END AS name FROM pg_tables "
+    "ELSE schemaname || '.' || tablename END AS name FROM pg_catalog.pg_tables "
     "WHERE schemaname IN ({schemas}) ORDER BY name"
 )
 _MY_TABLES_IN = (
@@ -324,7 +362,7 @@ _MY_COLUMN_TYPES_IN = (
     "WHERE TABLE_SCHEMA = %s AND TABLE_NAME = %s ORDER BY ORDINAL_POSITION"
 )
 _PG_COLUMN_TYPES = (
-    "SELECT attname, pg_catalog.format_type(atttypid, atttypmod) FROM pg_attribute "
+    "SELECT attname, pg_catalog.format_type(atttypid, atttypmod) FROM pg_catalog.pg_attribute "
     "WHERE attrelid = %s::regclass AND attnum > 0 AND NOT attisdropped ORDER BY attnum"
 )
 _MY_COLUMN_TYPES = (
@@ -520,6 +558,19 @@ def _split_table(name: str, namespaces: Sequence[str]) -> tuple[str | None, str]
     if dot and rest and head in namespaces:
         return head, rest
     return None, name
+
+
+def routine_path_value(namespaces: Sequence[str]) -> str:
+    """The routines' ``search_path``: ``"public"`` then the setup's schemas, each quoted."""
+    return ", ".join(_quote(n, '"') for n in ["public", *namespaces])
+
+
+def pg_harness_table(name: str, namespaces: Sequence[str]) -> str:
+    """A table as a harness statement names it on PostgreSQL, always with its schema
+    (``"public"."t"``, ``"sales"."orders"``): the pinned path holds neither schema, and a
+    temporary relation of the same name never stands in for it (#2337)."""
+    schema, table = _split_table(name, namespaces)
+    return ".".join(_quote_table(part, '"') for part in (schema or "public", table))
 
 
 def qualified_table(name: str, namespaces: Sequence[str], mark: str) -> str:
@@ -1145,6 +1196,16 @@ class _Backend:
     def restore_counters(self, state: Sequence[tuple[str, Any, Any]]) -> None:
         raise NotImplementedError
 
+    # The harness's path (PostgreSQL, #2337); nothing to do on MySQL.
+    def pin(self) -> None:
+        return None
+
+    def routine_path(self) -> None:
+        return None
+
+    def after_rollback_to_savepoint(self) -> None:
+        return None
+
     def close(self) -> None:
         raise NotImplementedError
 
@@ -1314,7 +1375,18 @@ class _PostgresBackend(_Backend):
                 _execute(cur, _PG_CREATE_DB)
         finally:
             admin.close()
+        # The harness's own schema and sentinel, the superuser's (#2337).
+        owner = psycopg2.connect(server.dsn("postgres", _DATABASE))
+        try:
+            owner.autocommit = True
+            with owner.cursor() as cur:
+                for statement in pg_harness_schema_sql(_RUNNER):
+                    _execute(cur, statement)
+        finally:
+            owner.close()
         self._password = password
+        #: Whether the open transaction is on the harness's path (``PG_PIN``).
+        self._pinned = False
         self._type_names: dict[int, str] = {}
         self._cancels = 0
         self._terminated = False
@@ -1339,7 +1411,10 @@ class _PostgresBackend(_Backend):
         if not self._type_names:
             cur = self._conn.cursor()
             try:
-                _execute(cur, "SELECT oid::int, format_type(oid, NULL) FROM pg_type")
+                _execute(
+                    cur,
+                    "SELECT oid::int, pg_catalog.format_type(oid, NULL) FROM pg_catalog.pg_type",
+                )
                 self._type_names = {int(o): str(n) for o, n in cur.fetchall()}
             finally:
                 cur.close()
@@ -1383,6 +1458,48 @@ class _PostgresBackend(_Backend):
         finally:
             cur.close()
 
+    # ---- the harness's path (#2337)
+    def _in_transaction(self) -> bool:
+        idle = self._psycopg2.extensions.TRANSACTION_STATUS_IDLE
+        return bool(self._conn.info.transaction_status != idle)
+
+    def pin(self) -> None:
+        """The open transaction back on the harness's path (``PG_PIN``)."""
+        if self._in_transaction() and not self._pinned:
+            with self._conn.cursor() as cur:
+                _execute(cur, PG_PIN)
+            self._pinned = True
+
+    def routine_path(self) -> None:
+        """The open transaction on the routines' path, for a call, a row change or a
+        ``CREATE``: ``public`` first, then the setup's schemas."""
+        if self._in_transaction() and self._pinned:
+            with self._conn.cursor() as cur:
+                _execute(cur, PG_ROUTINE_PATH, [routine_path_value(self._namespaces)])
+            self._pinned = False
+
+    def after_rollback_to_savepoint(self) -> None:
+        self._pinned = True  # the savepoint was taken on the harness's path
+
+    @contextlib.contextmanager
+    def _harness(self) -> Iterator[None]:
+        """Harness reads on the harness's path: in the open transaction, or in one of their
+        own (rolled back; ``setval`` stays) when none is open."""
+        if self._in_transaction():
+            self.pin()
+            yield
+            return
+        with self._conn.cursor() as cur:
+            _execute(cur, "BEGIN")
+        self._pinned = False
+        try:
+            self.pin()
+            yield
+        finally:
+            with contextlib.suppress(Exception), self._conn.cursor() as cur:
+                _execute(cur, "ROLLBACK")
+            self._pinned = False
+
     @staticmethod
     def _advance_sequences(cur: Any, table: str) -> None:
         """Every identity or serial sequence of ``table`` continues past its highest value."""
@@ -1394,7 +1511,9 @@ class _PostgresBackend(_Backend):
             col = _quote(column, '"')
             # setval(seq, max, true): the next value is max + 1, and a row already at the
             # type's highest value does not overflow the sequence; an empty table keeps it
-            highest = f"SELECT max({col}) AS m FROM {quoted}"  # nosec B608 - see _SQL_NOTE
+            highest = (
+                f"SELECT pg_catalog.max({col}) AS m FROM {quoted}"  # nosec B608 - see _SQL_NOTE
+            )
             _execute(
                 cur,
                 f"SELECT pg_catalog.setval(%s, m, true) FROM ({highest}) s WHERE m IS NOT NULL",  # nosec B608 - see _SQL_NOTE
@@ -1430,22 +1549,33 @@ class _PostgresBackend(_Backend):
             cur.close()
 
     def execute(self, sql, params):  # type: ignore[no-untyped-def]
+        word = " ".join(sql.split()).upper()
         cur = self._conn.cursor()
         try:
             _execute(cur, sql, list(params))
             rows = [[_normalize(c) for c in r] for r in cur.fetchall()] if cur.description else []
-            return CallResult(rows=rows)
+            result = CallResult(rows=rows)
         except self._psycopg2.Error as exc:
             return _error_result(exc)
         finally:
             cur.close()
+        if word in ("BEGIN", "START TRANSACTION"):
+            self._pinned = False
+            self.pin()  # every transaction starts on the harness's path (#2337)
+        elif word in ("ROLLBACK", "COMMIT", "END", "ABORT"):
+            self._pinned = False
+        return result
 
     def column_types(self, tables):  # type: ignore[no-untyped-def]
+        with self._harness():
+            return self._column_types(tables)
+
+    def _column_types(self, tables):  # type: ignore[no-untyped-def]
         out: dict[str, dict[str, str]] = {}
         cur = self._conn.cursor()
         try:
             for table in tables:
-                _execute(cur, _PG_COLUMN_TYPES, [qualified_table(table, self._namespaces, '"')])
+                _execute(cur, _PG_COLUMN_TYPES, [pg_harness_table(table, self._namespaces)])
                 out[table] = {str(n): str(t) for n, t in cur.fetchall()}
         except self._psycopg2.Error as exc:
             raise EngineError(f"{type(exc).__name__}: {exc}".strip(), _sqlstate(exc)) from exc
@@ -1454,11 +1584,16 @@ class _PostgresBackend(_Backend):
         return out
 
     def snapshot(self, tables):  # type: ignore[no-untyped-def]
+        with self._harness():
+            return self._snapshot(tables)
+
+    def _snapshot(self, tables):  # type: ignore[no-untyped-def]
         out: dict[str, list[dict[str, Any]]] = {}
         cur = self._conn.cursor()
         try:
             for table in tables:
-                _execute(cur, _select_all_sql(table, '"'))
+                target = pg_harness_table(table, self._namespaces)
+                _execute(cur, f"SELECT * FROM {target}")  # nosec B608 - see _SQL_NOTE
                 names = [d[0] for d in cur.description]
                 got = [
                     {n: _normalize(v) for n, v in zip(names, r, strict=True)}
@@ -1472,6 +1607,10 @@ class _PostgresBackend(_Backend):
         return out
 
     def tables(self) -> list[str]:
+        with self._harness():
+            return self._tables()
+
+    def _tables(self) -> list[str]:
         cur = self._conn.cursor()
         try:
             _execute(cur, pg_tables_sql(self._namespaces) if self._namespaces else _PG_TABLES)
@@ -1494,7 +1633,9 @@ class _PostgresBackend(_Backend):
             self._conn.cancel()  # psycopg2: safe from another thread
             return
         self._terminated = True
-        self.execute_aside("SELECT pg_terminate_backend(%s)", [int(self._conn.get_backend_pid())])
+        self.execute_aside(
+            "SELECT pg_catalog.pg_terminate_backend(%s)", [int(self._conn.get_backend_pid())]
+        )
 
     def reconnect(self) -> None:
         """After :meth:`interrupt`: a new connection when the old one was terminated."""
@@ -1504,6 +1645,7 @@ class _PostgresBackend(_Backend):
             with contextlib.suppress(Exception):
                 self._conn.close()
             self._conn = self._connect()
+            self._pinned = False
 
     def execute_aside(self, sql, params):  # type: ignore[no-untyped-def]
         conn = self._psycopg2.connect(self._server.dsn(_RUNNER, _DATABASE, self._password))
@@ -1525,8 +1667,9 @@ class _PostgresBackend(_Backend):
         """``(sequence, last value, start value)`` for every sequence of the database."""
         cur = self._conn.cursor()
         try:
-            _execute(cur, _PG_SEQUENCE_STATE)
-            return tuple((str(n), last, start) for n, last, start in cur.fetchall())
+            with self._harness():
+                _execute(cur, _PG_SEQUENCE_STATE)
+                return tuple((str(n), last, start) for n, last, start in cur.fetchall())
         except self._psycopg2.Error as exc:
             raise EngineError(f"{type(exc).__name__}: {exc}".strip(), _sqlstate(exc)) from exc
         finally:
@@ -1537,9 +1680,10 @@ class _PostgresBackend(_Backend):
         # sequence never drawn from goes back to its start, not yet called.
         cur = self._conn.cursor()
         try:
-            for name, last, start in state:
-                called = last is not None
-                _execute(cur, _PG_SET_SEQUENCE, [name, last if called else start, called])
+            with self._harness():
+                for name, last, start in state:
+                    called = last is not None
+                    _execute(cur, _PG_SET_SEQUENCE, [name, last if called else start, called])
         except self._psycopg2.Error as exc:
             raise EngineError(f"{type(exc).__name__}: {exc}".strip(), _sqlstate(exc)) from exc
         finally:
@@ -2503,6 +2647,24 @@ def restore_counters(handle: EngineHandle, state: Sequence[tuple[str, Any, Any]]
     ``ALTER TABLE`` per table, which commits: call it outside a transaction."""
     _check_live(handle)
     handle._backend.restore_counters(state)
+
+
+def pin(handle: EngineHandle) -> None:
+    """Put the open transaction back on the harness's path (PostgreSQL, #2337)."""
+    _check_live(handle)
+    handle._backend.pin()
+
+
+def routine_path(handle: EngineHandle) -> None:
+    """Put the open transaction on the routines' path for their own statements (PostgreSQL)."""
+    _check_live(handle)
+    handle._backend.routine_path()
+
+
+def after_rollback_to_savepoint(handle: EngineHandle) -> None:
+    """A ``ROLLBACK TO SAVEPOINT`` taken on the harness's path put the path back too."""
+    _check_live(handle)
+    handle._backend.after_rollback_to_savepoint()
 
 
 def tables(handle: EngineHandle) -> list[str]:

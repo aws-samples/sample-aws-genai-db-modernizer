@@ -39,13 +39,27 @@ and of the schemas the setup made for the source tables (#1970); the role keeps 
 sign-in is checked. The setup, the routines (on MySQL they name it as their ``DEFINER``) and
 the calls run as it, through the Data API with its secret's ARN. The master user only
 creates the scratch database, grants it and drops it; on PostgreSQL it also creates the
-strict check's extension and hands the schemas over, all before the runner owns anything
-there and each in a transaction that pins ``search_path`` to ``pg_catalog``
+harness's own schema (``HARNESS_SCHEMA``, with the sentinel table and the strict check's
+extension) and hands the other schemas over, all before the runner owns anything there and
+each in a transaction that pins ``search_path`` to ``pg_catalog, pg_temp``
 (:meth:`DataApiTarget._as_owner`), so it never calls a function the runner made. The
 role takes at most 10 connections and its password stops working ``RUNNER_VALID_HOURS``
 after the run starts. The screen still refuses a text that changes its role, and every
 PostgreSQL call reads its role back. :func:`drop_runner` drops the account and deletes its
 secret with no recovery window, once the scratch databases are gone.
+
+Search path (PostgreSQL, #2337). The runner owns ``public``, so a carried routine, or a
+procedure that committed, can leave a ``public.now()``, a better-matching overload of a
+built-in (``quote_ident`` taking a ``name``, ``json_populate_record`` of a row type), an operator
+or a temporary view named like a catalog view. Every runner transaction starts on the same
+pinned path as the master user's (``de.PG_PIN``: ``pg_catalog, pg_temp``, ``row_security``
+off), and only the routines' own statements (the setup's tables, a carried ``CREATE``, the
+call and the row change) and two harness statements that name the routines' objects (the
+strict check and an enum label's lookup) switch to the routines' path, ``public`` first,
+and back. Every harness statement also names its built-ins with ``pg_catalog.`` and its
+tables with their schema. A cast reaches a read through no path (``pg_cast`` is global), so
+a snapshot after a call that made one is refused (:class:`HarnessTampered`), as is one a
+row-level security policy would filter (42501 with ``row_security`` off).
 
 Statements. Every statement is a module constant or built from checked, quoted identifiers
 (``disposable_engine``'s helpers); every value is bound as a Data API parameter. The Data API
@@ -99,8 +113,10 @@ from src.tools.database.mysql_grants import grant_database
 from src.tools.routines.proof_inputs import ProofCall, ProofSetup, run_call
 from src.tools.routines.proof_targets import (
     CALL_TIMEOUT_S,
+    HARNESS_TAMPERED,
     SESSION_TIME_ZONE,
     DisposableEngineTarget,
+    HarnessTampered,
     ProofTarget,
     ProofTargetError,
     RoleChanged,
@@ -146,8 +162,23 @@ def _resumed(call: Any, sleep: Any = None, /, **kwargs: Any) -> Any:
 
 
 _PLPGSQL_CHECK = "plpgsql_check"
-#: The first statement of every master transaction in a scratch database (review of #2417).
-_PIN = "SET LOCAL search_path = pg_catalog"
+#: The first statement of every master transaction in a scratch database (review of #2417),
+#: and of every runner transaction (#2337): the harness's path (``de.PG_PIN``).
+_PIN = de.PG_PIN
+#: The schema of the harness's own objects in a PostgreSQL scratch database (#2337): the
+#: sentinel table and the strict check's extension (``de.HARNESS_SCHEMA``).
+HARNESS_SCHEMA = de.HARNESS_SCHEMA
+_HARNESS = f'"{HARNESS_SCHEMA}"'
+#: Casts a routine made (#2337): ``pg_cast`` is global, so the pinned path never reaches a
+#: cast, and a snapshot's ``::text`` or ``to_jsonb`` would run it. A cast made after the
+#: cluster's own objects (``FirstNormalObjectId``) refuses the read, unless an extension
+#: owns it or it is part of a type it came with (``deptype 'i'``: a range type's built-in
+#: cast to its multirange, which runs no function a routine wrote).
+_PG_USER_CASTS = (
+    "SELECT pg_catalog.count(*) FROM pg_catalog.pg_cast c WHERE c.oid >= 16384 AND NOT EXISTS "
+    "(SELECT 1 FROM pg_catalog.pg_depend d WHERE d.classid = 'pg_catalog.pg_cast'::regclass "
+    "AND d.objid = c.oid AND d.deptype IN ('e', 'i'))"
+)
 #: The strict check where the cluster does not offer plpgsql_check (Aurora PostgreSQL does
 #: not, checked on 16.15): each PL/pgSQL routine is compiled again with every extra check of
 #: PL/pgSQL itself turned into an error, in a transaction that is rolled back.
@@ -173,18 +204,28 @@ _MY_AUTO_INCREMENTS = (
 _MY_BYTES = {"binary", "varbinary", "tinyblob", "blob", "mediumblob", "longblob", "bit", "geometry"}
 _MY_INTEGERS = {"tinyint", "smallint", "mediumint", "int", "integer", "bigint", "year"}
 _PG_COLUMNS = (
-    "SELECT a.attname::text, t.typname::text, t.typcategory::text FROM pg_attribute a "
-    "JOIN pg_type t ON t.oid = a.atttypid WHERE a.attrelid = CAST(%s AS regclass) "
+    "SELECT a.attname::text, t.typname::text, t.typcategory::text FROM pg_catalog.pg_attribute a "
+    "JOIN pg_catalog.pg_type t ON t.oid = a.atttypid WHERE a.attrelid = CAST(%s AS regclass) "
     "AND a.attnum > 0 AND NOT a.attisdropped ORDER BY a.attnum"
 )
 _PG_PLPGSQL_ROUTINES = (
     "SELECT p.oid::bigint, n.nspname || '.' || p.proname || '(' || "
-    "oidvectortypes(p.proargtypes) || ')', (SELECT t.tgrelid::bigint FROM pg_trigger t "
-    "WHERE t.tgfoid = p.oid ORDER BY t.oid LIMIT 1) FROM pg_proc p JOIN pg_namespace n ON "
-    "n.oid = p.pronamespace JOIN pg_language l ON l.oid = p.prolang WHERE n.nspname = 'public' "
+    "pg_catalog.oidvectortypes(p.proargtypes) || ')', (SELECT t.tgrelid::bigint FROM "
+    "pg_catalog.pg_trigger t WHERE t.tgfoid = p.oid ORDER BY t.oid LIMIT 1) FROM "
+    "pg_catalog.pg_proc p JOIN pg_catalog.pg_namespace n ON n.oid = p.pronamespace JOIN "
+    "pg_catalog.pg_language l ON l.oid = p.prolang WHERE n.nspname = 'public' "
     "AND l.lanname = 'plpgsql' AND (p.prorettype <> 'trigger'::regtype OR EXISTS (SELECT 1 "
-    "FROM pg_trigger t WHERE t.tgfoid = p.oid)) ORDER BY p.oid"
+    "FROM pg_catalog.pg_trigger t WHERE t.tgfoid = p.oid)) ORDER BY p.oid"
 )
+#: The strict check, run under the routines' path (it plans their bodies as a call would),
+#: so its function and every type it names are written with their schema.
+_PG_STRICT = (
+    "SELECT level::pg_catalog.text, coalesce(sqlstate, '') FROM "
+    '"modernizer_harness".plpgsql_check_function_tb(CAST(%s AS pg_catalog.oid)'
+    "::pg_catalog.regprocedure, CAST(%s AS pg_catalog.oid)::pg_catalog.regclass)"
+)
+#: The harness's own write of the PostgreSQL sentinel row.
+_PG_WRITE_SENTINEL = f"INSERT INTO {de.PG_SENTINEL} (id) VALUES (1)"  # nosec B608 - a constant
 
 
 class DataApiClient(Protocol):
@@ -485,6 +526,8 @@ class _DataApiBackend(de._Backend):
         self._mark = _MARK[engine]
         self._timeout = timeout_s
         self._tx: str | None = None
+        #: Whether the open transaction's path is the harness's (``_PIN``) or the routines'.
+        self._pinned = False
         self._kinds: dict[str, str] = {}
         self._no_run: dict[str, str] = {}
         self._pg_types: dict[str, str] = {}
@@ -528,16 +571,70 @@ class _DataApiBackend(de._Backend):
             self.rollback()
         got = _resumed(self._client.begin_transaction, **self._arn, database=self.database)
         self._tx = str(got["transactionId"])
+        self._pinned = False
         if self.engine == "postgresql":
-            if self._namespaces:  # public first, then the source schemas (#1970)
-                paths = ", ".join(de._quote(n, '"') for n in ["public", *self._namespaces])
-                self._call(f"SET LOCAL search_path = {paths}")
             for statement in (
                 f"SET LOCAL TIME ZONE INTERVAL '{SESSION_TIME_ZONE}' HOUR TO MINUTE",
                 "SET LOCAL lock_timeout = '5s'",
                 f"SET LOCAL statement_timeout = '{int(self._timeout * 1000)}ms'",
             ):
                 self._call(statement)
+            self.pin()  # every transaction starts on the harness's path (#2337)
+
+    # ---- the search path (PostgreSQL, #2337)
+    def pin(self) -> None:
+        """The open transaction's path back to the harness's (``_PIN``)."""
+        if self.engine == "postgresql" and self._tx is not None and not self._pinned:
+            self._call(_PIN)
+            self._pinned = True
+
+    def routine_path(self) -> None:
+        """The open transaction's path set to the routines' own, for the statements that are
+        theirs (the setup's tables, a carried ``CREATE``, a call, a row change): ``public``
+        first, then the setup's source schemas (#1970)."""
+        if self.engine == "postgresql" and self._tx is not None and self._pinned:
+            self._call(de.PG_ROUTINE_PATH, [de.routine_path_value(self._namespaces)])
+            self._pinned = False
+
+    def after_rollback_to_savepoint(self) -> None:
+        """A ``ROLLBACK TO SAVEPOINT`` taken while pinned undoes the path set after it."""
+        self._pinned = True
+
+    @contextlib.contextmanager
+    def harness(self) -> Any:
+        """Harness statements on PostgreSQL: on the harness's path, in the open transaction,
+        or in one of their own (rolled back) when none is open."""
+        if self.engine != "postgresql":
+            yield
+            return
+        if self._tx is not None:
+            self.pin()
+            yield
+            return
+        self.begin()
+        try:
+            yield
+        finally:
+            self.rollback()
+
+    @contextlib.contextmanager
+    def aside(self) -> Any:
+        """PostgreSQL: a transaction of its own, on the harness's path, beside the open one
+        (another connection), which is left as it was."""
+        held, pinned = self._tx, self._pinned
+        self._tx = None
+        try:
+            self.begin()
+            yield
+        finally:
+            self.rollback()
+            self._tx, self._pinned = held, pinned
+
+    def pg_table(self, table: str) -> str:
+        """A table as a harness statement names it, always with its schema
+        (``"public"."t"``, ``"sales"."orders"``): the pinned path holds neither schema, and a
+        temporary relation of the same name never stands in for it."""
+        return de.pg_harness_table(table, self._namespaces)
 
     def rollback(self) -> None:
         tx, self._tx = self._tx, None
@@ -601,15 +698,20 @@ class _DataApiBackend(de._Backend):
                 _MY_FIELD_TYPES.get(n.upper().split()[0] if n else "", n.upper()) for n in names
             )
         if not self._pg_types:
-            response = self._guarded(
-                "SELECT typname::text, pg_catalog.format_type(oid, NULL) FROM pg_type "
-                "WHERE typnamespace IN ('pg_catalog'::regnamespace, 'public'::regnamespace)", meta=True
-            )  # fmt: skip
+            # Read beside the call (it may run on the routines' path), on the harness's.
+            with self.aside():
+                response = self._guarded(
+                    "SELECT typname::text, pg_catalog.format_type(oid, NULL) FROM pg_catalog.pg_type "
+                    "WHERE typnamespace IN ('pg_catalog'::regnamespace, 'public'::regnamespace)", meta=True
+                )  # fmt: skip
             rows, _, _ = self._rows(response)
             self._pg_types = {str(a): str(b) for a, b in rows}
         return tuple(self._pg_types.get(n, n) for n in names)
 
     def execute_aside(self, sql, params):  # type: ignore[no-untyped-def]
+        if self.engine == "postgresql":
+            with self.aside():
+                return self._result(sql, params)
         return self._result(sql, params, aside=True)
 
     def load(self, ddl, rows, routines):  # type: ignore[no-untyped-def]
@@ -619,13 +721,16 @@ class _DataApiBackend(de._Backend):
         if self.engine == "postgresql":
             self.begin()
         try:
+            self.routine_path()  # the setup's own DDL names its tables as the routines do
             for statement in ddl:
                 self._guarded(statement)
+            self.pin()
             for table, table_rows in rows.items():
                 self._insert(table, list(table_rows))
             if self.engine == "postgresql":
                 for table in rows:
                     self._advance_sequences(table)
+            self.routine_path()
             for routine in routines:
                 self._kinds[routine.name] = routine.kind
                 self._guarded(routine.create_sql)
@@ -643,9 +748,9 @@ class _DataApiBackend(de._Backend):
         for cols, group in groups.items():
             if self.engine == "postgresql":
                 names = ", ".join(de._quote(c, '"') for c in cols)
-                target = de._quote(table, '"')
+                target = self.pg_table(table)
                 sql = (f"INSERT INTO {target} ({names}) SELECT {names} FROM "  # nosec B608 - quoted identifiers, a bound row
-                       f"json_populate_record(NULL::{target}, CAST(:row AS json))")  # fmt: skip
+                       f"pg_catalog.json_populate_record(NULL::{target}, CAST(:row AS json))")  # fmt: skip
                 sets = [[{"name": "row", "value": {"stringValue": _row_json(r)}}] for r in group]
             else:
                 text, _ = _bind(de._insert_sql(table, cols, "`"), [None] * len(cols))
@@ -670,14 +775,14 @@ class _DataApiBackend(de._Backend):
                     raise de.EngineError("the synthetic rows did not load", state) from None
 
     def _advance_sequences(self, table: str) -> None:
-        quoted = de._quote(table, '"')
+        quoted = self.pg_table(table)
         got = self._guarded(de._PG_TABLE_SEQUENCES.replace("%s::regclass", "CAST(%s AS regclass)"),
                             [quoted, quoted], meta=True)  # fmt: skip
         for column, sequence in self._rows(got)[0]:
             if not de._IDENT.match(str(column)):
                 continue
             col = de._quote(str(column), '"')
-            highest = f"SELECT max({col}) AS m FROM {quoted}"  # nosec B608 - quoted identifiers
+            highest = f"SELECT pg_catalog.max({col}) AS m FROM {quoted}"  # nosec B608 - quoted identifiers
             self._guarded(f"SELECT pg_catalog.setval(CAST(%s AS regclass), m, true) FROM ({highest}) s "  # nosec B608 - quoted identifiers, the row a bound parameter
                           "WHERE m IS NOT NULL", [sequence])  # fmt: skip
 
@@ -754,7 +859,16 @@ class _DataApiBackend(de._Backend):
         """Every row of each table, as the disposable engine's driver reads it. On PostgreSQL
         each column is read as its text and converted by its type here: the Data API returns
         no ``interval``, no ``NaN`` or infinite float and no infinite timestamp."""
+        with self.harness():
+            return self._snapshot(tables)
+
+    def _snapshot(self, tables):  # type: ignore[no-untyped-def]
         out: dict[str, list[dict[str, Any]]] = {}
+        if self.engine == "postgresql" and tables:
+            made = self._rows(self._guarded(_PG_USER_CASTS, meta=True), as_text=True)[0]
+            if made and int(made[0][0] or 0):
+                raise HarnessTampered(f"the test cluster's read of its tables: a call "
+                                      f"{HARNESS_TAMPERED}")  # fmt: skip
         for table in tables:
             if self.engine == "postgresql":
                 columns = self._pg_columns(table)
@@ -766,8 +880,7 @@ class _DataApiBackend(de._Backend):
                      else f"q.{de._quote_table(n, '"')}::text")
                     for n, _, cat in columns
                 )  # fmt: skip
-                target = de._select_all_sql(table, '"')[len("SELECT * FROM ") :]
-                sql = f"SELECT {select} FROM {target} q"  # nosec B608 - quoted identifiers
+                sql = f"SELECT {select} FROM {self.pg_table(table)} q"  # nosec B608 - quoted identifiers
                 rows, _, _ = self._rows(self._guarded(sql, meta=True), as_text=True)
                 got = [
                     {n: _pg_text(v, typ, cat) for (n, typ, cat), v in zip(columns, r, strict=True)}
@@ -799,29 +912,30 @@ class _DataApiBackend(de._Backend):
 
     def _pg_columns(self, table: str) -> list[tuple[str, str, str]]:
         """Each column's name, type name and type category, in order."""
-        got = self._guarded(_PG_COLUMNS, [de.qualified_table(table, self._namespaces, '"')],
-                            meta=True)  # fmt: skip
+        got = self._guarded(_PG_COLUMNS, [self.pg_table(table)], meta=True)
         return [(str(n), str(t), str(c)) for n, t, c in self._rows(got, as_text=True)[0]]
 
     def tables(self) -> list[str]:
         sql = de.pg_tables_sql(self._namespaces) if self.engine == "postgresql" else de._MY_TABLES
-        return [str(r[0]) for r in self._rows(self._guarded(sql, meta=True))[0]]
+        with self.harness():
+            return [str(r[0]) for r in self._rows(self._guarded(sql, meta=True))[0]]
 
     def column_types(self, tables):  # type: ignore[no-untyped-def]
         out: dict[str, dict[str, str]] = {}
-        for table in tables:
-            if self.engine == "postgresql":
-                sql = de._PG_COLUMN_TYPES.replace("%s::regclass", "CAST(%s AS regclass)")
-                got = self._guarded(sql, [de.qualified_table(table, self._namespaces, '"')],
-                                    meta=True)  # fmt: skip
-            else:
-                got = self._guarded(de._MY_COLUMN_TYPES, [table], meta=True)
-            out[table] = {str(n): str(t) for n, t in self._rows(got)[0]}
+        with self.harness():
+            for table in tables:
+                if self.engine == "postgresql":
+                    sql = de._PG_COLUMN_TYPES.replace("%s::regclass", "CAST(%s AS regclass)")
+                    got = self._guarded(sql, [self.pg_table(table)], meta=True)
+                else:
+                    got = self._guarded(de._MY_COLUMN_TYPES, [table], meta=True)
+                out[table] = {str(n): str(t) for n, t in self._rows(got)[0]}
         return out
 
     def counters(self) -> tuple[tuple[str, Any, Any], ...]:
         if self.engine == "postgresql":
-            rows = self._rows(self._guarded(de._PG_SEQUENCE_STATE, meta=True))[0]
+            with self.harness():
+                rows = self._rows(self._guarded(de._PG_SEQUENCE_STATE, meta=True))[0]
             return tuple((str(n), last, start) for n, last, start in rows)
         try:
             self._guarded(de._MY_STATS_NOW)
@@ -831,14 +945,16 @@ class _DataApiBackend(de._Backend):
         return tuple((str(t), int(n), None) for t, n in rows)
 
     def restore_counters(self, state):  # type: ignore[no-untyped-def]
-        for name, value, start in state:
-            if self.engine == "postgresql":
-                called = value is not None
-                self._guarded("SELECT pg_catalog.setval(CAST(%s AS regclass), %s, %s)",
-                              [name, value if called else start, called])  # fmt: skip
-            else:
-                target = de._quote_table(name, "`")
-                self._guarded(f"ALTER TABLE {target} AUTO_INCREMENT = {int(value)}")
+        if self.engine == "postgresql":
+            with self.harness():  # setval is not undone by a rollback
+                for name, value, start in state:
+                    called = value is not None
+                    self._guarded("SELECT pg_catalog.setval(CAST(%s AS regclass), %s, %s)",
+                                  [name, value if called else start, called])  # fmt: skip
+            return
+        for name, value, _ in state:
+            target = de._quote_table(name, "`")
+            self._guarded(f"ALTER TABLE {target} AUTO_INCREMENT = {int(value)}")
 
     def reset_session(self) -> None:
         return None  # each call opens its own transaction and sets its session itself
@@ -922,7 +1038,9 @@ class DataApiTarget(DisposableEngineTarget):
                 self._admin._guarded(f"REVOKE ALL ON DATABASE {db} FROM PUBLIC")
                 self._admin._guarded(f"GRANT CONNECT, TEMPORARY ON DATABASE {db} TO {role}")
                 # Everything the master user runs in the database comes before the runner
-                # owns anything there (review of #2417): the strict check's extension first.
+                # owns anything there (review of #2417): the harness's own schema and the
+                # strict check's extension in it first (#2337).
+                self._as_owner([(sql, []) for sql in de.pg_harness_schema_sql(role)])
                 self._prepare_strict()
                 self._as_owner([(f"ALTER SCHEMA public OWNER TO {role}", []),
                                 ("REVOKE ALL ON SCHEMA public FROM PUBLIC", [])])  # fmt: skip
@@ -952,13 +1070,15 @@ class DataApiTarget(DisposableEngineTarget):
 
     def _prepare_strict(self) -> None:
         """Whether the cluster offers ``plpgsql_check`` and, when it does, the extension in the
-        scratch database's ``public`` schema while the master user still owns it."""
+        harness's schema, which the master user owns (#2337)."""
         if not self._strict_check:
             self._strict_check.append(self._offer_strict())
         if self._strict_check[0] != _PLPGSQL_CHECK:
             return
         try:
-            self._as_owner([(f"CREATE EXTENSION IF NOT EXISTS {_PLPGSQL_CHECK} SCHEMA public", [])])
+            self._as_owner(
+                [(f"CREATE EXTENSION IF NOT EXISTS {_PLPGSQL_CHECK} SCHEMA {_HARNESS}", [])]
+            )
             self._strict_ready = True
         except de.EngineError:
             self._strict_check[0] = "not_available"  # offered, but it could not be created
@@ -990,6 +1110,11 @@ class DataApiTarget(DisposableEngineTarget):
                 "database yet: the setup's tables name one"
             )
         made = list(self._backend._namespaces)
+        if any(n.casefold() == HARNESS_SCHEMA for n in names):
+            raise ProofTargetError(
+                f"a source schema is named {HARNESS_SCHEMA}, the harness's own schema on "
+                f"{self.description}"
+            )
         try:
             todo: list[tuple[str, list[Any]]] = []
             for name in names:
@@ -1024,23 +1149,26 @@ class DataApiTarget(DisposableEngineTarget):
             return
         if not self._strict_ready:  # created with the database (_prepare_strict), or not at all
             return
+        backend = self._backend
         try:
-            routines = self._backend._rows(self._backend._guarded(_PG_PLPGSQL_ROUTINES, meta=True))[
-                0
-            ]
+            with backend.harness():
+                routines = backend._rows(backend._guarded(_PG_PLPGSQL_ROUTINES, meta=True))[0]
         except de.EngineError:
             return
         for oid, rid, relid in routines:
             key = self._routine_ids.get(str(rid), str(rid))
+            # plpgsql_check plans the body as a call would: on the routines' path, each check
+            # in a transaction of its own, so one that fails leaves the next one running.
+            backend.begin()
             try:
-                got = self._backend._rows(self._backend._guarded(
-                    "SELECT level::text, coalesce(sqlstate, '') FROM plpgsql_check_function_tb("
-                    "CAST(%s AS oid)::regprocedure, CAST(%s AS oid)::regclass)",
-                    [int(oid), int(relid or 0)], meta=True,
-                ))[0]  # fmt: skip
+                backend.routine_path()
+                got = backend._rows(backend._guarded(_PG_STRICT, [int(oid), int(relid or 0)],
+                                                     meta=True))[0]  # fmt: skip
             except de.EngineError as exc:
                 self._strict[key] = [("error", exc.sqlstate or "?????")]
                 continue
+            finally:
+                backend.rollback()
             self._strict[key] = [("error", str(state)) for level, state in got
                                  if str(level).lower() == "error"]  # fmt: skip
 
@@ -1066,6 +1194,7 @@ class DataApiTarget(DisposableEngineTarget):
         self._backend.begin()
         try:
             self._backend._guarded("SET LOCAL plpgsql.extra_errors = 'all'")
+            self._backend.routine_path()
             self._backend._guarded(routine.create_sql)
             self._strict[key] = []
         except de.EngineError as exc:
@@ -1079,21 +1208,21 @@ class DataApiTarget(DisposableEngineTarget):
     def _offer_strict(self) -> str:
         try:
             got = self._owner._rows(self._as_owner([(
-                "SELECT count(*) FROM pg_catalog.pg_available_extensions WHERE name = %s",
+                "SELECT pg_catalog.count(*) FROM pg_catalog.pg_available_extensions WHERE name = %s",
                 [_PLPGSQL_CHECK])])[0])[0]  # fmt: skip
         except de.EngineError:
             return "not_available"
         return _PLPGSQL_CHECK if got and got[0][0] else EXTRA_ERRORS
 
     def prepare_calls(self) -> None:
-        # Session settings are applied per call, in its transaction (begin_call).
-        if self.engine == "postgresql":
-            self._backend.begin()  # under the role, so every call may write it
-        try:
-            self._execute("CREATE TABLE modernizer_sentinel (id INTEGER PRIMARY KEY)")
-            self._backend.commit()
-        finally:
-            self._backend.rollback()
+        # Session settings are applied per call, in its transaction (begin_call). On
+        # PostgreSQL the master user made the sentinel in the harness's schema (_create).
+        if self.engine == "mysql":
+            try:
+                self._execute("CREATE TABLE modernizer_sentinel (id INTEGER PRIMARY KEY)")
+                self._backend.commit()
+            finally:
+                self._backend.rollback()
         try:
             self._counters = self._backend.counters()
         except de.EngineError as exc:
@@ -1112,9 +1241,13 @@ class DataApiTarget(DisposableEngineTarget):
                 self.notes = ("the server refused the random seed, so RAND() was not frozen",)
 
     def begin_call(self, frozen_at: datetime.datetime, seed: float) -> None:
+        postgres = self.engine == "postgresql"
         try:
-            self._backend.restore_counters(self._counters)  # MySQL: ALTER TABLE commits
+            if not postgres:
+                self._backend.restore_counters(self._counters)  # ALTER TABLE commits
             self._backend.begin()
+            if postgres:  # in the call's transaction, on the harness's path
+                self._backend.restore_counters(self._counters)
         except (de.EngineError, Exception) as exc:  # noqa: BLE001
             raise ProofTargetError(f"{self.description} could not reset its session",
                                    getattr(exc, "sqlstate", None)) from None  # fmt: skip
@@ -1124,20 +1257,22 @@ class DataApiTarget(DisposableEngineTarget):
                 if self._who() != (self._backend.role, self._backend.role):
                     raise ProofTargetError(f"{self.description} did not sign in as the runner role")
                 self._signed_in = True
-            self._execute("SELECT setseed(%s)", [seed])
-        else:
-            self._execute("SET time_zone = '+05:47'")
-            self._execute("SET SESSION innodb_lock_wait_timeout = 5")
-            self._execute("SET TIMESTAMP = %s", [round(frozen_at.timestamp(), 6)])
-            if self.random_seeded:
-                whole = int(abs(seed) * 1_000_000) + 1
-                self._execute("SET rand_seed1 = %s, rand_seed2 = %s", [whole, whole + 1])
+            self._execute("SELECT pg_catalog.setseed(%s)", [seed])
+            self._execute(_PG_WRITE_SENTINEL)
+            return
+        self._execute("SET time_zone = '+05:47'")
+        self._execute("SET SESSION innodb_lock_wait_timeout = 5")
+        self._execute("SET TIMESTAMP = %s", [round(frozen_at.timestamp(), 6)])
+        if self.random_seeded:
+            whole = int(abs(seed) * 1_000_000) + 1
+            self._execute("SET rand_seed1 = %s, rand_seed2 = %s", [whole, whole + 1])
         self._execute("INSERT INTO modernizer_sentinel (id) VALUES (1)")
 
     def run(self, call: ProofCall) -> de.CallResult:
         postgres = self.engine == "postgresql"
         if postgres:
             self._execute("SAVEPOINT modernizer_call")
+            self._backend.routine_path()  # the call is the routines' own (#2337)
         if postgres and call.action == "row_change":
             result = self._pg_row_change(call)
         else:
@@ -1146,8 +1281,11 @@ class DataApiTarget(DisposableEngineTarget):
             self._open = False
             return result
         if postgres and result.error is not None:
+            # Taken on the harness's path, the savepoint puts it back too.
             self._execute("ROLLBACK TO SAVEPOINT modernizer_call")
+            self._backend.after_rollback_to_savepoint()
         if postgres:
+            self._backend.pin()
             self._check_role()
         return result
 
@@ -1180,7 +1318,7 @@ class DataApiTarget(DisposableEngineTarget):
         target = de._quote(call.name, '"')
         values = dict(zip((*call.columns, *call.where), call.args, strict=True)) \
             if call.kind != "UPDATE" else None  # fmt: skip
-        record = f"json_populate_record(NULL::{target}, CAST(%s AS json))"
+        record = f"pg_catalog.json_populate_record(NULL::{target}, CAST(%s AS json))"
         if call.kind == "INSERT":
             cols = ", ".join(de._quote(c, '"') for c in call.columns)
             sql = f"INSERT INTO {target} ({cols}) SELECT {cols} FROM {record}"  # nosec B608 - quoted names, bound row
@@ -1242,7 +1380,8 @@ def drop_scratch(client: DataApiClient, *, cluster_arn: str, secret_arn: str, en
     mark = _MARK[engine]
     if engine == "postgresql":
         sql = (
-            "SELECT datname::text FROM pg_database WHERE starts_with(datname::text, %s) ORDER BY 1"
+            "SELECT datname::text FROM pg_catalog.pg_database "
+            "WHERE pg_catalog.starts_with(datname::text, %s) ORDER BY 1"
         )
         params: list[Any] = [prefix]
     else:
@@ -1425,7 +1564,10 @@ def sweep_runners(client: DataApiClient, secrets_client: Any, *, cluster_arn: st
                             CALL_TIMEOUT_S)  # fmt: skip
     params: list[Any]
     if engine == "postgresql":
-        sql = "SELECT rolname::text FROM pg_roles WHERE starts_with(rolname::text, %s) ORDER BY 1"
+        sql = (
+            "SELECT rolname::text FROM pg_catalog.pg_roles "
+            "WHERE pg_catalog.starts_with(rolname::text, %s) ORDER BY 1"
+        )
         params = [prefix]
     else:
         sql = "SELECT User FROM mysql.user WHERE LEFT(User, %s) = %s ORDER BY 1"
@@ -1548,8 +1690,8 @@ def mysql_event_scheduler(client: DataApiClient, *, cluster_arn: str, secret_arn
 #: What the cluster holds outside the scratch databases, read before and after a run.
 _BASELINE = {
     "postgresql": (
-        ("roles", "SELECT rolname::text FROM pg_roles ORDER BY 1"),
-        ("databases", "SELECT datname::text FROM pg_database ORDER BY 1"),
+        ("roles", "SELECT rolname::text FROM pg_catalog.pg_roles ORDER BY 1"),
+        ("databases", "SELECT datname::text FROM pg_catalog.pg_database ORDER BY 1"),
     ),
     "mysql": (
         ("users", "SELECT CONCAT(User, '@', Host) FROM mysql.user ORDER BY 1"),

@@ -109,6 +109,8 @@ class FakeDataApi:
         self._tx_role: dict[str, str] = {}
         self._tx_session: dict[str, str] = {}
         self._strict_tx: set[str] = set()
+        #: The transactions that wrote the sentinel row: only they see it.
+        self._sentinel_tx: set[str] = set()
         self._tx = 0
 
     # ---- what the target calls
@@ -212,6 +214,11 @@ class FakeDataApi:
 
     def _answer(self, sql: str, db: str, tx: str | None, params: list[Any],
                 kw_secret: str = "") -> dict[str, Any]:  # fmt: skip
+        # Matched as written without the schemas the harness names its built-ins and its own
+        # objects with (#2337): ``pg_catalog.count(*) FROM "modernizer_harness".
+        # "modernizer_sentinel"`` reads as ``count(*) FROM modernizer_sentinel``.
+        sql = (sql.replace("pg_catalog.", "").replace('"modernizer_harness".', "")
+               .replace('"modernizer_sentinel"', "modernizer_sentinel"))  # fmt: skip
 
         def rows(*values: Any, types: tuple[str, ...] = ()) -> dict[str, Any]:
             records = [[self._field(v) for v in row] for row in values]
@@ -312,7 +319,7 @@ class FakeDataApi:
             oid = params[0]["value"]["longValue"]
             rid = list(self.strict)[oid - 1]
             return rows(*[[lvl, st] for lvl, st in self.strict[rid]], types=("text", "text"))
-        if "typname::text, pg_catalog.format_type" in sql:
+        if "typname::text, format_type" in sql:
             return rows(
                 ["int4", "integer"], ["int8", "bigint"], ["text", "text"], types=("text", "text")
             )
@@ -328,9 +335,14 @@ class FakeDataApi:
             return rows(["1"], types=("text",))
         if "format_type(atttypid" in sql or "COLUMN_TYPE FROM" in sql:
             return rows(["id", "integer"], types=("text", "text"))
+        if "enum_last(NULL::" in sql or "enum_first(NULL::" in sql:
+            return rows(["b"], types=("text",))
+        if sql.startswith("INSERT INTO modernizer_sentinel") and tx:
+            self._sentinel_tx.add(tx)
+            return {}
         if "count(*) FROM modernizer_sentinel" in sql:
-            return rows([1 if tx else 0], types=("int8",))
-        if "pg_catalog.now()" in sql or "NOW(6)" in sql:
+            return rows([1 if tx in self._sentinel_tx else 0], types=("int8",))
+        if "SELECT now()" in sql or "NOW(6)" in sql:
             return rows(["2024-06-01 12:00:00.123456"], types=("timestamptz",))
         if "pg_settings" in sql or "performance_schema" in sql:
             return rows(types=("text", "text"))

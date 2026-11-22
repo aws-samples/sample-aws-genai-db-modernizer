@@ -71,8 +71,11 @@ Stage = Literal["rebuild", "rescreen", "recheck", "proof"]
 #: ``proved``: the proof found no difference, so the repair is carried.
 CheckOutcome = Literal["failed", "pending", "proved"]
 #: A comparison reason that is the candidate's own failure (the carried side would not
-#: load or be created, or left its role), not a proof that could not run.
-_CANDIDATE_FAULTS = frozenset({"carried_does_not_load", "outside_namespace", "role_changed"})
+#: load or be created, left its role, or changed what the comparison reads), not a proof that
+#: could not run.
+_CANDIDATE_FAULTS = frozenset(
+    {"carried_does_not_load", "outside_namespace", "role_changed", "harness_tampered"}
+)
 NO_PROOF_TARGET = "no proof target was given (--proof none), so the side-by-side proof did not run"
 NO_TEST_CLUSTER = (
     "no test cluster was opened for the proof (--proof test-cluster), so the side-by-side "
