@@ -10,7 +10,8 @@ the run's runner user only. A name the cluster already holds is refused (never u
 dropped). The names carry no job prefix, so the target records each one in its harness
 database (where the runner has no grant) before it creates it, makes an owner marker in it,
 and both the target's close and the job's sweep revoke the runner's grant and drop only a
-recorded database that holds its marker.
+recorded database that holds its marker, holding the marker from before that check to the
+drop (#2582).
 
 The fake-client tests run everywhere. The live tests run :class:`DataApiTarget` through
 :class:`LocalMySqlDataApi` on a disposable ``mysqld`` (no AWS call) and are marked
@@ -21,6 +22,8 @@ from __future__ import annotations
 import contextlib
 import datetime
 import os
+import threading
+import time
 from collections.abc import Iterator
 from typing import Any
 
@@ -247,6 +250,67 @@ def test_close_and_the_sweep_revoke_the_runners_grant_before_each_drop():
     revoke = master.index(f"REVOKE ALL PRIVILEGES ON `inventory`.* FROM '{user}'@'%'")
     assert revoke < master.index("DROP DATABASE IF EXISTS `inventory`")
     assert not {g for g in client.db_grants if g[1] in ("inventory", "billing")}
+
+
+@pytest.mark.parametrize("path", ["close", "sweep"])
+def test_the_drop_holds_the_marker_from_before_its_check_in_one_transaction(path):
+    """#2582: the marker check and the ``DROP`` share one transaction of the master user that
+    holds the marker (``SHOW COLUMNS``, which runs nothing of the view) from before the check,
+    so another session's ``DROP DATABASE`` of the name waits for the run's ``DROP``."""
+    client = FakeDataApi("mysql")
+    begun: list[dict[str, Any]] = []
+    real_begin = client.begin_transaction
+
+    def begin(**kw: Any) -> Any:
+        begun.append(kw)
+        return real_begin(**kw)
+
+    client.begin_transaction = begin  # type: ignore[method-assign]
+    target = _factory(client, engine="mysql")()
+    target.load_setup(_setup())
+    token = target._token
+    client.sent.clear()
+    begun.clear()
+    if path == "close":
+        target.close()
+        assert not target.drop_failed
+    else:
+        target._created = False  # killed: the sweep finds what it left
+        dat.drop_scratch(client, **ARNS, engine="mysql", job_id=JOB, admin_database=None)
+    sent = client.sent
+    for name in ("inventory", "billing"):
+        hold = next(i for i, s in enumerate(sent)
+                    if s.sql == f"SHOW COLUMNS FROM `{name}`.`modernizer_owner_{token}`")  # fmt: skip
+        check = next(i for i, s in enumerate(sent) if s.sql.startswith("SELECT COUNT(*) FROM "
+                     "information_schema.TABLES") and s.parameters[0]["value"]["stringValue"]
+                     == name)  # fmt: skip
+        drop = next(i for i, s in enumerate(sent)
+                    if s.sql == f"DROP DATABASE IF EXISTS `{name}`")  # fmt: skip
+        assert hold < check < drop
+        tx = sent[hold].transaction
+        assert tx is not None and sent[check].transaction == tx == sent[drop].transaction
+        assert sent[hold].secret == ARNS["secret_arn"]  # the master user's own transaction
+        ended = [s for s in sent if s.op in ("commit", "rollback") and s.transaction == tx]
+        assert ended and sent.index(ended[0]) > drop
+    master_begins = [kw for kw in begun if kw["secretArn"] == ARNS["secret_arn"]]
+    if path == "sweep":  # a cluster that names no database: the transaction names none either
+        assert master_begins and all("database" not in kw for kw in master_begins)
+    else:
+        assert master_begins and all(kw["database"] == "routine_proof" for kw in master_begins)
+
+
+def test_a_marker_that_cannot_be_held_keeps_the_database_and_its_row():
+    """#2582: a hold that fails for any reason but "no such table" keeps the database."""
+    client = FakeDataApi("mysql")
+    target = _factory(client, engine="mysql")()
+    target.load_setup(_setup())
+    client.fail_on = {"SHOW COLUMNS FROM `billing`": "40001"}
+    target.close()
+    assert target.drop_failed and "billing" in client.databases
+    assert "billing" in client.records[target.harness_database]
+    client.fail_on = {}
+    _, left = _sweep(client)
+    assert "billing" not in client.databases and left == []
 
 
 def test_a_database_another_party_made_again_during_the_run_is_never_dropped():
@@ -606,3 +670,112 @@ def test_a_marker_the_runner_makes_in_a_database_made_again_never_gets_it_droppe
         assert "inventory" not in grants
         as_root("DROP DATABASE inventory")
         as_root(f"DROP DATABASE `{target.harness_database}`")
+
+
+@contextlib.contextmanager
+def _made_again_before_the_drop(client: Any, as_root: Any, name: str) -> Iterator[list[str]]:
+    """Another party's ``DROP DATABASE`` and ``CREATE DATABASE`` of ``name`` with a row of its
+    own, started from a hook just before the run's ``DROP`` of it reaches the server, after the
+    marker check (#2582). The hook lets the run's ``DROP`` go once that party is done, or once
+    its drop waits on a metadata lock. Yields what the hook saw."""
+    real = client.execute_statement
+    seen: list[str] = []
+    done = threading.Event()
+    errors: list[BaseException] = []
+
+    def third_party() -> None:
+        conn = client.connect(ARNS["secret_arn"], None)  # the engine's root, not the run
+        try:
+            cur = conn.cursor()
+            for sql in ("SET SESSION lock_wait_timeout = 20", f"DROP DATABASE {name}",
+                        f"CREATE DATABASE {name}", f"CREATE TABLE {name}.theirs (id INT PRIMARY KEY)",
+                        f"INSERT INTO {name}.theirs VALUES (1)"):  # fmt: skip
+                cur.execute(sql)
+        except BaseException as exc:  # noqa: BLE001 - asserted below
+            errors.append(exc)
+        finally:
+            conn.close()
+            done.set()
+
+    worker = threading.Thread(target=third_party)
+
+    def execute_statement(**kw: Any) -> Any:
+        if kw["sql"] == f"DROP DATABASE IF EXISTS `{name}`" and not seen:
+            worker.start()
+            for _ in range(500):  # at most about 10 seconds of polls
+                if done.is_set():
+                    seen.append("done")
+                    break
+                waiting = as_root("SELECT COUNT(*) FROM information_schema.PROCESSLIST WHERE "
+                                  f"INFO = 'DROP DATABASE {name}' AND STATE LIKE 'Waiting for%lock'")  # fmt: skip
+                if waiting[0][0]:
+                    seen.append("waited")
+                    break
+                time.sleep(0.02)
+            else:
+                seen.append("neither")
+        return real(**kw)
+
+    client.execute_statement = execute_statement
+    try:
+        yield seen
+    finally:
+        client.execute_statement = real
+        if worker.is_alive() or seen:
+            worker.join(30)
+    assert not errors and done.is_set()
+
+
+@pytest.mark.integration
+@needs_mysql
+@pytest.mark.parametrize("path", ["close", "sweep"])
+def test_a_database_made_again_between_the_marker_check_and_the_drop_is_kept_on_the_stand_in(path):
+    """#2582: the run holds its marker from before the check, so another party's drop of the
+    name waits for the run's ``DROP``, which then finds the name gone; that party's database,
+    made after it, keeps its row."""
+    _skip_as_root()
+    with _stand_in() as (client, runner, as_root):
+        target = _open(client, runner)
+        target.load_setup(_setup())
+        with _made_again_before_the_drop(client, as_root, "inventory") as seen:
+            if path == "close":
+                target.close()
+            else:
+                target._created = False  # killed: its close never ran
+                _, left = dat.drop_scratch(client, **ARNS, engine="mysql", job_id=JOB,
+                                           admin_database=None)  # fmt: skip
+                assert left == []
+        assert "inventory" in _databases(as_root)  # the other party's database is kept
+        assert as_root("SELECT id FROM inventory.theirs") == [(1,)]
+        assert seen == ["waited"]  # its drop waited on the run's hold
+        assert "billing" not in _databases(as_root)
+        grants = " ".join(str(r[0]) for r in as_root(f"SHOW GRANTS FOR {runner.account_sql}"))
+        assert "inventory" not in grants
+        as_root("DROP DATABASE inventory")
+
+
+@pytest.mark.integration
+@needs_mysql
+def test_holding_the_marker_runs_nothing_of_a_view_of_its_name_on_the_stand_in():
+    """The hold (#2582) never reads the marker: a view of the marker's name that another party
+    made over a function with a side effect, run as its caller, is held without running it."""
+    _skip_as_root()
+    with _stand_in() as (client, _runner, as_root):
+        token = "0a" * 8  # any 16 hex digits
+        for sql in ("SET GLOBAL log_bin_trust_function_creators = 1", "CREATE DATABASE theirs",
+                    "CREATE TABLE theirs.calls (n INT)",
+                    "CREATE FUNCTION theirs.f() RETURNS INT MODIFIES SQL DATA SQL SECURITY "
+                    "INVOKER BEGIN INSERT INTO theirs.calls VALUES (1); RETURN 1; END",
+                    f"CREATE SQL SECURITY INVOKER VIEW theirs.modernizer_owner_{token} AS "
+                    "SELECT theirs.f() AS id"):  # fmt: skip
+            as_root(sql)
+        admin = dat._DataApiBackend(client, ARNS["cluster_arn"], ARNS["secret_arn"], "mysql",
+                                    "", None, dat.CALL_TIMEOUT_S)  # fmt: skip
+        admin.begin()
+        try:
+            admin._guarded(dat._MY_HOLD.format(table=dat._owner_table("theirs", token)))
+        finally:
+            admin.rollback()
+        assert as_root("SELECT COUNT(*) FROM theirs.calls") == [(0,)]
+        as_root(f"SELECT * FROM theirs.modernizer_owner_{token}")  # a read would run it
+        assert as_root("SELECT COUNT(*) FROM theirs.calls") == [(1,)]
