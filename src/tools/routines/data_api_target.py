@@ -30,10 +30,13 @@ holds is refused, never used or dropped), makes its owner marker ``modernizer_ow
 the sweep revoke that grant, then drop the database only while
 ``information_schema.TABLES`` lists its marker as a view, and forget a row once its
 database is gone; a row whose database exists with no marker stays, with the harness database,
-and is reported by every sweep. What is left: a database dropped and made again under its name
-by another party between the marker check and the ``DROP`` (two consecutive statements) would
-be dropped (#2582). On Aurora PostgreSQL it is a scratch database too,
-not a scratch schema: the collected ``CREATE`` text (``pg_get_functiondef``,
+and is reported by every sweep. The marker check and the ``DROP`` run in one transaction that
+holds a metadata lock on the marker from before the check (#2582), so another party's
+``DROP DATABASE`` of the name waits for the run's ``DROP`` and cannot make the name again in
+between. What is left: MySQL lets that lock go when the ``DROP DATABASE`` starts, just before
+the statement takes the database's own lock, so another party's drop and create that both
+start and end in that moment inside the server are not ruled out. On Aurora PostgreSQL it is
+a scratch database too, not a scratch schema: the collected ``CREATE`` text (``pg_get_functiondef``,
 ``pg_get_triggerdef``) names every object with its schema, ``public.posts``, and the
 comparison's screen refuses a ``CREATE`` that names any schema but the target's, so the
 carried text runs as written in the scratch database's own ``public`` schema, as it does on
@@ -191,6 +194,13 @@ _MY_TOKEN = re.compile(r"^[0-9a-f]{16}$")
 _MY_OWNER_CREATE = "CREATE VIEW {table} AS SELECT 1 AS id"
 _MY_OWNED = ("SELECT COUNT(*) FROM information_schema.TABLES WHERE TABLE_SCHEMA = %s "
              "AND TABLE_NAME = %s AND TABLE_TYPE = 'VIEW'")  # fmt: skip
+#: The marker held until the drop (#2582): in a transaction, ``SHOW COLUMNS`` keeps a metadata
+#: lock on it to the transaction's end and runs nothing of the view. Another session's
+#: ``DROP DATABASE`` then takes the database's lock and waits on the marker, so the run's own
+#: ``DROP`` queues behind it and finds the name gone (what is left: the module docstring).
+_MY_HOLD = "SHOW COLUMNS FROM {table}"
+#: The SQLSTATE of "no such table": the marker (or the database) is not there.
+_MY_NO_TABLE = "42S02"
 #: MySQL's error for a ``REVOKE`` of a grant the account does not hold.
 _MY_NO_GRANT = 1141
 _MY_EXISTS = "SELECT COUNT(*) FROM information_schema.SCHEMATA WHERE SCHEMA_NAME = %s"
@@ -682,7 +692,9 @@ class _DataApiBackend(de._Backend):
     def begin(self) -> None:
         if self._tx is not None:
             self.rollback()
-        got = _resumed(self._client.begin_transaction, **self._arn, database=self.database)
+        # none for the master user's own transactions when the cluster names no database
+        where = {"database": self.database} if self.database else {}
+        got = _resumed(self._client.begin_transaction, **self._arn, **where)
         self._tx = str(got["transactionId"])
         self._pinned = False
         if self.engine == "postgresql":
@@ -1944,10 +1956,11 @@ def _release_source(admin: _DataApiBackend, record: str, name: str, token: str, 
     on the name is revoked first, every time (MySQL keeps a database's grants after it is
     dropped, so a later database of that name would be open to it), and checked gone, then the
     database is dropped only while ``information_schema.TABLES`` lists its owner marker,
-    ``modernizer_owner_<token>``, as a view, which the runner cannot make. A database that is gone has its row forgotten.
-    One that exists with no marker (another party's, or made before a run was killed) is named
-    in ``left`` and kept with its row, so every later sweep checks it again. Returns whether
-    the row is gone."""
+    ``modernizer_owner_<token>``, as a view, which the runner cannot make. The check and the
+    ``DROP`` share one transaction that holds the marker (``_MY_HOLD``) from before the check
+    (#2582). A database that is gone has its row forgotten. One that exists with no marker
+    (another party's, or made before a run was killed) is named in ``left`` and kept with its
+    row, so every later sweep checks it again. Returns whether the row is gone."""
     try:
         account = RunnerAccount(runner, "", "mysql")
         escaped = grant_database(name)[1:-1].replace("``", "`")
@@ -1963,10 +1976,22 @@ def _release_source(admin: _DataApiBackend, record: str, name: str, token: str, 
         if not _count(admin, _MY_EXISTS, [name]):
             admin._guarded(_MY_MADE_FORGET.format(record=record), [name])
             return True
-        if not _count(admin, _MY_OWNED, [name, MY_OWNER_PREFIX + token]):
-            left.append(f"{name} (it holds no owner marker of this run, so it is not dropped)")
-            return False
-        admin._guarded(f"DROP DATABASE IF EXISTS {de._quote(name, '`')}")
+        admin.begin()
+        try:
+            try:  # held first, so the database checked is the one dropped
+                admin._guarded(_MY_HOLD.format(table=_owner_table(name, token)))
+                owned = _count(admin, _MY_OWNED, [name, MY_OWNER_PREFIX + token])
+            except de.EngineError as exc:
+                if exc.sqlstate != _MY_NO_TABLE:
+                    raise
+                owned = 0
+            if not owned:
+                left.append(f"{name} (it holds no owner marker of this run, so it is not dropped)")
+                return False
+            admin._guarded(f"DROP DATABASE IF EXISTS {de._quote(name, '`')}")
+        finally:
+            with contextlib.suppress(Exception):  # the DROP committed: nothing is left to undo
+                admin.rollback()
     except Exception:  # noqa: BLE001 - reported, and the row stays for the next sweep
         left.append(name)
         return False

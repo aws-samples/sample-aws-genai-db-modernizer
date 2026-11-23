@@ -385,6 +385,12 @@ class FakeDataApi:
             schema, name = (p["value"]["stringValue"] for p in params)
             found = self.views if "'VIEW'" in sql else self.tables
             return rows([1 if name in found.get(schema, set()) else 0], types=("BIGINT",))
+        shown = re.match(r"SHOW COLUMNS FROM `(\w+)`\.`(\w+)`$", sql)
+        if shown and self.engine == "mysql":  # the marker held until the drop (#2582)
+            schema, name = shown.groups()
+            if name not in self.views.get(schema, set()) | self.tables.get(schema, set()):
+                raise db_error("42S02", "Database error code: 1146. Message: Table doesn't exist")
+            return rows(["id", "int"], types=("VARCHAR", "VARCHAR"))
         if sql.startswith("SELECT COUNT(*) FROM information_schema.SCHEMATA WHERE SCHEMA_NAME"):
             name = params[0]["value"]["stringValue"]
             return rows([1 if name in self.databases else 0], types=("BIGINT",))
