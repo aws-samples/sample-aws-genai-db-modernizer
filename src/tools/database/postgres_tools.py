@@ -44,6 +44,11 @@ _SAMPLE_KEY = "s.userid::text || '/' || s.queryid::text || '/' || " + (
     "coalesce(to_jsonb(s) ->> 'toplevel', '')"
 )
 
+# #2389: a pg_stat_statements_reset call with arguments (a reset that may be scoped to a
+# database, user or statement), as a POSIX regular expression with no backslash. The
+# offline script (``scripts/collect-postgresql.sql``) uses the same text.
+_SCOPED_RESET_PATTERN = "pg_stat_statements_reset[[:space:]]*[(][[:space:]]*[^)[:space:]]"
+
 
 # #1652: the offline script's sections 8 and 9 (``scripts/collect-postgresql.sql``),
 # for every user schema; ``{flag}`` is 1 or 0
@@ -717,15 +722,60 @@ class PostgreSQLRemoteCollector:
         """The window ``pg_stat_statements``' counters cover (#1893): the time since it was
         last reset (``pg_stat_statements_info.stats_reset``, PostgreSQL 14+). Never the
         uptime: with ``pg_stat_statements.save`` on (the default) the counters survive a
-        clean restart. None before 14, or when it can't be read."""
+        clean restart. On PostgreSQL 17, bounded by the age of the database's oldest entry
+        (#2389): a reset scoped to one database does not move ``stats_reset``. None
+        before 14, or when it can't be read."""
+        rows = self._reset_ages()
+        if rows is None:
+            return None
+        return server_window(
+            stats_reset_seconds=first_row_figure(rows, "stats_reset_seconds"),
+            oldest_entry_age_seconds=first_row_figure(rows, "oldest_entry_age_seconds"),
+        )
+
+    def _reset_ages(self) -> list[dict] | None:
+        """The time since ``pg_stat_statements`` was reset and the age of this database's
+        oldest entry (``stats_since``, read through ``to_jsonb``: NULL before 17, where
+        naming the column would fail the query). None when the read fails."""
         try:
-            rows = self._query(
-                "SELECT extract(epoch FROM now() - stats_reset) AS stats_reset_seconds "
-                "FROM pg_stat_statements_info"
-            )
+            return self._query("""
+                SELECT extract(epoch FROM now() - i.stats_reset) AS stats_reset_seconds,
+                       (SELECT extract(epoch FROM now()
+                                - min((to_jsonb(p) ->> 'stats_since')::timestamptz))
+                        FROM pg_stat_statements p
+                        WHERE p.dbid = (SELECT oid FROM pg_database
+                                        WHERE datname = current_database()))
+                           AS oldest_entry_age_seconds
+                FROM pg_stat_statements_info i
+            """)
         except Exception:  # noqa: BLE001 -- no reset time: the rates fall back to 24 hours
             return None
-        return server_window(stats_reset_seconds=first_row_figure(rows, "stats_reset_seconds"))
+
+    def reset_scope(self) -> dict[str, object]:
+        """What the rate window check reads about the last reset (#2389): the reset age
+        as the server records it, the oldest entry's age (PostgreSQL 17) and the calls of
+        ``pg_stat_statements_reset`` with arguments on the server, every database's (a
+        reset may be run from another database). A read that fails leaves its figures
+        out. The pattern needs no backslash, so it reads the same whatever
+        ``standard_conforming_strings`` is."""
+        rows = self._reset_ages()
+        calls: object = None
+        try:
+            calls = first_row_figure(
+                self._query(f"""
+                    SELECT coalesce(sum(calls), 0) AS scoped_reset_calls
+                    FROM pg_stat_statements
+                    WHERE query ~* '{_SCOPED_RESET_PATTERN}'
+                """),  # nosec B608 -- fixed text
+                "scoped_reset_calls",
+            )
+        except Exception:  # noqa: BLE001 -- no reset calls: the check says so
+            logger.warning("Failed to read the pg_stat_statements_reset calls")
+        return {
+            "stats_reset_seconds": first_row_figure(rows, "stats_reset_seconds"),
+            "oldest_entry_age_seconds": first_row_figure(rows, "oldest_entry_age_seconds"),
+            "scoped_reset_calls": calls,
+        }
 
     def server_uptime(self) -> object:
         """The server's uptime in seconds (#1991), ``pg_postmaster_start_time()``, a read.

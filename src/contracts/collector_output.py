@@ -630,6 +630,25 @@ class ServerCounters(BaseModel):
             "MariaDB Questions), independent of the statement digests; None when not read"
         ),
     )
+    oldest_entry_age_seconds: float | None = Field(
+        None,
+        gt=0,
+        description=(
+            "PostgreSQL 17+: the age of the database's oldest pg_stat_statements entry "
+            "(stats_since), which bounds the window every count covers (#2389); None "
+            "before 17 or when not read"
+        ),
+    )
+    scoped_reset_calls: int | None = Field(
+        None,
+        ge=0,
+        description=(
+            "PostgreSQL: the calls of pg_stat_statements_reset with arguments among the "
+            "server's statements, every database's, all since the last full reset: a "
+            "reset scoped to a database, user or statement, which stats_reset does not "
+            "record (#2389); None when not read"
+        ),
+    )
 
 
 class Metadata(BaseModel):

@@ -1439,14 +1439,19 @@ def _collection_server_window(data: dict, source_engine: str) -> ServerWindow | 
     """The window an offline collection's statement counters cover (#1893).
 
     PostgreSQL: only ``global_stats.stats_reset_age_seconds``, the time since
-    ``pg_stat_statements`` was reset (PostgreSQL 14+); its counters survive a restart, so
-    the uptime is never their window. Every other engine: its uptime,
+    ``pg_stat_statements`` was reset (PostgreSQL 14+), bounded on PostgreSQL 17 by
+    ``global_stats.oldest_entry_age_seconds``, the age of the database's oldest entry (a
+    reset scoped to one database does not move ``stats_reset``, #2389); its counters
+    survive a restart, so the uptime is never their window. Every other engine: its uptime,
     ``os_stats.db_uptime_seconds`` (SQL Server, Oracle), ``global_stats.uptime`` (MySQL,
     MariaDB) or, from an older collection, ``os_stats.db_uptime_hours``.
     """
     stats = data.get("global_stats") or {}
     if source_engine == "postgresql":
-        return server_window(stats_reset_seconds=stats.get("stats_reset_age_seconds"))
+        return server_window(
+            stats_reset_seconds=stats.get("stats_reset_age_seconds"),
+            oldest_entry_age_seconds=stats.get("oldest_entry_age_seconds"),
+        )
     os_stats = data.get("os_stats") or {}
     return server_window(
         uptime_seconds=os_stats.get("db_uptime_seconds") or stats.get("uptime"),

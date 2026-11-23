@@ -612,6 +612,13 @@ global_stats_data AS (
   SELECT json_build_object(
     'uptime', extract(epoch FROM (now() - pg_postmaster_start_time()))::bigint::text,
     'stats_reset_age_seconds', (:pgss_reset_age)::text,
+    -- #2389: a reset scoped to one database, user or statement does not move
+    -- stats_reset. On PostgreSQL 17 the oldest entry's age (stats_since, NULL before 17)
+    -- bounds the window every count covers. Before 17 the one trace of such a reset is
+    -- its own call: the calls of pg_stat_statements_reset with arguments, in every
+    -- database (a full reset removes every entry, so each ran since the last one).
+    'oldest_entry_age_seconds', (SELECT round(extract(epoch FROM now() - min((to_jsonb(p) ->> 'stats_since')::timestamptz))::numeric, 3) FROM pg_stat_statements p WHERE p.dbid = (SELECT oid FROM pg_database WHERE datname = current_database()))::text,
+    'scoped_reset_calls', (SELECT coalesce(sum(calls), 0) FROM pg_stat_statements WHERE query ~* 'pg_stat_statements_reset[[:space:]]*[(][[:space:]]*[^)[:space:]]')::text,
     'questions', (SELECT sum(calls) FROM pg_stat_statements WHERE dbid = (SELECT oid FROM pg_database WHERE datname = current_database()))::text,
     'threads_connected', (SELECT count(*) FROM pg_stat_activity WHERE datname = current_database())::text,
     'threads_running', (SELECT count(*) FROM pg_stat_activity WHERE datname = current_database() AND state = 'active')::text,
