@@ -57,6 +57,7 @@ from src.agents.referee.engine_scope import (
     scope_text,
     without_unservable_groups,
 )
+from src.agents.referee.feasibility_review import review_assignment_feasibility
 from src.agents.referee.move_ledger import (
     MoveLedger,
     apply_to_assignment,
@@ -102,6 +103,7 @@ from src.contracts.assignment_models import (
     RoutineUnit,
     ValidationResult,
 )
+from src.contracts.feasibility_models import FeasibilityFinding, FindingKind, FindingSeverity
 from src.contracts.move_ledger import EngineScore, MoveActor, MoveEvidence, MovePass, ReasonCode
 from src.shared.cache_engines import DEFAULT_CACHE_ENGINE
 from src.shared.capability_labels import capability_gap_phrase
@@ -159,6 +161,12 @@ class AssignmentOverrideResult:
     # Key-scoped counts re-placed because the edit moved their table's writes off the
     # engine their waiver needs (#1151, ADR-031 Decision 2 Amendment 12).
     replaced_count_query_ids: list[str] = field(default_factory=list)
+    # The feasibility review's findings on this edit (ADR-029 Decision C, #2519): each
+    # advisory finding the edit introduced, and each blocking one the version already
+    # had and the edit did not make worse. Their messages are in the version's
+    # ``validation_warnings`` too. A blocking finding the edit introduced refuses it
+    # (:class:`InfeasibleAssignmentEdit`).
+    feasibility_findings: list[FeasibilityFinding] = field(default_factory=list)
 
 
 class AssignmentOverrideError(Exception):
@@ -185,6 +193,19 @@ class AssignmentValidationFailed(AssignmentOverrideError, InvalidAssignment):
 
     def __init__(self, errors: list[str], warnings: list[str], writer: str = "") -> None:
         InvalidAssignment.__init__(self, errors, warnings, writer)
+
+
+class InfeasibleAssignmentEdit(AssignmentValidationFailed):
+    """The edit introduces a blocking feasibility finding (ADR-029 Decision C, #2519).
+
+    The feasibility review runs on the edited version before it is written; a blocking
+    finding the version did not already have, or one the edit spreads to more engines,
+    refuses the edit like any hard validation error, nothing written. ``findings`` are
+    those blocking findings; ``warnings`` the review's other messages."""
+
+    def __init__(self, findings: list[FeasibilityFinding], warnings: list[str]) -> None:
+        self.findings = findings
+        super().__init__([f"ERROR: {f.message}" for f in findings], warnings, "customer gate")
 
 
 class LosingAuroraEngineOverride(AssignmentOverrideError):
@@ -752,6 +773,12 @@ def apply_assignment_overrides(
             analysis_outputs, triage, collector_output
         ).with_sources_of_truth(before_sources)
 
+    # The feasibility findings the version had before the edit (ADR-029 Decision C,
+    # #2519), on its own routing with its derived views recomputed: the edit is judged
+    # on what it introduces, so a finding the version already had never refuses an
+    # edit that leaves it as it was. Read before the edits below change the routing.
+    findings_before = _feasibility_findings(current.model_copy(deep=True), collector_output)
+
     qa_map: dict[str, QueryAssignment] = {qa.query_id: qa for qa in current.query_assignments}
 
     def scores(query_id: str, from_engine: str, to_engine: str) -> dict:
@@ -1084,7 +1111,28 @@ def apply_assignment_overrides(
     if not validation.valid:
         raise AssignmentValidationFailed(validation.errors, validation.warnings, "customer gate")
 
-    new_assignment.validation_warnings = scope_warnings + validation.warnings + replaced.warnings
+    # ADR-029 Decision C (#2519): the feasibility review of the edited routing, with no
+    # model call. A blocking finding the edit introduced refuses it, nothing written; the
+    # rest are said as warnings.
+    refused, reported = review_edit_feasibility(
+        findings_before, review_assignment_feasibility(new_assignment, collector_output)
+    )
+    feasibility_warnings = [feasibility_warning(f) for f in reported]
+    if refused:
+        raise InfeasibleAssignmentEdit(
+            refused,
+            [
+                *_without_restated_splits(validation.warnings, [*refused, *reported]),
+                *feasibility_warnings,
+            ],
+        )
+
+    new_assignment.validation_warnings = (
+        scope_warnings
+        + _without_restated_splits(validation.warnings, reported)
+        + feasibility_warnings
+        + replaced.warnings
+    )
 
     in_scope_counts: dict[str, int] = {}
     for qa in new_assignment.query_assignments:
@@ -1120,7 +1168,67 @@ def apply_assignment_overrides(
         written_path=new_path,
         propagated_query_ids=propagated_query_ids,
         replaced_count_query_ids=[m.query_id for m in replaced.moved],
+        feasibility_findings=reported,
     )
+
+
+def _feasibility_findings(
+    assignment: Assignment, collector_output: dict
+) -> list[FeasibilityFinding]:
+    """The feasibility review of ``assignment`` with its derived views recomputed in
+    place, so a saved version's stale or empty groups read as its routing has them."""
+    _recompute_derived_views(assignment, collector_output)
+    return review_assignment_feasibility(assignment, collector_output)
+
+
+def _finding_key(finding: FeasibilityFinding) -> tuple:
+    return (finding.kind, finding.table, tuple(sorted(finding.query_ids)))
+
+
+def review_edit_feasibility(
+    before: list[FeasibilityFinding], after: list[FeasibilityFinding]
+) -> tuple[list[FeasibilityFinding], list[FeasibilityFinding]]:
+    """``(refused, reported)``: how the customer gate treats the edited version's
+    feasibility findings ``after``, given the version's own ``before`` (#2519).
+
+    A finding is the edit's when ``before`` has no finding of its kind on the same table
+    and queries, or had it on fewer engines than now. A blocking finding of the edit's
+    refuses it; an advisory one is reported. A blocking finding the edit did not make
+    worse is reported too: it stays open, and the customer sees it. An advisory finding
+    the version already had is not reported again."""
+    engines_before: dict[tuple, set[str]] = {}
+    for finding in before:
+        engines_before.setdefault(_finding_key(finding), set()).update(finding.engines)
+    refused: list[FeasibilityFinding] = []
+    reported: list[FeasibilityFinding] = []
+    for finding in after:
+        had = engines_before.get(_finding_key(finding))
+        introduced = had is None or not set(finding.engines) <= had
+        blocking = finding.severity is FindingSeverity.BLOCKING
+        if blocking and introduced:
+            refused.append(finding)
+        elif blocking or introduced:
+            reported.append(finding)
+    return refused, reported
+
+
+def _without_restated_splits(warnings: list[str], reported: list[FeasibilityFinding]) -> list[str]:
+    """``warnings`` without the validator's co-dependency split warning of a group the
+    feasibility review reports (#2519): the finding says the same split, and whether
+    its engines can serve the JOIN, so the version states it once."""
+    restated = {
+        f"WARNING [HIGH]: Co-dependent queries {sorted(f.query_ids)} split across engines "
+        for f in reported
+        if f.kind is FindingKind.CO_DEPENDENCY_SPLIT
+    }
+    return [w for w in warnings if not any(w.startswith(r) for r in restated)]
+
+
+def feasibility_warning(finding: FeasibilityFinding) -> str:
+    """A reported finding as a gate warning: ``[HIGH]`` for a blocking one, ``[MEDIUM]``
+    for an advisory one, the finding's own message after it."""
+    level = "HIGH" if finding.severity is FindingSeverity.BLOCKING else "MEDIUM"
+    return f"WARNING [{level}]: {finding.message}"
 
 
 def _lapsed_count_picks(
@@ -1325,9 +1433,10 @@ def _propagate_codependent_overrides(
 
     Respects explicit customer picks otherwise: a JOIN group the customer
     explicitly split (two members set to different engines in the same edit) is
-    left as chosen -- the resulting split is the feasibility reviewer's to report
-    (no gate runs it since #2509, see #2519), not overridden here -- and only the
-    writes of a picked table follow the pick.
+    not propagated here -- the feasibility review judges the split on the edited
+    version (#2519): onto an engine that cannot serve the JOIN it refuses the edit,
+    across join-capable engines it is advisory -- and only the writes of a picked
+    table follow the pick.
     A propagated query is tagged ``co_dependency_propagated`` (not
     ``customer_override``) so it is distinguishable from the customer's own picks.
 
@@ -1500,9 +1609,10 @@ def _propagate_codependent_overrides(
                 shared = sorted(anchor_tables & set(own)) or sorted(own)
                 _move(qid, target, anchor, group, shared[0] if shared else None, by_rule)
             continue
-        # Explicitly split across engines: the JOIN split is respected (the
-        # feasibility reviewer flags it), but each picked write still pulls
-        # the other writes of its tables.
+        # Explicitly split across engines: no propagation (the feasibility review
+        # refuses a split onto an engine that cannot serve the JOIN and advises on
+        # the rest, #2519), but each picked write still pulls the other writes of
+        # its tables.
         for anchor in sorted(touched):
             for table in tables_written_by.get(anchor, []):
                 members = write_groups.get(table, [])
@@ -1894,8 +2004,8 @@ def reroute_split_writes(
 
     # #1151: the counts whose waiver relied on a split table's old placement are
     # re-placed against the one source of truth each table now has; a pinned one is
-    # held, pin kept, and said (``stranded_counts`` finds it; no gate runs the
-    # feasibility review since #2509, see #2519).
+    # held, pin kept, and said (``stranded_counts`` finds it, and the customer gate's
+    # feasibility review reports it on each customer edit while it stays open, #2519).
     from src.agents.referee.waived_counts import replace_lapsed_counts
 
     replaced = replace_lapsed_counts(

@@ -1052,10 +1052,12 @@ def phase_engine_choices(
     ``--decide-for-me``, --auto's pick for every other pending choice, as one new
     assignment version through the customer gate (#1003). Prints one
     ``engine_choices`` status line: the version, what was picked and decided, the
-    choices still pending and the engines schema design runs next."""
+    feasibility review's warnings on the edit (#2519), the choices still pending and
+    the engines schema design runs next."""
     from src.agents.referee.assignment_overrides import (
         AssignmentOverrideError,
         apply_engine_choices,
+        feasibility_warning,
     )
     from src.agents.referee.pending_choices import EngineChoiceError
     from src.storage.assignment_versioning import resolve_downstream_assignment_version
@@ -1086,6 +1088,12 @@ def phase_engine_choices(
                 "reason": p.reason,
             }
             for p in (result.decided if result is not None else [])
+        ],
+        # ADR-029 Decision C (#2519): the feasibility review's findings on the edit
+        # (a blocking one the edit introduced refuses it, an error line instead).
+        "feasibility_warnings": [
+            feasibility_warning(f)
+            for f in (result.override.feasibility_findings if result is not None else [])
         ],
         "pending_choices": _compact_pending_choices(store, job_id, db),
         "schema_design_engines": _schema_design_engines(store, job_id, db, version),

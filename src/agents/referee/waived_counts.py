@@ -28,8 +28,8 @@ a pinned count, when the customer's own newer edit moved its table's writes (``p
 automatic reroutes hold a pinned count instead (``pinned = "hold"``): they keep its
 table's writes on its engine as they keep a pinned write's, and a count they still
 strand is left pinned, and :func:`stranded_counts` reports it as
-``FindingKind.STRANDED_COUNT`` to the feasibility review, which no gate runs since
-#2509 (#2519).
+``FindingKind.STRANDED_COUNT`` to the feasibility review, which the customer gate
+runs on each edit and which reports it there while it stays open (#2519).
 """
 
 from __future__ import annotations

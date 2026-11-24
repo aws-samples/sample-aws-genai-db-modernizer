@@ -169,7 +169,11 @@ Re-entry reuses the existing gate rather than adding a parallel flow.
 
 ### C. Post-gate feasibility reviewer
 
-*Removed (2026-11-20, #2509): no gate runs the reviewer any more. Its only caller was the AWS Transform review tools. The function (`review_assignment_feasibility` in `src/agents/referee/feasibility_review.py`) is kept, and this decision's Enforcement row tests it on its own, not as part of a gate. Wiring it into the local gate, or removing it, is #2519.*
+*Amended (2026-11-24, #2519): the customer gate runs the reviewer. Its AWS Transform caller went with #2509; now `apply_assignment_overrides` reviews every edited version before writing it, and both the assignment review's PUT and `run_assessment.py --choose` / `--decide-for-me` go through it. <!-- claim: tests/unit/api/test_assignment_feasibility_routes.py::test_an_advisory_finding_comes_back_with_the_saved_edit, tests/unit/scripts/test_run_assessment_choices_feasibility.py::test_a_choice_that_puts_a_join_group_on_dynamodb_prints_the_advisory, tests/unit/scripts/test_run_assessment_choices_feasibility.py::test_decide_for_me_runs_the_review_on_the_rule_s_pick --> The review makes no model call.*
+
+*A blocking finding the edit introduces refuses the edit as a hard validation error does, and nothing is written. The PUT answers 422 with the finding's message among the errors. <!-- claim: tests/unit/test_assignment_overrides.py::TestFeasibilityReviewOnEdits::test_a_split_onto_an_engine_that_cannot_serve_the_join_is_refused, tests/unit/api/test_assignment_feasibility_routes.py::test_an_edit_that_splits_a_join_onto_dynamodb_is_a_422_and_writes_nothing --> A finding is the edit's when the version before it had no finding of that kind on the same table and queries, or had it on fewer engines. <!-- claim: tests/unit/test_assignment_overrides.py::TestReviewEditFeasibility::test_a_new_blocking_finding_refuses, tests/unit/test_assignment_overrides.py::TestReviewEditFeasibility::test_a_blocking_finding_spread_to_another_engine_refuses --> An advisory finding the edit introduces is a warning, and so is a blocking one the version already had that the edit did not spread. Each lands in the new version's `validation_warnings`, in the PUT response's `feasibility_findings` and in the `engine_choices` status line's `feasibility_warnings`. <!-- claim: tests/unit/test_assignment_overrides.py::TestFeasibilityReviewOnEdits::test_an_advisory_finding_the_edit_introduces_is_a_warning, tests/unit/test_assignment_overrides.py::TestFeasibilityReviewOnEdits::test_a_blocking_finding_the_version_already_had_is_a_warning_not_a_refusal, tests/unit/api/test_assignment_feasibility_routes.py::test_an_advisory_finding_comes_back_with_the_saved_edit, tests/unit/scripts/test_run_assessment_choices_feasibility.py::test_a_choice_that_puts_a_join_group_on_dynamodb_prints_the_advisory --> A co-dependency split finding replaces the validator's own split warning for the group, so the version states the split once. <!-- claim: tests/unit/test_assignment_overrides.py::TestFeasibilityReviewOnEdits::test_a_blocking_finding_the_version_already_had_is_a_warning_not_a_refusal, tests/unit/test_assignment_overrides.py::TestFeasibilityReviewOnEdits::test_a_refused_split_states_the_split_once, tests/unit/test_assignment_overrides.py::TestFeasibilityReviewOnEdits::test_an_unrelated_validator_warning_is_kept --> An advisory finding the version already had is not said again, and a feasible edit has no finding. <!-- claim: tests/unit/test_assignment_overrides.py::TestFeasibilityReviewOnEdits::test_an_advisory_finding_the_version_already_had_is_not_said_again, tests/unit/test_assignment_overrides.py::TestFeasibilityReviewOnEdits::test_a_feasible_edit_passes_with_no_finding, tests/unit/api/test_assignment_feasibility_routes.py::test_a_feasible_edit_is_saved_with_no_finding, tests/unit/scripts/test_run_assessment_choices_feasibility.py::test_a_feasible_choice_prints_no_warning --> There is no acceptance flag.*
+
+*In practice the customer gate now refuses nearly every customer split of a JOIN group: only Aurora MySQL and Aurora PostgreSQL serve complex JOINs, so a split stands only when every engine it lands on is one of the two Aurora engines. <!-- claim: tests/unit/test_assignment_overrides.py::TestFeasibilityReviewOnEdits::test_a_split_onto_an_engine_that_cannot_serve_the_join_is_refused, tests/unit/test_assignment_overrides.py::TestCoDependencyPropagation::test_explicit_split_is_respected_no_propagation, tests/unit/agents/referee/test_feasibility_review.py::TestCoDependencySplit -->*
 
 A reviewer runs on the customer-edited assignment **after** `finalize` applies it
 (on both first-pass and re-entry), producing structured, human-facing findings.
@@ -208,7 +212,7 @@ explicit decision), but it will not let an infeasible routing pass unremarked.
   inform and proceed. The customer always decides; the gate never silently ships
   a broken split, and never overrides the customer's explicit choice.
 
-  *Removed (2026-11-20, #2509): the finalize loop and the acceptance flag were part of the AWS Transform gate and went with it. The reviewer function still produces these findings when called, but no gate calls it (#2519).*
+  *Removed (2026-11-20, #2509): the finalize loop and the acceptance flag were part of the AWS Transform gate and went with it. The customer gate refuses an edit that introduces a blocking finding instead (#2519, the note at the top of this decision).*
 
 - **Inform, do not auto-fix.** The reviewer does not re-score or pull a whole
   co-dependency group along to follow a moved query. That would fight the
@@ -266,11 +270,12 @@ Each decision names the guard test that fails when the code stops following it. 
 |---|---|
 | A. Staleness-driven re-entry (mechanics) | `tests/unit/test_assignment_engine_diff.py` |
 | B. Keep the gate honest (cheap, high value) | `tests/unit/test_assignment_overrides.py::TestRecomputesDerivedViews`<br>`tests/unit/agents/referee/test_reality_check_revised_write_layer_b.py::TestRevisedWriteRecomputesDerivedViews` |
-| C. Post-gate feasibility reviewer | `tests/unit/agents/referee/test_feasibility_review.py::TestReadWriteSplit`<br>`tests/unit/agents/referee/test_feasibility_review.py::TestCoDependencySplit` |
+| C. Post-gate feasibility reviewer | `tests/unit/agents/referee/test_feasibility_review.py::TestReadWriteSplit`<br>`tests/unit/agents/referee/test_feasibility_review.py::TestCoDependencySplit`<br>`tests/unit/test_assignment_overrides.py::TestFeasibilityReviewOnEdits`<br>`tests/unit/test_assignment_overrides.py::TestReviewEditFeasibility`<br>`tests/unit/api/test_assignment_feasibility_routes.py`<br>`tests/unit/scripts/test_run_assessment_choices_feasibility.py` |
 | E. Prune dead-engine signals after consolidation | `tests/unit/test_assignment_overrides.py::TestRefreshConsolidatedAssignment`<br>`tests/unit/agents/referee/test_synthesis_dead_engine_filter.py`<br>`tests/unit/agents/referee/test_eliminated_engine_agreement.py` |
+| Amendment 2026-11-24: the customer gate runs the feasibility review (#2519) | `tests/unit/test_assignment_overrides.py::TestFeasibilityReviewOnEdits`<br>`tests/unit/test_assignment_overrides.py::TestReviewEditFeasibility`<br>`tests/unit/api/test_assignment_feasibility_routes.py`<br>`tests/unit/scripts/test_run_assessment_choices_feasibility.py` |
 | Amendment 1 (2026-09-17): defer job completion so re-entry is possible | superseded -- #2509 (the AWS Transform integration was removed) |
-| Amendment 2 (2026-09-18): read/write split is advisory, not blocking | `tests/unit/agents/referee/test_feasibility_review.py::TestReadWriteSplit` |
-| Amendment 3 (2026-09-18): co-dependency-aware override propagation | `tests/unit/test_assignment_overrides.py::TestCoDependencyPropagation`<br>`tests/unit/agents/referee/test_feasibility_review.py::TestCoDependencySplit` |
+| Amendment 2 (2026-09-18): read/write split is advisory, not blocking | `tests/unit/agents/referee/test_feasibility_review.py::TestReadWriteSplit`<br>`tests/unit/test_assignment_overrides.py::TestFeasibilityReviewOnEdits::test_an_advisory_finding_the_edit_introduces_is_a_warning` |
+| Amendment 3 (2026-09-18): co-dependency-aware override propagation | `tests/unit/test_assignment_overrides.py::TestCoDependencyPropagation`<br>`tests/unit/agents/referee/test_feasibility_review.py::TestCoDependencySplit`<br>`tests/unit/test_assignment_overrides.py::TestFeasibilityReviewOnEdits::test_a_split_onto_an_engine_that_cannot_serve_the_join_is_refused` |
 
 ## Implementation surface
 
@@ -441,7 +446,7 @@ is produced. The completion idempotency guard now latches only on the terminal
 
 ## Amendment 2 (2026-09-18): read/write split is advisory, not blocking
 
-*Removed (2026-11-20, #2509): the gate this amendment describes went with the AWS Transform integration, and no gate runs the feasibility reviewer now. The advisory classification stays in `review_assignment_feasibility`, which this amendment's Enforcement row tests on its own. Wiring it into the local gate, or removing it, is #2519.*
+*Amended (2026-11-24, #2519): the gate this amendment describes went with the AWS Transform integration (#2509), and the customer gate runs the reviewer now (Decision C). A read/write split is advisory there: an edit that introduces one is written, and the finding comes back as a warning with its recommended pattern. <!-- claim: tests/unit/test_assignment_overrides.py::TestFeasibilityReviewOnEdits::test_an_advisory_finding_the_edit_introduces_is_a_warning, tests/unit/api/test_assignment_feasibility_routes.py::test_an_advisory_finding_comes_back_with_the_saved_edit -->*
 
 **Status:** Accepted. **Trigger:** on the `feat_staleness_` fleet, the very first
 assignment-review gate blocked approve-as-is: the feasibility reviewer flagged
@@ -501,8 +506,9 @@ the whole workload.
   tagged `co_dependency_propagated` on `QueryAssignment` (contract 1.3), distinct
   from `customer_override`, so the move is self-describing and reportable.
 - A group the customer **explicitly** split (two members set to different engines
-  in the same edit) is respected — propagation is skipped and the split is
-  surfaced by the feasibility reviewer, not overridden.
+  in the same edit) is not propagated. The feasibility review then judges the split
+  (#2519): a split onto an engine that cannot serve the JOIN is refused and nothing is
+  written, and a split across join-capable engines is saved with an advisory finding. <!-- claim: tests/unit/test_assignment_overrides.py::TestFeasibilityReviewOnEdits::test_a_split_onto_an_engine_that_cannot_serve_the_join_is_refused, tests/unit/test_assignment_overrides.py::TestCoDependencyPropagation::test_explicit_split_is_respected_no_propagation -->
 - Out-of-scope members are left alone; an in-scope-only toggle does not propagate.
 - `finalize_assignment_review` returns `co_dependency_propagated` and a note, and
   the orchestrator prompt tells the customer which queries moved along with their

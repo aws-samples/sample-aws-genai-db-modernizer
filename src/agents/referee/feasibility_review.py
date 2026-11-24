@@ -348,8 +348,10 @@ def _detect_routine_unit_splits(
     """A routine whose statements a customer edit put on two or more engines (#1654).
 
     Routing places a routine unit as one (ADR-031 Decision 4 Amendment 21); only a
-    customer's explicit picks split one, and that choice stands, as a co-dependency
-    split's does, with this advisory finding saying what it costs."""
+    customer's explicit picks split one, and that choice stands with this advisory
+    finding saying what it costs. A co-dependency split stands only across engines
+    that serve the JOIN; one onto an engine that cannot is blocking, and the customer
+    gate refuses it (#2519)."""
     from src.agents.referee.routine_units import routine_units_for
 
     engine_by_query = _in_scope_engine_by_query(assignment)

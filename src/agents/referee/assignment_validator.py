@@ -10,8 +10,10 @@ Pure function, no side effects. Detects:
   groups and routine units merged, ADR-031 Decision 4, Amendments 9 and 21) whose
   in-scope members sit on more than one engine → hard ERROR (#2152), unless the
   customer's own picks inside it name two or more engines and every engine it is on
-  is one of those picks: a customer split of a JOIN group or routine unit stands,
-  with an advisory feasibility finding
+  is one of those picks: the validator lets a customer split of a JOIN group or
+  routine unit through, and the customer gate's feasibility review then refuses a
+  JOIN group split onto an engine that cannot serve the JOIN (#2519) and gives the
+  rest an advisory finding
 - A table's writes (its write group) on more than one engine → hard ERROR, whoever
   placed them: the customer gate never splits one (Amendment 9)
 - The units themselves cannot be built → hard ERROR: the check fails closed
@@ -277,8 +279,10 @@ def _unit_split_errors(
     """``(errors, warnings, refused)`` for units split across engines (ADR-031 Decision 4,
     Amendments 9 and 21): each table's writes, and each placement unit, judged on its
     in-scope members; ``refused`` holds the members of every unit reported as an
-    error. A unit the customer split stands when every engine it is on is one the
-    customer picked for one of its members; a split ``legacy`` carries is a warning.
+    error. A unit the customer split is not an error here when every engine it is on is
+    one the customer picked for one of its members (the feasibility review judges it
+    next, and refuses a JOIN split onto an engine that cannot serve it, #2519); a split
+    ``legacy`` carries is a warning.
     Fails closed: when the units cannot be built, that is the error."""
     try:
         write_groups = collector_write_groups(collector_output)
@@ -339,7 +343,7 @@ def _unit_split_errors(
             if q in placed and placed[q].customer_override
         }
         if len(picked) > 1 and on <= picked:
-            continue  # the customer's own split, which stands (Amendment 21)
+            continue  # the customer's own split: the feasibility review judges it (#2519)
         if inherited(members, on):
             continue
         refused.update(members)

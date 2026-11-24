@@ -20,6 +20,7 @@ import pytest
 from src.agents.referee.assignment_overrides import (
     AssignmentValidationFailed,
     ExcludedEngineOverride,
+    InfeasibleAssignmentEdit,
     LosingAuroraEngineOverride,
     NoAssignmentFound,
     QueryOverrideInput,
@@ -27,6 +28,7 @@ from src.agents.referee.assignment_overrides import (
     apply_assignment_overrides,
     load_assignment_for_edit,
     refresh_consolidated_assignment,
+    review_edit_feasibility,
 )
 from src.contracts.assignment_models import (
     Assignment,
@@ -35,6 +37,7 @@ from src.contracts.assignment_models import (
     AuroraEngineChoice,
     QueryAssignment,
 )
+from src.contracts.feasibility_models import FeasibilityFinding, FindingKind, FindingSeverity
 
 
 class _MemStore:
@@ -787,13 +790,19 @@ class TestCoDependencyPropagation:
     co-located instead of silently splitting."""
 
     @staticmethod
-    def _seed_join_group(store: _MemStore, engines: list[str], *, q3_in_scope: bool = True) -> None:
-        # q1, q2, q3 all on dynamodb, all sharing a significant JOIN on t.orders
-        # -> one co-dependency group of three.
+    def _seed_join_group(
+        store: _MemStore,
+        engines: list[str],
+        *,
+        q3_in_scope: bool = True,
+        on: str = "dynamodb",
+    ) -> None:
+        # q1, q2, q3 all on ``on`` (dynamodb by default), all sharing a significant
+        # JOIN on t.orders -> one co-dependency group of three.
         qas = [
-            _qa("q1", "dynamodb", ["t.orders", "t.items"]),
-            _qa("q2", "dynamodb", ["t.orders", "t.items"]),
-            _qa("q3", "dynamodb", ["t.orders", "t.items"], in_scope=q3_in_scope),
+            _qa("q1", on, ["t.orders", "t.items"]),
+            _qa("q2", on, ["t.orders", "t.items"]),
+            _qa("q3", on, ["t.orders", "t.items"], in_scope=q3_in_scope),
         ]
         assignment = Assignment(
             job_id=JOB,
@@ -853,24 +862,28 @@ class TestCoDependencyPropagation:
     @pytest.mark.passes_on_main  # a split on picked engines stands, as before #2152
     def test_explicit_split_is_respected_no_propagation(self) -> None:
         # The customer sets two group members to DIFFERENT engines, the third already on
-        # one of them -> respect both explicit picks and propagate nothing.
+        # one of them -> respect both explicit picks and propagate nothing. Both engines
+        # serve the JOIN, so the feasibility review only advises (#2519); a split onto an
+        # engine that cannot serve it is refused (TestFeasibilityReviewOnEdits).
         store = _MemStore()
-        self._seed_join_group(store, engines=["dynamodb", "aurora_postgresql"])
+        self._seed_join_group(
+            store, engines=["aurora_mysql", "aurora_postgresql"], on="aurora_mysql"
+        )
         result = apply_assignment_overrides(
             store,
             DB,
             JOB,
             [
                 QueryOverrideInput("q1", assigned_engine="aurora_postgresql"),
-                QueryOverrideInput("q2", assigned_engine="dynamodb"),
+                QueryOverrideInput("q2", assigned_engine="aurora_mysql"),
             ],
         )
         by_id = {qa.query_id: qa for qa in result.assignment.query_assignments}
         assert by_id["q1"].assigned_engine == "aurora_postgresql"
-        assert by_id["q2"].assigned_engine == "dynamodb"
+        assert by_id["q2"].assigned_engine == "aurora_mysql"
         # q3 (untouched) is left alone because the group was explicitly split.
         assert by_id["q3"].co_dependency_propagated is False
-        assert by_id["q3"].assigned_engine == "dynamodb"
+        assert by_id["q3"].assigned_engine == "aurora_mysql"
         assert result.propagated_query_ids == []
 
     def test_explicit_split_leaving_a_member_on_a_third_engine_is_refused(self) -> None:
@@ -914,6 +927,195 @@ class TestCoDependencyPropagation:
         assert by_id["q2"].assigned_engine == "dynamodb"  # untouched
         assert by_id["q2"].co_dependency_propagated is False
         assert result.propagated_query_ids == []
+
+
+class TestFeasibilityReviewOnEdits:
+    """ADR-029 Decision C (#2519): the customer gate runs the feasibility review on
+    the edited version. A blocking finding the edit introduces refuses it, nothing
+    written; an advisory one it introduces, and a blocking one the version already had,
+    are warnings on the new version and on the result."""
+
+    _seed_join_group = staticmethod(TestCoDependencyPropagation._seed_join_group)
+
+    def test_a_split_onto_an_engine_that_cannot_serve_the_join_is_refused(self) -> None:
+        store = _MemStore()
+        self._seed_join_group(store, engines=["dynamodb", "aurora_postgresql"])
+        with pytest.raises(InfeasibleAssignmentEdit) as refused:
+            apply_assignment_overrides(
+                store,
+                DB,
+                JOB,
+                [
+                    QueryOverrideInput("q1", assigned_engine="aurora_postgresql"),
+                    QueryOverrideInput("q2", assigned_engine="dynamodb"),
+                ],
+            )
+        # Reported the way every hard gate error is: an AssignmentValidationFailed.
+        assert isinstance(refused.value, AssignmentValidationFailed)
+        (finding,) = refused.value.findings
+        assert (finding.kind, finding.severity) == (
+            FindingKind.CO_DEPENDENCY_SPLIT,
+            FindingSeverity.BLOCKING,
+        )
+        assert finding.query_ids == ["q1", "q2", "q3"]
+        assert refused.value.errors == [f"ERROR: {finding.message}"]
+        assert "DynamoDB cannot serve the JOIN" in str(refused.value)
+        assert not store.exists(f"{DB}/{JOB}/assignment/v2/assignment.json")
+
+    def test_a_feasible_edit_passes_with_no_finding(self) -> None:
+        store = _MemStore()
+        self._seed_join_group(store, engines=["dynamodb", "aurora_postgresql"])
+        result = apply_assignment_overrides(
+            store, DB, JOB, [QueryOverrideInput("q1", assigned_engine="aurora_postgresql")]
+        )
+        assert result.feasibility_findings == []
+        assert store.exists(f"{DB}/{JOB}/assignment/v2/assignment.json")
+        # The group left DynamoDB: its no-JOIN advisory is gone, and nothing replaces it.
+        assert not any("JOIN" in w for w in result.assignment.validation_warnings)
+
+    def test_an_advisory_finding_the_edit_introduces_is_a_warning(self) -> None:
+        store = _MemStore()
+        _seed(
+            store,
+            [
+                _qa("q1", "aurora_postgresql", ["t.users"]),
+                _qa("q2", "aurora_postgresql", ["t.users"]),
+            ],
+            engines=["aurora_postgresql", "dynamodb"],
+            query_texts={
+                "q1": "UPDATE t.users SET name = ? WHERE id = ?",
+                "q2": "SELECT * FROM t.users WHERE id = ?",
+            },
+        )
+        collector = store.read_json(f"{DB}/{JOB}/collector/output.json")
+        for query, kind in zip(
+            collector["queries"]["query_patterns"], ("UPDATE", "SELECT"), strict=True
+        ):
+            query["query_type"] = kind
+        store.write_json(f"{DB}/{JOB}/collector/output.json", collector)
+        result = apply_assignment_overrides(
+            store, DB, JOB, [QueryOverrideInput("q2", assigned_engine="dynamodb")]
+        )
+        (finding,) = result.feasibility_findings
+        assert (finding.kind, finding.severity, finding.table) == (
+            FindingKind.READ_WRITE_SPLIT,
+            FindingSeverity.ADVISORY,
+            "t.users",
+        )
+        assert f"WARNING [MEDIUM]: {finding.message}" in result.assignment.validation_warnings
+        saved = store.read_json(f"{DB}/{JOB}/assignment/v2/assignment.json")
+        assert f"WARNING [MEDIUM]: {finding.message}" in saved["validation_warnings"]
+
+    def test_an_advisory_finding_the_version_already_had_is_not_said_again(self) -> None:
+        # The whole group already sits on DynamoDB (a no-JOIN advisory before the edit);
+        # an edit that leaves it there reports nothing new.
+        store = _MemStore()
+        self._seed_join_group(store, engines=["dynamodb", "aurora_postgresql"])
+        result = apply_assignment_overrides(
+            store, DB, JOB, [QueryOverrideInput("q3", in_scope=False)]
+        )
+        assert result.feasibility_findings == []
+
+    def test_a_blocking_finding_the_version_already_had_is_a_warning_not_a_refusal(
+        self,
+    ) -> None:
+        # The saved version already splits the group onto DynamoDB (the customer's picks);
+        # an edit that does not spread the split is written, and the split is said.
+        store = _MemStore()
+        self._seed_join_group(store, engines=["dynamodb", "aurora_postgresql"])
+        path = f"{DB}/{JOB}/assignment/v1/assignment.json"
+        saved = store.read_json(path)
+        saved["query_assignments"][0]["assigned_engine"] = "aurora_postgresql"
+        for qa in saved["query_assignments"]:
+            qa["customer_override"] = True
+        store.write_json(path, saved)
+        result = apply_assignment_overrides(
+            store, DB, JOB, [QueryOverrideInput("q3", in_scope=False)]
+        )
+        (finding,) = result.feasibility_findings
+        assert finding.severity is FindingSeverity.BLOCKING
+        # Said once: the finding replaces the validator's own split warning for the group.
+        splits = [w for w in result.assignment.validation_warnings if "Co-dependent" in w]
+        assert splits == [f"WARNING [HIGH]: {finding.message}"]
+        assert store.exists(f"{DB}/{JOB}/assignment/v2/assignment.json")
+
+    def test_a_refused_split_states_the_split_once(self) -> None:
+        store = _MemStore()
+        self._seed_join_group(store, engines=["dynamodb", "aurora_postgresql"])
+        with pytest.raises(InfeasibleAssignmentEdit) as refused:
+            apply_assignment_overrides(
+                store,
+                DB,
+                JOB,
+                [
+                    QueryOverrideInput("q1", assigned_engine="aurora_postgresql"),
+                    QueryOverrideInput("q2", assigned_engine="dynamodb"),
+                ],
+            )
+        assert not [w for w in refused.value.warnings if "Co-dependent" in w]
+
+    def test_an_unrelated_validator_warning_is_kept(self) -> None:
+        # A split across join-capable engines: the advisory finding replaces the
+        # validator's split warning, and nothing else is dropped.
+        store = _MemStore()
+        self._seed_join_group(
+            store, engines=["aurora_mysql", "aurora_postgresql"], on="aurora_mysql"
+        )
+        result = apply_assignment_overrides(
+            store,
+            DB,
+            JOB,
+            [
+                QueryOverrideInput("q1", assigned_engine="aurora_postgresql"),
+                QueryOverrideInput("q2", assigned_engine="aurora_mysql"),
+            ],
+            exclude_tables=["t.orders"],
+        )
+        warnings = result.assignment.validation_warnings
+        assert [w for w in warnings if "Co-dependent" in w] == [
+            f"WARNING [MEDIUM]: {result.feasibility_findings[0].message}"
+        ]
+        assert any(w.startswith("WARNING [LOW]: Query q1 accesses both") for w in warnings)
+
+
+def _finding(severity: FindingSeverity, engines: list[str]) -> FeasibilityFinding:
+    return FeasibilityFinding(
+        kind=FindingKind.CO_DEPENDENCY_SPLIT,
+        severity=severity,
+        engines=engines,
+        query_ids=["q1", "q2"],
+        message="split",
+    )
+
+
+class TestReviewEditFeasibility:
+    """#2519: an edit is judged on the findings it introduces."""
+
+    BLOCKING, ADVISORY = FindingSeverity.BLOCKING, FindingSeverity.ADVISORY
+
+    def test_a_new_blocking_finding_refuses(self) -> None:
+        after = [_finding(self.BLOCKING, ["aurora_postgresql", "dynamodb"])]
+        assert review_edit_feasibility([], after) == (after, [])
+
+    def test_a_blocking_finding_spread_to_another_engine_refuses(self) -> None:
+        before = [_finding(self.BLOCKING, ["aurora_postgresql", "dynamodb"])]
+        after = [_finding(self.BLOCKING, ["aurora_postgresql", "documentdb", "dynamodb"])]
+        assert review_edit_feasibility(before, after) == (after, [])
+
+    def test_a_blocking_finding_left_as_it_was_or_narrowed_is_reported(self) -> None:
+        before = [_finding(self.BLOCKING, ["aurora_postgresql", "documentdb", "dynamodb"])]
+        after = [_finding(self.BLOCKING, ["aurora_postgresql", "dynamodb"])]
+        assert review_edit_feasibility(before, after) == ([], after)
+        assert review_edit_feasibility(before, before) == ([], before)
+
+    def test_an_advisory_finding_is_reported_only_when_new(self) -> None:
+        advisory = [_finding(self.ADVISORY, ["aurora_mysql", "aurora_postgresql"])]
+        assert review_edit_feasibility([], advisory) == ([], advisory)
+        assert review_edit_feasibility(advisory, advisory) == ([], [])
+
+    def test_no_finding_after_the_edit_reports_nothing(self) -> None:
+        before = [_finding(self.BLOCKING, ["aurora_postgresql", "dynamodb"])]
+        assert review_edit_feasibility(before, []) == ([], [])
 
 
 class TestExcludedEngineOverride:
