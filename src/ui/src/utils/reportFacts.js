@@ -534,9 +534,10 @@ export function rateWindowStatementOf(synthesis) {
   return typeof statement === 'string' && statement ? statement : null;
 }
 
-// #2375: the sentence every deliverable prints about the statements AWS DMS ran on the
-// source, left out of the workload (facts.excluded_statements.statement). Null when none
-// were, and for a report written before the fact.
+// #2375, #1894: the sentence every deliverable prints about the statements left out of
+// the workload, the ones AWS DMS ran on the source and the ones SQL Server ran on its own
+// catalogs (facts.excluded_statements.statement). Null when none were, and for a report
+// written before the fact.
 export function excludedStatementsOf(synthesis) {
   const fact = factsOf(synthesis) && factsOf(synthesis).excluded_statements;
   const statement = fact && fact.statement;

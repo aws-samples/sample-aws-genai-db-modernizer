@@ -1662,7 +1662,7 @@ def _report_output_data(store: ArtifactStore, result: dict, assignment_version: 
         hot_partitions=hot_partitions,
         busiest_partition_key=busiest_partition_key,
         rate_windows=rate_windows,
-        # #2375: the statements AWS DMS ran, which the collector left out of the workload.
+        # #2375, #1894: the statements the collector left out of the workload.
         excluded_statements=excluded_statement_facts(data.collector),
         # #1990: the one assumptions block (growth, peak, rate window, region and prices,
         # each with its origin) and the growth scenario lines.

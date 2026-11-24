@@ -507,7 +507,8 @@ const AssignmentGatePage = memo(() => {
         </SpaceBetween>
       ) : t('assignment-gate.figures.none'),
     });
-    // #2375: the statements AWS DMS ran, left out before routing (gate_facts' sentence).
+    // #2375, #1894: the statements AWS DMS or SQL Server's catalog reads ran, left out
+    // before routing (gate_facts' sentence).
     const excluded = gateFacts.excluded_statements;
     if (excluded && typeof excluded.statement === 'string' && excluded.statement) {
       items.push({

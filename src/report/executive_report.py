@@ -1167,7 +1167,7 @@ def _numbers(report: dict[str, Any], st: dict[str, ParagraphStyle], names: Any) 
     rate_windows = (facts.get("rate_windows") or {}).get("statement")
     if rate_windows:
         flow += [_gap(6), _para(f"{L_RATE_WINDOWS}: {rate_windows}.", st["small"])]
-    # #2375: the statements AWS DMS ran, left out of the workload.
+    # #2375, #1894: the statements left out of the workload.
     excluded = (facts.get("excluded_statements") or {}).get("statement")
     if excluded:
         flow += [_gap(6), _para(f"{L_EXCLUDED_STATEMENTS}: {excluded}.", st["small"])]

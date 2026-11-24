@@ -137,7 +137,9 @@ def test_no_table_is_unknown():
             "SELECT column_default IS NOT NULL FROM information_schema.columns WHERE x = ?",
             ["information_schema.columns"],
         ),
-        ("sqlserver", "SELECT name FROM sys.objects WHERE type = 'U'", ["sys.objects"]),
+        # A statement that reads only SQL Server's catalog is left out of the workload
+        # (#1894, test_sqlserver_catalog_statements_excluded.py); one that also reads an
+        # application table keeps both references.
         (
             "sqlserver",
             "SELECT o.name FROM sys.objects o JOIN orders ON 1 = 1",

@@ -48,7 +48,7 @@ def run_triage(
     tables = collector_output.get("database_schema", {}).get("tables", [])
     queries = collector_output.get("queries", {}).get("query_patterns", [])
     say(f"[triage] Loaded collector: {len(tables)} tables, {len(queries)} queries")
-    # #2375: the statements AWS DMS ran, which the collector left out of the workload.
+    # #2375, #1894: the statements the collector left out of the workload.
     excluded = excluded_statements_summary(
         collector_output.get("queries", {}).get("excluded_statements") or []
     )
