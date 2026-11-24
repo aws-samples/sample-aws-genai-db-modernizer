@@ -1,7 +1,9 @@
 # Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
 # SPDX-License-Identifier: MIT-0
 
-"""The statements AWS DMS runs on the source, left out of the workload (#2375).
+"""The statements AWS DMS runs on the source, left out of the workload (#2375), and
+the split that also leaves out SQL Server's statements on its own catalogs (#1894, the
+rules are in :mod:`src.tools.database.system_catalog_statements`).
 
 A collection taken while a DMS task reads the source records DMS's own statements next
 to the application's. Routing must score only the application, so the collector leaves
@@ -49,9 +51,24 @@ import re
 from collections.abc import Iterable, Mapping
 from typing import Any
 
-from src.shared.excluded_statements import DMS_CURSOR, DMS_OBJECT, DMS_REPLICATION_SLOT
+from src.shared.excluded_statements import (
+    DMS_CURSOR,
+    DMS_OBJECT,
+    DMS_REPLICATION_SLOT,
+    ORIGINS,
+    SQLSERVER_CATALOG,
+    SQLSERVER_SYSTEM_PROCEDURE,
+)
+from src.tools.database.system_catalog_statements import catalog_statement_match
 
-__all__ = ["DMS_CURSOR", "DMS_OBJECT", "DMS_REPLICATION_SLOT", "split_migration_tool_statements"]
+__all__ = [
+    "DMS_CURSOR",
+    "DMS_OBJECT",
+    "DMS_REPLICATION_SLOT",
+    "SQLSERVER_CATALOG",
+    "SQLSERVER_SYSTEM_PROCEDURE",
+    "split_migration_tool_statements",
+]
 
 HEARTBEAT_TABLE = "awsdms_heartbeat"
 DDL_AUDIT_TABLE = "awsdms_ddl_audit"
@@ -111,10 +128,15 @@ REASONS = {
         "a psqlODBC cursor statement with AWS DMS's full-load shape, run by the role that "
         "updates AWS DMS's heartbeat table"
     ),
+    # #1894: SQL Server's statements on its own catalogs (system_catalog_statements).
+    SQLSERVER_CATALOG: "reads only SQL Server's system catalog views and DMVs ({objects})",
+    SQLSERVER_SYSTEM_PROCEDURE: "runs only SQL Server's system catalog procedure {objects}",
 }
 # Appended when the application runs the same statement too (pg_stat_statements keys an
 # entry on its role, so both rows share the statement's id).
 SHARED_ID_SUFFIX = ":dms"
+# The suffix per origin (``excluded_statements.ORIGINS``).
+_SHARED_SUFFIXES = {"dms": SHARED_ID_SUFFIX, "catalog": ":catalog"}
 SHARED_NOTE = (
     "; the application's own runs of the same statement stay in the workload under id {id}"
 )
@@ -203,7 +225,7 @@ def _is_postgres(source_engine: str) -> bool:
 
 
 def split_migration_tool_statements(
-    rows: Iterable[Any], source_engine: str
+    rows: Iterable[Any], source_engine: str, database_name: str | None = None
 ) -> tuple[list[Any], list[dict[str, Any]]]:
     """The rows to keep, and one record per statement left out: ``query_id``,
     ``rule``, ``reason`` and ``execution_count`` (summed over rows sharing an id).
@@ -212,7 +234,12 @@ def split_migration_tool_statements(
     ``query_id``, ``execution_count``, and on PostgreSQL ``role_id``). A row that is not
     a mapping is kept. With nothing to leave out, the rows come back unchanged. A left
     out statement whose id a kept row also has is recorded under the id with
-    :data:`SHARED_ID_SUFFIX`, its reason naming the kept id.
+    :data:`SHARED_ID_SUFFIX` (``:catalog`` for SQL Server's own), its reason naming the
+    kept id.
+
+    On a SQL Server source the statements SQL Server ran on its own catalogs go too
+    (#1894, :mod:`src.tools.database.system_catalog_statements`); ``database_name``, the
+    collected database, keeps a database named like a system schema its own.
     """
     rows = list(rows)
     postgres = _is_postgres(source_engine)
@@ -230,6 +257,8 @@ def split_migration_tool_statements(
             matched[i] = (DMS_OBJECT, objects)
             if HEARTBEAT_TABLE in objects and _role(row):
                 dms_roles.add(_role(row))
+        elif catalog := catalog_statement_match(row, text, source_engine, database_name):
+            matched[i] = catalog
         elif postgres:
             functions = _slot_match(text, source_engine)
             if functions:
@@ -254,8 +283,9 @@ def split_migration_tool_statements(
         if record is None:
             reason = REASONS[rule].format(objects=", ".join(objects))
             shared = sid in kept_ids
+            suffix = _SHARED_SUFFIXES[ORIGINS[rule]]
             records[key] = {
-                "query_id": sid + SHARED_ID_SUFFIX if shared else sid,
+                "query_id": sid + suffix if shared else sid,
                 "rule": rule,
                 "reason": reason + SHARED_NOTE.format(id=sid) if shared else reason,
                 "execution_count": calls,

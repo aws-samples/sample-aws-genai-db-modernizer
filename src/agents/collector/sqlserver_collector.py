@@ -79,6 +79,11 @@ from src.shared.row_counts import read_data_size_mb, read_row_count, read_size_m
 from src.shared.server_counters import live_server_counters, server_counters_model
 from src.tools.aws.s3_storage import init_storage
 from src.tools.aws.ssm_executor import SSMExecutor
+from src.tools.database.migration_tool_statements import (
+    merge_excluded,
+    record_excluded,
+    split_migration_tool_statements,
+)
 from src.tools.database.sqlserver_max import max_type
 from src.tools.database.sqlserver_tools import SQLServerRemoteCollector, _normalize_index_type
 from src.tools.sql.view_lineage import apply_view_lineage
@@ -224,10 +229,18 @@ def _collect_live(inp: CollectorInput, ckpt) -> CollectorOutputContract:
     procs = _build_procedures(schema_raw.get("procedures", []))
     triggers = _build_triggers(schema_raw.get("triggers", []))
 
-    queries = _build_queries(queries_raw)
-    aws_queries = aws_raw.get("query_patterns", [])
+    # #1894: SQL Server's statements on its own catalogs (and #2375, AWS DMS's) are left
+    # out of the workload, and recorded.
+    app_rows, excluded = split_migration_tool_statements(
+        queries_raw, "sqlserver", inp.database_name
+    )
+    aws_queries, aws_excluded = split_migration_tool_statements(
+        aws_raw.get("query_patterns", []), "sqlserver", inp.database_name
+    )
+    queries = _build_queries(app_rows)
     if aws_queries:
         queries = _merge_queries(queries, aws_queries)
+    record_excluded(queries, merge_excluded(excluded, aws_excluded))
 
     global_stats = schema_raw.get("global_stats", {})
     pi_counters = global_stats or aws_raw.get("pi_counters", {})
@@ -314,8 +327,11 @@ def _collect_ddl(inp: CollectorInput, ckpt) -> CollectorOutputContract:
     aws_raw = ckpt.load_or_run("aws_metrics", lambda: _collect_aws_raw(inp, cred_mgr))
 
     tables = _build_tables_from_ddl(schema_raw, inp.database_name)
-    aws_queries = aws_raw.get("query_patterns", [])
+    aws_queries, excluded = split_migration_tool_statements(
+        aws_raw.get("query_patterns", []), "sqlserver", inp.database_name
+    )
     queries = _build_queries_from_aws(aws_queries)
+    record_excluded(queries, excluded)
     pi_counters = aws_raw.get("pi_counters", {})
     cw_raw = aws_raw.get("cloudwatch", {})
     em_data = aws_raw.get("enhanced_monitoring")

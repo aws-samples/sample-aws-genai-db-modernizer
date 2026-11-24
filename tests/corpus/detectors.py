@@ -265,6 +265,8 @@ SQL_DETECTORS: tuple[SqlDetector, ...] = (
         ),
     ),
     SqlDetector(f"{_FACADE}:written_columns", facade.written_columns),
+    # #1894: every row source of a statement, which the SQL Server catalog rule reads.
+    SqlDetector(f"{_FACADE}:row_sources", facade.row_sources),
     # #1936: the tables and unknown calls one routine-body statement names.
     SqlDetector(
         f"{_FACADE}:routine_statement_refs",

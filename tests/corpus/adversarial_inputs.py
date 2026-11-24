@@ -664,6 +664,45 @@ SQL_ENTRIES: tuple[SqlEntry, ...] = (
         ("sqlserver",),
         "status = @p and a correlated equality with bracket-quoted names (#1547)",
     ),
+    # #1894 review: a statement that reads a catalog view next to an application source
+    # the parser returns no table for, or a comma-joined row function. Nothing in them is
+    # hostile text to make inert, so each twin only adds an inert comment. The SQL Server catalog rule keeps
+    # each (test_sqlserver_catalog_statements_excluded.py reads the corpus).
+    SqlEntry(
+        "linked_server_name_next_to_catalog",
+        "DELETE FROM lnk.appdb.dbo.orders WHERE id IN (SELECT object_id FROM sys.objects)",
+        "DELETE FROM lnk.appdb.dbo.orders WHERE id IN (SELECT object_id FROM sys.objects) /* x */",
+        ("sqlserver",),
+        "a four-part linked-server name, which no table reference holds, beside sys.objects",
+    ),
+    SqlEntry(
+        "bracketed_linked_server_join_to_catalog",
+        "SELECT o.id FROM [lnk].[appdb].[dbo].[orders] o JOIN sys.objects s ON s.name = o.n",
+        "SELECT o.id FROM [lnk].[appdb].[dbo].[orders] o JOIN sys.objects s ON s.name = o.n /* x */",
+        ("sqlserver",),
+        "a bracketed four-part name joined to a catalog view",
+    ),
+    SqlEntry(
+        "double_dot_name_join_to_catalog",
+        "SELECT o.id FROM lnk.appdb..orders o JOIN sys.objects s ON s.name = o.n",
+        "SELECT o.id FROM lnk.appdb..orders o JOIN sys.objects s ON s.name = o.n /* x */",
+        ("sqlserver",),
+        "a name with an empty middle part (``..``) joined to a catalog view",
+    ),
+    SqlEntry(
+        "comma_joined_function_beside_catalog",
+        "SELECT o.name FROM sys.objects o, GetOrders(1) g",
+        "SELECT o.name FROM sys.objects o, GetOrders(1) g /* x */",
+        ("sqlserver",),
+        "an unqualified table-valued function as a comma-joined FROM item beside sys.objects",
+    ),
+    SqlEntry(
+        "comma_joined_openquery_beside_catalog",
+        "SELECT o.name FROM sys.objects o, OPENQUERY(lnk, 'select id from orders') q",
+        "SELECT o.name FROM sys.objects o, OPENQUERY(lnk, 'select id from orders') q /* x */",
+        ("sqlserver",),
+        "a remote read through OPENQUERY as a comma-joined FROM item beside sys.objects",
+    ),
 )
 
 

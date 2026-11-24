@@ -2563,8 +2563,9 @@ class DerivedCopySyncFacts(BaseModel):
 
 
 class ExcludedStatementFacts(BaseModel):
-    """The statements AWS DMS ran on the source, which the collector left out of the
-    workload (#2375), from ``src.tools.database.migration_tool_statements``."""
+    """The statements AWS DMS ran on the source (#2375) and the ones SQL Server ran on its
+    own system catalogs (#1894), which the collector left out of the workload, from
+    ``src.shared.excluded_statements.excluded_statement_facts``."""
 
     statement_count: int = Field(..., ge=0, description="How many statements were left out")
     execution_count: int = Field(..., ge=0, description="Their executions in the collection")
@@ -5720,7 +5721,8 @@ class ReportFacts(BaseModel):
     excluded_statements: ExcludedStatementFacts | None = Field(
         None,
         description=(
-            "The statements AWS DMS ran on the source, left out of the workload (#2375); "
+            "The statements AWS DMS ran on the source (#2375) or SQL Server ran on its own "
+            "system catalogs (#1894), left out of the workload; "
             "None when none were, in a report rebuilt without the collection, or written before"
         ),
     )

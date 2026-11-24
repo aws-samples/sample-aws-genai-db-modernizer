@@ -374,12 +374,14 @@ def _parse_offline_collection(
         _with_routines(data.get("queries") or [], data), db_name
     )
     other_db_note = {"queries_dropped_other_database": dropped_other_db} if dropped_other_db else {}
-    # #2375: AWS DMS's own statements, recorded and left out of the workload.
-    raw_queries, excluded = split_migration_tool_statements(raw_queries, source_engine)
+    # #2375: AWS DMS's own statements, and #1894: SQL Server's on its own catalogs,
+    # recorded and left out of the workload.
+    raw_queries, excluded = split_migration_tool_statements(raw_queries, source_engine, db_name)
     excluded_note = {"excluded_statements": excluded} if excluded else {}
     if excluded:
         logger.warning(
-            "offline_parser: left out %d statement(s) AWS DMS ran on the source (#2375)",
+            "offline_parser: left out %d statement(s) AWS DMS or the source's own catalog "
+            "reads ran (#2375, #1894)",
             len(excluded),
         )
     sample_rows_note: dict[str, int] = {}

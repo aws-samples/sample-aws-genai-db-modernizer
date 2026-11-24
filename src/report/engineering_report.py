@@ -1422,7 +1422,7 @@ def render_engineering_report_md(
     rate_windows = (facts.get("rate_windows") or {}).get("statement")
     if rate_windows:
         out += [f"Call rates: {escaping.md_text(rate_windows)}.", ""]
-    # #2375: the statements AWS DMS ran, left out of the workload.
+    # #2375, #1894: the statements left out of the workload.
     excluded = (facts.get("excluded_statements") or {}).get("statement")
     if excluded:
         out += [f"Statements left out: {escaping.md_text(excluded)}.", ""]

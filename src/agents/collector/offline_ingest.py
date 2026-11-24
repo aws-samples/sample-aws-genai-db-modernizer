@@ -147,7 +147,8 @@ def build_offline_contract(
     queries = _build_queries(
         parsed.get("queries", []), query_log_source=_offline_query_log_source(inp.engine.value)
     )
-    # #2375: the statements AWS DMS ran, which the parser left out.
+    # #2375, #1894: the statements AWS DMS ran and SQL Server's catalog reads, which the
+    # parser left out.
     excluded = list(parsed.get("excluded_statements") or [])
     # #381: a short, human-readable version string (product_version, or the first
     # line only of version/version_full) -- the full @@VERSION banner (newlines,
@@ -160,7 +161,7 @@ def build_offline_contract(
         rds_meta = None
     else:
         aws_patterns, aws_excluded = split_migration_tool_statements(
-            aws_raw.get("query_patterns", []), inp.engine.value
+            aws_raw.get("query_patterns", []), inp.engine.value, collected_name
         )
         excluded = merge_excluded(excluded, aws_excluded)
         queries = _merge_into_queries(queries, aws_patterns, source_engine=inp.engine.value)

@@ -648,9 +648,10 @@ def phase_collect(
 
     tables = collector_data.get("database_schema", {}).get("tables", [])
     queries = collector_data.get("queries", {}).get("query_patterns", [])
-    from src.shared.excluded_statements import excluded_statement_count
+    from src.shared.excluded_statements import CATALOG, DMS, excluded_statement_count
 
-    dms_rows = excluded_statement_count(collector_data)
+    dms_rows = excluded_statement_count(collector_data, origin=DMS)
+    catalog_rows = excluded_statement_count(collector_data, origin=CATALOG)
 
     artifact = _path(store, collector_path)
     _log_artifact("collect", artifact)
@@ -673,6 +674,8 @@ def phase_collect(
             **({"queries_dropped_other_database": other_db_rows} if other_db_rows else {}),
             # #2375: the statements AWS DMS ran, left out of the workload (triage names them).
             **({"dms_statements_excluded": dms_rows} if dms_rows else {}),
+            # #1894: SQL Server's statements on its own catalogs, left out the same way.
+            **({"catalog_statements_excluded": catalog_rows} if catalog_rows else {}),
         },
     )
     return job_id, db_name

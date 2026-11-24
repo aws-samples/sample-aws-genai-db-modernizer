@@ -170,7 +170,7 @@ def render_gate_block(
         f"Total: {facts['total_after']} {plural_noun(facts['total_after'], 'query', 'queries')}.",
         "",
     ]
-    # #2375: the statements AWS DMS ran, which no engine was scored on.
+    # #2375, #1894: the statements left out, which no engine was scored on.
     excluded = facts["excluded_statements"]
     if excluded:
         lines += [f"{prose(excluded['statement'])}.", ""]

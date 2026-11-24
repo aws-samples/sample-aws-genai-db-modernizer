@@ -572,6 +572,120 @@ def written_columns(sql: str, source_engine: str) -> tuple[str, ...] | None:
     return None
 
 
+RowSourceKind = Literal["table", "cte", "function", "temp", "other"]
+
+
+@dataclass(frozen=True)
+class RowSource:
+    """One place a statement reads or writes rows from (#1894), as written.
+
+    ``kind`` is ``table`` (a stored table or view, ``parts`` its one to three name parts:
+    ``[[database.]schema.]name``), ``cte`` (a CTE name where that CTE is visible),
+    ``function`` (a table-valued function in a ``FROM`` item, a comma join or an
+    ``APPLY``: ``parts`` its qualifiers and its name), ``temp`` (a T-SQL temp table or
+    table variable, :func:`temp_object_name`) or ``other``: anything else, such as a
+    four-part linked-server name, a ``..`` name or a rowset function standing for a
+    qualifier (``OPENDATASOURCE(...).db.dbo.t``). Parts are lower-case, unquoted."""
+
+    kind: RowSourceKind
+    parts: tuple[str, ...] = ()
+
+
+@dataclass(frozen=True)
+class RowSources:
+    """Every row source of a statement (:func:`row_sources`), and whether it does more
+    than read: ``writes`` (an ``INSERT``, ``UPDATE``, ``DELETE``, ``MERGE``, ``SELECT ...
+    INTO``, ``OUTPUT ... INTO``, DDL, a statement that is not a query, or a command the
+    parser kept as text) and ``next_value`` (a ``NEXT VALUE FOR``, which advances a
+    sequence)."""
+
+    sources: tuple[RowSource, ...]
+    writes: bool
+    next_value: bool
+
+
+_ROW_SOURCE_WRITES: tuple[type[exp.Expr], ...] = (
+    exp.Insert, exp.Update, exp.Delete, exp.Merge, exp.Create, exp.Drop, exp.Alter,
+    exp.TruncateTable, exp.Into, exp.Command, exp.Returning, exp.Grant, exp.Execute,
+)  # fmt: skip
+
+
+def _name_parts(node: exp.Expr | None) -> tuple[str, ...] | None:
+    """The plain name parts of a ``Dot`` chain or identifier, lower-case; None when a
+    part is not a plain name."""
+    if isinstance(node, exp.Identifier | exp.Var):
+        return (str(node.name).lower(),) if node.name else None
+    if isinstance(node, exp.Dot):
+        left, right = _name_parts(node.this), _name_parts(node.expression)
+        return left + right if left is not None and right is not None else None
+    return None
+
+
+def _row_source(node: exp.Table | exp.Lateral) -> RowSource | None:
+    """A table node's or an ``APPLY``'s row source; None for an ``APPLY`` of a subquery
+    (its own tables are walked) or a ``VALUES`` list."""
+    target = node.this
+    if isinstance(node, exp.Lateral) and isinstance(target, exp.Subquery | exp.Values):
+        return None
+    if isinstance(node, exp.Table) and isinstance(target, exp.Values):
+        return None
+    fn = _row_function_name(target)
+    if fn is not None:
+        qualifier: tuple[str, ...] | None = ()
+        if isinstance(target, exp.Dot):
+            qualifier = _name_parts(target.this)
+        if isinstance(node, exp.Table):
+            outer = tuple(str(p).lower() for p in (node.catalog, node.db) if p)
+            qualifier = outer + qualifier if qualifier is not None else None
+        if qualifier is None:
+            return RowSource("other")
+        return RowSource("function", (*qualifier, fn))
+    if isinstance(node, exp.Table):
+        if temp_object_name(node):
+            return RowSource("temp", (temp_object_name(node) or "",))
+        if isinstance(target, exp.Identifier) and target.name:
+            parts = tuple(
+                str(p.name).lower()
+                for p in (node.args.get("catalog"), node.args.get("db"))
+                if isinstance(p, exp.Identifier) and p.name
+            ) + (str(target.name).lower(),)
+            # A missing middle part (``db..t``) is not a name this reading accounts for.
+            if node.args.get("catalog") is not None and not node.db:
+                return RowSource("other")
+            return RowSource("table", parts)
+    return RowSource("other")
+
+
+def row_sources(sql: str, source_engine: str) -> RowSources | None:
+    """Every row source in ``sql`` (:class:`RowSources`), read with the source engine's
+    dialect: each table node and ``APPLY`` of every statement, subqueries included, in
+    text order with duplicates. None when the text falls back (sqlglot cannot read it),
+    so a caller that must account for every source can refuse the statement."""
+    parsed = _parse(sql, source_engine)
+    if parsed.fallback_reason is not None or not parsed.statements:
+        return None
+    sources: list[RowSource] = []
+    writes = next_value = False
+    for statement in parsed.statements:
+        if not isinstance(statement, exp.Query):
+            writes = True
+        for node in statement.walk():
+            if isinstance(node, _ROW_SOURCE_WRITES):
+                writes = True
+            elif isinstance(node, exp.NextValueFor):
+                next_value = True
+            if isinstance(node, exp.Table | exp.Lateral):
+                source = _row_source(node)
+                if source is None:
+                    continue
+                if source.kind == "table" and isinstance(node, exp.Table):
+                    ref = _ref_from_node(node)
+                    if ref is not None and _is_cte_reference(node, ref):
+                        source = RowSource("cte", source.parts)
+                sources.append(source)
+    return RowSources(sources=tuple(sources), writes=writes, next_value=next_value)
+
+
 # How many views deep a statement's views are resolved (a view on a view on a view ...).
 _MAX_VIEW_DEPTH = 16
 

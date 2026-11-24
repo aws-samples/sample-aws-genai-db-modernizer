@@ -178,7 +178,7 @@ def gate_block_facts(
             if isinstance(gate.get("source_table_count"), int)
             else source_table_count(collector) if collector is not None else None
         ),
-        # #2375: the statements AWS DMS ran, left out of the workload before routing;
+        # #2375, #1894: the statements left out of the workload before routing;
         # None with no collection or nothing left out.
         "excluded_statements": excluded_statement_facts(collector),
     }

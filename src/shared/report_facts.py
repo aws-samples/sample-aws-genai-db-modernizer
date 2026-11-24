@@ -4194,9 +4194,10 @@ def compute_report_facts(
     ``rate_windows`` is how many statements' call rates used each window basis
     (``src.shared.rate_window.rate_window_facts``, #1893), which needs the collection:
     synthesis passes it, and a report rebuilt without the collection has None.
-    ``excluded_statements`` is the statements AWS DMS ran that the collector left out of
-    the workload (``src.shared.excluded_statements.excluded_statement_facts``,
-    #2375): synthesis passes it, and a report rebuilt without the collection has None.
+    ``excluded_statements`` is the statements AWS DMS ran, or SQL Server ran on its own
+    catalogs, that the collector left out of the workload
+    (``src.shared.excluded_statements.excluded_statement_facts``, #2375, #1894):
+    synthesis passes it, and a report rebuilt without the collection has None.
     ``hot_partitions`` is each DynamoDB design entry above the at-risk share of one
     partition key value's limit, with its load per key value estimated
     (``src.shared.partition_load.hot_partition_rows``, #1989), which needs the design and
@@ -4396,7 +4397,7 @@ def compute_report_facts(
         "row_counts": dict(row_counts) if row_counts is not None else None,
         # #1893: the window basis of each statement's call rate, and the 24-hour assumption.
         "rate_windows": dict(rate_windows) if rate_windows is not None else None,
-        # #2375: the statements AWS DMS ran, left out of the workload, stated once.
+        # #2375, #1894: the statements left out of the workload, stated once.
         "excluded_statements": (
             dict(excluded_statements) if excluded_statements is not None else None
         ),
