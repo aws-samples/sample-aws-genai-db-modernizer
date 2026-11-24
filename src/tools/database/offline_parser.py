@@ -878,6 +878,7 @@ def _merge_oracle_shapes(groups: dict[str, list[dict]], order: list[str]) -> lis
     tie), so a merged row is named like the sample text it keeps. Returns the new order,
     by first appearance. A group whose rows differ in shape (one digest, several shapes)
     is left whole: a shared digest is already the collection's own statement of identity.
+    So is a group whose text is all comment and has no shape.
     """
     from src.tools.sql.normalize import literal_shape
 
@@ -889,6 +890,11 @@ def _merge_oracle_shapes(groups: dict[str, list[dict]], order: list[str]) -> lis
             by_shape.setdefault(f"digest:{key}", []).append(key)
             continue
         (shape,) = shapes
+        if not shape:
+            # All comment (an old flattened text that begins with ``--``): no shape to
+            # compare, so the digest stays the statement's identity (#1899).
+            by_shape.setdefault(f"digest:{key}", []).append(key)
+            continue
         by_shape.setdefault(shape, []).append(key)
         if all(len(str(v.get("query_text") or "")) >= ORACLE_TEXT_CAP for v in groups[key]):
             truncated.add(shape)
