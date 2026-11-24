@@ -1171,6 +1171,20 @@ def _assert_readiness_shown(shown: Locator, wave: dict, db: str, n: str) -> None
     assert status.inner_text().strip() == want, (db, n, status.inner_text())
 
 
+def _wave_toggle(card: Locator) -> Locator:
+    """The control that opens a roadmap wave (#2286): its section header, the first
+    expandable control in the card."""
+    return card.locator("[aria-expanded][aria-controls]").first
+
+
+def _open_wave(card: Locator) -> None:
+    """Open a collapsed roadmap wave (#2286), as a reader would, and wait for it."""
+    toggle = _wave_toggle(card)
+    if toggle.get_attribute("aria-expanded") != "true":
+        toggle.click()
+    expect(toggle).to_have_attribute("aria-expanded", "true")
+
+
 def test_results_page_shows_the_reports_wave_plan(
     page: Page, ui: str, all_runs: list[PipelineResult]
 ) -> None:
@@ -1198,6 +1212,11 @@ def test_results_page_shows_the_reports_wave_plan(
             for c in cards
         }
         assert shown == expected, r.db
+        # #2286: every wave opens collapsed, its headline in its header; open each to read
+        # its gate, readiness and notes.
+        for c in cards:
+            expect(_wave_toggle(c)).to_have_attribute("aria-expanded", "false")
+            _open_wave(c)
         lists = {
             str(w["wave"]): [p["items"] for p in (w.get("gate_parts") or []) if p["items"]]
             for w in report["migration_waves"]
@@ -1276,6 +1295,140 @@ def test_results_page_shows_the_reports_wave_plan(
         count = report["facts"]["migration_wave_count"]
         assert f"Migration roadmap ({count} waves)" in section.inner_text(), r.db
         assert ev == {"console": [], "pageerror": [], "failed": []}, (r.db, ev)
+
+
+@pytest.mark.parametrize("width", [1440, 390])
+def test_roadmap_waves_steps_and_stages_open_one_level_at_a_time(
+    page: Page, ui: str, all_runs: list[PipelineResult], width: int
+) -> None:
+    """#2286: each wave is a collapsed section whose header states its engines, its
+    headline (the query and table counts) and its readiness, so the plan's shape reads
+    with every wave closed; the headline is the reports' (``_wave_headline_stats``). The
+    largest wave opens with the keyboard, then one of its steps, then one of that step's
+    stages; each header states report.json's counts and the stage's fields are its own.
+    The stage and the step close again with the keyboard. At phone width nothing scrolls
+    the page sideways."""
+    from src.shared.engine_names import display_engine
+
+    def counted(n: int, one: str, many: str) -> str:
+        return f"{n} {one if n == 1 else many}"
+
+    page.set_viewport_size({"width": width, "height": 900})
+    checked = 0
+    for r in all_runs:
+        report = json.loads((r.artifact_root / r.report["report"]).read_text())
+        headlines = {n: headline for n, (headline, _) in _report_wave_stats(r).items()}
+        facts = report.get("facts") or {}
+        no_move = {str(w["wave"]) for w in facts.get("waves") or [] if w.get("no_move")}
+        plan = facts.get("slice_plan") or {}
+        readiness = {str(w["wave"]): w.get("readiness") for w in facts.get("waves") or []}
+        ev = _watch(page)
+        _goto_results(page, ui, r, "plan")
+        section = page.locator("#migration-roadmap-section")
+        section.wait_for(timeout=READY_MS)
+        for w in report["migration_waves"]:
+            card = section.locator(f'[data-wave="{w["wave"]}"]')
+            expect(_wave_toggle(card)).to_have_attribute("aria-expanded", "false")
+            expect(card.get_by_role("heading", level=3).first).to_contain_text(
+                f"Wave {w['wave']}: "
+            )
+            badges = card.locator("[data-engine] [data-engine-badge]")
+            assert badges.count() == len(w.get("engines") or []), (r.db, w["wave"])
+            for badge in badges.all():
+                expect(badge).to_be_visible()
+            # The header's headline is the reports' own, word for word, and a wave that
+            # moves nothing states none (#1383).
+            stats = card.locator("[data-figure=wave-stats]")
+            if str(w["wave"]) in no_move:
+                assert stats.count() == 0, (r.db, w["wave"])
+            else:
+                expect(stats).to_be_visible()
+                assert " ".join(stats.inner_text().split()) == headlines[str(w["wave"])], (
+                    r.db,
+                    w["wave"],
+                )
+            shown = card.locator("[data-figure=wave-header-readiness]")
+            if readiness.get(str(w["wave"])):
+                expect(shown).to_be_visible()
+                assert shown.get_attribute("data-readiness") == readiness[str(w["wave"])], r.db
+            # Closed, a wave shows none of its body: no step, stage or gate.
+            for hook in ("[data-plan-step]", "[data-figure=wave-gate]"):
+                if card.locator(hook).count():
+                    expect(card.locator(hook).first).to_be_hidden()
+        phases = [p for p in plan.get("wave_phases") or [] if p.get("stage_labels")]
+        if not phases:
+            assert ev == {"console": [], "pageerror": [], "failed": []}, (r.db, ev)
+            continue
+        phase = max(phases, key=lambda p: (p["stage_count"], -p["phase_wave"]))
+        steps = {s["step_number"]: s for s in plan.get("plan_steps") or []}
+        card = section.locator(f'[data-wave="{phase["phase_wave"]}"]')
+        toggle = _wave_toggle(card)
+        toggle.focus()
+        page.keyboard.press("Enter")
+        expect(toggle).to_have_attribute("aria-expanded", "true")
+        step_cards = card.locator("[data-plan-step]")
+        numbers = [n for n in phase["step_numbers"] if steps[n].get("step_stages")]
+        assert step_cards.count() == len(numbers), (r.db, phase["phase_wave"])
+        first_step = step_cards.first
+        step_toggle = _wave_toggle(first_step)
+        expect(step_toggle).to_be_visible()
+        expect(step_toggle).to_have_attribute("aria-expanded", "false")
+        step = steps[numbers[0]]
+        title = (
+            f"Step {numbers[0]}: {display_engine(step['engine'])}"
+            if step.get("engine")
+            else f"Step {numbers[0]}"
+        )
+        expect(first_step.get_by_role("heading", level=5).first).to_have_text(title)
+        # The step's header states its stored stage and query counts.
+        step_counts = (
+            f"{counted(step.get('stage_count') or 0, 'stage', 'stages')}, "
+            f"{counted(step.get('query_count') or 0, 'query', 'queries')}"
+        )
+        expect(first_step.get_by_text(step_counts, exact=True).first).to_be_visible()
+        step_toggle.focus()
+        page.keyboard.press("Space")
+        expect(step_toggle).to_have_attribute("aria-expanded", "true")
+        stage = step["step_stages"][0]
+        stage_card = first_step.locator(f'[data-stage="{stage["label"]}"]')
+        stage_toggle = _wave_toggle(stage_card)
+        expect(stage_card.get_by_role("heading", level=6).first).to_contain_text(
+            f"{stage['label']}: "
+        )
+        # The stage's header states its stored unit and query counts.
+        stage_counts = (
+            f"{counted(stage.get('unit_count') or 0, 'unit', 'units')}, "
+            f"{counted(stage.get('query_count') or 0, 'query', 'queries')}"
+        )
+        expect(stage_card.get_by_text(stage_counts, exact=True).first).to_be_visible()
+        stage_toggle.focus()
+        page.keyboard.press("Enter")
+        expect(stage_toggle).to_have_attribute("aria-expanded", "true")
+        if stage.get("gate"):
+            gate = stage_card.locator("[data-figure=stage-gate]")
+            expect(gate).to_be_visible()
+            assert gate.inner_text() == stage["gate"], (r.db, stage["label"])
+        assert stage_card.locator("[data-figure=stage-query-count]").inner_text() == (
+            f"{stage['query_count']} {'query' if stage['query_count'] == 1 else 'queries'}"
+        ), (r.db, stage["label"])
+        assert stage_card.locator("[data-figure=stage-unit-count]").inner_text() == counted(
+            stage.get("unit_count") or 0, "unit", "units"
+        ), (r.db, stage["label"])
+        assert page.evaluate("document.documentElement.scrollWidth <= window.innerWidth + 1"), (
+            r.db,
+            width,
+        )
+        # Each closes again with the keyboard: the stage with Space, the step with Enter.
+        stage_toggle.focus()
+        page.keyboard.press("Space")
+        expect(stage_toggle).to_have_attribute("aria-expanded", "false")
+        step_toggle.focus()
+        page.keyboard.press("Enter")
+        expect(step_toggle).to_have_attribute("aria-expanded", "false")
+        expect(stage_card.locator("[data-figure=stage-gate]")).to_be_hidden()
+        checked += 1
+        assert ev == {"console": [], "pageerror": [], "failed": []}, (r.db, ev)
+    assert checked, "no sample has a wave with stages"
 
 
 def _adoption_tiles(path: dict, adoption: dict) -> dict[str, str | None]:
@@ -1458,6 +1611,9 @@ def test_results_page_shows_the_adoption_paths_stages_and_one_step_option(
         _choose_path(panel, "full_target", adoption)
         for phase in plan.get("wave_phases") or []:
             card = section.locator(f'[data-wave="{phase["phase_wave"]}"]')
+            # #2286: the wave opens collapsed; open, it nests one section per step, and
+            # the step's stages in it.
+            _open_wave(card)
             line = card.locator("[data-figure=wave-stages-line]").inner_text().strip()
             numbers = phase["step_numbers"]
             span = (
@@ -1469,7 +1625,8 @@ def test_results_page_shows_the_adoption_paths_stages_and_one_step_option(
             stages = f"{n} {'stage' if n == 1 else 'stages'}"
             assert line == f"{span}: {stages}", (r.db, line)
             assert f"- {span} ({stages}):" in md, (r.db, span)
-            card.locator('[data-disclosure="wave-stage-list"]').click()
+            step_cards = card.locator("[data-plan-step]").all()
+            assert [int(s.get_attribute("data-plan-step") or 0) for s in step_cards] == numbers
             shown = card.locator("[data-stage]")
             assert [s.get_attribute("data-stage") for s in shown.all()] == phase["stage_labels"]
             # #1699: open, each step's why sentence is report.json's, word for word, and
@@ -3186,7 +3343,9 @@ def _expand_every_section(page: Page) -> None:
     and a non-empty bounding box. ``click()`` fires the same click event the page's
     handlers open a section on. The check after the loop fails when a visible header
     is still closed, so a click that stopped opening sections cannot pass."""
-    for _ in range(4):  # nested sections open one level at a time
+    # Nested sections open one level at a time; the roadmap alone nests a wave, its
+    # steps and their stages (#2286).
+    for _ in range(6):
         # Section headers only (they control their content); never a menu, a
         # dropdown or a popover trigger.
         clicked = page.evaluate("""() => {

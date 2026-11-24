@@ -26,6 +26,7 @@ from .adoption import (
     NO_FIGURE,
     ONE_STEP_CHECK_HEADER,
     RISKS_HEADER,
+    STAGE_HEADER,
     STAGE_KIND_LABELS,
     STEP_COLUMN,
     UNIT_METRIC_FIELDS,
@@ -400,7 +401,7 @@ def wave_stages_md(facts: dict[str, Any], wave: int, gates: _SaidOnce) -> list[s
         f"- {span} ({fmt_num(count)} {plural_noun(count, 'stage')}):",
         "",
         *_table_md(
-            ["Stage", "What it moves", "Units", "Queries", "Gate"],
+            list(STAGE_HEADER),
             [_stage_row(stage, gates) for stage in shown],
         ),
         "",

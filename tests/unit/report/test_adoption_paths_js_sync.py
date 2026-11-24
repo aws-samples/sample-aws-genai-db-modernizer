@@ -62,6 +62,13 @@ def test_the_ui_states_every_one_step_rule_in_the_reports_words() -> None:
         assert EN[f"{KEY}one-step.rule.{rule}"] == labels[rule], rule
 
 
+def test_the_ui_names_a_stage_s_fields_as_the_report_s_stage_table_does() -> None:
+    """#2286: open, a stage states its fields as key-value pairs labelled with the
+    engineering report's stage table columns."""
+    fields = [EN[f"{KEY}stage-field.{f}"] for f in ("kind", "units", "queries", "gate")]
+    assert tuple(fields) == adoption.STAGE_HEADER[1:]
+
+
 def test_the_ui_s_tile_and_check_headers_are_the_report_s_columns() -> None:
     assert EN[KEY + "tile.risks"] == adoption.RISKS_HEADER
     columns = [EN[f"{KEY}one-step.column.{c}"] for c in ("check", "observed", "limit", "holds")]

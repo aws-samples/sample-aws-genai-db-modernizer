@@ -61,6 +61,11 @@ import {
  * this component's own state: it changes what is shown and is never sent anywhere. A
  * report without facts.adoption shows no selector and greys nothing.
  *
+ * #2286: each wave is a collapsed container section ("Wave 3: ..."). Its header holds the
+ * engines, the headline with the query and table counts, and the readiness status, so
+ * the shape of the plan reads with every wave closed; open, it holds the rest, and its
+ * steps and stages nest inside as collapsed sections of their own (WaveStages).
+ *
  * Callers pass `t` (the page's own `useTranslation` function), like
  * QueryRoutingTable, and may pass `schemaSectionId`, the target schemas' section the
  * one-step option links to.
@@ -161,6 +166,38 @@ function GateText({ wave, t }) {
   );
 }
 
+// What a collapsed wave shows in its header (#2286), so the plan's shape reads without
+// opening it: the wave's engines, the reports' headline (its query and table counts) and
+// the readiness status, the wave's gate state. A wave the selected path leaves out says
+// so here too. Every figure is report.json's, as the body and the reports print it.
+function WaveHeaderFacts({ synthesis, wave, readiness, leftOut, t }) {
+  const status = readiness ? readinessText(readiness, t) : null;
+  return (
+    <SpaceBetween size="xxs">
+      <SpaceBetween direction="horizontal" size="xs" alignItems="center">
+        {(wave.engines || []).map(engine => (
+          <span key={engine} data-engine={engine}><EngineBadge engine={engine} /></span>
+        ))}
+        {status && (
+          <span data-figure="wave-header-readiness" data-readiness={readiness.readiness || ''}>
+            <Box variant="span" color="text-body-secondary">{t('analysis-results.waves.header-readiness')}</Box>
+            {' '}
+            <StatusIndicator type={readinessType(readiness)}>{status}</StatusIndicator>
+          </span>
+        )}
+        {leftOut && (
+          <span data-figure="wave-left-out-badge">
+            <Badge color="grey">{t('analysis-results.adoption.stage-left-out')}</Badge>
+          </span>
+        )}
+      </SpaceBetween>
+      {!waveMovesNothing(synthesis, wave) && (
+        <Box variant="span"><span data-figure="wave-stats">{waveHeadline(t, synthesis, wave)}</span></Box>
+      )}
+    </SpaceBetween>
+  );
+}
+
 // A wave the selected path leaves out: marked by a dashed rule and a full-contrast
 // badge, never faded (WCAG AA contrast, review of #2249).
 const LEFT_OUT_STYLE = { borderLeft: '3px dashed currentColor', paddingLeft: '12px' };
@@ -233,6 +270,7 @@ const MigrationWavePlan = memo(({ synthesis, t, schemaSectionId }) => {
           {waves.map((wave, index) => {
             const phase = wavePhase(plan, wave.wave);
             const leftOut = pathLeavesWaveOut(greying, phase);
+            const readiness = waveReadiness(synthesis, wave);
             return (
             <div
               key={wave.wave}
@@ -240,76 +278,72 @@ const MigrationWavePlan = memo(({ synthesis, t, schemaSectionId }) => {
               data-left-out={leftOut ? 'true' : undefined}
               style={leftOut ? LEFT_OUT_STYLE : undefined}
             >
-              <SpaceBetween size="xs">
-                <Box variant="h3">
-                  {t('analysis-results.waves.wave-title', { wave: wave.wave, title: waveTitle(wave) })}
-                </Box>
-                <SpaceBetween direction="horizontal" size="xs">
-                  {(wave.engines || []).map(engine => (
-                    <span key={engine} data-engine={engine}><EngineBadge engine={engine} /></span>
-                  ))}
+              <ExpandableSection
+                variant="container"
+                headingTagOverride="h3"
+                headerText={t('analysis-results.waves.wave-title', { wave: wave.wave, title: waveTitle(wave) })}
+                headerSecondaryContent={(
+                  <WaveHeaderFacts
+                    synthesis={synthesis}
+                    wave={wave}
+                    readiness={readiness}
+                    leftOut={leftOut}
+                    t={t}
+                  />
+                )}
+              >
+                <SpaceBetween size="s">
+                  {leftOut && (
+                    <Box>
+                      <span data-figure="wave-left-out">
+                        {t('analysis-results.adoption.wave-left-out', { path: selectedLabel })}
+                      </span>
+                    </Box>
+                  )}
+                  {pathStopsInWave(greying, phase) && (
+                    <Box>
+                      <span data-figure="wave-path-stops">
+                        {t('analysis-results.adoption.wave-stops-inside', {
+                          path: selectedLabel, step: greying.stops_after_step,
+                        })}
+                      </span>
+                    </Box>
+                  )}
+                  {wave.rationale && <Box color="text-body-secondary">{wave.rationale}</Box>}
+                  {/* #2287 turns the gate into a checklist; it stays one sentence here. */}
+                  {wave.gate && (
+                    <div data-figure="wave-gate"><GateText wave={wave} t={t} /></div>
+                  )}
+                  {readiness && <WaveReadiness view={readiness} t={t} />}
+                  {heterogeneousNote(synthesis, wave) && (
+                    <div data-figure="wave-heterogeneous-note">{heterogeneousNote(synthesis, wave)}</div>
+                  )}
+                  {waveGaps(synthesis, wave).length > 0 && (
+                    <div>
+                      <Box variant="h4">{t('analysis-results.waves.gaps')}</Box>
+                      <ul>
+                        {waveGaps(synthesis, wave).map(gap => (
+                          <li key={gap.rule_id} data-figure="wave-gap">
+                            {t('analysis-results.waves.gap', {
+                              feature: gap.feature || gap.rule_id,
+                              impact: t(`analysis-results.waves.gap-impact.${gap.impact}`),
+                              reason: gap.reason || '',
+                            })}
+                          </li>
+                        ))}
+                      </ul>
+                    </div>
+                  )}
+                  {index === 0 && <RoutineMigrationSection synthesis={synthesis} t={t} />}
+                  {index === 0 && <EngineChoicesNote synthesis={synthesis} t={t} />}
+                  {phase && <WaveStages plan={plan} wave={wave.wave} path={greying} t={t} />}
+                  {!waveMovesNothing(synthesis, wave) && (wave.tables || []).length > 0 && (
+                    <ExpandableSection headerText={t('analysis-results.waves.tables')} variant="footer">
+                      <Box fontSize="body-s"><span data-figure="wave-tables">{wave.tables.join(', ')}</span></Box>
+                    </ExpandableSection>
+                  )}
                 </SpaceBetween>
-                {!waveMovesNothing(synthesis, wave) && (
-                  <div data-figure="wave-stats">{waveHeadline(t, synthesis, wave)}</div>
-                )}
-                {leftOut && (
-                  <div>
-                    <span data-figure="wave-left-out-badge">
-                      <Badge color="grey">{t('analysis-results.adoption.stage-left-out')}</Badge>
-                    </span>
-                  </div>
-                )}
-                {leftOut && (
-                  <Box>
-                    <span data-figure="wave-left-out">
-                      {t('analysis-results.adoption.wave-left-out', { path: selectedLabel })}
-                    </span>
-                  </Box>
-                )}
-                {pathStopsInWave(greying, phase) && (
-                  <Box>
-                    <span data-figure="wave-path-stops">
-                      {t('analysis-results.adoption.wave-stops-inside', {
-                        path: selectedLabel, step: greying.stops_after_step,
-                      })}
-                    </span>
-                  </Box>
-                )}
-                {wave.rationale && <Box color="text-body-secondary">{wave.rationale}</Box>}
-                {wave.gate && (
-                  <div data-figure="wave-gate"><GateText wave={wave} t={t} /></div>
-                )}
-                {waveReadiness(synthesis, wave) && (
-                  <WaveReadiness view={waveReadiness(synthesis, wave)} t={t} />
-                )}
-                {heterogeneousNote(synthesis, wave) && (
-                  <div data-figure="wave-heterogeneous-note">{heterogeneousNote(synthesis, wave)}</div>
-                )}
-                {waveGaps(synthesis, wave).length > 0 && (
-                  <div>
-                    <Box variant="h4">{t('analysis-results.waves.gaps')}</Box>
-                    <ul>
-                      {waveGaps(synthesis, wave).map(gap => (
-                        <li key={gap.rule_id} data-figure="wave-gap">
-                          {t('analysis-results.waves.gap', {
-                            feature: gap.feature || gap.rule_id,
-                            impact: t(`analysis-results.waves.gap-impact.${gap.impact}`),
-                            reason: gap.reason || '',
-                          })}
-                        </li>
-                      ))}
-                    </ul>
-                  </div>
-                )}
-                {index === 0 && <RoutineMigrationSection synthesis={synthesis} t={t} />}
-                {index === 0 && <EngineChoicesNote synthesis={synthesis} t={t} />}
-                {phase && <WaveStages plan={plan} wave={wave.wave} path={greying} t={t} />}
-                {!waveMovesNothing(synthesis, wave) && (wave.tables || []).length > 0 && (
-                  <ExpandableSection headerText={t('analysis-results.waves.tables')} variant="footer">
-                    <Box fontSize="body-s"><span data-figure="wave-tables">{wave.tables.join(', ')}</span></Box>
-                  </ExpandableSection>
-                )}
-              </SpaceBetween>
+              </ExpandableSection>
             </div>
             );
           })}

@@ -5,8 +5,8 @@
  * Each step's why sentence and the order metrics' plain names on the results page
  * (#1699, PR B). The sentence is facts.slice_plan.plan_steps[].why, shown as stored; the
  * metric names are facts.slice_plan.metric_labels, never a copy here: a label the facts
- * do not give is a metric the page leaves out. Both sit inside the wave's collapsed
- * stage list, so the page opens on the same view as before (#1699's decisions).
+ * do not give is a metric the page leaves out. Both sit in the wave above its step
+ * sections (#2286), inside the collapsed wave, so the page opens on the waves alone.
  */
 
 import { act } from 'react';
@@ -92,24 +92,19 @@ function render(p) {
   act(() => { root.render(<WaveStages plan={p} wave={3} path={null} t={t} />); });
 }
 
-function open() {
-  const button = container.querySelector('[data-disclosure="wave-stage-list"]');
-  act(() => { button.dispatchEvent(new MouseEvent('click', { bubbles: true })); });
-}
-
 const all = (name) => [...container.querySelectorAll(`[data-figure="${name}"]`)];
 
-test('the sentences sit inside the collapsed stage list, so the default view is unchanged', () => {
+test('the sentences sit above the wave\'s step sections, in step order', () => {
   render(plan());
-  expect(all('step-why')).toHaveLength(0);
-  expect(container.textContent).not.toContain(WHY_3);
-  open();
   expect(all('step-why').map(el => el.textContent)).toEqual([WHY_3, WHY_4]);
+  const why = all('step-why-block')[0];
+  const steps = all('wave-step-list')[0];
+  expect(why.compareDocumentPosition(steps) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+  expect(steps.contains(why)).toBe(false);
 });
 
 test('a sentence is shown as stored, as text, never as markup', () => {
   render(plan());
-  open();
   const [, second] = all('step-why');
   expect(second.textContent).toBe(WHY_4);
   expect(second.querySelector('b')).toBeNull();
@@ -117,7 +112,6 @@ test('a sentence is shown as stored, as text, never as markup', () => {
 
 test('the step figures are headed by the facts metric_labels', () => {
   render(plan());
-  open();
   const table = all('step-metrics')[0];
   const headers = [...table.querySelectorAll('th')].map(th => th.textContent);
   // No transactions split and no moved cost: those columns are left out.
@@ -137,7 +131,6 @@ test('the step figures are headed by the facts metric_labels', () => {
 
 test('no default wording names a metric: every name is the facts own', () => {
   render(plan());
-  open();
   expect(all('step-metrics')).toHaveLength(1);
   const headings = all('step-metrics').map(el => el.querySelector('thead').textContent).join(' ');
   ['how tightly tied', 'shared by many parts', 'tables copied across', 'what the move touches']
@@ -146,9 +139,6 @@ test('no default wording names a metric: every name is the facts own', () => {
 
 test('a unit line states its metrics under the facts labels', () => {
   render(plan());
-  open();
-  const units = container.querySelector('[data-disclosure="stage-units"]');
-  act(() => { units.dispatchEvent(new MouseEvent('click', { bubbles: true })); });
   const line = all('stage-unit')[0].textContent;
   expect(line).toContain('sentinel gravity: 0.5');
   expect(line).toContain('sentinel hub_score: 0');
@@ -157,7 +147,6 @@ test('a unit line states its metrics under the facts labels', () => {
 
 test('a plan with no labels shows the sentences and no metric it cannot name', () => {
   render(plan({}));
-  open();
   expect(all('step-why')).toHaveLength(2);
   expect(all('step-metrics')).toHaveLength(0);
 });
@@ -180,7 +169,6 @@ test('the figures table prints large and tiny values as the reports do', () => {
   p.plan_steps[1].metrics.cut_cost.write_site_count = 1234;
   p.plan_steps[1].metrics.hub_score = 0.004;
   render(p);
-  open();
   const row = [...all('step-metrics')[0].querySelectorAll('tbody tr')][1];
   expect([...row.children].map(td => td.textContent)).toEqual(['4', '0.62', '<0.01', '3', '1,234', '67.3%']);
 });
