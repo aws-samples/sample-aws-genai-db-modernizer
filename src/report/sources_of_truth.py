@@ -61,7 +61,7 @@ def _risks_md(facts: dict[str, Any], rows: list[dict[str, Any]]) -> list[str]:
         out += ["", "The risk of each table below:", ""] if sentence else ["The risk of each:", ""]
         for row in own:
             out.append(
-                f"- `{escaping.md_cell(escaping.md_code(row.get('table', '?')))}`: "
+                f"- `{escaping.md_code(row.get('table', '?'))}`: "
                 f"{escaping.md_text(row.get('risk', ''))}"
             )
     return out
@@ -95,7 +95,7 @@ def sources_of_truth_md(report: dict[str, Any]) -> list[str]:
         ]
         for row in rows:
             out.append(
-                f"| `{escaping.md_cell(escaping.md_code(row.get('table', '?')))}` "
+                f"| {escaping.md_code_cell(row.get('table', '?'))} "
                 f"| {escaping.md_cell(display_engine(str(row.get('source_of_truth', ''))))} "
                 f"| {escaping.md_cell(cdc_direction(row))} "
                 f"| {escaping.md_cell(row.get('replica_read_count', 0))} |"

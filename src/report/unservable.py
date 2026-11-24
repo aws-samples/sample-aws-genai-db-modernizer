@@ -247,7 +247,7 @@ def unservable_md(report: dict[str, Any]) -> list[str]:
     ]
     for q in facts.get("unservable_queries") or []:
         out.append(
-            f"| `{escaping.md_cell(escaping.md_code(q.get('query_id', '?')))}` "
+            f"| {escaping.md_code_cell(q.get('query_id', '?'))} "
             f"| {escaping.md_cell(unservable_engine_text(q))} "
             f"| {escaping.md_cell(q.get('explanation', ''))} "
             f"| {escaping.md_cell(_gates(q) or '-')} "

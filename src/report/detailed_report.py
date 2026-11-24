@@ -58,7 +58,7 @@ def _code(value: Any) -> str:
 
 def _cell_code(value: Any) -> str:
     """An id in a code span inside a table cell: a pipe is escaped for the table."""
-    return f"`{escaping.md_cell(escaping.md_code(value))}`"
+    return escaping.md_code_cell(value)
 
 
 def _absences(detail: dict[str, Any]) -> list[str]:
