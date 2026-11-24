@@ -43,6 +43,7 @@ import PendingEngineChoices from "../components/PendingEngineChoices";
 import UnservableAssignmentNotice from "../components/UnservableAssignmentNotice";
 import ApiManager from "../classes/ApiManager";
 import { failureFlash, upsertFlash } from "../utils/requestFailure";
+import { feasibilityFlash } from "../utils/feasibilityFindings";
 import QueryFlow from "../components/QueryFlow";
 import {
   buildAssignmentSummary,
@@ -146,6 +147,19 @@ const AssignmentGatePage = memo(() => {
 
   const addFailure = useCallback((header, source, options = {}) => {
     setFlashbarItems(prev => upsertFlash(prev, failureFlash(t, source, { header, variant: 'form', ...options })));
+  }, [t]);
+
+  // #2519: the feasibility review's warnings on a saved edit, each finding's own message.
+  const addFeasibility = useCallback((response) => {
+    const flash = feasibilityFlash(t, response);
+    if (!flash) return;
+    const { lines, ...item } = flash;
+    const content = (
+      <ul data-testid="feasibility-findings">
+        {lines.map((line, i) => <li key={i}>{line}</li>)}
+      </ul>
+    );
+    setFlashbarItems(prev => upsertFlash(prev, { ...item, content }));
   }, [t]);
 
   const dismissFlash = useCallback((itemId) => {
@@ -275,6 +289,7 @@ const AssignmentGatePage = memo(() => {
 
       if (results['save']?.success) {
         addFlash('success', t('assignment-gate.flash.overrides-saved'), t('assignment-gate.flash.overrides-saved-detail', { count: overrideList.length }));
+        addFeasibility(results['save']);
         setOverrides({});
         setCacheOverrides({});
         // Refresh data
@@ -288,7 +303,7 @@ const AssignmentGatePage = memo(() => {
     } finally {
       setSavingOverrides(false);
     }
-  }, [jobId, overrides, cacheOverrides, addFlash, addFailure, fetchData, t, assignmentData]);
+  }, [jobId, overrides, cacheOverrides, addFlash, addFailure, addFeasibility, fetchData, t, assignmentData]);
 
   // ---- Save per-table engine choices (#1003) ----
   const handleSaveChoices = useCallback(async (body) => {
@@ -305,6 +320,7 @@ const AssignmentGatePage = memo(() => {
       ]);
       if (results['choices']?.success) {
         addFlash('success', t('assignment-gate.flash.overrides-saved'), t('assignment-gate.flash.overrides-saved-detail', { count: (body.table_choices || []).length + (body.overrides || []).length }));
+        addFeasibility(results['choices']);
         fetchData();
       } else {
         addFailure(t('assignment-gate.flash.save-failed'), results['choices'], { allowReason: true });
@@ -314,7 +330,7 @@ const AssignmentGatePage = memo(() => {
     } finally {
       setSavingOverrides(false);
     }
-  }, [jobId, databaseName, assignmentData, addFlash, addFailure, fetchData, t]);
+  }, [jobId, databaseName, assignmentData, addFlash, addFailure, addFeasibility, fetchData, t]);
 
   // ---- Handle Sankey node click ----
   const handleSankeyNodeClick = useCallback((nodeId) => {

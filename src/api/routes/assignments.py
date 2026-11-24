@@ -31,6 +31,7 @@ from src.contracts.assignment_models import (
     PendingEngineChoice,
     ValidationResult,
 )
+from src.contracts.feasibility_models import FeasibilityFinding
 from src.shared.assumptions import assumption_lines, gate_assumption_items, read_assumptions
 from src.shared.contract_versioning import load_contract
 from src.shared.gate_facts import cache_candidate_reads, gate_block_facts
@@ -150,6 +151,15 @@ class AssignmentResponse(BaseModel):
     skipped_engines: list[str] = Field(
         default_factory=list,
         description="Engines with zero in-scope queries (schema design will be SKIPPED)",
+    )
+    feasibility_findings: list[FeasibilityFinding] = Field(
+        default_factory=list,
+        description=(
+            "The feasibility review's findings on the edit a PUT applied (ADR-029 "
+            "Decision C, #2519): each advisory finding it introduced, and each blocking "
+            "one the routing already had that it did not make worse. A blocking finding "
+            "the edit introduced refuses it with a 422 instead"
+        ),
     )
     cache_reads: dict | None = Field(
         None,
@@ -313,6 +323,17 @@ async def get_assignments(
     )
 
 
+def _rerouted_note(rerouted) -> str:
+    """The sentence a refused edit adds when the saved routing was re-routed first: the
+    re-route's version stands even though the edits were refused (#992, #2519)."""
+    if rerouted is None:
+        return ""
+    return (
+        " (The saved routing was first re-routed so each table's writes land on "
+        f"one engine: assignment version {rerouted.assignment.version}.)"
+    )
+
+
 @router.put("/{job_id}/assignments", response_model=AssignmentResponse)
 async def put_assignments(
     body: AssignmentOverrideRequest,
@@ -393,7 +414,8 @@ async def put_assignments(
         raise HTTPException(
             status_code=422,
             detail={
-                "message": "Assignment validation failed with hard errors",
+                "message": "Assignment validation failed with hard errors"
+                + _rerouted_note(rerouted),
                 "errors": exc.errors,
                 "warnings": exc.warnings,
             },
@@ -404,14 +426,7 @@ async def put_assignments(
         # maps to the same 400 -- round 2 review: before this, only UnknownQuery
         # and ExcludedEngineOverride were caught by name here, so
         # LosingAuroraEngineOverride fell through to an unhandled 500.
-        detail = str(exc)
-        if rerouted is not None:
-            # The re-route version stands even though these edits were refused.
-            detail += (
-                f" (The saved routing was first re-routed so each table's writes land on "
-                f"one engine: assignment version {rerouted.assignment.version}.)"
-            )
-        raise HTTPException(status_code=400, detail=detail) from None
+        raise HTTPException(status_code=400, detail=str(exc) + _rerouted_note(rerouted)) from None
 
     if result is None:
         # "Decide for me" with nothing pending and no edit: the current version.
@@ -426,5 +441,6 @@ async def put_assignments(
         assignment=result.assignment,
         validation=result.validation,
         skipped_engines=result.skipped_engines,
+        feasibility_findings=result.feasibility_findings,
         pending_choices=choices,
     )

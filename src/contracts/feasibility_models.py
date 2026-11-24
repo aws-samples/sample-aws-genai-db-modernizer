@@ -54,7 +54,8 @@ class FindingKind(str, Enum):
     # A routine unit a customer edit split across engines (#1654, ADR-031 Decision 4
     # Amendment 21): the routine's statements run together on the source, so the routine
     # has to be rewritten to call each engine, and a transaction it opens no longer spans
-    # them. Advisory: the customer's split stands, as a co-dependency split's does.
+    # them. Advisory: the customer's split stands (a co-dependency split onto an engine
+    # that cannot serve the JOIN is blocking instead, and the gate refuses it, #2519).
     ROUTINE_UNIT_SPLIT = "routine_unit_split"
 
 

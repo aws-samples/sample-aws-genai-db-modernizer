@@ -99,7 +99,8 @@ _CARRIED = "', already split in a version saved before whole units (contract 1.2
 def _one_engine(name: str, table: str, key: str, label: str, *, customer: bool) -> Check:
     """Every in-scope member of each ``table`` group (keyed by ``key``) on one engine, in
     every version (a member with no engine, unservable, is on none); ``customer``: a
-    split onto engines the customer picked stands."""
+    split onto engines the customer picked passes this check (the customer gate's
+    feasibility review refuses a JOIN split onto an engine that cannot serve it, #2519)."""
     names = {"table": table, "key": key, "label": label}
     common = {**names, "customer": _CUSTOMER_SPLIT if customer else "false"}
     return Check(

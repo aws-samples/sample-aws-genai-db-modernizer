@@ -1124,6 +1124,7 @@
   "assignment-gate.flash.no-changes-detail": "No assignment overrides to save.",
   "assignment-gate.flash.overrides-saved": "Overrides saved",
   "assignment-gate.flash.overrides-saved-detail": "{{count}} assignment(s) updated.",
+  "assignment-gate.flash.feasibility-findings": "Saved. The feasibility review has warnings for this routing",
   "assignment-gate.flash.save-failed": "Save failed",
   "cache-layer.badge-label": "Cache layer",
   "cache-layer.cached-reads_one": "{{count}} designed cached read",
