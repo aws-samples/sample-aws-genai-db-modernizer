@@ -38,21 +38,53 @@ from typing import Any
 # ---------------------------------------------------------------------------
 
 
-def md_cell(value: Any) -> str:
-    """Escape a value for a **Markdown table cell**.
+# An underscore that can open emphasis: not after a letter or digit (a lax parser also
+# opens one before a space).
+# One that cannot open it is inert, since a closer needs an opener and each opener is escaped.
+_LOOSE_UNDERSCORE = re.compile(r"(?<![0-9A-Za-z])_")
 
-    A raw ``|`` starts a new cell and a newline ends the row, so an unescaped table
-    name or query fragment silently corrupts the table structure. Pipes are
-    backslash-escaped (the GFM-defined escape inside a cell) and CR/LF are collapsed
-    to a space so the value stays within its one cell. Also neutralizes inline HTML
-    (``< >``) — most Markdown renderers pass raw HTML through, so a ``<script>`` in a
-    table name would otherwise be live markup in the rendered document.
-    """
-    s = str(value)
-    s = s.replace("\r\n", " ").replace("\r", " ").replace("\n", " ")
-    s = s.replace("\\", "\\\\").replace("|", "\\|")
+
+def _escape_cell_outside_span(s: str) -> str:
+    """The escaping :func:`md_cell` applies to the text outside any code span: inline HTML,
+    the backslash, a backtick, ``[ ]`` (no link, image or reference can open), ``*`` and
+    ``~`` (emphasis, strikethrough) and a ``_`` that could open emphasis (not after a letter or
+    digit). Parentheses, ``!`` and an intraword underscore stay as they
+    are: they are inert without a ``[``, so a name like ``wp_posts`` or a count like
+    ``(+2 more)`` reads as written in the source of the report too."""
     s = s.replace("<", "&lt;").replace(">", "&gt;")
-    return s
+    s = s.replace("\\", "\\\\").replace("`", "\\`")
+    for ch in "[]*~":
+        s = s.replace(ch, "\\" + ch)
+    return _LOOSE_UNDERSCORE.sub(lambda m: "\\_", s)
+
+
+def md_cell(value: Any) -> str:
+    """Escape untrusted text for a **Markdown table cell** (#2349).
+
+    The value stays in its one cell and renders as written. Newlines collapse to a space;
+    outside a code span :func:`_escape_cell_outside_span` makes a link, an image, an
+    autolink (``<`` becomes an entity), emphasis or strikethrough in collection, DMS or
+    model text plain text, each character escaped once; and the pipe is backslash-escaped,
+    inside a code span too, because GFM splits a row on a pipe even there and ``\\|`` is its
+    escape. A complete code span (:func:`_code_spans`) is left as written, except that ``< >``
+    become entities there too, as the report has always set them. A caller can pass
+    ``f"`{md_code(x)}`"`` and get the span back; :func:`md_code_cell` does that.
+    """
+    text = str(value).replace("\r\n", " ").replace("\r", " ").replace("\n", " ")
+    out: list[str] = []
+    last = 0
+    for start, end in _code_spans(text):
+        out.append(_escape_cell_outside_span(text[last:start]))
+        out.append(text[start:end].replace("<", "&lt;").replace(">", "&gt;"))
+        last = end
+    out.append(_escape_cell_outside_span(text[last:]))
+    return "".join(out).replace("|", "\\|")
+
+
+def md_code_cell(value: Any) -> str:
+    """A value as an inline code span inside a **table cell**: :func:`md_code` strips what
+    could close the span, the content stays literal, and the pipe is escaped for the row."""
+    return md_cell(f"`{md_code(value)}`")
 
 
 def _escape_outside_span(s: str) -> str:
@@ -114,16 +146,9 @@ def md_text(value: Any) -> str:
 
 
 def md_cell_text(value: Any) -> str:
-    """Escape untrusted text for a **Markdown table cell** (#1801 review).
-
-    :func:`md_cell` keeps a value inside its cell but leaves link, image and emphasis
-    syntax live, so ``![x](http://e/x.png)`` in a cell is a remote image fetch. This
-    applies :func:`md_text` (newlines, inline HTML, the backslash, backticks and
-    ``[ ] ( ) ! * _``, each escaped once) and then escapes the pipe, inside a code span
-    too: GFM splits a table row on a pipe even there, and ``\\|`` is its escape. Use it
-    for a cell that holds collection, DMS or model text; :func:`md_cell` remains for a
-    cell whose markup is the renderer's own.
-    """
+    """Escape untrusted text for a table cell with :func:`md_text`'s full set (#1801 review):
+    ``[ ] ( ) ! * _`` each escaped once, then the pipe, inside a code span too. The step 1
+    gate section uses it; :func:`md_cell` escapes only what can start markup."""
     return md_text(value).replace("|", "\\|")
 
 

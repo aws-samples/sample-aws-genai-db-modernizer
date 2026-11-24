@@ -2412,7 +2412,7 @@ Duplicate clean-up: Removes rows that repeat another row's natural key, keeping 
 |---|---|---|
 | DynamoDB | Make the natural key the item's primary key (or write a uniqueness item for it in the same TransactWriteItems) and put with a ConditionExpression of attribute_not_exists, so a duplicate is never stored and nothing needs cleaning up. | Amazon DynamoDB Developer Guide, section on condition expressions |
 | DocumentDB | Remove the existing duplicates once, then create a unique index on the natural key fields and upsert on that key, so a duplicate insert fails instead of being cleaned up later. | Amazon DocumentDB Developer Guide, Managing Amazon DocumentDB indexes |
-| OpenSearch | Use the natural key as the document _id, so indexing the same entity again overwrites one document. | OpenSearch documentation, Index document API |
+| OpenSearch | Use the natural key as the document \_id, so indexing the same entity again overwrites one document. | OpenSearch documentation, Index document API |
 | ElastiCache | Key the entry by its natural key and write it with SET NX, so writing it twice keeps one. | Valkey documentation, SET command reference |
 | Aurora PostgreSQL | Remove the existing duplicates once, then add a unique constraint on the natural key and write with INSERT ... ON CONFLICT DO NOTHING, so duplicates cannot be written. | PostgreSQL documentation, INSERT (ON CONFLICT clause) |
 | Aurora MySQL | Remove the existing duplicates once, then add a unique index on the natural key and write with INSERT ... ON DUPLICATE KEY UPDATE, so duplicates cannot be written. | MySQL 8.0 Reference Manual, INSERT ... ON DUPLICATE KEY UPDATE Statement |
