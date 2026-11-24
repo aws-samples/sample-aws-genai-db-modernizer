@@ -174,9 +174,12 @@ def _build_sql_command(
         # the error as rows. The status is SQL.SQLCODE modulo 256 (0 for ORA-01536, say),
         # and sqlplus's own SP2- errors do not trigger it, so _parse_tabular_output also
         # refuses output holding an error line.
+        # 50000 is sqlplus's largest page size, so a longer result repeats the heading and
+        # dashes lines at the top of every page (#1895); NEWPAGE NONE drops the blank lines
+        # and form feed between pages, and _parse_fixed_width skips the repeated headings.
         oracle_preamble = (
             "WHENEVER SQLERROR EXIT SQL.SQLCODE\\nWHENEVER OSERROR EXIT FAILURE\\n"
-            "SET PAGESIZE 50000\\nSET LINESIZE 32767\\nSET FEEDBACK OFF\\n"
+            "SET PAGESIZE 50000\\nSET NEWPAGE NONE\\nSET LINESIZE 32767\\nSET FEEDBACK OFF\\n"
             "SET HEADING ON\\nSET TRIMSPOOL ON\\nSET TRIMOUT ON\\n"
         )
         return (
@@ -309,10 +312,16 @@ def _parse_fixed_width(lines: list[str], separator_idx: int) -> list[dict]:
         h = header_line[start:end].strip().lower() if start < len(header_line) else ""
         headers.append(h)
 
+    # sqlplus repeats the heading and dashes lines at the top of every page (#1895). A line
+    # equal to either one is a page heading, not a row.
+    page_lines = {header_line.strip("\f").rstrip(), sep_line.strip("\f").rstrip()}
+
     # Parse data lines (everything after separator)
     rows = []
     for line in lines[separator_idx + 1 :]:
         expanded = line.expandtabs(8)
+        if expanded.strip("\f").rstrip() in page_lines:
+            continue
         values = []
         for start, end in col_ranges:
             v = expanded[start:end].strip() if start < len(expanded) else ""
