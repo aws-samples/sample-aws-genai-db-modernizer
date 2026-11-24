@@ -639,3 +639,112 @@ def test_a_stale_version_fails_without_a_pending_bump_of_that_contract() -> None
     for pending in ({}, {"m.D": "minor"}):
         (problem,) = evaluate_snapshot(committed, rebased, pending)
         assert "wasn't regenerated" in problem
+
+
+# A field named like a JSON Schema documentation keyword is a field, not an annotation (#1821).
+
+
+class _KeywordInner(BaseModel):
+    description: str
+    note: str = ""
+
+
+class _KeywordNamed(BaseModel):
+    title: str
+    description: Annotated[str, Field(description="documented")] = ""
+    default: int = 0
+    examples: list[str] = []
+    inner: _KeywordInner = _KeywordInner(description="x")
+    contract_version: str = "1.0"
+
+
+def test_fields_named_like_documentation_keywords_stay_in_the_summary() -> None:
+    summary = field_summary(_KeywordNamed)
+    assert {"title", "description", "default", "examples"} <= set(summary)
+    assert summary["title"]["required"] is True
+    assert "description" in summary["inner"]["schema"]["properties"]
+
+
+@pytest.mark.passes_on_main
+def test_documentation_keys_of_a_schema_node_are_still_dropped() -> None:
+    class Documented(BaseModel):
+        value: Annotated[int, Field(title="A title", description="Docs", examples=[1])] = 1
+
+    summary = field_summary(Documented)
+    assert summary["value"]["schema"] == {"kind": "scalar", "type": "integer"}
+
+
+def test_removing_a_keyword_named_field_is_major() -> None:
+    class After(BaseModel):
+        description: str = ""
+        default: int = 0
+        examples: list[str] = []
+        inner: _KeywordInner = _KeywordInner(description="x")
+        contract_version: str = "1.0"
+
+    bump, changes = _bump_for(_KeywordNamed, After)
+    assert bump == "major"
+    assert [path for path, _, _ in changes] == ["title"]
+
+
+def test_retyping_a_keyword_named_nested_field_is_major() -> None:
+    class InnerAfter(BaseModel):
+        description: int
+        note: str = ""
+
+    class After(BaseModel):
+        title: str
+        description: str = ""
+        default: int = 0
+        examples: list[str] = []
+        inner: InnerAfter = InnerAfter(description=1)
+        contract_version: str = "1.0"
+
+    bump, changes = _bump_for(_KeywordNamed, After)
+    assert bump == "major"
+    assert [path for path, _, _ in changes] == ["inner.description"]
+
+
+def _entry(model: type[BaseModel]) -> dict:
+    fields = field_summary(model)
+    return {"version": "1.0", "schema_hash": schema_hash(fields), "fields": fields}
+
+
+def test_an_entry_from_the_old_format_is_not_read_as_a_shape_change() -> None:
+    from scripts.contract_schema_snapshot import SNAPSHOT_FORMAT, as_format_1
+
+    new = {**_entry(_KeywordNamed), "snapshot_format": SNAPSHOT_FORMAT}
+    old = as_format_1(new)
+    assert "title" not in old["fields"]
+    assert "description" not in old["fields"]["inner"]["schema"]["properties"]
+    assert old["schema_hash"] != new["schema_hash"]
+    assert evaluate_snapshot({"k": old}, {"k": new}) == []
+    assert evaluate_against_base({"k": old}, {"k": new}) == []
+
+
+def test_a_new_entry_that_loses_a_keyword_field_is_a_problem() -> None:
+    from scripts.contract_schema_snapshot import SNAPSHOT_FORMAT
+
+    class After(BaseModel):
+        description: str = ""
+        default: int = 0
+        examples: list[str] = []
+        inner: _KeywordInner = _KeywordInner(description="x")
+        contract_version: str = "1.0"
+
+    committed = {"k": {**_entry(_KeywordNamed), "snapshot_format": SNAPSHOT_FORMAT}}
+    actual = {"k": {**_entry(After), "snapshot_format": SNAPSHOT_FORMAT}}
+    (problem,) = evaluate_snapshot(committed, actual)
+    assert "title" in problem
+    assert evaluate_against_base(committed, actual)
+
+
+def test_keep_pending_leaves_the_entry_of_a_pending_contract_as_it_was(
+    tmp_path, monkeypatch
+) -> None:
+    import scripts.contract_schema_snapshot as css
+
+    monkeypatch.setattr(css, "SNAPSHOT_PATH", tmp_path / "snap.json")
+    monkeypatch.setattr(css, "build_snapshot", lambda: {"a": {"v": "new"}, "b": {"v": "new"}})
+    written = css.write_snapshot({"a": {"v": "old"}, "gone": {"v": "old"}})
+    assert written == {"a": {"v": "old"}, "b": {"v": "new"}}

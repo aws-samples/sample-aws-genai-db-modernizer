@@ -34,6 +34,12 @@ This module is the harness for that check, the same shape as
   silently skipped. A ``$ref`` cycle resolves to a ``{"$cycle": name}``
   marker instead of recursing forever (not currently possible in these
   contracts, but cheap to guard).
+- A snapshot entry carries ``snapshot_format`` (absent means 1). Format 1 dropped a field
+  named ``title``, ``description``, ``default`` or ``examples`` along with the annotation
+  keys; format 2 drops those keys only on a schema node, never in ``properties`` (#1821).
+  An entry is rewritten in the new format when it is next written, and comparing an old
+  entry with a new build reads the build in the old format (``_comparable``), so the move
+  alone needs no version bump.
 - ``field_summary()`` converts a model's resolved schema into a *structural*
   tree (``_structural_node()``): each node is tagged with a ``kind``
   (``object``/``array``/``enum``/``const``/``anyOf``/``oneOf``/``scalar``)
@@ -141,6 +147,12 @@ PUBLIC_CONTRACTS: dict[str, str] = {
 # are known to vary cosmetically between pydantic versions, never the shape
 # of the data itself.
 _COSMETIC_KEYS = {"title", "description", "default", "examples"}
+
+#: The format of a snapshot entry. Format 1 (no ``snapshot_format`` key) dropped a field
+#: named like a documentation keyword; format 2 keeps it (#1821). An entry moves to the new
+#: format when it is next written, and a change that is only that move is not a shape change
+#: (``_comparable``).
+SNAPSHOT_FORMAT = 2
 
 # model.module_key -> why its contract_version field is required with no
 # literal default (so it is excluded from versioned_contract_models()).
@@ -274,6 +286,12 @@ def _resolve(node: Any, defs: dict[str, Any], seen: frozenset[str]) -> Any:
         for key, value in node.items():
             if key in _COSMETIC_KEYS or key == "$defs":
                 continue
+            if key == "properties" and isinstance(value, dict):
+                # The keys of a ``properties`` mapping are field names, not schema
+                # keywords: a field called ``title`` or ``default`` stays (#1821).
+                # Only each field's own schema node is resolved and stripped.
+                out[key] = {name: _resolve(sub, defs, seen) for name, sub in value.items()}
+                continue
             out[key] = _resolve(value, defs, seen)
         if isinstance(out.get("required"), list):
             out["required"] = sorted(out["required"])
@@ -377,6 +395,47 @@ def schema_hash(fields: dict[str, Any]) -> str:
     return hashlib.sha256(blob.encode("utf-8")).hexdigest()
 
 
+def _strip_keyword_fields(node: Any) -> Any:
+    """``node`` (a ``field_summary()`` tree) as format 1 wrote it: no field named like a
+    documentation keyword, and an object left with no field is a bare object."""
+    if isinstance(node, list):
+        return [_strip_keyword_fields(item) for item in node]
+    if not isinstance(node, dict):
+        return node
+    out = {key: _strip_keyword_fields(value) for key, value in node.items()}
+    props = out.get("properties")
+    if isinstance(props, dict):
+        kept = {name: sub for name, sub in props.items() if name not in _COSMETIC_KEYS}
+        if kept:
+            out["properties"] = kept
+        else:
+            del out["properties"]
+    return out
+
+
+def entry_format(entry: Mapping[str, Any]) -> int:
+    return int(entry.get("snapshot_format", 1))
+
+
+def as_format_1(entry: dict[str, Any]) -> dict[str, Any]:
+    """A snapshot entry as format 1 would have recorded the same contract."""
+    if entry_format(entry) == 1:
+        return entry
+    fields = {
+        name: _strip_keyword_fields(field)
+        for name, field in entry["fields"].items()
+        if name not in _COSMETIC_KEYS
+    }
+    return {"version": entry["version"], "schema_hash": schema_hash(fields), "fields": fields}
+
+
+def _comparable(before: dict[str, Any], after: dict[str, Any]) -> dict[str, Any]:
+    """``after`` in ``before``'s format, so a contract whose entry was written before the
+    format moved is compared with what the old format would have recorded, not read as
+    having gained its keyword-named fields."""
+    return as_format_1(after) if entry_format(before) < entry_format(after) else after
+
+
 def build_snapshot() -> dict[str, Any]:
     """``{model_key: {"version", "schema_hash", "fields"}}`` for every
     versioned contract model, freshly computed from ``src/contracts/``."""
@@ -387,6 +446,7 @@ def build_snapshot() -> dict[str, Any]:
             "version": model.model_fields["contract_version"].default,
             "schema_hash": schema_hash(fields),
             "fields": fields,
+            "snapshot_format": SNAPSHOT_FORMAT,
         }
     return snapshot
 
@@ -687,6 +747,7 @@ def evaluate_snapshot(
                 f"snapshot. Run: {REGENERATE_COMMAND}"
             )
             continue
+        after = _comparable(before, after)
         declared = pending.get(key)
         if declared is not None:
             before = {**before, "version": after["version"]}
@@ -771,7 +832,8 @@ def evaluate_against_base(
     pending = pending or {}
     problems: list[str] = []
     for key in sorted(set(base) & set(actual)):
-        before, after = base[key], actual[key]
+        before = base[key]
+        after = _comparable(before, actual[key])
         changes = diff_fields(before["fields"], after["fields"])
         if not changes:
             continue
@@ -1049,9 +1111,15 @@ def check_released_against(
     return problems + evaluate_against_released(effective, current)
 
 
-def write_snapshot() -> dict[str, Any]:
-    """Build and commit-write the snapshot, returning what was written."""
+def write_snapshot(keep: Mapping[str, Any] | None = None) -> dict[str, Any]:
+    """Build and commit-write the snapshot, returning what was written.
+
+    ``keep`` maps a contract to the entry to leave as it is (the committed one of a
+    contract with a pending bump: the release resolve writes it, ADR-008 Decision 8)."""
     snapshot = build_snapshot()
+    for key, entry in (keep or {}).items():
+        if key in snapshot:
+            snapshot[key] = entry
     SNAPSHOT_PATH.parent.mkdir(parents=True, exist_ok=True)
     SNAPSHOT_PATH.write_text(json.dumps(snapshot, indent=2, sort_keys=True) + "\n")
     return snapshot
@@ -1076,9 +1144,11 @@ def _print_diff(previous: dict[str, Any], actual: dict[str, Any]) -> None:
         if after is None:
             print(f"{key}: removed")
             continue
-        changes = diff_fields(before["fields"], after["fields"])
+        changes = diff_fields(before["fields"], _comparable(before, after)["fields"])
         bump = overall_bump(changes)
         detail = _format_changes(changes) if changes else "no field-level change"
+        if entry_format(before) < entry_format(after):
+            detail += f"; entry rewritten in snapshot format {entry_format(after)}"
         print(
             f"{key}: version {before['version']!r} -> {after['version']!r} ({bump} bump); {detail}"
         )
@@ -1088,6 +1158,14 @@ def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     parser.add_argument(
         "--write", action="store_true", help="regenerate tests/contract/schema_snapshot.json"
+    )
+    parser.add_argument(
+        "--keep-pending",
+        action="store_true",
+        help=(
+            "with --write: leave the committed entry of every contract that has a pending "
+            "bump file as it is, so a pull request writes only the entries no pending file covers"
+        ),
     )
     parser.add_argument(
         "--write-released",
@@ -1122,7 +1200,12 @@ def main(argv: list[str] | None = None) -> int:
         print(json.dumps(build_snapshot(), indent=2, sort_keys=True))
         return 0
     previous = json.loads(SNAPSHOT_PATH.read_text()) if SNAPSHOT_PATH.exists() else {}
-    actual = write_snapshot()
+    keep: dict[str, Any] = {}
+    if args.keep_pending:
+        from scripts.contract_bumps import load_pending, pending_kinds
+
+        keep = {k: previous[k] for k in pending_kinds(load_pending()) if k in previous}
+    actual = write_snapshot(keep)
     _print_diff(previous, actual)
     print(f"wrote {SNAPSHOT_PATH.relative_to(REPO)} ({len(actual)} contracts)")
     return 0
