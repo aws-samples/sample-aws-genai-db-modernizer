@@ -75,6 +75,7 @@ if str(REPO_ROOT) not in sys.path:
 from packaging.version import InvalidVersion, Version  # noqa: E402
 
 from scripts.contract_schema_snapshot import (  # noqa: E402
+    _comparable,
     _format_changes,
     diff_fields,
     overall_bump,
@@ -160,6 +161,8 @@ def contract_changes(before: Mapping[str, Any], after: Mapping[str, Any]) -> lis
         elif a is None and b is not None:
             lines.append(f"Contract `{key}` removed (was {b['version']})")
         elif a is not None and b is not None and b["version"] != a["version"]:
+            # A tag's snapshot may be in an older entry format: read the newer one in it.
+            a = _comparable(b, a)
             changes = [
                 c for c in diff_fields(b["fields"], a["fields"]) if c[0] != "contract_version"
             ]

@@ -166,6 +166,18 @@ def test_contract_changes_gives_one_line_per_contract_that_moved() -> None:
     ]
 
 
+def test_a_release_against_an_old_format_tag_snapshot_lists_no_old_keyword_field() -> None:
+    from scripts.contract_schema_snapshot import SNAPSHOT_FORMAT, as_format_1
+
+    fields = {"x": _STR, "title": _STR}
+    new = {**_entry("1.1", fields), "snapshot_format": SNAPSHOT_FORMAT}
+    old = as_format_1({**_entry("1.0", fields), "snapshot_format": SNAPSHOT_FORMAT})
+    assert "title" not in old["fields"]
+    assert rn.contract_changes({"k": old}, {"k": new}) == [
+        "Contract `k` 1.0 -> 1.1 (version only): no field change"
+    ]
+
+
 def test_rule_changes_gives_one_line_per_catalog_file() -> None:
     changed = [
         ("M", "src/catalog/patterns/key-value-lookup.toml"),
