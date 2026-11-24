@@ -255,6 +255,46 @@ class TestCutInsideInList:
         assert len(_merged([_row("a", a), _row("b", b)])) == 2
 
 
+class TestFlattenedLeadingComment:
+    """A flattened text that begins with ``--`` is all comment and has no shape (#1899)."""
+
+    def test_distinct_comment_only_texts_stay_apart(self) -> None:
+        rows = [
+            _row(
+                "sql_a",
+                "-- tag=a SELECT o.id FROM app.orders o WHERE o.id = :1",
+                execution_count=20,
+            ),
+            _row(
+                "sql_b",
+                "-- tag=b DELETE FROM app.order_lines WHERE order_id = :1",
+                execution_count=20,
+            ),
+        ]
+        out = _merged(rows)
+        assert sorted((r["digest"], r["execution_count"]) for r in out) == [
+            ("sql_a", 20),
+            ("sql_b", 20),
+        ]
+
+    @pytest.mark.passes_on_main
+    def test_rows_of_one_digest_still_merge(self) -> None:
+        rows = [
+            _row("sql_a", "-- tag=a SELECT 1 FROM app.orders", execution_count=5),
+            _row("sql_a", "-- tag=a SELECT 1 FROM app.orders", execution_count=7),
+        ]
+        out = _merged(rows)
+        assert [(r["digest"], r["execution_count"]) for r in out] == [("sql_a", 12)]
+
+    @pytest.mark.passes_on_main
+    def test_a_comment_before_code_does_not_change_the_shape_merge(self) -> None:
+        rows = [
+            _row("a", "/* tag */ SELECT * FROM orders WHERE id = 1"),
+            _row("b", "SELECT * FROM orders WHERE id = 2"),
+        ]
+        assert len(_merged(rows)) == 1
+
+
 class TestOpenInListStart:
     @pytest.mark.parametrize(
         ("shape", "expected"),
