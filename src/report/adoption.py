@@ -109,6 +109,9 @@ ONE_STEP_RULE_LABELS = {
 }
 #: The one-step checks table's columns, in both reports.
 ONE_STEP_CHECK_HEADER = ("Check", "Observed", "At most", "Holds")
+#: A wave's stage table's columns in the engineering report; the results page names a
+#: stage's fields with the last four (#2286).
+STAGE_HEADER = ("Stage", "What it moves", "Units", "Queries", "Gate")
 
 
 #: The heading of each wave's why sentences, and the step figures table's first column

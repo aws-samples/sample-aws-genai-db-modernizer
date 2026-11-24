@@ -57,7 +57,16 @@ jest.mock('@cloudscape-design/components/badge', () => ({
 }));
 jest.mock('@cloudscape-design/components/expandable-section', () => ({
   __esModule: true,
-  default: ({ headerText, children }) => <details><summary>{headerText}</summary>{children}</details>,
+  // #2286: a wave, a step and a stage are sections too; their header's description and
+  // secondary content (the engines, the headline, the readiness) follow the summary.
+  default: ({ headerText, headerDescription, headerSecondaryContent, variant, children }) => (
+    <details data-variant={variant}>
+      <summary>{headerText}</summary>
+      {headerDescription && <p className="mock-section-description">{headerDescription}</p>}
+      {headerSecondaryContent}
+      {children}
+    </details>
+  ),
 }));
 // #2318: the path choice is a segmented control (a dropdown past six paths); both stand-ins
 // render one button per path, so the checks below read them the same way. The real
@@ -182,13 +191,15 @@ function stage(label, kind, unitKeys, extra) {
 // relational move only (after step 2), through steps 3 to 7, and the full target.
 function synthesis({ costBasis = 'per_path_sizing', relational = true } = {}) {
   const steps = [
-    { step_number: 1, kind: 'relational_step', engine: 'aurora_mysql', phase_wave: 1, step_stages: [stage('1', 'whole_database', ['aurora_mysql:whole-database'])] },
-    { step_number: 2, kind: 'cache_step', engine: 'elasticache', phase_wave: 2, step_stages: [stage('2a', 'cache_reads', ['elasticache:cache'])] },
+    { step_number: 1, kind: 'relational_step', engine: 'aurora_mysql', phase_wave: 1, stage_count: 1, query_count: 30, step_stages: [stage('1', 'whole_database', ['aurora_mysql:whole-database'])] },
+    { step_number: 2, kind: 'cache_step', engine: 'elasticache', phase_wave: 2, stage_count: 1, query_count: 2, step_stages: [stage('2a', 'cache_reads', ['elasticache:cache'])] },
     ...[3, 4, 5, 6, 7, 8].map(n => ({
       step_number: n,
       kind: 'slice',
       engine: 'dynamodb',
       phase_wave: 3,
+      stage_count: 1,
+      query_count: n === 3 ? 5 : 2,
       step_stages: [stage(`${n}a`, n === 3 ? 'replica_reads' : 'self_contained', n === 3 ? ['dynamodb:app.carts', 'dynamodb:app.empty'] : [`dynamodb:app.t${n}`])],
     })),
   ];
@@ -468,17 +479,26 @@ describe('the waves and stages a path leaves out', () => {
     expect(figure('wave-path-stops', wave3).textContent).toBe(
       'Through step 3 leaves out the stages after step 3.',
     );
-    click(wave3.querySelector('[data-disclosure="wave-stage-list"]'));
     const stages = [...wave3.querySelectorAll('[data-stage]')];
     expect(stages.map(s => [s.getAttribute('data-stage'), s.getAttribute('data-left-out')])).toEqual([
       ['3a', null], ['4a', 'true'], ['5a', 'true'], ['6a', 'true'], ['7a', 'true'], ['8a', 'true'],
     ]);
-    expect(stages[1].textContent).toContain('Left out of this path');
-    // Review of #2249 (WCAG AA): nothing is faded with opacity; the stage carries a
-    // full-contrast label as its non-colour cue.
+    // Review of #2249 (WCAG AA): nothing is faded with opacity; a left-out stage keeps
+    // its dashed rule, and its step's header carries the full-contrast label, once.
     stages.forEach((st) => expect(st.style.opacity).toBe(''));
-    expect(figure('stage-left-out', stages[1]).closest('[data-left-out-label]')).not.toBeNull();
-    expect(figure('stage-left-out', stages[0])).toBeNull();
+    expect(stages[1].style.borderLeft).toContain('dashed');
+    expect(stages[0].style.borderLeft).toBe('');
+    // #2585 review: the label is on the step, never repeated on each of its stages.
+    stages.forEach((st) => expect(st.querySelector('[data-left-out-label]')).toBeNull());
+    // #2286: the step a path leaves out is marked in its own header too.
+    const steps = [...wave3.querySelectorAll('[data-plan-step]')];
+    expect(steps.map(st => [st.getAttribute('data-plan-step'), st.getAttribute('data-left-out')])).toEqual([
+      ['3', null], ['4', 'true'], ['5', 'true'], ['6', 'true'], ['7', 'true'], ['8', 'true'],
+    ]);
+    expect(figure('step-left-out', steps[1]).textContent).toBe('Left out of this path');
+    expect(figure('step-left-out', steps[0])).toBeNull();
+    expect(figure('step-left-out', steps[1]).closest('[data-left-out-label]')).not.toBeNull();
+    expect(wave3.querySelectorAll('[data-left-out-label]')).toHaveLength(5);
     expect(container.querySelector('[data-wave="1"]').getAttribute('data-left-out')).toBeNull();
   });
 
@@ -507,34 +527,53 @@ describe('the waves and stages a path leaves out', () => {
   });
 });
 
-describe('a wave card\'s stages', () => {
-  test('are collapsed to "N stages (…)" and expand in place, in run order, with their gates', () => {
+describe('a wave card\'s steps and stages', () => {
+  const header = el => el.querySelector('summary').textContent;
+  const description = el => el.querySelector('.mock-section-description').textContent;
+
+  test('are nested sections: a step per section, its stages inside it, in run order, with their gates', () => {
     render(synthesis());
     const wave3 = container.querySelector('[data-wave="3"]');
     expect(figure('wave-stages-line', wave3).textContent).toBe('Steps 3 to 8: 6 stages');
-    expect(wave3.querySelectorAll('[data-stage]')).toHaveLength(0);
-    const show = wave3.querySelector('[data-disclosure="wave-stage-list"]');
-    expect(show.textContent).toBe('(…)');
-    expect(show.getAttribute('aria-label')).toBe('Show the 6 stages');
-    click(show);
-    const first = wave3.querySelector('[data-stage="3a"]');
-    expect(figure('stage-line', first).textContent).toBe('Stage 3a: reads on a CDC copy; 2 units, 3 queries');
-    expect(figure('stage-gate', first).textContent).toBe('Gate: Gate of stage 3a.');
-    expect(figure('wave-stages-line', container.querySelector('[data-wave="1"]')).textContent).toBe('Step 1: 1 stage');
+    const steps = [...wave3.querySelectorAll('[data-plan-step]')];
+    expect(steps.map(st => st.getAttribute('data-plan-step'))).toEqual(['3', '4', '5', '6', '7', '8']);
+    // A step's header names its engine and states its stored stage and query counts.
+    expect(header(steps[0])).toBe('Step 3: DynamoDB');
+    expect(description(steps[0])).toBe('1 stage, 5 queries');
+    // Its stages nest inside it, each with its label, what it moves and its counts.
+    const first = steps[0].querySelector('[data-stage="3a"]');
+    expect(first).not.toBeNull();
+    expect(header(first)).toBe('3a: Reads on a CDC copy');
+    expect(description(first)).toBe('2 units, 3 queries');
+    expect(figure('stage-kind', first).textContent).toBe('reads on a CDC copy');
+    expect(figure('stage-unit-count', first).textContent).toBe('2 units');
+    expect(figure('stage-query-count', first).textContent).toBe('3 queries');
+    expect(figure('stage-gate', first).textContent).toBe('Gate of stage 3a.');
+    expect(steps[1].querySelector('[data-stage="3a"]')).toBeNull();
+    expect([...wave3.querySelectorAll('[data-stage]')].map(st => st.getAttribute('data-stage')))
+      .toEqual(['3a', '4a', '5a', '6a', '7a', '8a']);
+    const wave1 = container.querySelector('[data-wave="1"]');
+    expect(figure('wave-stages-line', wave1).textContent).toBe('Step 1: 1 stage');
+    expect(header(wave1.querySelector('[data-plan-step="1"]'))).toBe('Step 1: Aurora MySQL');
   });
 
-  test('a stage\'s units expand the same way, the pilot named, never by key', () => {
+  test('the steps, stages and their fields are sections and key-value pairs, not a hand-written list', () => {
     render(synthesis());
     const wave3 = container.querySelector('[data-wave="3"]');
-    click(wave3.querySelector('[data-disclosure="wave-stage-list"]'));
-    const first = wave3.querySelector('[data-stage="3a"]');
-    const show = first.querySelector('[data-disclosure="stage-units"]');
-    expect(show.getAttribute('aria-label')).toBe('Show the 2 units');
-    click(show);
+    expect(figure('wave-stages', wave3).querySelector('ol, li[data-stage]')).toBeNull();
+    [...wave3.querySelectorAll('[data-plan-step], [data-stage]')].forEach((el) => {
+      expect(el.firstElementChild.tagName).toBe('DETAILS');
+    });
+  });
+
+  test('a stage lists its units, the pilot named, never by key', () => {
+    render(synthesis());
+    const first = container.querySelector('[data-wave="3"] [data-stage="3a"]');
     // The unit with no table either way is left out, as the report leaves it out.
     expect([...first.querySelectorAll('[data-figure="stage-unit"]')].map(u => u.textContent)).toEqual([
       'Pilot: 4 queries; owns app.carts; reads a copy of app.users; CDC copy back to Aurora MySQL (2 reads)',
     ]);
+    expect(first.querySelector('[aria-label="Units of stage 3a"]')).not.toBeNull();
     expect(first.textContent).not.toContain('dynamodb:');
   });
 
@@ -542,8 +581,8 @@ describe('a wave card\'s stages', () => {
     render(synthesis());
     ['1', '2'].forEach((n) => {
       const wave = container.querySelector(`[data-wave="${n}"]`);
-      click(wave.querySelector('[data-disclosure="wave-stage-list"]'));
-      expect(wave.querySelector('[data-disclosure="stage-units"]')).toBeNull();
+      expect(wave.querySelectorAll('[data-stage]')).toHaveLength(1);
+      expect(wave.querySelector('[data-figure="stage-units"]')).toBeNull();
     });
   });
 
@@ -551,11 +590,10 @@ describe('a wave card\'s stages', () => {
     const s = synthesis();
     s.facts.slice_plan.plan_steps[3].step_stages[0] = stage('4a', 'risk_held', ['dynamodb:app.t4'], { holding_risk_ids: ['RISK-002'] });
     render(s);
-    const wave3 = container.querySelector('[data-wave="3"]');
-    click(wave3.querySelector('[data-disclosure="wave-stage-list"]'));
-    expect(figure('stage-line', wave3.querySelector('[data-stage="4a"]')).textContent).toBe(
-      'Stage 4a: held by an open risk (RISK-002); 1 unit, 3 queries',
-    );
+    const stage4a = container.querySelector('[data-wave="3"] [data-stage="4a"]');
+    expect(header(stage4a)).toBe('4a: Held by an open risk (RISK-002)');
+    expect(figure('stage-kind', stage4a).textContent).toBe('held by an open risk (RISK-002)');
+    expect(description(stage4a)).toBe('1 unit, 3 queries');
   });
 });
 
@@ -566,10 +604,10 @@ describe('an unknown stage kind or one-step rule', () => {
     s.facts.adoption.one_step.one_step_checks.push({ rule: 'no_new_thing_here', observed: 0, limit: 0, passed: true });
     render(s);
     const wave3 = container.querySelector('[data-wave="3"]');
-    click(wave3.querySelector('[data-disclosure="wave-stage-list"]'));
-    expect(figure('stage-line', wave3.querySelector('[data-stage="4a"]')).textContent).toBe(
-      'Stage 4a: -; 1 unit, 3 queries',
-    );
+    const stage4a = wave3.querySelector('[data-stage="4a"]');
+    // The header is the label alone; the field states the dash, as the report's table does.
+    expect(stage4a.querySelector('summary').textContent).toBe('4a');
+    expect(figure('stage-kind', stage4a).textContent).toBe('-');
     const row = container.querySelector('[data-rule="no_new_thing_here"]');
     expect(row.children[0].textContent).toBe('No new thing here');
     expect(container.textContent).not.toContain('analysis-results.');

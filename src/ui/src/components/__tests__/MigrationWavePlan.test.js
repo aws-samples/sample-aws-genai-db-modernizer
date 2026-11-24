@@ -39,7 +39,16 @@ jest.mock('@cloudscape-design/components/badge', () => ({
 }));
 jest.mock('@cloudscape-design/components/expandable-section', () => ({
   __esModule: true,
-  default: ({ headerText, children }) => <details><summary>{headerText}</summary>{children}</details>,
+  // #2286: a wave, a step and a stage are sections too; their header's description and
+  // secondary content (the engines, the headline, the readiness) follow the summary.
+  default: ({ headerText, headerDescription, headerSecondaryContent, variant, children }) => (
+    <details data-variant={variant}>
+      <summary>{headerText}</summary>
+      {headerDescription && <p className="mock-section-description">{headerDescription}</p>}
+      {headerSecondaryContent}
+      {children}
+    </details>
+  ),
 }));
 
 // #1132: the adoption paths panel's components (not rendered by a report without
@@ -260,7 +269,7 @@ test('the Tables expander stays at the end of the card', () => {
   render({ migration_waves: [listWave], facts: { waves: [], migration_wave_count: 1 } });
   const card = container.querySelector('[data-wave="3"]');
   const gate = card.querySelector('[data-figure="wave-gate"]');
-  const tables = card.querySelector('details');
+  const tables = card.querySelector('details[data-variant="footer"]');
   expect(gate.compareDocumentPosition(tables) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
   expect(tables.querySelector('summary').textContent).toBe('Tables');
 });

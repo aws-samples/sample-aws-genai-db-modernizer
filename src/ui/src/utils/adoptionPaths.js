@@ -204,21 +204,6 @@ export function wavePhase(plan, wave) {
   return ((plan && plan.wave_phases) || []).find(p => p && p.phase_wave === wave) || null;
 }
 
-// The wave's stages, each with the step it belongs to, in run order: the phase's steps
-// and each step's own stages.
-export function waveStages(plan, wave) {
-  const phase = wavePhase(plan, wave);
-  if (!phase) return [];
-  const out = [];
-  (phase.step_numbers || []).forEach(n => {
-    const step = planStep(plan, n);
-    ((step && step.step_stages) || []).forEach(stage => {
-      if (stage && typeof stage === 'object') out.push({ step: n, stage });
-    });
-  });
-  return out;
-}
-
 // "Step 1", "Steps 3 to 9": the phase's first and last step numbers.
 export function waveStepsText(t, phase) {
   const numbers = (phase.step_numbers || []).filter(n => typeof n === 'number');

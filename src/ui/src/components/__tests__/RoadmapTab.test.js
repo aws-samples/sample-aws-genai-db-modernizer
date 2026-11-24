@@ -407,3 +407,77 @@ test('with no waves, the routines and the pending engine choices still show, on 
   renderRoadmap({ migration_waves: [], facts: {} });
   expect(container.innerHTML).toBe('');
 });
+
+// ---------------------------------------------------------------------------
+// #2286: waves, steps and stages as nested sections
+// ---------------------------------------------------------------------------
+
+function nestedRoadmap() {
+  const synthesis = roadmap({ waveFacts: [{ ...SUGGESTED, wave: 2, served_tables: 224 }] });
+  synthesis.migration_waves[1] = { ...wave(2, ['dynamodb', 'documentdb']), query_count: 857, table_count: 224, workload_share_percent: 40 };
+  const plan = synthesis.facts.slice_plan;
+  plan.plan_steps[1] = { ...plan.plan_steps[1], stage_count: 1, query_count: 3 };
+  plan.plan_steps[2] = { ...plan.plan_steps[2], engine: 'documentdb', stage_count: 1, query_count: 3 };
+  plan.wave_phases = [
+    { phase_wave: 1, step_numbers: [1], engines: ['aurora_mysql'], stage_labels: ['1'], stage_kinds: ['whole_database'], stage_count: 1, query_count: 3 },
+    { phase_wave: 2, step_numbers: [2, 3], engines: ['dynamodb', 'documentdb'], stage_labels: ['2a', '3a'], stage_kinds: ['whole_database'], stage_count: 2, query_count: 6 },
+  ];
+  return synthesis;
+}
+const sectionOf = el => createWrapper(el).findExpandableSection();
+const isOpen = section => section.findExpandButton().getElement().getAttribute('aria-expanded') === 'true';
+
+test('each wave is a container section headed "Wave N: title", one level under the roadmap, collapsed', () => {
+  renderRoadmap(nestedRoadmap());
+  [1, 2].forEach((n) => {
+    const section = sectionOf(waveCard(n));
+    expect(section).not.toBeNull();
+    expect(section.findHeaderText().getElement().textContent).toBe(`Wave ${n}: Move ${n}`);
+    expect(section.findHeaderText().getElement().closest('h3')).not.toBeNull();
+    expect(isOpen(section)).toBe(false);
+  });
+  expect(container.querySelector('h2').textContent).toContain('Migration roadmap');
+});
+
+test('a collapsed wave states its engines, query and table counts and readiness in its header', () => {
+  renderRoadmap(nestedRoadmap());
+  const header = sectionOf(waveCard(2)).findHeader().getElement();
+  expect([...header.querySelectorAll('[data-engine]')].map(e => e.getAttribute('data-engine'))).toEqual(['dynamodb', 'documentdb']);
+  // The reports' headline, as the body printed it before (#957).
+  expect(header.querySelector('[data-figure="wave-stats"]').textContent).toBe('857 queries (40% of queries), 224 source tables');
+  const readiness = header.querySelector('[data-figure="wave-header-readiness"]');
+  expect(readiness.getAttribute('data-readiness')).toBe('suggested');
+  expect(createWrapper(readiness).findStatusIndicator().getElement().textContent).toBe('Suggested, 2 warnings to accept');
+  // Wave 1 has no readiness in its facts: its header states none.
+  expect(sectionOf(waveCard(1)).findHeader().getElement().querySelector('[data-figure="wave-header-readiness"]')).toBeNull();
+  // The gate and the readiness line stay in the body.
+  expect(header.querySelector('[data-figure="wave-gate"], [data-figure="wave-readiness-line"]')).toBeNull();
+  expect(sectionOf(waveCard(2)).findContent().getElement().querySelector('[data-figure="wave-readiness-line"]')).not.toBeNull();
+});
+
+test('a wave, its steps and its stages open and close with the keyboard, one level at a time', () => {
+  renderRoadmap(nestedRoadmap());
+  const wave2 = sectionOf(waveCard(2));
+  const step = sectionOf(waveCard(2).querySelector('[data-plan-step="3"]'));
+  const stage = sectionOf(waveCard(2).querySelector('[data-stage="3a"]'));
+  expect(step.findHeaderText().getElement().textContent).toBe('Step 3: DocumentDB');
+  expect(stage.findHeaderText().getElement().textContent).toBe('3a: The whole database at once');
+  [wave2, step, stage].forEach((section) => {
+    expect(isOpen(section)).toBe(false);
+    const button = section.findExpandButton();
+    expect(button.getElement().getAttribute('aria-controls')).toBeTruthy();
+    act(() => button.keyup(13));
+    expect(isOpen(section)).toBe(true);
+  });
+  expect(stage.findContent().getElement().querySelector('[data-figure="stage-gate"]').textContent).toBe('Gate 3a.');
+  // A stage's fields are key-value pairs.
+  expect(createWrapper(stage.findContent().getElement()).findKeyValuePairs()).not.toBeNull();
+  // Each closes again with the keyboard: the stage with Space, the step with Enter, the
+  // wave with Space.
+  act(() => stage.findExpandButton().keyup(32));
+  expect(isOpen(stage)).toBe(false);
+  act(() => step.findExpandButton().keyup(13));
+  expect(isOpen(step)).toBe(false);
+  act(() => wave2.findExpandButton().keyup(32));
+  expect(isOpen(wave2)).toBe(false);
+});
