@@ -29,11 +29,13 @@ A finding names its kind and line, never the value. A designer's example values 
 allowed exactly as ``src/shared/example_values.py`` defines them (#2053).
 
 The key-value scan runs in two passes, and every result is their union (#2595): main's
-rules as they were (``src/shared/secret_scan_baseline.py``), then this module's rules.
-A baseline hit is added wherever a hit of this module's rules of the same kind does not
-already cover it, and ``credential_spans`` merges main's spans in, so the newer rules
-can only add masking or findings. ``tests/property/test_secret_scan_differential.py``
-checks it.
+rules as they were (``src/shared/secret_scan_baseline.py``), then this module's rules,
+which read a value whole where main's cut it short (#2247, #2260), YAML block scalars,
+values inside arrays and objects and unclosed quotes (#2263), and SQL quoting in the
+source dialect and dynamic SQL (#2262). A baseline hit is added wherever a hit of this
+module's rules of the same kind does not already cover it, and ``credential_spans``
+merges main's spans in, so the newer rules can only add masking or findings.
+``tests/property/test_secret_scan_differential.py`` checks it.
 """
 
 from __future__ import annotations
@@ -54,6 +56,7 @@ from src.shared.example_values import (
     public_ipv4,
     public_ipv6,
 )
+from src.shared.sql_spans import span_dialect
 
 
 def _load_detect_secrets() -> tuple[Any, Any]:
@@ -244,7 +247,8 @@ _PAIR_RES = (
     # key=value, key: value (YAML or prose), **key**: value, `key`=value
     re.compile(
         rf"(?:\*\*|`)?{_KEY_NAME}(?:\*\*|`)?\s*(?P<sep>=|:(?=\s))\s*`?"
-        rf"(?:{_QUOTED}|(?P<u>[^\s\"'`\\]+))",
+        rf"(?:(?:(?P<sp>[Qq](?='[^\w\s'])|[NnEeBbXx]|[Uu]&|_[A-Za-z0-9]+)(?=[\"']))?{_QUOTED}"
+        rf"|(?P<u>[^\s\"'`\\]+))",
         re.I,
     ),
     # | key | value |
@@ -291,9 +295,13 @@ def _unquoted_end(line: str, m: re.Match[str], end: int, index: _LineIndex) -> t
                 if code_span:
                     return token.start(), True
             elif text[-1] in "\"'":
-                level = _level(len(text) - 1)
                 closes = _CLOSE_CONTEXT_RE.match(line, token.end()) is not None
-                if closes and index.string_open(key_start, text[-1], level):
+                # ``\\'`` closes a different string in each backslash reading, so it never
+                # ends a value where a setting moves that reading (#2595).
+                escaped = text[-1] == "'" and len(text) > 1 and not index.literal_backslash
+                if closes and not escaped and index.string_open(key_start, text[-1], len(text) - 1):
+                    # A ``'`` keeps its backslashes in the value (the longer reading).
+                    level = 0 if text[-1] == "'" else _level(len(text) - 1)
                     return token.end() - 1 - ((1 << level) - 1), True
             elif in_string and _LINE_BREAK_ESCAPE_RE.match(line, token.start()):
                 return token.start(), True
@@ -313,23 +321,59 @@ def _quoted_end(line: str, m: re.Match[str], index: _LineIndex) -> int:
     level, is part of the value, unless it closes a string opened before the key: then
     the value ends there, and never runs past the string around it. A value no quote
     closes runs to the end of the line (#2263)."""
+    prefix = (m.groupdict().get("sp") or "").lower()
+    if prefix == "q":
+        # Oracle's ``q'[...]'``: it ends at its closing delimiter and a quote.
+        delim = line[m.end("qv") : m.end("qv") + 1]
+        closer = {"[": "]", "(": ")", "{": "}", "<": ">"}.get(delim, delim) + "'"
+        at = line.find(closer, m.end("qv") + 1)
+        return len(line) if at == -1 else at + 1
+    escapes = prefix == "e"
+    if escapes:
+        return _quoted_end_reading(line, m, index, "")
+    if index.literal_backslash:
+        return _quoted_end_reading(line, m, index, "'")
+    # Where a setting moves a backslash's meaning, or no dialect is known, both
+    # readings, and the value is the longer one (#2262).
+    return max(_quoted_end_reading(line, m, index, ""), _quoted_end_reading(line, m, index, "'"))
+
+
+def _quoted_end_reading(line: str, m: re.Match[str], index: _LineIndex, literal: str) -> int:
+    """``_quoted_end`` in one reading: a backslash before a quote in ``literal`` is an
+    ordinary character (SQL Server, Oracle, MySQL with ``NO_BACKSLASH_ESCAPES``,
+    PostgreSQL's standard strings), and an escape before any other quote."""
+
+    def level_of(char: str, backslashes: int) -> int:
+        return 0 if char in literal else _level(backslashes)
+
     opener = m.group("qv")
     quote = opener[-1]
-    level = _level(len(opener) - 1)
+    level = level_of(quote, len(opener) - 1)
     key_start = m.start()
     pos = m.start("v")
+    # A search that reached the end of the line from an earlier start reaches it from
+    # here too: repeated unclosed openers cost linear time (#2595).
+    memo = (literal, quote, level, index.state_key(key_start))
+    if index.unclosed_from.get(memo, len(line) + 1) <= pos:
+        return len(line)
+    first = pos
     while (run := _QUOTE_RUN_RE.search(line, pos)) is not None:
         backslashes, char = run.end() - run.start() - 1, line[run.end() - 1]
-        found = _level(backslashes)
+        found = level_of(char, backslashes)
         if char == quote and found == level:
-            if not backslashes and line[run.end() : run.end() + 1] == quote:
+            doubled = line[run.end() : run.end() + 1] == quote
+            if doubled and (not backslashes or char in literal):
                 pos = run.end() + 1  # doubled: SQL's ``''``
                 continue
             if _CLOSE_CONTEXT_RE.match(line, run.end()):
                 return run.end() - 1 - ((1 << level) - 1)
-        elif index.string_open(key_start, char, found) and _CLOSE_CONTEXT_RE.match(line, run.end()):
+        elif (
+            not (char == "'" and backslashes and not index.literal_backslash)
+            and index.string_open(key_start, char, backslashes)
+        ) and _CLOSE_CONTEXT_RE.match(line, run.end()):
             return run.end() - 1 - ((1 << found) - 1)
         pos = run.end()
+    index.unclosed_from[memo] = min(first, index.unclosed_from.get(memo, first))
     return len(line)
 
 
@@ -343,52 +387,79 @@ class _LineIndex:
     before an offset. Each quote toggles the string of its kind at its escape level
     (``_level``), except an apostrophe between two letters (``don't``)."""
 
-    def __init__(self, line: str) -> None:
+    def __init__(self, line: str, literal_backslash: bool = False) -> None:
         self.line = line
-        self._brackets: dict[str, list[int]] | None = None
+        #: The dialect reads a backslash before ``'`` as an ordinary character (SQL
+        #: Server, Oracle): such a quote is at level 0 whatever precedes it.
+        self.literal_backslash = literal_backslash
         self._quote_ends: list[int] | None = None
-        self._quote_states: list[int] = []
+        self._quote_states: list[tuple[int, ...]] = []
+        # Each reading of an unclosed quoted value: the earliest start from which the
+        # search reached the end of the line (``_quoted_end_reading``).
+        self.unclosed_from: dict[tuple[object, ...], int] = {}
         self._backticks: list[int] | None = None
 
-    def open_brackets(self, opener: str, offset: int) -> int:
-        """How many ``opener`` brackets are open before ``offset``."""
-        if self._brackets is None:
-            self._brackets = {c: [] for c in "()[]{}"}
-            for i, c in enumerate(self.line):
-                if c in self._brackets:
-                    self._brackets[c].append(i)
-        closer = next(k for k, v in _OPENERS.items() if v == opener)
-        return bisect_left(self._brackets[opener], offset) - bisect_left(
-            self._brackets[closer], offset
-        )
+    def _readings(self) -> tuple[tuple[str, bool], ...]:
+        """The readings of a line: of a backslash before ``'`` (``literal`` where the
+        dialect fixes it, SQL Server and Oracle, else both, since a setting moves it,
+        #2262), each with and without a one-letter word before a quote read as a string
+        prefix (``N'``: SQL, or ``B's``: prose; nothing tells them apart, #2595)."""
+        backslash = ("literal",) if self.literal_backslash else ("escape", "literal")
+        return tuple((reading, prefixes) for reading in backslash for prefixes in (False, True))
 
-    def _open_strings(self, offset: int) -> int:
+    def _open_strings(self, offset: int) -> tuple[int, ...]:
+        """The strings open before ``offset`` in each reading (``_readings``)."""
         if self._quote_ends is None:
             self._quote_ends = []
-            state = 0
             line = self.line
+            states = [0 for _ in self._readings()]
             for run in _QUOTE_RUN_RE.finditer(line):
                 at, backslashes = run.end() - 1, run.end() - run.start() - 1
                 char = line[at]
-                bit = _string_bit(char, _level(backslashes))
-                if not state & bit and not _can_open(line, run.start()):
-                    continue  # ``admins'``, ``5"``: no string starts here (#2595)
-                if state & bit and char == "'" and not backslashes:
-                    if line[at - 1 : at].isalpha() and line[at + 1 : at + 2].isalpha():
-                        continue  # ``don't`` inside a string
-                state ^= bit
+                can_open: dict[bool, bool] = {}
+                for i, (reading, prefixes) in enumerate(self._readings()):
+                    bit = _string_bit(char, _reading_level(reading, char, backslashes))
+                    if not states[i] & bit:
+                        if prefixes not in can_open:
+                            can_open[prefixes] = _can_open(line, run.start(), prefixes)
+                        if not can_open[prefixes]:
+                            continue  # ``admins'``, ``5"``: no string starts here (#2595)
+                    elif char == "'" and line[at - 1 : at].isalpha():
+                        if line[at + 1 : at + 2].isalpha() and not backslashes:
+                            continue  # ``don't`` inside a string
+                    states[i] ^= bit
                 self._quote_ends.append(run.end())
-                self._quote_states.append(state)
+                self._quote_states.append(tuple(states))
         i = bisect_right(self._quote_ends, offset)
-        return self._quote_states[i - 1] if i else 0
+        return self._quote_states[i - 1] if i else tuple(0 for _ in self._readings())
 
-    def string_open(self, offset: int, char: str, level: int) -> bool:
-        """Whether a ``char`` string at escape ``level`` is open before ``offset``."""
-        return bool(self._open_strings(offset) & _string_bit(char, level))
+    def string_open(self, offset: int, char: str, backslashes: int) -> bool:
+        """Whether the string a ``char`` quote after ``backslashes`` backslashes would
+        close is open before ``offset`` in every reading: where the readings differ, no
+        string is taken as open, so a value never ends early at that quote."""
+        return all(
+            state & _string_bit(char, _reading_level(reading, char, backslashes))
+            for (reading, _), state in zip(
+                self._readings(), self._open_strings(offset), strict=True
+            )
+        )
+
+    def string_open_in_some_reading(self, offset: int, char: str, backslashes: int) -> bool:
+        """``string_open`` in at least one reading: what adds a value (a nested
+        doubled-quote value) asks this, so it finds the most."""
+        return any(
+            state & _string_bit(char, _reading_level(reading, char, backslashes))
+            for (reading, _), state in zip(
+                self._readings(), self._open_strings(offset), strict=True
+            )
+        )
 
     def any_string_open(self, offset: int) -> bool:
-        """Whether any string is open before ``offset``."""
-        return bool(self._open_strings(offset))
+        """Whether some string is open before ``offset`` in every reading."""
+        return all(self._open_strings(offset))
+
+    def state_key(self, offset: int) -> tuple[int, ...]:
+        return self._open_strings(offset)
 
     def backticks_before(self, offset: int) -> int:
         if self._backticks is None:
@@ -405,13 +476,16 @@ def _word_char(char: str) -> bool:
     return bool(char) and (char.isalnum() or char in "_$")
 
 
-def _can_open(line: str, start: int) -> bool:
+def _can_open(line: str, start: int, prefixes: bool = True) -> bool:
     """Whether a quote run starting at ``start`` can open a string: not right after a
-    letter, a digit or ``_`` (a possessive ``admins'``, an inch mark ``5"``), unless
-    that is a string prefix (``N'...``, MySQL's ``_utf8mb4'...``). The letters and
-    digits before the quote are read once, as no other quote lies inside them."""
+    letter, a digit or ``_`` (a possessive ``admins'``, an inch mark ``5"``), unless,
+    with ``prefixes``, that is a string prefix (``N'...``, MySQL's ``_utf8mb4'...``).
+    The letters and digits before the quote are read once, as no other quote lies
+    inside them."""
     if not _word_char(line[start - 1 : start]):
         return True
+    if not prefixes:
+        return False
     at = start
     while at > 0 and line[at - 1].isalnum():
         at -= 1
@@ -420,6 +494,12 @@ def _can_open(line: str, start: int) -> bool:
         return True
     # ``_utf8mb4'``: an underscore that starts a word, then letters and digits.
     return bool(word) and before == "_" and not _word_char(line[at - 2 : at - 1])
+
+
+def _reading_level(reading: str, char: str, backslashes: int) -> int:
+    """The escape level of a quote in one reading: in ``literal``, a backslash before
+    ``'`` is an ordinary character."""
+    return 0 if reading == "literal" and char == "'" else _level(backslashes)
 
 
 def _string_bit(char: str, level: int) -> int:
@@ -435,29 +515,11 @@ def _opens_no_value(line: str, m: re.Match[str], index: _LineIndex) -> bool:
     """The quote after ``key=`` closes a string open before the key
     (``'password=' + pw``, ``CONCAT('password=', @p)``), so it opens no value."""
     opener = m.group("qv")
-    level = _level(len(opener) - 1)
-    return index.string_open(m.start(), opener[-1], level) and (
+    if opener[-1] == "'" and len(opener) > 1 and not index.literal_backslash:
+        return False  # ``\\'``: see ``_unquoted_end``
+    return index.string_open(m.start(), opener[-1], len(opener) - 1) and (
         _CLOSE_CONTEXT_RE.match(line, m.end("qv")) is not None
     )
-
-
-def _bracket_end(line: str, start: int, end: int, index: _LineIndex) -> int:
-    """``end`` less each closing bracket at the value's end that closes a bracket open
-    before the value (``f(password=...)``), never one the value opened itself
-    (``...(1))`` keeps its own ``)``): the bracket stays, as SQL and code read, and so
-    does a ``,`` or ``;`` after it (``f(x, password=...), g(y)``, #2263)."""
-    while True:
-        at = end
-        while at > start and line[at - 1] in ",;":
-            at -= 1
-        if at <= start or line[at - 1] not in _OPENERS:
-            return end
-        closer = line[at - 1]
-        opener = _OPENERS[closer]
-        inside = line.count(opener, start, at - 1) - line.count(closer, start, at - 1)
-        if inside > 0 or index.open_brackets(opener, start) + inside <= 0:
-            return end
-        end = at - 1
 
 
 # A YAML block scalar's indicator (``|``, ``>``, with a chomping and an indentation
@@ -947,7 +1009,40 @@ class _Pair(NamedTuple):
     certain: bool = True
 
 
-def _pairs(line: str, narrow_key_names: bool = False) -> list[_Pair]:
+# The span dialects whose strings read a backslash as an ordinary character, whatever
+# the session sets. MySQL's and PostgreSQL's readings move with a setting
+# (``NO_BACKSLASH_ESCAPES``, ``standard_conforming_strings``), so a scan in those, or in
+# no known dialect, reads a backslash as an escape: the reading that holds more of the
+# value, the rule the literal redaction follows (``src.tools.sql.redact``, #1482).
+_LITERAL_BACKSLASH_DIALECTS = frozenset({"sqlserver", "oracle"})
+
+
+def _nested_value(line: str, m: re.Match[str], index: _LineIndex) -> tuple[int, int] | None:
+    """The span of a value quoted by SQL's doubled quote inside a string open around the
+    key (``EXEC('... PASSWORD=''...''')``, #2262): from after the doubled quote to the
+    next doubled one, to a single quote that closes the string around it, or to the end
+    of the line. ``None`` when the opening quote is not doubled or no string is open."""
+    opener = m.group("qv")
+    quote, start = opener[-1], m.end("qv") + 1
+    if len(opener) != 1 or line[m.end("qv") : start] != quote:
+        return None
+    if not index.string_open_in_some_reading(m.start(), quote, 0):
+        return None
+    pos = start
+    while (at := line.find(quote, pos)) != -1:
+        run_end = at
+        while line[run_end : run_end + 1] == quote:
+            run_end += 1
+        # Four quotes are a quote in the nested string; two (or three, the string
+        # around it closing too) close it; one closes the string around it.
+        at += (run_end - at) // 4 * 4
+        if run_end - at >= 2 or (run_end - at == 1 and _CLOSE_CONTEXT_RE.match(line, run_end)):
+            return start, at
+        pos = run_end
+    return start, len(line)
+
+
+def _pairs(line: str, narrow_key_names: bool = False, dialect: str = "") -> list[_Pair]:
     """Each credential key's value on ``line`` (``_Pair``). Every pair is checked; an
     allowed value (a placeholder, a marker, a bare JSON literal or short count, a bind
     parameter, a ``@variable`` set from a column, a column note, and with
@@ -956,7 +1051,7 @@ def _pairs(line: str, narrow_key_names: bool = False) -> list[_Pair]:
     found: dict[tuple[int, int], _Pair] = {}
     if _KEY_WORD_RE.search(line) is None:
         return []
-    index = _LineIndex(line)
+    index = _LineIndex(line, dialect in _LITERAL_BACKSLASH_DIALECTS)
     flow_cover = -1
     for rx in _PAIR_RES:
         for m in rx.finditer(line):
@@ -977,6 +1072,7 @@ def _pairs(line: str, narrow_key_names: bool = False) -> list[_Pair]:
                 if _LINE_BREAK_ESCAPE_RE.match(line, _block_end(m) or 0) is not None:
                     certain = False
             flow_value = rx is _PAIR_RES[1] and group == "u" and value[:1] in "[{"
+            flow_value = flow_value and not _allowed_value(value)
             if flow_value and m.group("sep") == ":" and certain:
                 # A YAML flow sequence or mapping (``password: [a, b]``): the whole of
                 # it is the value; one that does not close on the line is uncertain.
@@ -990,6 +1086,12 @@ def _pairs(line: str, narrow_key_names: bool = False) -> list[_Pair]:
                 flow = line[span[0] : span[1]]
                 if flow.strip("[]{}, ") and not _allowed_value(flow):
                     found.setdefault(span, _Pair(_pair_kind(m), span, m.group("key"), closed))
+                continue
+            nested = _nested_value(line, m, index) if group == "v" else None
+            if nested is not None:
+                value = line[nested[0] : nested[1]]
+                if value and not _allowed_value(value):
+                    found.setdefault(nested, _Pair(_pair_kind(m), nested, m.group("key")))
                 continue
             if group == "v" and _opens_no_value(line, m, index):
                 continue
@@ -1016,11 +1118,28 @@ def _pairs(line: str, narrow_key_names: bool = False) -> list[_Pair]:
                 end = _quoted_end(line, m, index)
             elif rx is _PAIR_RES[1] and certain:
                 end, certain = _unquoted_end(line, m, end, index)
-                end = _bracket_end(line, start, end, index)
             pair = found.get((start, end))
             if pair is None or (pair.certain and not certain):
                 found[(start, end)] = _Pair(_pair_kind(m), (start, end), m.group("key"), certain)
-    return list(found.values())
+    return _outermost(found.values())
+
+
+def _outermost(pairs: Iterable[_Pair]) -> list[_Pair]:
+    """``pairs`` less each one inside another's span, whose uncertainty the outer one
+    takes on: a line of unclosed values (a key name and an opening quote, repeated with
+    no closing quote) records each stretch once, so what the redaction keeps stays
+    linear in the line (#2595)."""
+    kept: list[_Pair] = []
+    cover = -1
+    for pair in sorted(pairs, key=lambda p: (p.span[0], -p.span[1])):
+        if cover >= 0 and pair.span[1] <= kept[cover].span[1]:
+            if not pair.certain:
+                kept[cover] = kept[cover]._replace(certain=False)
+            continue
+        kept.append(pair)
+        if cover < 0 or pair.span[1] > kept[cover].span[1]:
+            cover = len(kept) - 1
+    return kept
 
 
 def _covered(kind: str, span: tuple[int, int] | None, by: Iterable[tuple[str, object]]) -> bool:
@@ -1049,11 +1168,11 @@ def _with_baseline(
 
 
 def _pair_matches(
-    line: str, narrow_key_names: bool = False
+    line: str, narrow_key_names: bool = False, dialect: str = ""
 ) -> list[tuple[str, tuple[int, int], str]]:
     """Each credential key's value on ``line``: its kind, span and key name, from both
     passes (``_pairs``, and main's rules in ``secret_scan_baseline``)."""
-    found = [(p.kind, p.span, p.key) for p in _pairs(line, narrow_key_names)]
+    found = [(p.kind, p.span, p.key) for p in _pairs(line, narrow_key_names, dialect)]
     rules = [(kind, span) for kind, span, _ in found]
     return found + [
         (kind, span, key)
@@ -1062,13 +1181,15 @@ def _pair_matches(
     ]
 
 
-def _pair_hits(line: str, narrow_key_names: bool = False, to_line_end: bool = False) -> list[Hit]:
+def _pair_hits(
+    line: str, narrow_key_names: bool = False, to_line_end: bool = False, dialect: str = ""
+) -> list[Hit]:
     """``_pairs`` without the key names. A value whose end the scan cannot tell is
     placed as far as it is known and also counted unplaced, so a redaction of it is
     incomplete; with ``to_line_end`` (comment masking, which has no file to withhold)
     it runs to the end of the line instead."""
     hits: list[Hit] = []
-    for pair in _pairs(line, narrow_key_names):
+    for pair in _pairs(line, narrow_key_names, dialect):
         if pair.certain:
             hits.append((pair.kind, pair.span))
         elif to_line_end:
@@ -1205,11 +1326,12 @@ def _line_hits(
     narrow_key_names: bool = False,
     plugins: bool = True,
     to_line_end: bool = False,
+    dialect: str = "",
 ) -> list[Hit]:
     """Each finding on ``line`` (``_rule_line_hits``), with each key-value hit of main's
     rules (``secret_scan_baseline``) they do not cover: the union of the two passes, so
     nothing main masks or finds is lost (#2595)."""
-    rules = _rule_line_hits(line, emails, narrow_key_names, plugins, to_line_end)
+    rules = _rule_line_hits(line, emails, narrow_key_names, plugins, to_line_end, dialect)
     return _with_baseline(rules, _baseline._pair_hits(line, narrow_key_names))
 
 
@@ -1219,11 +1341,13 @@ def _rule_line_hits(
     narrow_key_names: bool = False,
     plugins: bool = True,
     to_line_end: bool = False,
+    dialect: str = "",
 ) -> list[Hit]:
     """Each finding on ``line`` by this module's rules: its kind and the span of its
     value (``None`` when the value cannot be placed on the line). Allowed values are left
     out. ``plugins=False`` runs the repository's own rules only (``RULE_SET``
-    ``"regex"``); ``to_line_end`` as in ``_pair_hits``."""
+    ``"regex"``); ``to_line_end`` as in ``_pair_hits``; ``dialect`` is the span dialect
+    SQL quotes are read in."""
     found: list[Hit] = []
     for secret in _detect_secrets_line(line) if plugins else ():
         value = secret.secret_value or ""
@@ -1236,7 +1360,7 @@ def _rule_line_hits(
             group: int | str = next((g for g in ("v", "m") if g in rx.groupindex and m.group(g)), 0)
             if not _allowed(kind, line, m.span(group)):
                 found.append((kind, m.span(group)))
-    found += _pair_hits(line, narrow_key_names, to_line_end)
+    found += _pair_hits(line, narrow_key_names, to_line_end, dialect)
     found += [
         ("bare secret key", m.span())
         for m in _BARE_KEY_RE.finditer(line)
@@ -1261,7 +1385,13 @@ def _rule_line_hits(
     return found
 
 
-def _scan_lines(text: str, key_names: bool, emails: bool = False, narrow_key_names: bool = False):
+def _scan_lines(
+    text: str,
+    key_names: bool,
+    emails: bool = False,
+    narrow_key_names: bool = False,
+    dialect: str = "",
+):
     lines = text.splitlines(keepends=True)
     bodies = [line.rstrip("\r\n") for line in lines]
     tables = _multiline_hits(bodies, narrow_key_names)
@@ -1275,7 +1405,7 @@ def _scan_lines(text: str, key_names: bool, emails: bool = False, narrow_key_nam
         for number, line in enumerate(lines, start=1):
             body = line.rstrip("\r\n")
             table = tables.get(number - 1, [])
-            hits = _line_hits(body, emails, narrow_key_names) + [
+            hits = _line_hits(body, emails, narrow_key_names, dialect=dialect) + [
                 (kind, span) for kind, span, _ in table
             ]
             if not key_names:
@@ -1283,25 +1413,33 @@ def _scan_lines(text: str, key_names: bool, emails: bool = False, narrow_key_nam
             yield number, line, body, hits, table
 
 
-def secret_findings(text: str, key_names: bool = True, narrow_key_names: bool = False) -> list[str]:
+def secret_findings(
+    text: str,
+    key_names: bool = True,
+    narrow_key_names: bool = False,
+    source_engine: str | None = None,
+) -> list[str]:
     """``"<kind> at line N"`` for every credential in ``text``; no value is repeated.
     ``key_names=False`` leaves out the findings that go by a key's name (``KEY_NAME_KINDS``);
     ``narrow_key_names=True`` leaves out prose under a token or API key name (#2179, the
-    CI scans of model-written text only; the default is strict)."""
+    CI scans of model-written text only; the default is strict). ``source_engine``: the
+    SQL dialect the text's quotes are read in (``_LITERAL_BACKSLASH_DIALECTS``, #2262)."""
     found: list[str] = []
     for number, _line, _body, hits, _table in _scan_lines(
-        text, key_names, narrow_key_names=narrow_key_names
+        text, key_names, narrow_key_names=narrow_key_names, dialect=span_dialect(source_engine)
     ):
         found += [f"{kind} at line {number}" for kind in sorted({kind for kind, _ in hits})]
     return found
 
 
-def secret_kinds(text: str, key_names: bool = True) -> set[str]:
+def secret_kinds(text: str, key_names: bool = True, source_engine: str | None = None) -> set[str]:
     """The kinds :func:`secret_findings` finds in ``text``, without their lines: what a
-    caller that scans many texts keeps of each (the collector, #2098). Always strict:
-    a routine body is SQL, not design prose (#2179)."""
+    caller that scans many texts keeps of each (the collector, #2098), read in
+    ``source_engine``'s SQL dialect (#2262). Always strict: a routine body is SQL, not
+    design prose (#2179)."""
     kinds: set[str] = set()
-    for _number, _line, _body, hits, _table in _scan_lines(text, key_names):
+    dialect = span_dialect(source_engine)
+    for _number, _line, _body, hits, _table in _scan_lines(text, key_names, dialect=dialect):
         kinds.update(kind for kind, _ in hits)
     return kinds
 
@@ -1325,7 +1463,7 @@ def token_format_spans(text: str) -> list[tuple[int, int]]:
     return [m.span() for m in _BOUNDED_TOKEN_RE.finditer(text)]
 
 
-def credential_spans(text: str) -> list[tuple[int, int]]:
+def credential_spans(text: str, source_engine: str | None = None) -> list[tuple[int, int]]:
     """The span (offsets in ``text``) of each credential value the repository's own
     rules find, strictly, sorted and merged: every ``RULE_SET`` ``"regex"`` rule (key-name
     pairs, a Markdown credential column, the AWS, Google, Slack, bearer and private-key
@@ -1335,16 +1473,18 @@ def credential_spans(text: str) -> list[tuple[int, int]]:
     JSON Web Token), which stand in for detect-secrets' shape plugins. No plugin runs,
     so the spans are the same in every image, with or without detect-secrets: what the
     collector masks in a SQL comment (``src.tools.sql.redact.scrub_comment``, #2234)
-    never depends on a dev dependency."""
+    never depends on a dev dependency. ``source_engine``: the SQL dialect the text's
+    quotes are read in (#2262)."""
     if not text:
         return []
+    dialect = span_dialect(source_engine)
     spans: list[tuple[int, int]] = []
     offset = 0
     lines = text.splitlines(keepends=True)
     tables = _multiline_hits([line.rstrip("\r\n") for line in lines])
     for index, line in enumerate(lines):
         body = line.rstrip("\r\n")
-        hits = _rule_line_hits(body, emails=False, plugins=False, to_line_end=True)
+        hits = _rule_line_hits(body, emails=False, plugins=False, to_line_end=True, dialect=dialect)
         hits += [(kind, span) for kind, span, _ in tables.get(index, [])]
         found = [span for _kind, span in hits if span is not None]
         found += [m.span() for m in _TOKEN_FORMAT_RE.finditer(body)]

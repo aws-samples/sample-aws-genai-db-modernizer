@@ -170,6 +170,7 @@ def test_a_json_string_inside_a_json_string_keeps_both_whole() -> None:
 # -- #2595 review: a quote after a letter opens no string ---------------------------------
 
 
+@pytest.mark.passes_on_main  # main never had this regression of this PR's first head
 @pytest.mark.parametrize(
     "before,after",
     [

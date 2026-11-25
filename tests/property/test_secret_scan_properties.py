@@ -72,18 +72,62 @@ _SYNTAXES: dict[str, tuple[Callable[[str], str], st.SearchStrategy[str]]] = {
 }
 
 
+# Text before the key: a possessive apostrophe, an inch mark, an apostrophe inside a word,
+# a string the line opens and closes before the key (#2595).
+_BEFORE = st.sampled_from(
+    ["", "-- the admins' ", '-- 5" display; ', "don't set ", "'x' , ", "-- Plan B's ", 'Plan B" ; ']
+)
+
+
 @pytest.mark.parametrize("syntax", list(_SYNTAXES), ids=list(_SYNTAXES))
 def test_a_generated_secret_in_every_syntax_is_masked(syntax: str) -> None:
     write, middles = _SYNTAXES[syntax]
 
     @settings(max_examples=scaled(300), deadline=None, suppress_health_check=list(HealthCheck))
-    @given(_PART, middles, _PART)
-    def check(head: str, middle: str, tail: str) -> None:
+    @given(_PART, middles, _PART, _BEFORE)
+    def check(head: str, middle: str, tail: str, before: str) -> None:
         text = write(head + middle + tail)
+        if syntax.startswith("unquoted") or syntax in ("sql-string", "unclosed-quote"):
+            text = before + text
         out = private_scan.redact(text, narrow_key_names=True)
         assert out.complete, text
         assert head not in out.text and tail not in out.text, (text, out.text)
         masked = scrub_comment(text)
+        assert head not in masked and tail not in masked, (text, masked)
+
+    check()
+
+
+@pytest.mark.parametrize("engine", ["sqlserver", "oracle", "mysql", "postgresql", None])
+def test_a_generated_secret_in_a_sql_string_is_masked_in_every_dialect(engine: str | None) -> None:
+    """A SQL string with doubled quotes, backslashes and spaces in it, plain, prefixed
+    and nested in dynamic SQL, read in each dialect (#2262)."""
+
+    @settings(max_examples=scaled(300), deadline=None, suppress_health_check=list(HealthCheck))
+    @given(
+        _PART,
+        _SPACED_MIDDLE,
+        _PART,
+        st.sampled_from(["plain", "prefixed", "nested", "nested-n", "sp-executesql", "set-sql"]),
+    )
+    def check(head: str, middle: str, tail: str, form: str) -> None:
+        inner = (head + middle + tail).replace("'", "''")
+        text = {
+            "plain": "SET password = '" + inner + "';",
+            "prefixed": "SET password = N'" + inner + "';",
+            "nested": "EXEC('ALTER LOGIN sa WITH PASSWORD=''" + inner.replace("'", "''") + "''')",
+            # Dynamic SQL in a prefixed string (#2595).
+            "nested-n": "EXEC(N'ALTER LOGIN sa WITH PASSWORD=N''"
+            + inner.replace("'", "''")
+            + "''')",
+            "sp-executesql": "EXEC sp_executesql N'ALTER LOGIN sa WITH PASSWORD=''"
+            + inner.replace("'", "''")
+            + "'''",
+            "set-sql": "SET @sql = N'CREATE LOGIN app WITH PASSWORD=''"
+            + inner.replace("'", "''")
+            + "'', CHECK_POLICY=OFF'",
+        }[form]
+        masked = scrub_comment(text, source_engine=engine)
         assert head not in masked and tail not in masked, (text, masked)
 
     check()

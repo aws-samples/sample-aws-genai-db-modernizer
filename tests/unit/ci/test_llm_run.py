@@ -1790,6 +1790,7 @@ def test_collect_job_redacts_the_transcripts_and_every_other_uploaded_text_file(
     assert json.loads((out / "results.json").read_text())["pass"] is False
 
 
+@pytest.mark.passes_on_main  # guards behaviour main already has; changed here for the new dialect keyword
 def test_collect_job_deletes_an_upload_it_cannot_fully_redact(tmp_path: Path, monkeypatch) -> None:
     from src.shared import secret_scan
 
@@ -1799,7 +1800,7 @@ def test_collect_job_deletes_an_upload_it_cannot_fully_redact(tmp_path: Path, mo
     monkeypatch.setattr(
         secret_scan,
         "_line_hits",
-        lambda body, emails, *_: [("JSON Web Token", None)] if "unplaceable" in body else [],
+        lambda body, emails, *_, **__: [("JSON Web Token", None)] if "unplaceable" in body else [],
     )
     result = run.collect_job(tmp_path / "artifacts", out, db="wordpress", job="job1")
     assert result["withheld"] == ["transcript.jsonl"] and not (out / "transcript.jsonl").exists()
