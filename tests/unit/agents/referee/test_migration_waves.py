@@ -444,6 +444,66 @@ class TestAuroraWave:
         )
         assert "no later wave moves any of the 4 off Aurora MySQL" in rationale
 
+    @staticmethod
+    def _all_on_aurora(**overrides):
+        kwargs = {
+            "ranking": [
+                {"target": "aurora_mysql", "assigned_queries": 5, "workload_percent": 100.0}
+            ],
+            "table_assignments": [
+                t | {"primary_engine": "aurora_mysql", "engines": ["aurora_mysql"]}
+                for t in TABLE_ASSIGNMENTS
+            ],
+            "query_assignments": [
+                q | {"assigned_engine": "aurora_mysql"} for q in QUERY_ASSIGNMENTS
+            ],
+            "cache_overlay": None,
+            "mapped_tables": KNOWN_TABLES,
+        }
+        kwargs.update(overrides)
+        return _build(**kwargs)
+
+    def test_later_waves_that_move_no_table_are_not_said_to_move_subsets(self):
+        # #2218: a cache wave follows, but no table leaves Aurora: wave 1 never says
+        # "later waves move subsets" next to "no later wave moves any".
+        cache = CACHE_OVERLAY | {"owners": {"aurora_mysql": 20}}
+        for mapped in (KNOWN_TABLES, None):
+            waves = self._all_on_aurora(cache_overlay=cache, mapped_tables=mapped)
+            assert len(waves) == 2
+            rationale = waves[0]["rationale"]
+            assert "subsets" not in rationale
+            assert "later waves move" not in rationale
+            assert "remain on Aurora MySQL once later waves have moved their share" in rationale
+        mapped_text = self._all_on_aurora(cache_overlay=cache)[0]["rationale"]
+        assert mapped_text.count("no later wave moves any of the 4 off Aurora MySQL") == 1
+        unmapped_text = self._all_on_aurora(cache_overlay=cache, mapped_tables=None)[0]["rationale"]
+        assert unmapped_text.endswith("Later waves move no tables or views off Aurora MySQL.")
+
+    def test_wave_1_with_no_later_wave_claims_no_later_move(self):
+        # #2218: nothing follows wave 1, so "once later waves have moved their share"
+        # and "later waves move subsets" describe waves that do not exist.
+        for mapped in (KNOWN_TABLES, None):
+            waves = self._all_on_aurora(mapped_tables=mapped)
+            assert len(waves) == 1
+            rationale = waves[0]["rationale"]
+            assert "subsets" not in rationale
+            assert "once later waves" not in rationale
+            assert "5 queries (100.0%) remain on Aurora MySQL." in rationale
+
+    def test_later_waves_that_move_tables_keep_the_subset_sentence(self):
+        rationale = _build(mapped_tables=KNOWN_TABLES)[0]["rationale"]
+        assert (
+            "remain on Aurora MySQL once later waves have moved their share; later waves move "
+            "subsets of these 4 tables and views out of Aurora MySQL."
+        ) in rationale
+        assert "later waves move 3 of the 4 off Aurora MySQL" in rationale
+
+    def test_cross_engine_wave_1_never_claims_a_move_no_wave_makes(self):
+        waves = self._all_on_aurora(source_engine="sqlserver")
+        assert waves[0]["homogeneity"] == "cross_engine"
+        assert "subsets" not in waves[0]["rationale"]
+        assert "once later waves" not in waves[0]["rationale"]
+
     def test_cross_engine_wave_1_states_the_same_split(self):
         waves = _build(source_engine="sqlserver", mapped_tables=KNOWN_TABLES)
         rationale = waves[0]["rationale"]

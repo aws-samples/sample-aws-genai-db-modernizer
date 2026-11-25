@@ -147,6 +147,7 @@ from src.agents.referee.migration_wave_builders import (
     _merge_kv_and_document_waves,
     _other_target_wave,
     _search_wave,
+    wave_one_later_waves_sentence,
     wave_one_map_sentence,
 )
 from src.agents.referee.migration_wave_tables import (
@@ -595,6 +596,11 @@ def build_migration_waves(
         # migration map's, stating apart what a later wave actually moves (the
         # facts layer's figure, so the two never disagree).
         moved = wave_one_moved_by_later_waves(waves)
+        if moved is not None:
+            # #2218: the opening sentence about later waves reads the same figure.
+            waves[0]["rationale"] += wave_one_later_waves_sentence(
+                waves[0], moved, len(waves) > 1, mapped is not None
+            )
         if mapped is not None and moved is not None:
             waves[0]["rationale"] += wave_one_map_sentence(
                 waves[0], mapped, moved, wave_one_staying_split(waves, mapped)
