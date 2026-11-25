@@ -485,16 +485,20 @@ def test_the_raw_text_check_undoes_every_json_escape(value: str, raw: str) -> No
 def test_a_short_value_cut_at_a_quote_is_recorded_and_a_quoted_one_is_not() -> None:
     """#2213 review round 2, Important 1: the scan records a value under 4 characters
     it ended at a ``"`` or ``\\`` that does not close it, since the rest of it is
-    unknown: a quote run before ``,`` (``Zq9",Xv7...``), an escaped quote no quote
-    closes (a cut line). An embedded quote or backslash is part of the value since
-    #2247, so ``Zq9"Xv7...`` and ``"Zq9\\"Xv7..."`` are whole, as is ``"abc"``."""
+    unknown: a quote run before ``,`` (``Zq9",Xv7...``), a value right before an
+    escaped quote. An embedded quote or backslash is part of the value since #2247,
+    so ``Zq9"Xv7...`` and ``"Zq9\\"Xv7..."`` are whole, as is ``"abc"``, and so is a
+    value whose quote never closes (#2263)."""
     cut_quote = private_scan.redact('password = Zq9",Xv7Wm3Kt5\n', narrow_key_names=True)
-    cut_backslash = private_scan.redact('{"password": "Zq9\\"Xv7Wm3Kt5', narrow_key_names=True)
+    cut_backslash = private_scan.redact(
+        '{"x": "{\\"password\\": \\"Zq9\\"}"}', narrow_key_names=True
+    )
     # With what it was cut at (#2266 review round 2, Minor 7).
     assert cut_quote.cut == {'Zq9"'} and cut_backslash.cut == {'Zq9\\"'}
     for text in (
         'password = Zq9"Xv7Wm3Kt5\n',  # pragma: allowlist secret
         '{"password": "Zq9\\"Xv7Wm3Kt5"}',  # pragma: allowlist secret
+        '{"password": "Zq9\\"Xv7Wm3Kt5',  # pragma: allowlist secret
         '{"password": "abc"}',
     ):
         assert private_scan.redact(text, narrow_key_names=True).cut == set()
@@ -879,12 +883,15 @@ def test_an_all_digit_value_matches_only_as_a_whole_token_at_any_length() -> Non
 
 
 @pytest.mark.parametrize(
-    "line",
-    ['password = "a\\"b\n', "DB_PASSWORD=ab\\\n"],  # pragma: allowlist secret
+    "line,cut_copy",
+    [
+        ('{"x": "{\\"y\\": \\"password=a\\"}"}\n', 'a\\"'),  # pragma: allowlist secret
+        ("DB_PASSWORD=ab\\\n", "ab\\"),  # pragma: allowlist secret
+    ],
     ids=["quote-escape", "backslash"],
 )
 def test_a_one_or_two_letter_cut_value_withholds_only_with_the_character_it_was_cut_at(
-    line: str,
+    line: str, cut_copy: str
 ) -> None:
     """#2266 review round 2, Minor 7: a value the scan cut short is matched with the
     character it was cut at (``a\\"``, ``ab\\``), so a bare ``a`` or ``ab`` in a
@@ -900,7 +907,6 @@ def test_a_one_or_two_letter_cut_value_withholds_only_with_the_character_it_was_
     ):
         rewrite = private_scan.redact_flagged_values(text, document, flagged, scanned.cut)
         assert rewrite.text is not None and rewrite.reason is None, text
-    cut_copy = line.split("=", 1)[1].strip()
     for text, document in ((json.dumps({"msg": "use " + cut_copy}), "json"), (cut_copy, "")):
         rewrite = private_scan.redact_flagged_values(text, document, flagged, scanned.cut)
         assert rewrite.text is None and rewrite.reason == private_scan.CUT_FLAGGED, text

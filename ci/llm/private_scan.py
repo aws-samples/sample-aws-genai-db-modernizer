@@ -121,7 +121,8 @@ _KEY_EDGE_RE = re.compile(r"-{4,5} ?(?:BEGIN|END) [A-Z0-9 ]*PRIVATE KEY(?: BLOCK
 # prefix is removed. Raw lines and segments of a line split at escaped breaks (any
 # escape level) count.
 _BASE64_RUN_RE = re.compile(r"[A-Za-z0-9+/]{40,}={0,2}")
-_ESCAPED_BREAK_RE = re.compile(r"\\+r\\+n|\\+n|\\+r|\\+u000[aAdD]|<br\s*/?>")
+# A backslash run is read from its start only, so a long one costs linear time (#2263).
+_ESCAPED_BREAK_RE = re.compile(r"(?<!\\)(?:\\+r\\+n|\\+n|\\+r|\\+u000[aAdD])|<br\s*/?>")
 # Known line prefixes: the Read tool's "  12→" (raw or escaped), grep -n's "file:12:",
 # a list marker, a table pipe, a timestamp and a log level, and JSON punctuation.
 _LINE_PREFIX_RE = re.compile(
@@ -129,7 +130,7 @@ _LINE_PREFIX_RE = re.compile(
     r"|\[?\d{4}-\d{2}-\d{2}[T ]\d{2}:\d{2}(?::\d{2}(?:[.,]\d+)?)?(?:Z|[+-]\d{2}:?\d{2})?\]?"
     r"|(?:DEBUG|INFO|WARN(?:ING)?|ERROR)\b:?|[\"'{}\[\],:\\])"
 )
-_LINE_SUFFIX_RE = re.compile(r"[\s\"'|,\\}\]]+$")
+_LINE_SUFFIX_RE = re.compile(r"(?<![\s\"'|,\\}\]])[\s\"'|,\\}\]]+$")
 #: Two body lines in a row are key material, with or without a header (fail closed:
 #: a two-line chunk of a key read back in pieces).
 KEY_BODY_RUN = 2

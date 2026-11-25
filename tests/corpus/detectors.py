@@ -545,6 +545,10 @@ NOT_CORPUS_MODULES: dict[str, str] = {
         "finds credentials in text; its one SQL pattern (a column note naming a SQL type) "
         "only allows a value, it reads no workload query"
     ),
+    "src/shared/secret_scan_baseline.py": (
+        "main's copy of the credential scan's rules, the first pass of its union (#2595); "
+        "the same column-note allow rule as src/shared/secret_scan.py, no workload query"
+    ),
     "src/tools/database/ddl_parser.py": "reads DDL, not a workload query",
     "src/tools/schema/aurora_common/sql_safety.py": "checks generated DDL, not a workload query",
     "src/agents/schema_design/dynamodb_key_reconcile.py": (
