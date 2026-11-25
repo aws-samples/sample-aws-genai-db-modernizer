@@ -793,13 +793,22 @@ def build_query_groups(data: SynthesisData) -> list[dict]:
                 # without this a literal "unknown" leaked into the group name
                 # instead of one of the two blame labels the relational
                 # branch below already uses for exactly this fact.
+                # The collected statement, never the design's own ``sql_text`` copy
+                # (#2280): a saved design could carry any text there.
+                ap_qids = [str(q) for q in _access_pattern_query_ids(ap)]
                 group_name = _no_table_group_label(
-                    ap.get("sql_text"),
+                    next(
+                        (
+                            text
+                            for q in ap_qids
+                            if (text := (source_queries.get(q) or {}).get("query_text"))
+                        ),
+                        None,
+                    ),
                     source_tables,
                     source_scope,
-                    pinned=bool(ap_qids := _access_pattern_query_ids(ap))
-                    and all(str(q) in pinned_qids for q in ap_qids),
-                    with_routine=bool(ap_qids) and all(str(q) in following_qids for q in ap_qids),
+                    pinned=bool(ap_qids) and all(q in pinned_qids for q in ap_qids),
+                    with_routine=bool(ap_qids) and all(q in following_qids for q in ap_qids),
                 )
             else:
                 group_name = ", ".join(clean_tables) or "ungrouped"
@@ -1989,10 +1998,9 @@ def _unsupported_pattern_problem(engine: str, up: dict, query_text: dict[str, st
     if reason:
         return reason
     ids = unsupported_pattern_ids(up)
-    # OpenSearch patterns carry the SQL themselves (``source_query``).
-    sql = next((query_text[q] for q in ids if query_text.get(q, "").strip()), "") or str(
-        up.get("source_query") or ""
-    )
+    # Only the collected SQL is quoted (#2280): OpenSearch's own ``source_query`` copy
+    # is the design's text, so a saved design could carry anything there.
+    sql = next((query_text[q] for q in ids if query_text.get(q, "").strip()), "")
     head = f"{display_name(engine)} has no native equivalent for"
     if len(ids) > 1:
         return f"{head} these {len(ids)} queries" + (f", e.g. {_sql_excerpt(sql)}" if sql else ".")
