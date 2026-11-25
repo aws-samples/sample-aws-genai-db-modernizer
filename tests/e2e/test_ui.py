@@ -1715,8 +1715,64 @@ def test_results_page_shows_the_adoption_paths_stages_and_one_step_option(
                 line = f"  - {escaping.md_text(sentence)}"
                 assert line in report_md.splitlines(), (r.db, sentence)
             labels = plan.get("metric_labels") or {}
-            for heading in card.locator("[data-figure=step-metrics] th[title]").all():
+            figures = card.locator("[data-figure=step-metrics]")
+            for heading in figures.locator("thead [data-metric]").all():
                 assert heading.get_attribute("title") in labels.values(), (r.db, heading)
+            # #2288: the figures are one table, each step's sentence in its own row; a
+            # score reads as report.json's band, in its words, then its value: the
+            # engineering report's "Band (value)", character for character.
+            if figures.count():
+                expect(figures.get_by_role("table")).to_have_count(1)
+                scales = plan.get("score_scales") or {}
+                for row in figures.locator("tbody tr").all():
+                    number = int(
+                        row.locator("[data-figure=step-row]").get_attribute("data-step") or 0
+                    )
+                    step = by_number[number]
+                    if step.get("why"):
+                        assert row.locator("[data-figure=step-why]").inner_text().strip() == (
+                            step["why"]
+                        ), (r.db, number)
+                    md_row = next(
+                        (
+                            ln
+                            for ln in report_md.splitlines()
+                            if ln.startswith(f"| Step {number} |")
+                        ),
+                        "",
+                    )
+                    for badge in row.locator("[data-figure=step-score]").all():
+                        field = badge.get_attribute("data-metric") or ""
+                        band = badge.get_attribute("data-band") or ""
+                        assert band == step["score_bands"][field], (r.db, number, field)
+                        value = badge.get_attribute("data-score") or ""
+                        word = badge.locator("[data-figure=score-band-word]").inner_text().strip()
+                        band_word = str(scales[field]["band_labels"][band])
+                        assert word == band_word[:1].upper() + band_word[1:], (r.db, number, word)
+                        cell_text = f"{word} ({value})"
+                        assert f" {cell_text} |" in md_row, (r.db, number, cell_text, md_row)
+                scores = figures.locator("[data-figure=step-score]")
+                if scores.count():
+                    # Text only, as the engineering report prints it: no tab stop.
+                    assert scores.first.get_attribute("tabindex") is None, r.db
+                    # The Info link by the heading opens how the scores read, in the
+                    # facts' words.
+                    info = card.locator('[data-help-topic="step-scores"]')
+                    expect(info).to_have_count(1)
+                    info.click()
+                    help_panel = _help_panel(page)
+                    expect(help_panel).to_have_attribute(
+                        "data-help-topic", "step-scores", timeout=READY_MS
+                    )
+                    notes = [
+                        n.inner_text().strip()
+                        for n in help_panel.locator("[data-figure=step-score-note]").all()
+                    ]
+                    assert notes == [
+                        scales[f]["note"] for f in ("gravity", "hub_score") if f in scales
+                    ], (r.db, notes)
+                    page.get_by_role("button", name="Close the help panel").click()
+                    expect(help_panel).to_have_count(0)
         # The one-step option: the engineering report's lines and checks.
         one = adoption["one_step"]
         option = panel.locator("[data-figure=one-step-option]")

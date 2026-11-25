@@ -1,18 +1,22 @@
 // Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
 // SPDX-License-Identifier: MIT-0
 
+import { useState } from "react";
 import Box from "@cloudscape-design/components/box";
 import Badge from "@cloudscape-design/components/badge";
 import ExpandableSection from "@cloudscape-design/components/expandable-section";
 import KeyValuePairs from "@cloudscape-design/components/key-value-pairs";
 import List from "@cloudscape-design/components/list";
 import SpaceBetween from "@cloudscape-design/components/space-between";
+import Table from "@cloudscape-design/components/table";
 import GateChecklist from "./GateChecklist";
+import HelpInfoLink from "./HelpInfoLink";
 import { displayEngine } from "../utils/engineNames";
 import { stageGateConditions } from "../utils/migrationWaves";
 import {
-  capitalized, metricLabel, metricValueText, pathTakesStep, stageKindText, stageUnits,
-  stepMetric, stepMetricColumns, unitText, wavePhase, waveSteps, waveStepsText,
+  capitalized, metricLabel, metricValueText, pathTakesStep, scoreBandWord, scoreNotes,
+  stageKindText, stageUnits, stepMetric, stepMetricColumns, unitText, wavePhase, waveSteps,
+  waveStepsText,
 } from "../utils/adoptionPaths";
 
 /**
@@ -25,9 +29,12 @@ import {
  * and stages are facts.slice_plan's (wave_phases and plan_steps[].step_stages, #2156),
  * in run order; nothing is counted here.
  *
- * Above the steps, each step's why sentence and a table of the steps' order figures,
- * named by facts.slice_plan.metric_labels (#1699). StepFigures is the one place that
- * draws them, so a later change to that table (#2288) touches only it.
+ * Above the steps, a table of the wave's steps (#2288): each step's order figures, named
+ * by facts.slice_plan.metric_labels (#1699), and its why sentence in its own row. A 0-to-1
+ * score with a band (shared by many parts, #2288's decision) reads as the band
+ * facts.slice_plan states for it (score_bands, in the words of score_scales) then the
+ * value, "Low (0.02)", and one without as its value, as the engineering report prints
+ * them; an Info link by the heading opens how they read. StepFigures is the one place that draws them.
  *
  * With an earlier path selected, a step the path does not take is marked "Left out of
  * this path" once, in its header; it and each of its stages carry a dashed rule. The full
@@ -143,42 +150,112 @@ function StepSection({ plan, step, path, t }) {
   );
 }
 
-// The wave's steps' why sentences, as stored, and a table of each slice step's order
-// figures headed by the facts' metric_labels (#1699). Nothing is counted here.
+// Two stored figures in order, a missing one first; a comparison only, never arithmetic.
+function compareFigures(x, y) {
+  const a = x === null || x === undefined ? null : x;
+  const b = y === null || y === undefined ? null : y;
+  if (a === b) return 0;
+  if (a === null) return -1;
+  if (b === null) return 1;
+  return a < b ? -1 : 1;
+}
+
+// #2288: a score as its band in the facts' words, then its stored value, "Low (0.37)":
+// the text the engineering report prints in the same cell.
+function ScoreText({ field, band, word, value }) {
+  return (
+    <span data-figure="step-score" data-metric={field} data-band={band} data-score={value}>
+      <span data-figure="score-band-word">{capitalized(word)}</span>{` (${value})`}
+    </span>
+  );
+}
+
+function stepTitle(t, step) {
+  return step.engine
+    ? t('analysis-results.adoption.step-title', { step: step.step_number, engine: displayEngine(step.engine) })
+    : t('analysis-results.adoption.wave-step', { step: step.step_number });
+}
+
+// The wave's steps as one table (#2288): the step, each order figure the facts name
+// (#1699) and the step's why sentence, as stored. Every column sorts; a figure sorts by
+// its stored value. Nothing is counted here.
 export function StepFigures({ plan, wave, t }) {
+  const [sorting, setSorting] = useState({ id: 'step', descending: false });
   const steps = waveSteps(plan, wave);
   const told = steps.filter(s => s.why);
   if (told.length === 0) return null;
   const measured = steps.filter(s => s.metrics && typeof s.metrics === 'object');
+  const rows = steps.filter(s => s.why || (s.metrics && typeof s.metrics === 'object'));
   const columns = stepMetricColumns(plan, measured);
+  const notes = scoreNotes(plan, columns);
+  const columnDefinitions = [
+    {
+      id: 'step',
+      header: t('analysis-results.adoption.step-column'),
+      cell: s => <span data-figure="step-row" data-step={s.step_number}>{stepTitle(t, s)}</span>,
+      sortingComparator: (a, b) => compareFigures(a.step_number, b.step_number),
+      // Each row is named by its step for a screen reader.
+      isRowHeader: true,
+      minWidth: 120,
+    },
+    ...columns.map(f => {
+      const label = metricLabel(plan, f);
+      return {
+        id: f,
+        header: <span title={label} data-metric={f}>{capitalized(label)}</span>,
+        cell: s => {
+          const value = metricValueText(f, stepMetric(s, f));
+          const word = stepMetric(s, f) === null ? '' : scoreBandWord(plan, s, f);
+          return (
+            <Box textAlign="right">
+              {word
+                ? <ScoreText field={f} band={s.score_bands[f]} word={word} value={value} />
+                : <span data-figure="step-figure" data-metric={f}>{value}</span>}
+            </Box>
+          );
+        },
+        sortingComparator: (a, b) => compareFigures(stepMetric(a, f), stepMetric(b, f)),
+      };
+    }),
+    {
+      id: 'why',
+      header: t('analysis-results.adoption.why-column'),
+      cell: s => (s.why
+        ? <span data-figure="step-why" data-step={s.step_number}>{String(s.why)}</span>
+        : '-'),
+      minWidth: 320,
+    },
+  ];
+  const column = columnDefinitions.find(c => c.id === sorting.id) || columnDefinitions[0];
+  const sign = sorting.descending ? -1 : 1;
+  const items = [...rows].sort((a, b) => sign * column.sortingComparator(a, b));
   return (
     <div data-figure="step-why-block">
-      <Box variant="h4">{t('analysis-results.adoption.why-heading')}</Box>
-      <ul>
-        {told.map(s => (
-          <li key={s.step_number} data-figure="step-why" data-step={s.step_number}>{String(s.why)}</li>
-        ))}
-      </ul>
-      {columns.length > 0 && (
-        <table data-figure="step-metrics">
-          <thead>
-            <tr>
-              <th scope="col">{t('analysis-results.adoption.step-column')}</th>
-              {columns.map(f => (
-                <th key={f} scope="col" title={metricLabel(plan, f)}>{capitalized(metricLabel(plan, f))}</th>
-              ))}
-            </tr>
-          </thead>
-          <tbody>
-            {measured.map(s => (
-              <tr key={s.step_number} data-step={s.step_number}>
-                <td>{s.step_number}</td>
-                {columns.map(f => <td key={f}>{metricValueText(f, stepMetric(s, f))}</td>)}
-              </tr>
-            ))}
-          </tbody>
-        </table>
-      )}
+      <SpaceBetween size="xs">
+        <SpaceBetween direction="horizontal" size="xs" alignItems="center">
+          <Box variant="h4">{t('analysis-results.adoption.why-heading')}</Box>
+          {notes.length > 0 && (
+            <HelpInfoLink topic="step-scores" t={t} ariaLabel={t('analysis-results.adoption.score-info-label')} />
+          )}
+        </SpaceBetween>
+        <div data-figure="step-metrics">
+          <Table
+            variant="embedded"
+            trackBy="step_number"
+            wrapLines
+            // Names the table, and the scroll region a narrow screen wraps it in (axe:
+            // landmark-unique, #2458).
+            ariaLabels={{ tableLabel: t('analysis-results.adoption.step-table-label', { wave }) }}
+            items={items}
+            columnDefinitions={columnDefinitions}
+            sortingColumn={column}
+            sortingDescending={sorting.descending}
+            onSortingChange={({ detail }) => setSorting({
+              id: detail.sortingColumn.id, descending: detail.isDescending,
+            })}
+          />
+        </div>
+      </SpaceBetween>
     </div>
   );
 }

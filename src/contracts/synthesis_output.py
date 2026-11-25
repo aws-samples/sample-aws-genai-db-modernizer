@@ -785,7 +785,7 @@ Version History:
 """
 
 import re
-from collections.abc import Collection
+from collections.abc import Collection, Mapping
 from datetime import datetime
 from typing import Any, Literal, get_args
 
@@ -4114,6 +4114,55 @@ class ReverseReplica(BaseModel):
         return self
 
 
+#: A 0-to-1 order metric's band on its scale (#2288).
+ScoreBand = Literal["low", "high"]
+#: The order metrics that run from 0 to 1 and so have a scale (#2288).
+SCORED_METRICS = ("gravity", "hub_score")
+
+
+class ScoreScale(BaseModel):
+    """How a 0-to-1 order metric reads (#2288), explained by ``note``
+    (``step_explanations.score_scales``). A banded metric reads low below ``high_from``
+    and high from it, in the words of ``band_labels``; a metric with neither reads as
+    its value."""
+
+    high_from: float | None = Field(
+        None, gt=0, le=1, description="The value from which it reads high; None: no band"
+    )
+    band_labels: dict[ScoreBand, str] | None = Field(
+        None, description="The plain word for each band, the one every deliverable prints"
+    )
+    note: str = Field(..., description="What the metric means and how it reads")
+
+    @model_validator(mode="after")
+    def _both_bands(self) -> "ScoreScale":
+        if (self.high_from is None) != (self.band_labels is None):
+            raise ValueError("a score scale states its threshold and band words together")
+        if self.band_labels is not None and set(self.band_labels) != {"low", "high"}:
+            raise ValueError("a score scale names both bands")
+        return self
+
+
+def _check_score_bands(
+    what: str,
+    bands: Mapping[str, str],
+    metrics: BaseModel | None,
+    scales: dict[str, "ScoreScale"],
+) -> None:
+    """``bands`` name only scaled metrics ``metrics`` states, each on its scale (#2288)."""
+    for field, band in bands.items():
+        scale = scales.get(field)
+        value = getattr(metrics, field, None) if metrics is not None else None
+        if scale is None or value is None:
+            raise ValueError(
+                f"{what}: score_bands names {field}, which it has no scale or value for"
+            )
+        if scale.high_from is None:
+            raise ValueError(f"{what}: score_bands names {field}, whose scale has no band")
+        if band != ("high" if value >= scale.high_from else "low"):
+            raise ValueError(f"{what}: its {field} band is not its value's on the scale")
+
+
 class UnitMetrics(BaseModel):
     """A move unit's dependency-graph metrics (#1698), rounded, computed in our code."""
 
@@ -4179,6 +4228,13 @@ class MoveUnit(BaseModel):
     )
     pilot: bool = Field(False, description="The first unit of its step's first stage, named")
     metrics: UnitMetrics | None = Field(None, description="None until the graph (#1698) runs")
+    score_bands: dict[str, ScoreBand] = Field(
+        default_factory=dict,
+        description=(
+            "Each 0-to-1 metric's band on the plan's score_scales (#2288); empty in a plan "
+            "stored before it, which the reader fills"
+        ),
+    )
 
     @model_validator(mode="after")
     def _consistent(self) -> "MoveUnit":
@@ -4489,6 +4545,13 @@ class SliceStep(BaseModel):
         ),
     )
     metrics: SliceMetrics | None = Field(None, description="A slice step's order metrics")
+    score_bands: dict[str, ScoreBand] = Field(
+        default_factory=dict,
+        description=(
+            "Each 0-to-1 metric's band on the plan's score_scales (#2288); empty in a plan "
+            "stored before it, which the reader fills"
+        ),
+    )
     table_classes: RelationalTableClasses | None = Field(
         None, description="The relational step only"
     )
@@ -4655,6 +4718,16 @@ class SlicePlanFacts(BaseModel):
         ),
     )
 
+    score_scales: dict[str, ScoreScale] = Field(
+        default_factory=dict,
+        description=(
+            "How each 0-to-1 order metric reads, by its field: where it turns high, the "
+            "band words and the sentence that explains it (#2288, "
+            "``step_explanations.score_scales``); empty in a plan stored before it, which "
+            "the reader fills"
+        ),
+    )
+
     @model_validator(mode="after")
     def _consistent(self) -> "SlicePlanFacts":
         _count_matches(self.step_count, self.plan_steps, "step_count")
@@ -4663,6 +4736,16 @@ class SlicePlanFacts(BaseModel):
             # A subset loads: a plan saved before a metric was added names fewer, and the
             # reader fills the missing names (``step_explanations.needs_step_explanations``).
             raise ValueError("metric_labels names only order metrics")
+        if not set(self.score_scales) <= set(SCORED_METRICS):
+            raise ValueError("score_scales names only the 0-to-1 order metrics")
+        for step in self.plan_steps:
+            _check_score_bands(
+                f"step {step.step_number}", step.score_bands, step.metrics, self.score_scales
+            )
+        for unit in self.move_units:
+            _check_score_bands(
+                f"unit {unit.key}", unit.score_bands, unit.metrics, self.score_scales
+            )
         if [s.step_number for s in self.plan_steps] != list(range(1, len(self.plan_steps) + 1)):
             raise ValueError("steps are numbered 1, 2, ... in order")
         if (self.slice_basis is None) == (self.step_basis == "slices"):

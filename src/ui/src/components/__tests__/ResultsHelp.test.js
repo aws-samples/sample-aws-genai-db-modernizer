@@ -84,6 +84,23 @@ describe('the help topics', () => {
     expect(older).not.toContain(en['analysis-results.waves.readiness-rule']);
   });
 
+  test('the step scores panel states how each score reads, in the facts words (#2288)', () => {
+    const body = en['analysis-results.help.step-scores.body'];
+    const plan = { score_scales: {
+      gravity: { high_from: 0.5, band_labels: { low: 'low', high: 'high' }, note: 'Sentinel gravity note.' },
+      hub_score: { high_from: 0.5, band_labels: { low: 'low', high: 'high' }, note: 'Sentinel hub note.' },
+    } };
+    const { paragraphs, url } = helpPanelContent('step-scores', t, resultsHelpContext({ facts: { slice_plan: plan } }));
+    expect(paragraphs).toEqual([
+      body,
+      { text: 'Sentinel gravity note.', figure: 'step-score-note' },
+      { text: 'Sentinel hub note.', figure: 'step-score-note' },
+    ]);
+    expect(url.endsWith('#adoption-paths')).toBe(true);
+    // A report with no scales states the page's line alone.
+    expect(helpPanelContent('step-scores', t, resultsHelpContext({ facts: {} })).paragraphs).toEqual([body]);
+  });
+
   test('the table owners panel holds the owner rule the report follows and, with a CDC copy, the CDC sentence', () => {
     const body = en['analysis-results.help.table-owners.body'];
     const intro = en['analysis-results.sources-of-truth.intro'];

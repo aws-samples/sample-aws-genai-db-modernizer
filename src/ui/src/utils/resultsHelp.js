@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: MIT-0
 
 import { helpPageUrl, RESULTS_HELP_URL } from './helpSite';
-import { adoptionOf } from './adoptionPaths';
+import { adoptionOf, scoreNotes, slicePlanOf } from './adoptionPaths';
 import { migrationWaves, waveReadiness } from './migrationWaves';
 import { tableOwnershipOf, tableSourcesOf, unservableOf } from './reportFacts';
 import { rerunLines } from './unservable';
@@ -50,6 +50,15 @@ export const HELP_TOPICS = {
       context.adoptionShown ? t('analysis-results.adoption.definitions') : null,
       t(key('migration-roadmap', 'groups')),
       context.readinessShown ? t('analysis-results.waves.readiness-rule') : null,
+    ],
+  },
+  // #2288: how the step table's two scores read, in the facts' words
+  // (facts.slice_plan.score_scales[].note), after the page's own line on the bands.
+  'step-scores': {
+    anchor: 'adoption-paths',
+    paragraphs: (t, context) => [
+      t(key('step-scores', 'body')),
+      ...((context.stepScoreNotes || []).map(text => ({ text, figure: 'step-score-note' }))),
     ],
   },
   'close-calls': {
@@ -115,6 +124,7 @@ export function resultsHelpContext(synthesis) {
     ownerRuleKey: ownership ? ownerRuleKey(ownership) : null,
     adoptionShown: Boolean(adoptionOf(synthesis)),
     readinessShown: migrationWaves(synthesis).some(w => waveReadiness(synthesis, w)),
+    stepScoreNotes: scoreNotes(slicePlanOf(synthesis) || {}, ['gravity', 'hub_score']),
   };
 }
 
