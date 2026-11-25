@@ -375,7 +375,7 @@ class SchemaDesignTrace:
 
     def __init__(self) -> None:
         self.iterations: list[dict] = []
-        self.start_time = time.time()
+        self.start_time = time.monotonic()
 
     def log_designer(
         self,
@@ -424,7 +424,7 @@ class SchemaDesignTrace:
 
     def to_dict(self) -> dict:
         return {
-            "total_duration_seconds": round(time.time() - self.start_time, 2),
+            "total_duration_seconds": round(time.monotonic() - self.start_time, 2),
             "total_iterations": len(self.iterations),
             "iterations": self.iterations,
         }

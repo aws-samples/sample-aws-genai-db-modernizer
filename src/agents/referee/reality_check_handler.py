@@ -441,7 +441,7 @@ def run_reality_check_handler(
     """
     import time
 
-    start_time = time.time()
+    start_time = time.monotonic()
 
     if assignment_version is None:
         previous_run = reality_check_run_for_lineage(
@@ -510,7 +510,7 @@ def run_reality_check_handler(
         store, job_id, database_name, det, assignment_version, write_revision=not awaiting
     )
 
-    elapsed = time.time() - start_time
+    elapsed = time.monotonic() - start_time
     say(f"[reality-check] Complete in {elapsed:.1f}s")
     return {
         "status": "awaiting_llm" if awaiting else "complete",

@@ -322,8 +322,8 @@ class DocumentDBProvisioner(BaseProvisioner):
         versions, so we poll describe_db_clusters manually.
         """
         logger.info("waiting_documentdb_cluster_available", cluster_id=cluster_id)
-        deadline = time.time() + 1200  # 20 min hard cap
-        while time.time() < deadline:
+        deadline = time.monotonic() + 1200  # 20 min hard cap
+        while time.monotonic() < deadline:
             response = self.docdb.describe_db_clusters(DBClusterIdentifier=cluster_id)
             status = response["DBClusters"][0]["Status"]
             if status == "available":

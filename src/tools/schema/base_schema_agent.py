@@ -378,9 +378,9 @@ class SchemaDesignRunner:
 
         # --- Iteration 0: initial design ---
         say(f"{prefix} === Designer iteration 1/{MAX_PE_ITERATIONS} ===")
-        t0 = time.time()
+        t0 = time.monotonic()
         design_output: T = self._checked(self._invoke_designer(designer_prompt))
-        elapsed = time.time() - t0
+        elapsed = time.monotonic() - t0
         self.trace.log_designer(0, elapsed, design_output)
         say(f"{prefix} Designer iteration 1 complete in {elapsed:.0f}s")
 
@@ -400,11 +400,11 @@ class SchemaDesignRunner:
             # a later review that errors leaves none, never an earlier review's.
             self.routing_flags = []
             try:
-                t0 = time.time()
+                t0 = time.monotonic()
                 review = self._invoke_pe_reviewer(
                     self.model, design_output, input_summary, self.pe_skill_path
                 )
-                elapsed = time.time() - t0
+                elapsed = time.monotonic() - t0
                 self.trace.log_pe_review(iteration, elapsed, review)
                 self.routing_flags = [
                     f.model_dump(mode="json") if hasattr(f, "model_dump") else dict(f)
@@ -509,11 +509,11 @@ class SchemaDesignRunner:
                 f"{prefix} === Designer revision {iteration + 2}/{MAX_PE_ITERATIONS} "
                 f"({len(change_requests)} changes requested) ==="
             )
-            t0 = time.time()
+            t0 = time.monotonic()
             design_output = self._checked(
                 self._invoke_designer(revision_prompt, previous_output=design_output)
             )
-            elapsed = time.time() - t0
+            elapsed = time.monotonic() - t0
             self.trace.log_designer(iteration + 1, elapsed, design_output)
             say(f"{prefix} Designer revision {iteration + 2} complete in {elapsed:.0f}s")
 

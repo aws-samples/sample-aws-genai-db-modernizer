@@ -37,7 +37,7 @@ def run_assignment_resolver(job_id: str, database_name: str, store: ArtifactStor
        (#2152), writing nothing
     7. Write assignment and validation artifacts
     """
-    start_time = time.time()
+    start_time = time.monotonic()
     say(f"[assignment] Starting assignment resolution for {database_name}")
 
     # --- Read triage output ---
@@ -119,7 +119,7 @@ def run_assignment_resolver(job_id: str, database_name: str, store: ArtifactStor
     )
     say(f"[assignment] Access-pattern record written to {record_key}")
 
-    elapsed = time.time() - start_time
+    elapsed = time.monotonic() - start_time
     say(f"[assignment] ✅ Complete in {elapsed:.1f}s — version {version}")
 
 

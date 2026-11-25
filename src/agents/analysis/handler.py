@@ -29,7 +29,7 @@ def run_analysis(
     """Run an analysis agent. Reads collector output, writes analysis via ArtifactStore."""
     import time
 
-    start_time = time.time()
+    start_time = time.monotonic()
 
     say(f"[analysis/{agent_type}] Starting analysis for {database_name}")
 
@@ -253,5 +253,5 @@ def run_analysis(
 
     key = f"{database_name}/{job_id}/analysis-{agent_type}/analysis.json"
     store.write_json(key, result.model_dump(mode="json"))
-    elapsed = time.time() - start_time
+    elapsed = time.monotonic() - start_time
     say(f"[analysis/{agent_type}] ✅ Complete in {elapsed:.1f}s — output written")

@@ -244,10 +244,10 @@ class OpenSearchProvisioner(BaseProvisioner):
 
     def _wait_for_active(self, domain_name: str, timeout_minutes: int = 40) -> None:
         """Poll until domain processing is complete."""
-        deadline = time.time() + timeout_minutes * 60
+        deadline = time.monotonic() + timeout_minutes * 60
         poll_interval = 30
 
-        while time.time() < deadline:
+        while time.monotonic() < deadline:
             desc = self.client.describe_domain(DomainName=domain_name)
             processing = desc["DomainStatus"].get("Processing", True)
             logger.info("waiting_for_domain", domain_name=domain_name, processing=processing)

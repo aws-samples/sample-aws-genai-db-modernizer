@@ -13,6 +13,7 @@ DynamoDB handler pattern. Third element is empty string — no Mermaid diagram
 for OpenSearch (indexes are independent; no ER diagram needed).
 """
 
+import time
 from datetime import datetime
 
 from src.contracts.analysis_input import AnalysisInput
@@ -41,7 +42,7 @@ def analyze_for_opensearch(
     NOT_SUITABLE recommendations for all tables, zero tables produces
     empty results.
     """
-    start_time = datetime.now()
+    start_time = time.monotonic()
     collector_output = analysis_input.collector_output
 
     tables = (collector_output.get("database_schema") or {}).get("tables") or []
@@ -63,7 +64,7 @@ def analyze_for_opensearch(
         analysis_input.analysis_options,
     )
 
-    duration = (datetime.now() - start_time).total_seconds()
+    duration = time.monotonic() - start_time
 
     # === 4. Output contract v2.1 ===
     output = AnalysisOutputContract(

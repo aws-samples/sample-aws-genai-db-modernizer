@@ -56,7 +56,7 @@ class ElastiCacheSeeder(BaseSeeder):
             decode_responses=True,
         )
 
-        start = time.time()
+        start = time.monotonic()
         key_designs = schema_output.get("key_designs", [])
         resources: dict = {}
         total_items = 0
@@ -80,7 +80,7 @@ class ElastiCacheSeeder(BaseSeeder):
             logger.info("seeded_key_design", key_pattern=key_pattern, items=seeded)
 
         client.close()
-        duration = time.time() - start
+        duration = time.monotonic() - start
 
         return SeedManifest(
             resources=resources,

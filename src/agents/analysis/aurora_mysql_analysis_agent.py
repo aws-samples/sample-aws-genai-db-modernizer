@@ -14,6 +14,7 @@ LLM Seam Pattern: exposes deterministic, prepare_llm_input, apply_llm_output,
 and main entry point.
 """
 
+import time
 from datetime import datetime
 
 from src.contracts.analysis_input import AnalysisInput
@@ -37,7 +38,7 @@ def analyze_for_aurora_mysql_deterministic(
         Tuple of (AnalysisOutputContract, decision_trace_dict, "").
         Third element is empty string — no Mermaid ER diagram for Aurora MySQL.
     """
-    start_time = datetime.now()
+    start_time = time.monotonic()
     collector_output = analysis_input.collector_output
 
     tables = (collector_output.get("database_schema") or {}).get("tables") or []
@@ -58,7 +59,7 @@ def analyze_for_aurora_mysql_deterministic(
         engine="mysql",
     )
 
-    duration = (datetime.now() - start_time).total_seconds()
+    duration = time.monotonic() - start_time
 
     # === 4. Output contract v2.1 ===
     output = AnalysisOutputContract(

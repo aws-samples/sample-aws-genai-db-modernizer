@@ -48,7 +48,7 @@ class OpenSearchSeeder(BaseSeeder):
             connection_class=None,
         )
 
-        start = time.time()
+        start = time.monotonic()
         resources: dict = {}
         total_items = 0
 
@@ -92,7 +92,7 @@ class OpenSearchSeeder(BaseSeeder):
         # Refresh all indices for immediate searchability
         client.indices.refresh(index="_all")
 
-        duration = time.time() - start
+        duration = time.monotonic() - start
         return SeedManifest(
             resources=resources,
             total_items=total_items,
