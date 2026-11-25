@@ -60,12 +60,17 @@
 --                     lock_wait_timeout until it ends or sets it again. A value that is not a
 --                     whole number takes the default.
 -- A column that is not measured has max_value_bytes null: never 0, which means an empty
--- column. That is the case for a table above the limit, a table the user has no direct SELECT
--- grant on (a grant through a role is not seen), and an InnoDB table whose size is unknown.
+-- column. That is the case for a table above the limit, a column the user may not SELECT, and
+-- an InnoDB table whose size is unknown. Whether the user may SELECT a column is read from
+-- information_schema.COLUMNS.PRIVILEGES, which counts every grant the session holds: global,
+-- on the database, the table or the column, and through an active role (#2367).
 -- An InnoDB table's size is its tablespace file's (information_schema.INNODB_TABLESPACES on
 -- MySQL, INNODB_SYS_TABLESPACES on MariaDB 10.5), summed over the partitions of a partitioned
 -- table, because InnoDB keeps a large value on pages data_length does not count. The view
--- raises an error without PROCESS, so it is read only when the user holds PROCESS directly. A
+-- raises an error without PROCESS, so it is read only when information_schema.USER_PRIVILEGES
+-- shows PROCESS granted to the user or, on MySQL 8.0.19+, to a role active in the session (the
+-- RDS master user's rds_superuser_role, for example). A role's row shows there when the user may
+-- read the mysql schema, as a global SELECT allows; a role granted to that role is not read. A
 -- table in a shared (general or system) tablespace, a table whose name MySQL encodes in its
 -- file name, a view the server does not have, and a file size of 0 give no size: unmeasured.
 -- Other engines (MyISAM, Aria) use data_length + index_length.
@@ -582,12 +587,27 @@ SELECT JSON_OBJECT(
 -- and are quoted. Only SELECTs run. LENGTH counts bytes (a JSON value as its text form, a
 -- spatial value with its 4-byte SRID prefix).
 -- The view with each InnoDB tablespace's file size. It raises an error without PROCESS
--- rather than showing nothing, so it is read only when the user holds PROCESS directly.
-SELECT MIN(table_name) INTO @tablespace_view FROM information_schema.tables
- WHERE table_schema = 'information_schema'
-   AND UPPER(table_name) IN ('INNODB_TABLESPACES', 'INNODB_SYS_TABLESPACES')
-   AND EXISTS (SELECT 1 FROM information_schema.user_privileges u
-                WHERE u.grantee = @grantee AND u.privilege_type = 'PROCESS');
+-- rather than showing nothing, so it is read only when PROCESS shows granted to the user or
+-- to a role active in the session (#2367). MySQL 8.0.19+ lists those roles with their host in
+-- ENABLED_ROLES; an older server or MariaDB (no ROLE_HOST) reads the user's own grant only.
+SELECT COUNT(*) > 0 INTO @enabled_role_hosts FROM information_schema.columns
+ WHERE table_schema = 'information_schema' AND UPPER(table_name) = 'ENABLED_ROLES'
+   AND UPPER(column_name) = 'ROLE_HOST';
+SET @tablespace_view_sql = CONCAT(
+  'SELECT MIN(table_name) INTO @tablespace_view FROM information_schema.tables
+    WHERE table_schema = ''information_schema''
+      AND UPPER(table_name) IN (''INNODB_TABLESPACES'', ''INNODB_SYS_TABLESPACES'')
+      AND EXISTS (SELECT 1 FROM information_schema.user_privileges u
+                   WHERE u.privilege_type = ''PROCESS'' AND (u.grantee = @grantee',
+  IF(@enabled_role_hosts,
+     ' OR u.grantee IN (SELECT CONCAT(CHAR(39 USING utf8mb4), r.role_name, CHAR(39 USING utf8mb4),
+                                      ''@'', CHAR(39 USING utf8mb4), r.role_host,
+                                      CHAR(39 USING utf8mb4))
+                          FROM information_schema.enabled_roles r)', ''),
+  '))');
+PREPARE tablespace_view_stmt FROM @tablespace_view_sql;
+EXECUTE tablespace_view_stmt;
+DEALLOCATE PREPARE tablespace_view_stmt;
 -- A partitioned table has one tablespace per partition (name#p#partition): summed.
 SET @lob_size_sql = CONCAT(
   'SELECT GROUP_CONCAT(
@@ -619,14 +639,7 @@ SET @lob_size_sql = CONCAT(
             AND (t.engine <> ''InnoDB'' OR ts.f > 0)
             AND GREATEST(t.data_length + t.index_length, IF(t.engine = ''InnoDB'', ts.f, 0))
                 <= @lob_scan_max_mb * 1048576
-            AND (EXISTS (SELECT 1 FROM information_schema.user_privileges u
-                          WHERE u.grantee = @grantee AND u.privilege_type = ''SELECT'')
-                 OR EXISTS (SELECT 1 FROM information_schema.schema_privileges s
-                             WHERE s.grantee = @grantee AND s.table_schema = c.table_schema
-                               AND s.privilege_type = ''SELECT'')
-                 OR EXISTS (SELECT 1 FROM information_schema.table_privileges p
-                             WHERE p.grantee = @grantee AND p.table_schema = c.table_schema
-                               AND p.table_name = c.table_name AND p.privilege_type = ''SELECT''))
+            AND FIND_IN_SET(''select'', LOWER(c.privileges)) > 0
           GROUP BY c.table_name) g');
 PREPARE lob_union_stmt FROM @lob_size_sql;
 EXECUTE lob_union_stmt;
