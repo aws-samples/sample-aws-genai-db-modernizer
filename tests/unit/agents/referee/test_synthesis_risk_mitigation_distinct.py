@@ -265,10 +265,10 @@ def test_sql_excerpt_drops_backticks() -> None:
     assert description.endswith("this query: SELECT COUNT ( * ) FROM wp_postmeta")
 
 
-def test_opensearch_source_query_is_the_sql_fallback() -> None:
+def test_opensearch_source_query_is_never_the_sql_fallback() -> None:
+    """Only collected SQL is quoted (#2280); the design's own copy is not."""
     pattern = {"query_ids": ["q-missing"], "source_query": "SELECT * FROM t WHERE x LIKE ?"}
     out = build_risk_assessment(_data({"opensearch": {"unsupported_patterns": [pattern]}}))
     assert out["risks"][0]["description"] == (
-        "[opensearch] unsupported pattern: OpenSearch has no native equivalent for this "
-        "query: SELECT * FROM t WHERE x LIKE ?"
+        "[opensearch] unsupported pattern: OpenSearch has no native equivalent for this query."
     )
