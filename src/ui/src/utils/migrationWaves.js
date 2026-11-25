@@ -145,3 +145,22 @@ export function readinessText(view, t) {
   }
   return view.readiness ? t(`analysis-results.waves.readiness-status.${view.readiness}`) : null;
 }
+
+// #2287: a gate's conditions as the facts cut it (facts.waves[].gate_conditions, a
+// stage's gate_conditions), read as stored. Facts that state none (no field, or an empty
+// list) show the gate string as one condition, unchanged, as the engineering report
+// prints the gate itself then (roadmap._gate_text); no gate, no condition.
+function gateConditionsOf(conditions, gate) {
+  const stated = Array.isArray(conditions) ? conditions.filter(c => c && typeof c === 'object') : [];
+  if (stated.length > 0) return stated;
+  return gate ? [{ kind: 'check', parts: [{ text: String(gate), items: [] }] }] : [];
+}
+
+export function waveGateConditions(synthesis, wave) {
+  const wf = waveFacts(synthesis, wave);
+  return gateConditionsOf(wf && wf.gate_conditions, wave.gate);
+}
+
+export function stageGateConditions(stage) {
+  return gateConditionsOf(stage && stage.gate_conditions, stage && stage.gate);
+}

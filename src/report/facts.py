@@ -21,6 +21,7 @@ from src.shared.cache_role import cache_role_sentence
 from src.shared.cutover_message import CUTOVER_MESSAGE
 from src.shared.decision_headline import decision_headline
 from src.shared.exposure_wording import group_exposures
+from src.shared.gate_conditions import conditions_for
 from src.shared.report_facts import (
     COST_CAVEAT,
     COST_SCOPE_LABEL,
@@ -55,6 +56,7 @@ from src.shared.report_facts import (
     unwritten_owner_rule,
     wave_one_moved_by_later_waves,
     wave_readiness_rows,
+    with_gate_conditions,
     with_owner_line_risk,
 )
 from src.shared.routine_facts import needs_routine_words, with_routine_words
@@ -391,6 +393,14 @@ def report_facts(report: dict[str, Any]) -> dict[str, Any]:
             # A block written before #2075: the executive report's short readiness line,
             # from the same function synthesis calls.
             missing["waves"] = _short_readiness_backfill(report, facts, rows)
+        rows = missing.get("waves", waves)
+        if isinstance(rows, list):
+            # #2287: each gate's conditions, the stored ones when they join back to the
+            # gate (a block written before them reads None, also when re-dumped through
+            # the contract), else cut again by the function synthesis calls.
+            cut = with_gate_conditions(rows, resolve_migration_waves(report))
+            if cut != rows:
+                missing["waves"] = cut
         if needs_routine_words(facts.get("routines")):
             # A block written before #1939: the words the deliverables print, from the
             # same function synthesis calls, over the stored rows and rules.
@@ -411,10 +421,44 @@ def report_facts(report: dict[str, Any]) -> dict[str, Any]:
             # plan gains the labels only. An engine-wave step stored before #1699 has no
             # cut cost to state, so its sentence leaves it out.
             missing["slice_plan"] = with_step_explanations(stored_plan)
+        stored_plan = missing.get("slice_plan", facts.get("slice_plan"))
+        if isinstance(stored_plan, dict):
+            # #2287: each stage gate's conditions, by the same rule as the waves'.
+            cut_plan = _with_stage_gate_conditions(stored_plan)
+            if cut_plan != stored_plan:
+                missing["slice_plan"] = cut_plan
         return {**facts, **missing} if missing else facts
     # #1992: a report with no facts block was written before the wave readiness check,
     # and states none: its designs carry no review counts to check.
     return compute_report_facts(report, waves=resolve_migration_waves(report), readiness=False)
+
+
+def _with_stage_gate_conditions(plan: dict[str, Any]) -> dict[str, Any]:
+    """``plan`` with each stage's ``gate_conditions`` as its stored gate states them (#2287,
+    ``conditions_for``, the rule the waves follow): the stored ones when they join back to
+    the gate, else the gate cut again."""
+
+    def stage_with(stage: Any) -> Any:
+        if not isinstance(stage, dict):
+            return stage
+        conditions = conditions_for(
+            stage.get("gate_conditions"), stage.get("stage_gate_parts"), stage.get("gate")
+        )
+        if conditions == stage.get("gate_conditions"):
+            return stage
+        return {**stage, "gate_conditions": conditions}
+
+    return {
+        **plan,
+        "plan_steps": [
+            (
+                {**step, "step_stages": [stage_with(s) for s in step.get("step_stages") or []]}
+                if isinstance(step, dict)
+                else step
+            )
+            for step in plan.get("plan_steps") or []
+        ],
+    }
 
 
 def step_gate_of(store: Any, db: str, job_id: str) -> dict[str, Any] | None:

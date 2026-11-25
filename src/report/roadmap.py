@@ -5,10 +5,10 @@
 
 from __future__ import annotations
 
-import re
 from typing import Any
 
 from src.shared.engine_names import display_engine, display_source_database
+from src.shared.gate_conditions import gate_conditions
 from src.shared.gate_facts import GATE_LIST_MAX
 from src.shared.report_facts import wave_facts
 from src.shared.wave_readiness import READINESS_RULE_NOTE
@@ -214,12 +214,23 @@ def _kept_list(wf: dict[str, Any]) -> list[Any]:
     return [o.get("table") for o in wf.get("kept_in_sync") or [] if isinstance(o, dict)]
 
 
+def _conditions_of(w: dict[str, Any], wf: dict[str, Any]) -> list[dict[str, Any]]:
+    """The wave's gate conditions as the facts state them (#2287): the sentences the
+    results page lists. A row with none (a wave the facts block has no row for) gets them
+    from the same function synthesis calls."""
+    conditions = wf.get("gate_conditions")
+    if not isinstance(conditions, list):
+        conditions = gate_conditions(w.get("gate_parts"), w.get("gate"))
+    return [c for c in conditions if isinstance(c, dict)]
+
+
 def _gate_lists_kept(w: dict[str, Any], wf: dict[str, Any]) -> bool:
-    """Whether a part of the wave's gate lists exactly its kept-in-sync tables (#1574)."""
+    """Whether a list of the wave's gate is exactly its kept-in-sync tables (#1574)."""
     kept = _kept_list(wf)
-    parts = w.get("gate_parts")
-    return isinstance(parts, list) and any(
-        isinstance(p, dict) and _same_tables(p.get("items") or [], kept) for p in parts
+    return any(
+        isinstance(p, dict) and _same_tables(p.get("items") or [], kept)
+        for c in _conditions_of(w, wf)
+        for p in c.get("parts") or []
     )
 
 
@@ -229,60 +240,66 @@ def _gate_lists_kept(w: dict[str, Any], wf: dict[str, Any]) -> bool:
 GATE_LIST_POINTER = "The Migration map above lists each of these tables with its owner and readers."
 
 
+def _is_long(items: list[Any]) -> bool:
+    """Whether a gate list is longer than a gate line prints (``GATE_LIST_MAX``)."""
+    return len(items) > GATE_LIST_MAX  # facts: presentation (list cap)
+
+
 def _gate_text(
     w: dict[str, Any],
     wf: dict[str, Any],
     replicated: dict[str, list[str]],
     mapped: set[str] | frozenset[str] = frozenset(),
 ) -> str:
-    """A wave's gate, each table list named once (#1170).
+    """A wave's gate, each table list named once (#1170), from the facts' gate
+    conditions (#2287), which join back to the stored gate: the sentences the results
+    page lists, in the same words.
 
-    The gate's parts (``gate_parts``, #1028) join back to the stored gate. A list
-    the section already gives in full is referred to instead of repeated: the
+    A list the section already gives in full is referred to instead of repeated: the
     wave's kept-in-sync tables (which that line then names in full, however many,
     #1574), the wave's own table list, or the tables the wave's engines write that
     "Sources of truth and replicas" lists. A list of more than ``GATE_LIST_MAX`` tables
     that are all Migration map rows (``mapped``: each with its owner and readers) is left
-    to the count the gate's own text gives, and one pointer to the map ends the sentence
-    that holds the last such list (#1642: the discourse wave 2 gate printed 70 names the
-    map already lists; #2171: no name of such a list, so a gate line never prints more
-    than ``GATE_LIST_MAX`` of them, and the pointer is said once however many lists it
-    covers). Any other list, and a gate with no parts, is printed as stored.
+    to the count the gate's own text gives, and one pointer to the map ends the condition
+    (the sentence) that holds the last such list (#1642: the discourse wave 2 gate printed
+    70 names the map already lists; #2171: no name of such a list, so a gate line never
+    prints more than ``GATE_LIST_MAX`` of them, and the pointer is said once however many
+    lists it covers). Any other list is printed as stored.
     """
-    parts = w.get("gate_parts")
-    if not isinstance(parts, list) or not parts:
+    conditions = _conditions_of(w, wf)
+    if not conditions:
         return str(w.get("gate") or "")
     kept = _kept_list(wf)
     tables = w.get("tables") or []
     written = [t for e in w.get("engines") or [] for t in replicated.get(str(e), [])]
-    out: list[str] = []
-    pointed_at = -1  # where the text after the last collapsed list starts
-    for part in parts:
-        text = part.get("text") if isinstance(part, dict) else None
-        items = (part.get("items") if isinstance(part, dict) else None) or []
-        out.append(str(text or ""))
-        if not items:
-            continue
-        # Only a list shown in full above is referred to; a capped one is printed here.
-        # The kept-in-sync line is never capped when this list is it (#1574).
-        if _same_tables(items, kept):
-            out.append(" (the tables kept current by CDC above)")
-        elif not tables[_TABLES_SHOWN:] and _same_tables(items, tables):
-            out.append(" (the tables listed above)")
-        elif _same_tables(items, written):
-            out.append(' (listed under "Sources of truth and replicas" below)')
-        elif len(items) > GATE_LIST_MAX and {str(i) for i in items} <= mapped:
-            pointed_at = len("".join(out))
-        else:
-            out.append(f" ({', '.join(str(i) for i in items)})")
-    gate = "".join(out)
-    if pointed_at < 0:
-        return gate
-    # #2171 review: the pointer ends the sentence that holds the last collapsed list, so
-    # "these tables" follows the lists it covers, not a later sentence about risks.
-    end = re.search(r"\.(?=\s|$)", gate[pointed_at:])
-    cut = pointed_at + end.end() if end else len(gate)
-    return f"{gate[:cut]} {GATE_LIST_POINTER}{gate[cut:]}"
+    sentences: list[str] = []
+    pointed = -1  # the condition that holds the last collapsed list
+    for i, condition in enumerate(conditions):
+        out: list[str] = []
+        for part in condition.get("parts") or []:
+            text = part.get("text") if isinstance(part, dict) else None
+            items = (part.get("items") if isinstance(part, dict) else None) or []
+            out.append(str(text or ""))
+            if not items:
+                continue
+            # Only a list shown in full above is referred to; a capped one is printed here.
+            # The kept-in-sync line is never capped when this list is it (#1574).
+            if _same_tables(items, kept):
+                out.append(" (the tables kept current by CDC above)")
+            elif not tables[_TABLES_SHOWN:] and _same_tables(items, tables):
+                out.append(" (the tables listed above)")
+            elif _same_tables(items, written):
+                out.append(' (listed under "Sources of truth and replicas" below)')
+            elif _is_long(items) and {str(x) for x in items} <= mapped:
+                pointed = i
+            else:
+                out.append(f" ({', '.join(str(i) for i in items)})")
+        sentences.append("".join(out))
+    if pointed >= 0:
+        # #2171 review: the pointer ends the sentence that holds the last collapsed list,
+        # so "these tables" follows the lists it covers, not a later sentence about risks.
+        sentences[pointed] = f"{sentences[pointed]} {GATE_LIST_POINTER}"
+    return " ".join(sentences)
 
 
 def one_step_pointer(report: dict[str, Any]) -> str:

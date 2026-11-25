@@ -58,6 +58,7 @@ from src.shared.engine_names import (
     display_engine,
 )
 from src.shared.exposure_wording import group_exposures
+from src.shared.gate_conditions import conditions_for, gate_conditions
 from src.shared.left_out_objects import left_out_objects
 from src.shared.migration_wave_engines import NON_OWNER_ENGINES, primary_owner_engine
 from src.shared.overlap_risk import overlap_risk_ids
@@ -370,6 +371,8 @@ def wave_facts(wave: dict[str, Any], view_ids: Iterable[str] | None = None) -> d
         "heterogeneous_note": None,
         "lists_relational_gaps": False,
         "moved_by_later_waves": None,
+        # #2287: the gate's sentences, each with its table lists, for the checklist.
+        "gate_conditions": gate_conditions(wave.get("gate_parts"), wave.get("gate")),
     }
     owners = _owner_entries(wave)
     outside: dict[str, dict[str, Any]] = {}
@@ -1100,6 +1103,30 @@ def risk_facts(report: dict[str, Any]) -> dict[str, Any]:
     }
 
 
+def with_gate_conditions(rows: list[Any], waves: Iterable[Any] | None) -> list[Any]:
+    """``rows`` (``facts.waves``) with each wave's ``gate_conditions`` as its gate in
+    ``waves`` states them (#2287, ``conditions_for``): the stored ones when they join back
+    to that gate, else the gate cut again by the function ``wave_facts`` calls. A row whose
+    wave is not in ``waves``, and a row that is not a record, are kept as stored."""
+    by_number = {
+        int(w.get("wave") or 0): w for w in waves or [] if isinstance(w, dict) and w.get("wave")
+    }
+    out: list[Any] = []
+    for r in rows:
+        w = by_number.get(int(r.get("wave") or 0)) if isinstance(r, dict) else None
+        out.append(
+            {
+                **r,
+                "gate_conditions": conditions_for(
+                    r.get("gate_conditions"), w.get("gate_parts"), w.get("gate")
+                ),
+            }
+            if w is not None
+            else r
+        )
+    return out
+
+
 def refresh_risk_facts(facts: dict[str, Any], report: dict[str, Any]) -> dict[str, Any]:
     """``facts`` with every risk figure counted again from ``report``'s risks: the
     open and resolved counts (``risk_facts``) and each wave's and the no-migration
@@ -1118,6 +1145,8 @@ def refresh_risk_facts(facts: dict[str, Any], report: dict[str, Any]) -> dict[st
             {**w, "critical_high_risks": high(w.get("engines"))} if isinstance(w, dict) else w
             for w in facts["waves"]
         ]
+        # #2287: the gates now name the register's risks, so their conditions follow them.
+        out["waves"] = with_gate_conditions(out["waves"], report.get("migration_waves"))
         rows = [w for w in out["waves"] if isinstance(w, dict)]
         if rows and all("readiness" in w for w in rows):
             # #1992: whether each wave is suggested, from the same risks (a block written

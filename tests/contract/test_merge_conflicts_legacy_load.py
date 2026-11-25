@@ -27,6 +27,7 @@ from src.agents.schema_design.group_merger import merge_group_drafts
 from src.contracts.dynamodb_model_output import DynamoDBModelOutputContract
 from src.contracts.synthesis_output import SynthesisOutputContract
 from src.report.facts import report_facts
+from src.report.waves import resolve_migration_waves
 from src.shared.adoption_facts import adoption_facts, slice_plan_facts
 from src.shared.cutover_message import CUTOVER_MESSAGE
 from src.shared.decision_headline import decision_headline
@@ -35,6 +36,7 @@ from src.shared.report_facts import (
     engine_query_count_facts,
     query_group_facts,
     trade_off_topic_facts,
+    with_gate_conditions,
 )
 from tests.unit.agents.schema_design.valid_designs import ddb_design, ddb_pattern, ddb_table
 from tests.unit.report.cache_role import as_read_back
@@ -132,7 +134,13 @@ def test_a_report_written_before_1_72_validates_and_reads_back_unchanged() -> No
         "executive_brief",
         # #2484: the objects each Aurora design leaves out (none here), from its notes.
         "design_left_out",
+        # #2287: each wave gate's conditions, from the same function.
+        "waves",
     )
+    assert facts["waves"] == with_gate_conditions(
+        as_read_back(stored)["waves"], resolve_migration_waves(old)
+    )
+    assert all(w["gate_conditions"] for w in facts["waves"])
     assert facts["design_left_out"] == []
     assert {k: v for k, v in facts.items() if k not in filled} == {
         k: v for k, v in as_read_back(stored).items() if k not in filled

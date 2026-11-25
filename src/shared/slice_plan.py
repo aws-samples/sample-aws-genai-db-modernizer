@@ -55,6 +55,7 @@ from src.shared.dependency_graph import (
     unit_gravity,
 )
 from src.shared.engine_names import SOURCE_ENGINE_DISPLAY_NAMES, display_engine
+from src.shared.gate_conditions import gate_conditions
 from src.shared.migration_wave_engines import RELATIONAL_ENGINES
 from src.shared.move_units import (
     KeptWhole,
@@ -236,6 +237,8 @@ def _stage_dict(
         "holding_risk_ids": sorted({r for u in units for r in u.holding_risk_ids}),
         "gate": join_gate_parts(gate),
         "stage_gate_parts": gate,
+        # #2287: the gate's sentences, each with its table lists, for the checklist.
+        "gate_conditions": gate_conditions(gate),
     }
 
 

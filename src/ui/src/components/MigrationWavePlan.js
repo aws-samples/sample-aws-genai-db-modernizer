@@ -1,7 +1,7 @@
 // Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
 // SPDX-License-Identifier: MIT-0
 
-import { memo, useEffect, useId, useRef, useState } from 'react';
+import { memo, useState } from 'react';
 import Container from "@cloudscape-design/components/container";
 import Header from "@cloudscape-design/components/header";
 import Box from "@cloudscape-design/components/box";
@@ -12,12 +12,13 @@ import StatusIndicator from "@cloudscape-design/components/status-indicator";
 import EngineBadge from "./EngineBadge";
 import AdoptionPathPanel from "./AdoptionPathPanel";
 import WaveStages from "./WaveStages";
+import GateChecklist, { TableNameList } from "./GateChecklist";
 import RoutineMigrationSection from "./RoutineMigrationSection";
 import EngineChoicesNote from "./EngineChoicesNote";
 import HelpInfoLink from "./HelpInfoLink";
 import {
   heterogeneousNote, migrationWaves, readinessText, readinessType, waveCount, waveGaps, waveHeadline,
-  waveMovesNothing, waveReadiness, waveTitle,
+  waveGateConditions, waveMovesNothing, waveReadiness, waveTitle,
 } from "../utils/migrationWaves";
 import { cutoverResponsibilityOf } from "../utils/reportFacts";
 import {
@@ -35,10 +36,9 @@ import {
  * `data-wave` and `data-figure` are stable hooks for the e2e check that this
  * page's waves read the same as the engineering report's (tests/e2e/test_ui.py).
  *
- * The gate shows each of its long lists (table names) as an inline "(…)" that
- * expands in place (#1028). The lists come from the wave's `gate_parts`, which
- * the producer splits out of the gate; a report written before them shows the
- * gate string as it is. Nothing here parses the gate's prose.
+ * #2287: the gate is a checklist (GateChecklist), one item per condition the facts cut it
+ * into (facts.waves[].gate_conditions), each table list behind "Show N tables". The
+ * wave's tables are a list with a filter on the name. Nothing here parses the gate's prose.
  *
  * A cross-engine wave 1 also shows the facts layer's note that it is not yet
  * optimized for heterogeneous migrations, and the relational gaps the check found
@@ -50,8 +50,9 @@ import {
  * The plan states once that the cutover is the customer's (facts.cutover_responsibility,
  * #2107), as both reports do, in the roadmap header's description (#2318).
  *
- * #2318: a wave's readiness is a status ("Suggested, 5 warnings to accept") beside the
- * facts' readiness line, shown whole as the reports print it. Wave 1 also holds what the plan has to do before it, in the plan itself: the
+ * #2318: a wave's readiness is a status ("Suggested, 5 warnings to accept") and the
+ * facts' readiness line, shown whole as the reports print it. The status is in the wave's
+ * header and the line in its body, so the status is stated once (#2287). Wave 1 also holds what the plan has to do before it, in the plan itself: the
  * routines (facts.routines) and the engine choices made automatically.
  *
  * #1132: above the wave cards, the adoption paths (AdoptionPathPanel): a selector, the
@@ -71,98 +72,31 @@ import {
  * one-step option links to.
  */
 
-const INLINE_TOGGLE_STYLE = {
-  background: 'none',
-  border: 'none',
-  padding: 0,
-  margin: 0,
-  font: 'inherit',
-  color: 'inherit',
-  cursor: 'pointer',
-  textDecoration: 'underline dotted',
-};
-
-// The wave's readiness: a status, and the facts' line whole beside it, as every report
-// prints it. The status never replaces or trims the line.
+// The wave's readiness line, whole, as every report prints it. Its status is in the
+// wave's header (WaveHeaderFacts), stated once (#2287).
 function WaveReadiness({ view, t }) {
-  const text = readinessText(view, t);
   return (
     <div data-figure="wave-readiness" data-readiness={view.readiness || ''}>
       <SpaceBetween size="xxs">
         <Box variant="awsui-key-label">{t('analysis-results.waves.readiness-label')}</Box>
-        {text && <StatusIndicator type={readinessType(view)}>{text}</StatusIndicator>}
         <Box><span data-figure="wave-readiness-line">{view.line}</span></Box>
       </SpaceBetween>
     </div>
   );
 }
 
-const HIDE_TOGGLE_STYLE = { ...INLINE_TOGGLE_STYLE, textDecoration: 'none', marginLeft: '0.2em' };
-
-// One list of a gate, collapsed to "(…)" until it is clicked. Open, the list is
-// plain text outside the button, so a screen reader reads it, and a small
-// "hide" control follows it; focus moves to whichever control is shown.
-function InlineList({ items, t }) {
-  const [open, setOpen] = useState(false);
-  const listId = useId();
-  const showRef = useRef(null);
-  const hideRef = useRef(null);
-  const toggled = useRef(false);
-  useEffect(() => {
-    if (!toggled.current) return;
-    const target = open ? hideRef.current : showRef.current;
-    if (target) target.focus();
-  }, [open]);
-  const toggle = (next) => { toggled.current = true; setOpen(next); };
-  if (!open) {
-    return (
-      <button
-        ref={showRef}
-        type="button"
-        style={INLINE_TOGGLE_STYLE}
-        aria-expanded={false}
-        aria-label={t('analysis-results.waves.list-show', { count: items.length })}
-        onClick={() => toggle(true)}
-      >
-        (…)
-      </button>
-    );
-  }
+// The wave's gate as a checklist of the facts' conditions (#2287), under its heading.
+function WaveGate({ synthesis, wave, t }) {
+  const conditions = waveGateConditions(synthesis, wave);
+  if (conditions.length === 0) return null;
+  const heading = t('analysis-results.waves.gate-heading');
   return (
-    <>
-      <span id={listId} data-figure="gate-list">{`(${items.join(', ')})`}</span>
-      <button
-        ref={hideRef}
-        type="button"
-        data-gate-hide=""
-        style={HIDE_TOGGLE_STYLE}
-        aria-expanded
-        aria-controls={listId}
-        aria-label={t('analysis-results.waves.list-hide', { count: items.length })}
-        onClick={() => toggle(false)}
-      >
-        ×
-      </button>
-    </>
-  );
-}
-
-function GateText({ wave, t }) {
-  const parts = Array.isArray(wave.gate_parts) ? wave.gate_parts : null;
-  if (!parts || parts.length === 0) {
-    return t('analysis-results.waves.gate', { gate: wave.gate });
-  }
-  return (
-    <>
-      {t('analysis-results.waves.gate', { gate: '' })}
-      {/* Parts have no id; their order is fixed by the report. */}
-      {parts.map((part, i) => (
-        <span key={i}>
-          {part.text}
-          {(part.items || []).length > 0 && <>{' '}<InlineList items={part.items} t={t} /></>}
-        </span>
-      ))}
-    </>
+    <div data-figure="wave-gate-block">
+      <SpaceBetween size="xxs">
+        <Box variant="h4">{heading}</Box>
+        <GateChecklist conditions={conditions} t={t} label={heading} figure="wave-gate" />
+      </SpaceBetween>
+    </div>
   );
 }
 
@@ -310,10 +244,7 @@ const MigrationWavePlan = memo(({ synthesis, t, schemaSectionId }) => {
                     </Box>
                   )}
                   {wave.rationale && <Box color="text-body-secondary">{wave.rationale}</Box>}
-                  {/* #2287 turns the gate into a checklist; it stays one sentence here. */}
-                  {wave.gate && (
-                    <div data-figure="wave-gate"><GateText wave={wave} t={t} /></div>
-                  )}
+                  <WaveGate synthesis={synthesis} wave={wave} t={t} />
                   {readiness && <WaveReadiness view={readiness} t={t} />}
                   {heterogeneousNote(synthesis, wave) && (
                     <div data-figure="wave-heterogeneous-note">{heterogeneousNote(synthesis, wave)}</div>
@@ -338,8 +269,17 @@ const MigrationWavePlan = memo(({ synthesis, t, schemaSectionId }) => {
                   {index === 0 && <EngineChoicesNote synthesis={synthesis} t={t} />}
                   {phase && <WaveStages plan={plan} wave={wave.wave} path={greying} t={t} />}
                   {!waveMovesNothing(synthesis, wave) && (wave.tables || []).length > 0 && (
-                    <ExpandableSection headerText={t('analysis-results.waves.tables')} variant="footer">
-                      <Box fontSize="body-s"><span data-figure="wave-tables">{wave.tables.join(', ')}</span></Box>
+                    <ExpandableSection
+                      headerText={t('analysis-results.waves.tables')}
+                      variant="footer"
+                    >
+                      <TableNameList
+                        names={wave.tables}
+                        t={t}
+                        label={t('analysis-results.waves.tables-label', { wave: wave.wave })}
+                        figure="wave-tables"
+                        filter
+                      />
                     </ExpandableSection>
                   )}
                 </SpaceBetween>

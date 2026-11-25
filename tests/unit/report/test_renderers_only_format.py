@@ -188,6 +188,8 @@ PINNED_EXEMPTIONS: frozenset[tuple[str, str]] = frozenset(
         ("src/report/executive_report.py", "chart geometry"),
         # #1403: "the main exposure is" / "exposures are".
         ("src/shared/executive_brief.py", "verb agreement"),
+        # #2171, #2287: a gate line leaves a list longer than GATE_LIST_MAX to its count.
+        ("src/report/roadmap.py", "list cap"),
     }
 )
 

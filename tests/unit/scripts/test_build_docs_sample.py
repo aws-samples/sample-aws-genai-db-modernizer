@@ -326,6 +326,10 @@ _NEWER_EXPOSURE_FIELDS_THAN_THE_RECORDING: tuple[str, ...] = ()
 _NEWER_BRIEF_FIELDS_THAN_THE_RECORDING = ("decision_headline",)
 # Fields added to each engine row, filled in the same way (#2162).
 _NEWER_ENGINE_FIELDS_THAN_THE_RECORDING: tuple[str, ...] = ()
+# Fields added to each wave row and to each slice-plan stage, filled in the same way
+# (#2287: each gate's conditions, cut from the recorded gate).
+_NEWER_WAVE_FIELDS_THAN_THE_RECORDING = ("gate_conditions",)
+_NEWER_STAGE_FIELDS_THAN_THE_RECORDING = ("gate_conditions",)
 
 
 def _recorded(facts: dict[str, Any]) -> dict[str, Any]:
@@ -376,6 +380,42 @@ def _recorded(facts: dict[str, Any]) -> dict[str, Any]:
             )
             for e in out["engines"]
         ]
+    if isinstance(out.get("waves"), list):
+        out["waves"] = [
+            (
+                {k: v for k, v in w.items() if k not in _NEWER_WAVE_FIELDS_THAN_THE_RECORDING}
+                if isinstance(w, dict)
+                else w
+            )
+            for w in out["waves"]
+        ]
+    plan = out.get("slice_plan")
+    if isinstance(plan, dict) and isinstance(plan.get("plan_steps"), list):
+        out["slice_plan"] = {
+            **plan,
+            "plan_steps": [
+                (
+                    {
+                        **step,
+                        "step_stages": [
+                            (
+                                {
+                                    k: v
+                                    for k, v in st.items()
+                                    if k not in _NEWER_STAGE_FIELDS_THAN_THE_RECORDING
+                                }
+                                if isinstance(st, dict)
+                                else st
+                            )
+                            for st in step.get("step_stages") or []
+                        ],
+                    }
+                    if isinstance(step, dict)
+                    else step
+                )
+                for step in plan["plan_steps"]
+            ],
+        }
     return out
 
 
