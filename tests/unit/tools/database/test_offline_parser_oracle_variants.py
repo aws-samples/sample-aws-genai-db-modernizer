@@ -181,7 +181,35 @@ class TestTruncatedOracleVariants:
         from src.tools.database.offline_parser import ORACLE_TEXT_CAP
 
         script = Path("scripts/collect-oracle.sql").read_text()
-        assert f"SQL_FULLTEXT, {ORACLE_TEXT_CAP}, 1" in script
+        assert f"LEAST({ORACLE_TEXT_CAP}," in script
+
+
+def _wide_statement(literal: str, cut_at: int) -> str:
+    """A long statement with non-ASCII column names, cut at ``cut_at`` characters: where
+    the script's byte limit (4000 bytes a text, #1909) cuts a statement of wide characters,
+    well before 2000 characters."""
+    filler = " AND ".join(f"col_\u2615{i:04d} IS NOT NULL" for i in range(200))
+    return f"SELECT * FROM orders WHERE name = '{literal}' AND {filler}"[:cut_at]
+
+
+class TestOracleVariantsCutByTheByteLimit:
+    """A statement of wide characters is cut under 2000 characters (#1909)."""
+
+    def test_variants_cut_under_the_character_cap_merge(self) -> None:
+        rows = [
+            _row("a", _wide_statement("AB", 1300)),
+            _row("b", _wide_statement("ABCDEFGHIJKLMNOPQRSTUVWXYZ", 1310)),
+        ]
+        assert all(1000 <= len(r["query_text"]) < 2000 for r in rows)
+        out = _merged(rows)
+        assert len(out) == 1
+        assert out[0]["execution_count"] == 20
+
+    @pytest.mark.passes_on_main
+    def test_short_ascii_variants_of_different_text_stay_apart(self) -> None:
+        # ASCII under 2000 characters is never a cut: the byte limit does not reach it.
+        rows = [_row("a", _long_statement("AB")[:1300]), _row("b", _long_statement("ABC")[:1310])]
+        assert len(_merged(rows)) == 2
 
 
 _IN_HEAD = "SELECT * FROM orders WHERE " + " AND ".join(

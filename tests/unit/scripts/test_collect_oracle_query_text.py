@@ -325,7 +325,7 @@ def test_offline_rows_fit_one_dbms_output_line() -> None:
     """DBMS_OUTPUT wraps a line longer than LINESIZE. The text is cut at 2000
     characters; even if every one is a control character JSON writes as six (\\u0001)
     and the row's other fields are at their widest, the row stays under LINESIZE."""
-    assert "DBMS_LOB.SUBSTR(SQL_FULLTEXT, 2000, 1) AS query_text" in SCRIPT.read_text()
+    assert "LEAST(2000, GREATEST(4000 - (" in SCRIPT.read_text()
     linesize = int(re.search(r"^SET LINESIZE (\d+)$", SCRIPT.read_text(), re.M).group(1))  # type: ignore[union-attr]
     widest = _row("fms_" + "9" * 40, "\x01" * 2000, 1e30)
     widest.update(
@@ -424,7 +424,7 @@ def test_the_live_text_is_a_varchar2_that_fits_the_line() -> None:
     projection = item.group(1)
     assert "SQL_FULLTEXT" not in projection
     assert "TO_CLOB" not in projection or projection.startswith("DBMS_LOB.SUBSTR(")
-    assert "DBMS_LOB.SUBSTR(SQL_FULLTEXT, 4000, 1) AS query_text" in sql
+    assert re.search(r"DBMS_LOB\.SUBSTR\(SQL_FULLTEXT,[^;]*?\s+AS query_text,\s+EXECUTIONS", sql)
     command = _build_sql_command("oracle", "h", 1521, "APP", SECRET_ARN, "SELECT 1;", "us-east-1")
     assert "SET LINESIZE 32767" in command and "SET LONG" not in command
     assert sum(width + 1 for _, width, _ in _COLUMNS) < 32767
@@ -530,3 +530,112 @@ def test_a_failed_capture_is_recorded_as_failed() -> None:
     with patch.object(db, "get_current_schema", return_value="APP"):
         rows = _collect_queries_raw(db, opts)
     assert rows == {"error": "the statement query failed (SqlClientError)"}
+
+
+# --- the cut of SQL_FULLTEXT (#1909) --------------------------------------------------
+
+DB_CAP = 4000  # the bytes a VARCHAR2 holds in SQL (MAX_STRING_SIZE=STANDARD)
+# One character of each width AL32UTF8 writes (UTF-8): 1, 2, 3 and 4 bytes.
+WIDTHS = ["a", "é", "☕", "😀"]
+
+
+def _fulltext_cut(expression: str, raw: str) -> str:
+    """What a ``DBMS_LOB.SUBSTR(SQL_FULLTEXT, ...)`` expression returns for ``raw``,
+    with LENGTHB counting UTF-8 bytes."""
+    tree = sqlglot.parse_one(f"SELECT {expression} FROM x", read="oracle")
+    tree = tree.transform(
+        lambda n: exp.column("t") if isinstance(n, exp.Column) and n.name == "SQL_FULLTEXT" else n
+    ).transform(_whole_text)
+    db = sqlite3.connect(":memory:")
+    db.create_function("LENGTHB", 1, lambda v: None if v is None else len(v.encode()))
+    db.execute("CREATE TABLE x (t)")
+    db.execute("INSERT INTO x VALUES (?)", (raw,))
+    (value,) = db.execute(tree.sql("sqlite")).fetchone()
+    db.close()
+    return str(value)
+
+
+def _offline_cut(raw: str) -> str:
+    match = re.search(
+        r"(DBMS_LOB\.SUBSTR\(SQL_FULLTEXT.*?\))\s+AS query_text,", SCRIPT.read_text(), re.S
+    )
+    assert match is not None
+    return _fulltext_cut(match.group(1), raw)
+
+
+def _live_cut(raw: str) -> str:
+    match = re.search(r"(DBMS_LOB\.SUBSTR\(SQL_FULLTEXT.*?\))\s+AS query_text,", _live_sql(), re.S)
+    assert match is not None
+    return _fulltext_cut(match.group(1), raw)
+
+
+def _statements() -> list[str]:
+    """Synthetic texts of every width and mix, from short to far past both caps."""
+    texts = []
+    for ch in WIDTHS:
+        for n in (10, 999, 1000, 1001, 1999, 2000, 2001, 3999, 4000, 4001, 9000):
+            texts.append(ch * n)
+    for ch in WIDTHS[1:]:
+        for n in (1, 500, 1500, 3000):
+            texts.append("a" * 3000 + ch * n)  # the wide characters come late
+            texts.append(ch * n + "a" * 6000)  # and early
+    return texts
+
+
+@pytest.mark.parametrize("cut", [_offline_cut, _live_cut], ids=["offline", "live"])
+def test_the_fulltext_cut_stays_within_4000_bytes(cut: Any) -> None:
+    """DBMS_LOB.SUBSTR counts characters but SQL caps its VARCHAR2 at 4000 bytes
+    (ORA-06502 past it), and a character takes up to 4 bytes. A cut by characters alone
+    went over for 1,001 four-byte characters (live: 4,000 characters, offline: 2,000)."""
+    for raw in _statements():
+        text = cut(raw)
+        assert len(text.encode()) <= DB_CAP, (raw[:3], len(raw), len(text.encode()))
+        assert raw.startswith(text) and text, (raw[:3], len(raw))
+
+
+@pytest.mark.passes_on_main
+@pytest.mark.parametrize(
+    ("cut", "cap"), [(_offline_cut, 2000), (_live_cut, 4000)], ids=["offline", "live"]
+)
+def test_an_ascii_statement_keeps_the_full_cap(cut: Any, cap: int) -> None:
+    assert len(cut("a" * 9000)) == cap
+    assert cut("SELECT 1 FROM DUAL") == "SELECT 1 FROM DUAL"
+
+
+@pytest.mark.parametrize("cut", [_offline_cut, _live_cut], ids=["offline", "live"])
+def test_a_statement_with_a_late_wide_character_keeps_most_of_its_cap(cut: Any) -> None:
+    text = cut("a" * 1500 + "é" + "a" * 8000)
+    assert len(text) >= 1990 and len(text.encode()) <= DB_CAP
+
+
+def test_the_offline_cut_reads_the_cap_it_names() -> None:
+    """The parser flags a statement cut by the script (``ORACLE_TEXT_CAP``) and one cut
+    by the byte limit (``ORACLE_BYTE_CUT_FLOOR``) from these two numbers."""
+    from src.tools.database import offline_parser
+
+    script = SCRIPT.read_text()
+    assert f"LEAST({offline_parser.ORACLE_TEXT_CAP}," in script
+    assert f", {offline_parser.ORACLE_BYTE_CUT_FLOOR})" in script
+    assert offline_parser.ORACLE_BYTE_CUT_FLOOR * 4 == DB_CAP
+
+
+def _fulltext_expression(sql: str) -> str:
+    match = re.search(r"(DBMS_LOB\.SUBSTR\(SQL_FULLTEXT.*?\))\s+AS query_text,", sql, re.S)
+    assert match is not None
+    return match.group(1)
+
+
+@pytest.mark.parametrize("live", [False, True], ids=["offline", "live"])
+def test_length_functions_only_see_varchar2_pieces_of_at_most_4000_bytes(live: bool) -> None:
+    """LENGTHB is not supported on a CLOB in a multibyte database character set, and a
+    VARCHAR2 in SQL holds 4000 bytes (ORA-06502 past it). So every LENGTH and LENGTHB
+    takes a ``DBMS_LOB.SUBSTR(SQL_FULLTEXT, 1000, k)`` piece (1000 characters, 4 bytes
+    each at most), never ``SQL_FULLTEXT`` or a ``SUBSTR`` of it."""
+    expression = _fulltext_expression(_live_sql() if live else _code(SCRIPT.read_text()))
+    calls = re.findall(r"\bLENGTHB?\(", expression)
+    pieces = re.findall(
+        r"\bLENGTHB?\(DBMS_LOB\.SUBSTR\(SQL_FULLTEXT,\s*(\d+),\s*\d+\)\)", expression
+    )
+    assert calls and len(pieces) == len(calls)  # every measure takes a piece
+    assert all(int(amount) * 4 <= DB_CAP for amount in pieces)
+    assert not re.search(r"\bSUBSTR\(\s*SQL_FULLTEXT", expression.replace("DBMS_LOB.SUBSTR(", ""))

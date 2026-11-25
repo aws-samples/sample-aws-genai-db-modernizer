@@ -850,11 +850,23 @@ def _nested(variants: list[dict]) -> bool | None:
 
 
 # The collection script cuts Oracle statement text at this many characters
-# (``DBMS_LOB.SUBSTR(SQL_FULLTEXT, 2000, 1)`` in scripts/collect-oracle.sql).
+# (``LEAST(2000, ...)`` in the ``DBMS_LOB.SUBSTR(SQL_FULLTEXT, ...)`` of
+# scripts/collect-oracle.sql) and, so the VARCHAR2 fits SQL's 4000 bytes, at fewer when its
+# first 2000 characters have extra bytes, but never under this floor (4 bytes each, #1909).
 ORACLE_TEXT_CAP = 2000
+ORACLE_BYTE_CUT_FLOOR = 1000
 # A truncated shape shorter than this is too little to call two statements the same.
 _MIN_TRUNCATED_PREFIX = 100
 _PARTIAL_WORD_RE = re.compile(r"[A-Za-z_][A-Za-z0-9_$#]*$")
+
+
+def _may_be_cut(text: str) -> bool:
+    """Whether the script may have cut this statement text: it holds the cap's characters,
+    or it has a wide character and at least the floor's, where the byte limit cuts a text
+    of wide characters short of the cap (#1909). ASCII under the cap is whole."""
+    if len(text) >= ORACLE_TEXT_CAP:
+        return True
+    return len(text) >= ORACLE_BYTE_CUT_FLOOR and not text.isascii()
 
 
 def _stable_prefix(shape: str) -> str:
@@ -896,7 +908,7 @@ def _merge_oracle_shapes(groups: dict[str, list[dict]], order: list[str]) -> lis
             by_shape.setdefault(f"digest:{key}", []).append(key)
             continue
         by_shape.setdefault(shape, []).append(key)
-        if all(len(str(v.get("query_text") or "")) >= ORACLE_TEXT_CAP for v in groups[key]):
+        if all(_may_be_cut(str(v.get("query_text") or "")) for v in groups[key]):
             truncated.add(shape)
 
     # Old collections cut every statement at the cap, so two literal variants of a long
