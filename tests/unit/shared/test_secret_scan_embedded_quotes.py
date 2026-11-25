@@ -138,8 +138,8 @@ def test_what_counts_as_a_finding_does_not_change(text: str) -> None:
 
 
 # A quoted value whose own closing quote is missing inside the JSON string around it:
-# the value ends where the rule ended it before, never past that string (#2259 review).
-# Main kept these whole; the guard keeps the wider span from breaking them.
+# the value ends where that string ends, never past it (#2259 review, #2260). Main
+# kept these whole; the guard keeps the wider span from breaking them.
 _UNCLOSED_IN_JSON = [
     pytest.param(
         '{"sql":"password = \'abc","note":"it\'s fine"}',
@@ -162,15 +162,15 @@ _UNCLOSED_IN_JSON = [
         '{"a":"password=\\"[REDACTED:password-value]","b":"x\\"y"}',
         id="lower-escape-level",
     ),
+    # The escaped backslash before the closing quote is part of the value (#2260).
     pytest.param(
         '{"a":"password=\\"Zq9\\\\","b":"x\\"y"}',
-        '{"a":"password=\\"[REDACTED:password-value]\\\\","b":"x\\"y"}',
+        '{"a":"password=\\"[REDACTED:password-value]","b":"x\\"y"}',
         id="lower-escape-level-after-a-backslash",
     ),
 ]
 
 
-@pytest.mark.passes_on_main
 @pytest.mark.parametrize("text,expected", _UNCLOSED_IN_JSON)
 def test_a_quoted_value_never_runs_past_the_json_string_around_it(text: str, expected: str) -> None:
     out = _redacted(text)
@@ -214,31 +214,3 @@ def test_a_comment_is_scrubbed_whole(value: str) -> None:
         out = scrub_comment(comment)
         assert _TAIL[2:] not in out, out
         assert out == comment.replace(value, "?")
-
-
-@pytest.mark.passes_on_main
-@pytest.mark.parametrize(
-    "text",
-    [
-        pytest.param("password = " + _HEAD + '",' + _TAIL, id="quote-comma"),
-        pytest.param("password = " + _HEAD + '";' + _TAIL, id="quote-semicolon"),
-        pytest.param("password = " + _HEAD + '")' + _TAIL, id="quote-paren"),
-        pytest.param("password = " + _HEAD + "'}" + _TAIL, id="apostrophe-brace"),
-        pytest.param("password = " + _HEAD + '"`' + _TAIL, id="quote-backtick"),
-        pytest.param("password='" + _HEAD + "'" + _TAIL + "'", id="same-kind-quote"),
-        # A literal line-break escape outside JSON reads as one.
-        pytest.param("password = " + _HEAD + "\\n" + _TAIL, id="literal-backslash-n"),
-        pytest.param("password = " + _HEAD + "\\r" + _TAIL, id="literal-backslash-r"),
-        pytest.param("password = " + _HEAD + "\\u000a" + _TAIL, id="literal-backslash-u000a"),
-        # The other quote kind before ``,:}]`` or the end reads as closing a string around it.
-        pytest.param('password = "' + _HEAD + "'," + _TAIL + '"', id="other-kind-comma"),
-        pytest.param("password = '" + _HEAD + '",' + _TAIL + "'", id="other-kind-comma-single"),
-        pytest.param('password = "' + _HEAD + "'}" + _TAIL + '"', id="other-kind-brace"),
-    ],
-)
-def test_the_known_limits_still_cut_the_value_at_the_quote(text: str) -> None:
-    """The limits ADR-034 Decision 4 states, open as #2260: the value is still
-    redacted only up to the quote, backslash or line-break escape, and the tail after
-    it ships. When #2260 is fixed,
-    this test changes with it."""
-    assert _redacted(text) == text.replace(_HEAD, _MARK)

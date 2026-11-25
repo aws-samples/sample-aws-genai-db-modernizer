@@ -485,11 +485,12 @@ def test_the_raw_text_check_undoes_every_json_escape(value: str, raw: str) -> No
 def test_a_short_value_cut_at_a_quote_is_recorded_and_a_quoted_one_is_not() -> None:
     """#2213 review round 2, Important 1: the scan records a value under 4 characters
     it ended at a ``"`` or ``\\`` that does not close it, since the rest of it is
-    unknown: a quote run before ``,`` (``Zq9",Xv7...``), a value right before an
-    escaped quote. An embedded quote or backslash is part of the value since #2247,
-    so ``Zq9"Xv7...`` and ``"Zq9\\"Xv7..."`` are whole, as is ``"abc"``, and so is a
-    value whose quote never closes (#2263)."""
-    cut_quote = private_scan.redact('password = Zq9",Xv7Wm3Kt5\n', narrow_key_names=True)
+    unknown: a value right before a quote that closes a string around the key
+    (``conn("password=Zq9")``), or right before an escaped quote. An embedded quote or
+    backslash is part of the value since #2247, so ``Zq9"Xv7...`` and
+    ``"Zq9\\"Xv7..."`` are whole, as is ``"abc"``, and so are a value whose quote
+    never closes (#2263) and one with a quote before a delimiter (#2260)."""
+    cut_quote = private_scan.redact('conn("password=Zq9")\n', narrow_key_names=True)
     cut_backslash = private_scan.redact(
         '{"x": "{\\"password\\": \\"Zq9\\"}"}', narrow_key_names=True
     )
@@ -499,6 +500,7 @@ def test_a_short_value_cut_at_a_quote_is_recorded_and_a_quoted_one_is_not() -> N
         'password = Zq9"Xv7Wm3Kt5\n',  # pragma: allowlist secret
         '{"password": "Zq9\\"Xv7Wm3Kt5"}',  # pragma: allowlist secret
         '{"password": "Zq9\\"Xv7Wm3Kt5',  # pragma: allowlist secret
+        'password = Zq9",Xv7Wm3Kt5\n',  # pragma: allowlist secret
         '{"password": "abc"}',
     ):
         assert private_scan.redact(text, narrow_key_names=True).cut == set()
@@ -882,20 +884,21 @@ def test_an_all_digit_value_matches_only_as_a_whole_token_at_any_length() -> Non
     assert _values(prose, "", [(_PW, value)]) == prose
 
 
+@pytest.mark.passes_on_main  # guards behaviour main already has; changed here for #2260's cut examples
 @pytest.mark.parametrize(
     "line,cut_copy",
     [
         ('{"x": "{\\"y\\": \\"password=a\\"}"}\n', 'a\\"'),  # pragma: allowlist secret
-        ("DB_PASSWORD=ab\\\n", "ab\\"),  # pragma: allowlist secret
     ],
-    ids=["quote-escape", "backslash"],
+    ids=["quote-escape"],
 )
 def test_a_one_or_two_letter_cut_value_withholds_only_with_the_character_it_was_cut_at(
     line: str, cut_copy: str
 ) -> None:
     """#2266 review round 2, Minor 7: a value the scan cut short is matched with the
-    character it was cut at (``a\\"``, ``ab\\``), so a bare ``a`` or ``ab`` in a
-    report, a sentence or SQL withholds nothing."""
+    character it was cut at (``a\\"``), so a bare ``a`` or ``ab`` in a report, a
+    sentence or SQL withholds nothing. A value ending in a lone backslash (``ab\\``)
+    is whole since #2260, so it is no longer cut."""
     scanned = private_scan.redact(line, narrow_key_names=True)
     flagged = [(kind, value) for kind, *_r, value in scanned.pending]
     assert scanned.cut

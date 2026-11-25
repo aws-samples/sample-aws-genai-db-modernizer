@@ -250,73 +250,85 @@ _PAIR_RES = (
     # | key | value |
     re.compile(rf"\|\s*{_KEY_NAME}\s*\|\s*(?P<u>[^|\s][^|]*?)\s*(?=\|)", re.I),
 )
-# A quote or backslash run inside an unquoted ``key=value`` / ``key: value`` value
-# (``Zq9"Xv7``, ``Zq9\Xv7``) and the piece after it. A run followed by whitespace, a
-# backtick, ``,;:)]}`` or the end closes an enclosing string instead
-# (``conn("password=...")``, ``{"a":"password=...","b":1}``), so it ends the value (#2247).
-# So does a run ending in a JSON escape of a line break (``\n``, ``\r``, ``\u000a``,
-# ``\u000d``, at any escape level): a ``.env`` file read into a transcript keeps the
-# settings after the value.
-_EMBEDDED_RUN_RE = re.compile(
-    r"(?![\\\"']*\\(?:[nr]|u000[aAdD]))[\\\"']+(?=[^\s\"'`\\,;:)\]}])[^\s\"'`\\]+"
-)
 # Every quote with the backslashes right before it (from the start of the run only).
 _QUOTE_RUN_RE = re.compile(r"(?<!\\)\\*[\"']")
-# After a quote that closes an enclosing string: a JSON member or element ends.
-_STRING_CLOSE_RE = re.compile(r"\s*(?:[,:}\]]|$)")
+# A run of quotes, backslashes and backticks inside an unquoted value; the piece after.
+_VALUE_RUN_RE = re.compile(r"[\\\"'`]+")
+_VALUE_PIECE_RE = re.compile(r"[^\s\"'`\\]+")
+# A quote token in a run: its backslashes and the quote; a backtick; trailing backslashes.
+_RUN_TOKEN_RE = re.compile(r"\\*[\"']|`|\\+")
 
 
-def _unquoted_end(line: str, end: int) -> int:
-    """Where the unquoted value the pair rule ended at ``end`` really ends: past each
-    embedded quote or backslash run (``_EMBEDDED_RUN_RE``)."""
-    while (run := _EMBEDDED_RUN_RE.match(line, end)) is not None:
+def _unquoted_end(line: str, m: re.Match[str], end: int, index: _LineIndex) -> tuple[int, bool]:
+    """Where the unquoted value the pair rule ended at ``end`` really ends, and whether
+    the scan can tell (#2247, #2260). A run of quotes, backslashes and backticks inside
+    it is part of it, except that the value ends before:
+
+    - a quote that closes a string opened before the key, at that string's escape
+      level (``conn("password=...")``, ``{"a":"password=...","b":1}``,
+      ``EXEC('...PASSWORD=...'+@x+'')``), followed by what may follow a closed string
+      (``_CLOSE_CONTEXT_RE``);
+    - a backtick that closes a Markdown code span opened before the value;
+    - a JSON escape of a line break (``\\n``, ``\\r``, ``\\u000a``, ``\\u000d``, at any
+      escape level) when a string is open around the key: a ``.env`` file read into a
+      transcript keeps its other settings. Outside any string it is a backslash in
+      the value.
+
+    A run that closes nothing and is followed by whitespace may end the value or be
+    part of it (``Zq9" Xv7...``): the scan cannot tell, so the value is placed up to
+    the run and marked uncertain, and the file is withheld."""
+    key_start, value_start = m.start(), m.start("u")
+    in_string = index.any_string_open(key_start)
+    code_span = index.backticks_before(value_start) % 2 == 1
+    while end < len(line) and not line[end].isspace():
+        run = _VALUE_RUN_RE.match(line, end)
+        if run is None:
+            end = _VALUE_PIECE_RE.match(line, end).end()  # type: ignore[union-attr]
+            continue
+        for token in _RUN_TOKEN_RE.finditer(line, run.start(), run.end()):
+            text = token.group(0)
+            if text == "`":
+                if code_span:
+                    return token.start(), True
+            elif text[-1] in "\"'":
+                level = _level(len(text) - 1)
+                closes = _CLOSE_CONTEXT_RE.match(line, token.end()) is not None
+                if closes and index.string_open(key_start, text[-1], level):
+                    return token.end() - 1 - ((1 << level) - 1), True
+            elif in_string and _LINE_BREAK_ESCAPE_RE.match(line, token.start()):
+                return token.start(), True
         end = run.end()
-    return end
+        if end < len(line) and line[end].isspace():
+            return end, False
+    return end, True
 
 
-def _closes_a_lower_level(backslashes: int, level: int) -> bool:
-    """A quote after ``backslashes`` backslashes is unescaped at an escape level below
-    ``level``: at level ``j`` (``2**j - 1`` backslashes) the run is ``2**j - 1`` modulo
-    ``2**(j + 1)`` (level 0: an even run, ``\\\\"`` included)."""
-    j = 0
-    while 2**j - 1 < level:
-        if backslashes % 2 ** (j + 1) == 2**j - 1:
-            return True
-        j += 1
-    return False
-
-
-def _quoted_end(line: str, m: re.Match[str]) -> int:
-    """Where the quoted value of ``m`` really ends: before its own closing quote, the
-    opening quote's character at the opening's escape level. At level ``n`` (``n``
-    backslashes before the quote) that is a quote after ``k`` backslashes with
-    ``k % (2n + 2) == n``: at level 0 an even run (``"Zq9\\"Xv7"`` holds ``\\"``), at
-    level 1 (a JSON string inside a JSON string) one, five, ... A quote of the other
-    kind is part of the value, and so is SQL's doubled ``''``. Where no quote closes it
-    before a quote that closes an enclosing string (one of the other kind, or of its
-    own kind at a lower escape level, followed by ``,``, ``:``, ``}``, ``]`` or the end
-    of the line), the value ends where the pair rule ended it: it never runs past
-    the JSON string around it (#2259 review). A value no quote closes runs to the end
-    of the line (#2263)."""
+def _quoted_end(line: str, m: re.Match[str], index: _LineIndex) -> int:
+    """Where the quoted value of ``m`` really ends (#2247, #2260): before its own closing
+    quote, the opening quote's character at the opening's escape level (``_level``: at
+    level 0 an even run of backslashes, ``"Zq9\\"Xv7"`` holds ``\\"``; at level 1, a
+    JSON string inside a JSON string, one, five, ...), followed by what may follow a
+    closed string (``_CLOSE_CONTEXT_RE``): ``'Zq9'Xv7'`` holds its middle quote, and so
+    does SQL's doubled ``''``. A quote of the other kind, or of its own kind at another
+    level, is part of the value, unless it closes a string opened before the key: then
+    the value ends there, and never runs past the string around it. A value no quote
+    closes runs to the end of the line (#2263)."""
     opener = m.group("qv")
-    level, quote = len(opener) - 1, opener[-1]
+    quote = opener[-1]
+    level = _level(len(opener) - 1)
+    key_start = m.start()
     pos = m.start("v")
     while (run := _QUOTE_RUN_RE.search(line, pos)) is not None:
         backslashes, char = run.end() - run.start() - 1, line[run.end() - 1]
-        if char == quote:
-            if (
-                level == 0
-                and quote == "'"
-                and not backslashes
-                and line[run.end() : run.end() + 1] == "'"
-            ):
-                pos = run.end() + 1
+        found = _level(backslashes)
+        if char == quote and found == level:
+            if not backslashes and line[run.end() : run.end() + 1] == quote:
+                pos = run.end() + 1  # doubled: SQL's ``''``
                 continue
-            if backslashes % (2 * level + 2) == level:
-                return run.end() - 1 - level
-        encloses = char != quote or _closes_a_lower_level(backslashes, level)
-        if encloses and _STRING_CLOSE_RE.match(line, run.end()):
-            return m.end("v")
+            if _CLOSE_CONTEXT_RE.match(line, run.end()):
+                return run.end() - 1 - ((1 << level) - 1)
+        elif index.string_open(key_start, char, found) and _CLOSE_CONTEXT_RE.match(line, run.end()):
+            return run.end() - 1 - ((1 << found) - 1)
         pos = run.end()
     return len(line)
 
@@ -336,6 +348,7 @@ class _LineIndex:
         self._brackets: dict[str, list[int]] | None = None
         self._quote_ends: list[int] | None = None
         self._quote_states: list[int] = []
+        self._backticks: list[int] | None = None
 
     def open_brackets(self, opener: str, offset: int) -> int:
         """How many ``opener`` brackets are open before ``offset``."""
@@ -357,10 +370,13 @@ class _LineIndex:
             for run in _QUOTE_RUN_RE.finditer(line):
                 at, backslashes = run.end() - 1, run.end() - run.start() - 1
                 char = line[at]
-                if char == "'" and not backslashes and line[at - 1 : at].isalpha():
-                    if line[at + 1 : at + 2].isalpha():
-                        continue
-                state ^= _string_bit(char, _level(backslashes))
+                bit = _string_bit(char, _level(backslashes))
+                if not state & bit and not _can_open(line, run.start()):
+                    continue  # ``admins'``, ``5"``: no string starts here (#2595)
+                if state & bit and char == "'" and not backslashes:
+                    if line[at - 1 : at].isalpha() and line[at + 1 : at + 2].isalpha():
+                        continue  # ``don't`` inside a string
+                state ^= bit
                 self._quote_ends.append(run.end())
                 self._quote_states.append(state)
         i = bisect_right(self._quote_ends, offset)
@@ -369,6 +385,41 @@ class _LineIndex:
     def string_open(self, offset: int, char: str, level: int) -> bool:
         """Whether a ``char`` string at escape ``level`` is open before ``offset``."""
         return bool(self._open_strings(offset) & _string_bit(char, level))
+
+    def any_string_open(self, offset: int) -> bool:
+        """Whether any string is open before ``offset``."""
+        return bool(self._open_strings(offset))
+
+    def backticks_before(self, offset: int) -> int:
+        if self._backticks is None:
+            self._backticks = [i for i, c in enumerate(self.line) if c == "`"]
+        return bisect_left(self._backticks, offset)
+
+
+# The one-letter string prefixes: ``N'``, ``E'``, ``B'``, ``X'``, ``Q'`` (``U&'`` follows
+# ``&``, which opens anyway).
+_PREFIX_LETTERS = frozenset("NnEeBbXxQq")
+
+
+def _word_char(char: str) -> bool:
+    return bool(char) and (char.isalnum() or char in "_$")
+
+
+def _can_open(line: str, start: int) -> bool:
+    """Whether a quote run starting at ``start`` can open a string: not right after a
+    letter, a digit or ``_`` (a possessive ``admins'``, an inch mark ``5"``), unless
+    that is a string prefix (``N'...``, MySQL's ``_utf8mb4'...``). The letters and
+    digits before the quote are read once, as no other quote lies inside them."""
+    if not _word_char(line[start - 1 : start]):
+        return True
+    at = start
+    while at > 0 and line[at - 1].isalnum():
+        at -= 1
+    word, before = line[at:start], line[at - 1 : at]
+    if len(word) == 1 and word in _PREFIX_LETTERS and not _word_char(before) and before != "&":
+        return True
+    # ``_utf8mb4'``: an underscore that starts a word, then letters and digits.
+    return bool(word) and before == "_" and not _word_char(line[at - 2 : at - 1])
 
 
 def _string_bit(char: str, level: int) -> int:
@@ -530,9 +581,9 @@ def _string_close(line: str, pos: int, level: int, quote: str) -> tuple[int, int
     while (run := _QUOTE_RUN_RE.search(line, pos)) is not None:
         char, found = line[run.end() - 1], _level(run.end() - run.start() - 1)
         if char == quote and found == level:
-            return run.end() - 1 - (2**level - 1), run.end(), True
+            return run.end() - 1 - ((1 << level) - 1), run.end(), True
         if char == '"' and found < level:
-            return run.end() - 1 - (2**found - 1), run.end(), False
+            return run.end() - 1 - ((1 << found) - 1), run.end(), False
         pos = run.end()
     return len(line), len(line), False
 
@@ -962,9 +1013,10 @@ def _pairs(line: str, narrow_key_names: bool = False) -> list[_Pair]:
             # redaction nor the recorded value stops at that character (#2247).
             start, end = m.span(group)
             if group == "v":
-                end = _quoted_end(line, m)
+                end = _quoted_end(line, m, index)
             elif rx is _PAIR_RES[1] and certain:
-                end = _bracket_end(line, start, _unquoted_end(line, end), index)
+                end, certain = _unquoted_end(line, m, end, index)
+                end = _bracket_end(line, start, end, index)
             pair = found.get((start, end))
             if pair is None or (pair.certain and not certain):
                 found[(start, end)] = _Pair(_pair_kind(m), (start, end), m.group("key"), certain)

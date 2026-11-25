@@ -4086,21 +4086,29 @@ def test_pieces_of_a_key_shaped_secret_are_redacted_as_keys(tmp_path: Path) -> N
     assert not [piece for piece in (shape[:13], shape[:20], shape[22:]) if piece in text]
 
 
-@pytest.mark.passes_on_main
-@pytest.mark.parametrize("cut", ['",', "\\,"], ids=["quote", "backslash"])
+@pytest.mark.passes_on_main  # guards behaviour main already has; changed here for #2260's cut examples
+@pytest.mark.parametrize(
+    "notes,cut",
+    [('conn("password=Zq9")', '",'), ('{"t": "DB_PASSWORD=Zq9\\nX=1"}', "\\n")],
+    ids=["quote", "line-break-escape"],
+)
 def test_a_json_file_keyed_by_a_password_the_scan_cut_short_is_withheld(
-    tmp_path: Path, cut: str
+    tmp_path: Path, notes: str, cut: str
 ) -> None:
-    """#2213 review round 2, Important 1: the scan records only ``Zq9`` of
-    ``Zq9",Xv7Wm3Kt5`` (a quote run before ``,`` may close an enclosing string, so it
-    ends the value, #2247); the rest of the value is unknown, so a JSON file with a key
+    """#2213 review round 2, Important 1: the scan records only ``Zq9`` where a value
+    ends at a quote that closes a string around the key, or at a line-break escape in
+    one (#2247, #2260); the rest of the value is unknown, so a JSON file with a key
     that holds the recorded part is withheld rather than guessed at."""
     from ci.llm import private_scan
 
     password = "Zq9" + cut + "Xv7Wm3Kt5"  # pragma: allowlist secret
-    result, _uploaded = _schema_finding(
-        tmp_path, json.dumps({"by_name": {password: 1}}), "Zq9" + cut + "Xv7Wm3Kt5"
+    out = _out_with_results(tmp_path)
+    (out / "notes.md").write_text(notes + "\n")
+    job = _job_tree(tmp_path / "artifacts")
+    (job / "schema-aurora_mysql" / "v2" / "schema_output.json").write_text(
+        json.dumps({"by_name": {password: 1}}), encoding="utf-8"
     )
+    result = run.collect_job(tmp_path / "artifacts", out, db="wordpress", job="job1")
     assert "archive" not in result and result["refused"] >= 1
     manifest = json.loads((tmp_path / "out" / "job.findings.json").read_text())
     assert {"file": _SCHEMA, "line": None, "type": private_scan.CUT_FLAGGED} in manifest["findings"]
