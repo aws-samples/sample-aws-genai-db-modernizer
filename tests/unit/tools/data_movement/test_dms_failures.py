@@ -186,24 +186,36 @@ STOP_MS = int(STOP.timestamp() * 1000)
 
 class FakeLogs:
     """A CloudWatch Logs client: FilterLogEvents over ``events`` ((epoch ms, message), oldest
-    first, as CloudWatch returns them) within startTime/endTime, ``limit`` a page, with a next
-    token while more remain. ``next_forever``: an empty page with a next token, every call."""
+    first, as CloudWatch returns them; one millisecond's events in the order given) within
+    startTime/endTime, ``limit`` a page, with a next token while more remain. Each event has its
+    own ``eventId``. As AWS documents, a page may be partly full or empty while a next token
+    remains: ``page`` caps a page below ``limit``, and ``empty_pages`` empty pages come first on
+    each query. ``next_forever``: an empty page with a next token, every call."""
 
-    def __init__(self, events=(), *, next_forever: bool = False) -> None:
-        self.events = sorted(events)
+    def __init__(self, events=(), *, next_forever: bool = False, page: int | None = None,
+                 empty_pages: int = 0) -> None:  # fmt: skip
+        self.events = sorted(events, key=lambda e: e[0])
         self.next_forever = next_forever
+        self.page = page
+        self.empty_pages = empty_pages
         self.calls: list[dict] = []
 
     def filter_log_events(self, **kwargs):
         self.calls.append(kwargs)
         if self.next_forever:
             return {"events": [], "nextToken": "more"}
-        found = [e for e in self.events if kwargs["startTime"] <= e[0] <= kwargs["endTime"]]
-        offset = int(kwargs.get("nextToken") or 0)
-        page = found[offset : offset + kwargs["limit"]]
-        more = offset + kwargs["limit"] < len(found)
-        return {"events": [{"timestamp": t, "message": m} for t, m in page],
-                **({"nextToken": str(offset + kwargs["limit"])} if more else {})}  # fmt: skip
+        token = str(kwargs.get("nextToken") or f"{self.empty_pages}:0")
+        empty, offset = (int(part) for part in token.split(":"))
+        if empty:
+            return {"events": [], "nextToken": f"{empty - 1}:{offset}"}
+        found = [(i, e) for i, e in enumerate(self.events)
+                 if kwargs["startTime"] <= e[0] <= kwargs["endTime"]]  # fmt: skip
+        size = min(kwargs["limit"], self.page or kwargs["limit"])
+        page = found[offset : offset + size]
+        more = offset + size < len(found)
+        return {"events": [{"eventId": f"ev-{i}", "timestamp": t, "message": m}
+                           for i, (t, m) in page],
+                **({"nextToken": f"0:{offset + size}"} if more else {})}  # fmt: skip
 
 
 def _at(seconds_before_stop: float, message: str) -> tuple[int, str]:
@@ -275,6 +287,182 @@ def test_over_the_event_cap_the_newest_events_nearest_the_stop_are_kept():
                        *(_at(1 + i * 0.1, "a line DMS logged") for i in range(df.LOG_EVENTS))])  # fmt: skip
     assert df.log_hint(oldest, "dms-tasks-ri", *_window()) is None  # past the cap: never matched
     assert len(oldest.calls) <= df.LOG_CALLS
+
+
+# --- Within a busy slice, the newest events first (#2383) ------------------------------------
+
+
+class _Recorder:
+    """A hint pattern that matches nothing and records every message it is asked about."""
+
+    def __init__(self) -> None:
+        self.seen: list[str] = []
+
+    def search(self, message: str) -> None:
+        self.seen.append(message)
+
+
+def _recording(monkeypatch) -> _Recorder:
+    recorder = _Recorder()
+    hint = df.FailureHint("recorder", recorder, "", "")  # type: ignore[arg-type]
+    monkeypatch.setattr(df, "FAILURE_HINTS", (hint,))
+    return recorder
+
+
+BINLOG_OFF = "2026-11-16T15:15:39 [SOURCE_CAPTURE  ]E:  binary logging is disabled [1020101]"
+
+
+def _noise(count: int, *, newest_s: float = 10.0, step_s: float = 0.1) -> list[tuple[int, str]]:
+    """``count`` error lines no hint knows, ``step_s`` apart, the newest ``newest_s`` before the
+    stop."""
+    return [_at(newest_s + i * step_s, "a line DMS logged") for i in range(count)]
+
+
+@pytest.mark.parametrize("noise", [1000, 1500])
+def test_a_match_just_before_the_stop_is_found_behind_a_busy_slice(noise):
+    """#2380 review: a ``binary logging is disabled`` line 5 ms before the stop was found behind
+    999 noise events and missed behind 1,000, because the slice was paged oldest first."""
+    logs = FakeLogs([*_noise(noise), _at(0.005, BINLOG_OFF)])
+    found = df.log_hint(logs, "dms-tasks-ri", *_window())
+    assert found is not None and found.id == "mysql_binary_logging"
+    assert len(logs.calls) <= df.LOG_CALLS
+    assert all(c["limit"] == df.LOG_PAGE for c in logs.calls)
+
+
+def test_the_newest_match_wins_over_an_older_one_in_a_busy_slice():
+    """Two known failures in one busy slice: the one nearest the stop is the hint."""
+    logs = FakeLogs([_at(150, PG_DENIAL_LOG[0]), *_noise(1000), _at(0.005, BINLOG_OFF)])
+    found = df.log_hint(logs, "dms-tasks-ri", *_window())
+    assert found is not None and found.id == "mysql_binary_logging"
+
+
+@pytest.mark.passes_on_main  # an empty window was already read in a few calls
+def test_an_empty_window_is_read_in_its_slices_and_carries_no_hint():
+    logs = FakeLogs([])
+    start, end = _window()
+    assert df.log_hint(logs, "dms-tasks-ri", start, end) is None
+    slices = -(-(end - start) // (df.LOG_SLICE_SECONDS * 1000))  # ceiling
+    assert len(logs.calls) == slices
+    assert logs.calls[0]["endTime"] == end and logs.calls[-1]["startTime"] == start
+
+
+@pytest.mark.passes_on_main  # quiet slices were already read back one by one
+def test_a_match_in_an_older_slice_is_found_past_empty_and_quiet_newer_ones():
+    """The newest slice holds nothing, the next a few unrelated lines, and the denial is in
+    the slice before that: the read goes back slice by slice and finds it."""
+    stop_s = df.LOG_SLICE_SECONDS  # the newest slice ends LOG_AFTER_SECONDS past the stop
+    logs = FakeLogs([_at(stop_s + 10 + i, "a line DMS logged") for i in range(5)]
+                    + [_at(stop_s * 2 + 30, PG_DENIAL_LOG[0])])  # fmt: skip
+    found = df.log_hint(logs, "dms-tasks-ri", *_window())
+    assert found is not None and found.id == "postgresql_control_schema"
+    assert len(logs.calls) <= df.LOG_CALLS
+
+
+def test_a_match_in_an_older_busy_slice_is_found_past_an_empty_newer_one():
+    """The newest slice is empty and the one before it is busy, its newest line the denial."""
+    older = df.LOG_SLICE_SECONDS - df.LOG_AFTER_SECONDS  # seconds before the stop the slice ends
+    logs = FakeLogs([*_noise(1000, newest_s=older + 20), _at(older + 5, PG_DENIAL_LOG[0])])
+    found = df.log_hint(logs, "dms-tasks-ri", *_window())
+    assert found is not None and found.id == "postgresql_control_schema"
+    assert len(logs.calls) <= df.LOG_CALLS
+
+
+@pytest.mark.passes_on_main  # one page that holds the slice exactly needs no narrower read
+def test_a_slice_of_exactly_one_page_is_read_in_one_call():
+    logs = FakeLogs([*_noise(df.LOG_PAGE - 1), _at(150, PG_DENIAL_LOG[0])])
+    found = df.log_hint(logs, "dms-tasks-ri", *_window())
+    assert found is not None and found.id == "postgresql_control_schema"
+    assert len(logs.calls) == 1
+
+
+@pytest.mark.passes_on_main  # the event cap held on main when the slice fit the call budget
+@pytest.mark.parametrize(("newer", "found_it"), [(df.LOG_EVENTS - 1, True), (df.LOG_EVENTS, False)])
+def test_the_event_cap_is_exact(newer, found_it):
+    """The denial is matched as the LOG_EVENTS-th newest event, and never as the one after."""
+    noise = _noise(newer, newest_s=1.0, step_s=0.1)
+    logs = FakeLogs([*noise, _at(1.0 + 0.1 * newer + 5, PG_DENIAL_LOG[0])])
+    found = df.log_hint(logs, "dms-tasks-ri", *_window())
+    assert (found is not None and found.id == "postgresql_control_schema") is found_it
+    assert len(logs.calls) <= df.LOG_CALLS
+
+
+@pytest.mark.passes_on_main  # main also stopped at the budget and matched its newest events
+def test_a_burst_too_dense_to_narrow_stops_at_the_call_budget(monkeypatch):
+    """Thousands of lines in the last second: the reads stop at LOG_CALLS, and the pages already
+    read are still matched, newest first, up to LOG_EVENTS lines."""
+    burst = [(STOP_MS - 500 - i // 10, f"line {i:04d}") for i in range(5000)]  # 10 a millisecond
+    recorder = _recording(monkeypatch)
+    logs = FakeLogs(burst)
+    assert df.log_hint(logs, "dms-tasks-ri", *_window()) is None
+    assert len(logs.calls) == df.LOG_CALLS
+    assert len(recorder.seen) == df.LOG_EVENTS == len(set(recorder.seen))
+    ages = [int(m.split()[1]) // 10 for m in recorder.seen]  # same-millisecond lines tie
+    assert ages == sorted(ages)
+
+
+@pytest.mark.passes_on_main  # main also stopped at the call budget with no hint
+def test_a_burst_too_dense_to_narrow_with_no_known_line_carries_no_hint():
+    logs = FakeLogs([_at(0.5 + i * 0.0001, "a line DMS logged") for i in range(5000)])
+    assert df.log_hint(logs, "dms-tasks-ri", *_window()) is None
+    assert len(logs.calls) == df.LOG_CALLS
+
+
+@pytest.mark.passes_on_main  # main paged this window in full; this guards the narrower reads
+def test_a_page_all_in_one_millisecond_is_read_in_full_each_event_once(monkeypatch):
+    """300 lines DMS stamped with the same millisecond, a line a second older, and 150 more:
+    every line is matched, and each once."""
+    same_ms = [_at(1.0, "a line DMS logged") for _ in range(300)]
+    events = [*same_ms, _at(2.0, "the line before"), *_noise(150, newest_s=3.0)]
+    recorder = _recording(monkeypatch)
+    logs = FakeLogs(events)
+    assert df.log_hint(logs, "dms-tasks-ri", *_window()) is None
+    assert len(recorder.seen) == len(events)
+    assert sorted(recorder.seen) == sorted(m for _, m in events)
+    assert len(logs.calls) <= df.LOG_CALLS
+
+
+@pytest.mark.passes_on_main  # #2611 review: main paged the crowded millisecond with its token
+def test_a_denial_inside_a_crowded_millisecond_is_found():
+    """150 lines in one millisecond, the denial the 120th, nothing else in the window."""
+    lines = [_at(1.0, "a line DMS logged") for _ in range(150)]
+    lines[119] = _at(1.0, PG_DENIAL_LOG[0])
+    found = df.log_hint(FakeLogs(lines), "dms-tasks-ri", *_window())
+    assert found is not None and found.id == "postgresql_control_schema"
+
+
+@pytest.mark.passes_on_main  # #2611 review: FilterLogEvents may return partial pages
+def test_a_denial_inside_one_millisecond_read_in_partial_pages_is_found():
+    """60 lines in one millisecond, pages of 40 while a next token remains, the denial 50th."""
+    lines = [_at(1.0, "a line DMS logged") for _ in range(60)]
+    lines[49] = _at(1.0, PG_DENIAL_LOG[0])
+    logs = FakeLogs(lines, page=40)
+    found = df.log_hint(logs, "dms-tasks-ri", *_window())
+    assert found is not None and found.id == "postgresql_control_schema"
+    assert len(logs.calls) <= df.LOG_CALLS
+
+
+@pytest.mark.passes_on_main  # main followed the token past an empty page
+def test_an_empty_page_with_a_next_token_is_followed_not_queried_again():
+    """Each query's first page is empty with a next token, as FilterLogEvents may return: the
+    read follows the token, never sends the same query again, and reaches the denial."""
+    logs = FakeLogs([*_noise(50, newest_s=1.0), _at(400, PG_DENIAL_LOG[0])], empty_pages=1)
+    found = df.log_hint(logs, "dms-tasks-ri", *_window())
+    assert found is not None and found.id == "postgresql_control_schema"
+    fresh = [(c["startTime"], c["endTime"]) for c in logs.calls if "nextToken" not in c]
+    assert len(fresh) == len(set(fresh))
+
+
+@pytest.mark.passes_on_main  # main read the slice's pages once each
+def test_a_full_page_at_the_windows_last_millisecond_is_not_read_twice(monkeypatch):
+    """150 lines in the window's last millisecond: the rest of it comes from the next token,
+    never from a narrower query that returns the same page again."""
+    start, end = _window()
+    recorder = _recording(monkeypatch)
+    logs = FakeLogs([(end, "a line DMS logged") for _ in range(150)])
+    assert df.log_hint(logs, "dms-tasks-ri", start, end) is None
+    assert len(recorder.seen) == 150
+    assert len(logs.calls) == 2 + 3  # the slice's two pages, then the three older slices
+    assert logs.calls[1] == {**logs.calls[0], "nextToken": "0:100"}
 
 
 def test_a_retry_never_sees_the_earlier_runs_errors():
