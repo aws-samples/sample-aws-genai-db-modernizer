@@ -156,7 +156,7 @@ LOG_AFTER_SECONDS = 60  # and this far past it (DMS flushes its last lines after
 LOG_EVENTS = 500  # match at most this many events in all, the newest first
 LOG_PAGE = 100  # events asked for per FilterLogEvents call
 LOG_CALLS = 10  # FilterLogEvents calls at most
-LOG_SLICE_SECONDS = 300  # read the window newest slice first, so the cap keeps the newest events
+LOG_SLICE_SECONDS = 300  # read the window back from its end, at most this wide a span per read
 # DMS's error lines only, as it tags them: "[TARGET_APPLY    ]E:  ...".
 LOG_ERRORS = '"]E:"'
 
@@ -192,16 +192,57 @@ def log_window(stats: dict[str, Any], now: datetime) -> tuple[int, int]:
 def log_hint(logs: Any, log_group: str, start_ms: int, end_ms: int) -> FailureHint | None:
     """The hint of the newest error event in [``start_ms``, ``end_ms``] that a ``FAILURE_HINTS``
     entry matches (the first entry, for that event); None for none. Read-only
-    (``FilterLogEvents``), newest ``LOG_SLICE_SECONDS`` slice first, at most ``LOG_EVENTS``
-    events over at most ``LOG_CALLS`` calls, so the cap keeps the events nearest the stop. The
-    messages are matched and dropped here, and only the entry (its own fixed text) is returned.
-    AWS errors propagate to the caller."""
+    (``FilterLogEvents``), newest events first: at most ``LOG_EVENTS`` events over at most
+    ``LOG_CALLS`` calls, so the caps keep the events nearest the stop. The messages are matched
+    and dropped here, and only the entry (its own fixed text) is returned. AWS errors propagate
+    to the caller.
+
+    FilterLogEvents returns a span's events oldest first, so the window is read back from
+    ``end_ms`` in slices of ``LOG_SLICE_SECONDS`` at most (#2383). A slice is paged as
+    FilterLogEvents returns it until its pages hold as many events as ``LOG_EVENTS`` still lets
+    match; one that holds more keeps those pages (its oldest events) for later, and its unread
+    rest is read newer half first, each half keeping its first page the same way. Pages that
+    leave nothing to narrow (no events yet, or all at the span's first or last millisecond) are
+    read on with their next token, never by the same query again. Each span read in full, and
+    each page kept, is matched once everything newer has been, newest first, each event once.
+    When the calls run out, the pages already read are still matched in that order; the spans
+    not read are skipped."""
     calls, read = 0, 0
+    seen: set[tuple[int, str, str]] = set()
+    # The newest region is on top; a ("slice" or "span", start, end) is read, a ("read",
+    # events) matched.
+    todo: list[tuple[str, Any, Any]] = []
     slice_end = end_ms
-    while slice_end > start_ms and calls < LOG_CALLS and read < LOG_EVENTS:
+    while slice_end >= start_ms:
         slice_start = max(start_ms, slice_end - LOG_SLICE_SECONDS * 1000)
-        kwargs: dict[str, Any] = {"logGroupName": log_group, "startTime": slice_start,
-                                  "endTime": slice_end, "filterPattern": LOG_ERRORS,
+        todo.insert(0, ("slice", slice_start, slice_end))
+        slice_end = slice_start - 1
+
+    def match(events: list[dict[str, Any]]) -> FailureHint | None:
+        nonlocal read
+        fresh = []
+        for event in events:  # a page's last millisecond is read again with the span's rest
+            key = (int(event.get("timestamp") or 0), str(event.get("eventId") or ""),
+                   str(event.get("message") or ""))  # fmt: skip
+            if key not in seen:
+                seen.add(key)
+                fresh.append(event)
+        newest = sorted(fresh, key=lambda e: int(e.get("timestamp") or 0), reverse=True)
+        for event in newest[: LOG_EVENTS - read]:
+            message = str(event.get("message") or "")
+            found = next((h for h in FAILURE_HINTS if h.pattern.search(message)), None)
+            if found is not None:
+                return found
+        read += min(len(newest), LOG_EVENTS - read)
+        return None
+
+    def read_span(first: int, last: int, whole: bool) -> list[dict[str, Any]] | None:
+        """The span's events if it was read in full (or the calls ran out on it); None when it
+        held more and its unread rest was queued, its pages kept to match after it. A ``whole``
+        slice is paged on until its pages hold as many events as the cap still matches."""
+        nonlocal calls
+        kwargs: dict[str, Any] = {"logGroupName": log_group, "startTime": first,
+                                  "endTime": last, "filterPattern": LOG_ERRORS,
                                   "limit": LOG_PAGE}  # fmt: skip
         events: list[dict[str, Any]] = []
         while calls < LOG_CALLS:
@@ -209,14 +250,29 @@ def log_hint(logs: Any, log_group: str, start_ms: int, end_ms: int) -> FailureHi
             calls += 1
             events += page.get("events") or []
             if not page.get("nextToken"):
-                break
+                return events
+            rest = max((int(e.get("timestamp") or 0) for e in events), default=first)
+            full = not whole or len(events) >= LOG_EVENTS - read
+            if full and first < rest < last:  # read the unread rest newer half first
+                middle = rest + (last - rest) // 2
+                todo.extend([("read", events, None), ("span", rest, middle),
+                             ("span", middle + 1, last)])  # fmt: skip
+                return None
+            # A slice not yet holding the cap's events, or nothing to narrow (an empty page, or
+            # every event so far at the span's first or last millisecond): the next token reads
+            # on, each event once.
             kwargs["nextToken"] = page["nextToken"]
-        newest = sorted(events, key=lambda e: int(e.get("timestamp") or 0), reverse=True)
-        for event in newest[: LOG_EVENTS - read]:
-            message = str(event.get("message") or "")
-            found = next((h for h in FAILURE_HINTS if h.pattern.search(message)), None)
-            if found is not None:
-                return found
-        read += min(len(newest), LOG_EVENTS - read)
-        slice_end = slice_start
+        return events
+
+    while todo and read < LOG_EVENTS:
+        kind, first, last = todo.pop()
+        if kind != "read":
+            if calls >= LOG_CALLS:
+                continue  # out of calls: only the pages already read are matched
+            first = read_span(first, last, kind == "slice")
+            if first is None:
+                continue  # the span's rest is queued, newer half on top
+        found = match(first)
+        if found is not None:
+            return found
     return None
