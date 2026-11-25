@@ -37,7 +37,7 @@ def run_triage(
     """
     import time
 
-    start_time = time.time()
+    start_time = time.monotonic()
 
     say(f"[triage] Starting triage for {database_name}")
 
@@ -103,7 +103,7 @@ def run_triage(
 
     key = f"{database_name}/{job_id}/referee-triage/triage.json"
     store.write_json(key, triage_output.model_dump(mode="json"))
-    elapsed = time.time() - start_time
+    elapsed = time.monotonic() - start_time
     confidence = _compute_triage_confidence(result)
     say(f"[triage] Confidence: {confidence}%")
     say(

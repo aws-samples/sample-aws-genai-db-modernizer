@@ -12,6 +12,7 @@ Analyzes database workloads to identify Redis/ElastiCache migration patterns inc
 - Geospatial queries
 """
 
+import time
 from datetime import datetime
 from typing import NamedTuple
 
@@ -50,7 +51,7 @@ def analyze_for_elasticache(
     Returns:
         Tuple of (AnalysisOutputContract, decision_trace_dict, mermaid_diagram_str | None).
     """
-    start_time = datetime.now()
+    start_time = time.monotonic()
     collector_output = analysis_input.collector_output
 
     tables = collector_output.get("database_schema", {}).get("tables", [])
@@ -63,7 +64,7 @@ def analyze_for_elasticache(
         collector_output, analysis_input.target_region, analysis_input.analysis_options
     )
 
-    duration = (datetime.now() - start_time).total_seconds()
+    duration = time.monotonic() - start_time
 
     output = AnalysisOutputContract(
         agent_metadata=AgentMetadata(

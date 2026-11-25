@@ -249,8 +249,8 @@ _FATAL_SSM_CODES = frozenset(
 def _wait_for_ssm(instance_id: str, region: str, timeout: int = 180) -> None:
     """Wait for SSM agent to report Online."""
     ssm = boto3.client("ssm", region_name=region)
-    deadline = time.time() + timeout
-    while time.time() < deadline:
+    deadline = time.monotonic() + timeout
+    while time.monotonic() < deadline:
         try:
             resp = ssm.describe_instance_information(
                 Filters=[{"Key": "InstanceIds", "Values": [instance_id]}]

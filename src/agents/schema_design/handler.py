@@ -1112,7 +1112,7 @@ def run_schema_design(
 
     import time
 
-    start_time = time.time()
+    start_time = time.monotonic()
     agent_name = f"schema-{target_type}"
 
     say(f"[schema-design/{target_type}] Starting for {database_name}")
@@ -1245,7 +1245,7 @@ def run_schema_design(
             trace_out_key = f"{database_name}/{job_id}/schema-{target_type}/design_trace.json"
         write_design_trace(store, trace_out_key, trace_data_out)
 
-    elapsed = time.time() - start_time
+    elapsed = time.monotonic() - start_time
     if report.violations:
         say(
             f"[schema-design/{target_type}] ❌ {len(report.violations)} scope violation(s) "
@@ -1279,7 +1279,7 @@ def run_schema_split(
 
     from src.agents.schema_design.group_splitter import split_schema_input
 
-    start_time = time.time()
+    start_time = time.monotonic()
     say(f"[schema-split/{target_type}] Starting for {database_name}")
     set_aside_refused_design(store, database_name, job_id, target_type, assignment_version)
     clear_design_skip(store, database_name, job_id, target_type, assignment_version)
@@ -1356,7 +1356,7 @@ def run_schema_split(
         else {}
     )
 
-    elapsed = time.time() - start_time
+    elapsed = time.monotonic() - start_time
     say(
         f"[schema-split/{target_type}] ✅ Split into {manifest.total_groups} groups "
         f"({manifest.total_queries} queries) in {elapsed:.1f}s"
@@ -1411,7 +1411,7 @@ def run_schema_merge(
         merge_warnings,
     )
 
-    start_time = time.time()
+    start_time = time.monotonic()
     say(f"[schema-merge/{target_type}] Starting for {database_name}")
 
     artifact_version = assignment_version if assignment_version > 0 else 1
@@ -1457,7 +1457,7 @@ def run_schema_merge(
     violations = report.violations + merge_failures(merged)
     report = ScopeReport(violations, report.warnings + merge_warnings(merged) + column_warnings)
 
-    elapsed = time.time() - start_time
+    elapsed = time.monotonic() - start_time
 
     # Print summary counts
     for field in ENGINE_LIST_FIELDS.get(target_type, []):
@@ -1604,7 +1604,7 @@ def run_schema_design_auto(
     import time
 
     say(f"[schema-design/{target_type}] Designing {len(groups)} groups in parallel")
-    start = time.time()
+    start = time.monotonic()
 
     # Read once; each group gets its own slice (DocumentDB and OpenSearch only).
     full_trace = _read_decision_trace(store, database_name, job_id, target_type)
@@ -1723,7 +1723,7 @@ def run_schema_design_auto(
                 logger.warning("Group %s failed", group.get("group_name", group.get("group_index")))
                 raise
 
-    elapsed = time.time() - start
+    elapsed = time.monotonic() - start
     say(f"[schema-design/{target_type}] All {len(groups)} groups done in {elapsed:.1f}s")
 
     # Merge group drafts
@@ -1757,7 +1757,7 @@ def run_schema_design_with_injected(
         return
     import time
 
-    start_time = time.time()
+    start_time = time.monotonic()
     say(
         f"[schema-design/{target_type}] Starting CASCADE pass "
         f"with {len(injected_query_ids)} injected queries"
@@ -1852,7 +1852,7 @@ def run_schema_design_with_injected(
 
     write_schema_output(store, output_key, output_data, target_type)
 
-    elapsed = time.time() - start_time
+    elapsed = time.monotonic() - start_time
     say(
         f"[schema-design/{target_type}] ✅ Cascade complete in {elapsed:.1f}s — "
         f"output written to {output_key}"

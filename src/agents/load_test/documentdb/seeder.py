@@ -71,7 +71,7 @@ class DocumentDBSeeder(BaseSeeder):
 
     def seed(self, schema_output: Any, max_items_per_table: int = 10_000) -> SeedManifest:
         """Generate synthetic documents and bulk-insert into DocumentDB."""
-        start = time.time()
+        start = time.monotonic()
 
         cluster_endpoint = self._get_required(schema_output, "_documentdb_endpoint")
         replica_count = int(schema_output.get("_documentdb_replica_count", 0) or 0)
@@ -107,7 +107,7 @@ class DocumentDBSeeder(BaseSeeder):
         finally:
             client.close()
 
-        duration = round(time.time() - start, 2)
+        duration = round(time.monotonic() - start, 2)
         logger.info(
             "documentdb_seeder_complete",
             total_items=total_items,

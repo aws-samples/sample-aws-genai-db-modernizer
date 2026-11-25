@@ -171,10 +171,10 @@ class ElastiCacheProvisioner(BaseProvisioner):
 
     def _wait_for_available(self, replication_group_id: str, timeout_minutes: int = 15) -> None:
         """Poll until replication group is available."""
-        deadline = time.time() + timeout_minutes * 60
+        deadline = time.monotonic() + timeout_minutes * 60
         poll_interval = 30
 
-        while time.time() < deadline:
+        while time.monotonic() < deadline:
             desc = self.client.describe_replication_groups(ReplicationGroupId=replication_group_id)
             status = desc["ReplicationGroups"][0]["Status"]
             logger.info("waiting_for_replication_group", status=status)

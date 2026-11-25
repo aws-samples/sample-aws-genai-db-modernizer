@@ -54,7 +54,7 @@ def analyze_for_documentdb_deterministic(
     Returns:
         Tuple of (AnalysisOutputContract, decision_trace_dict, mermaid_diagram_str).
     """
-    start_time = datetime.now()
+    start_time = time.monotonic()
     collector_output = analysis_input.collector_output
 
     tables = collector_output.get("database_schema", {}).get("tables", [])
@@ -77,7 +77,7 @@ def analyze_for_documentdb_deterministic(
     # Fallback denormalization strategies (no LLM)
     denorm_strategies = [_fallback_embedding_strategy(c) for c in embedding_candidates]
 
-    duration = (datetime.now() - start_time).total_seconds()
+    duration = time.monotonic() - start_time
 
     output = AnalysisOutputContract(
         agent_metadata=AgentMetadata(
@@ -223,7 +223,7 @@ def analyze_for_documentdb(
     llm_attempts = 0
 
     if advisor.enabled and embedding_candidates:
-        llm_start = time.time()
+        llm_start = time.monotonic()
         llm_output = advisor.advise(
             deterministic_results={
                 "patterns": [p.model_dump() for p in contract.workload_analysis.patterns_detected],
@@ -236,7 +236,7 @@ def analyze_for_documentdb(
             queries=collector_output.get("queries", {}).get("query_patterns", []),
             embedding_candidates=embedding_candidates,
         )
-        llm_duration = time.time() - llm_start
+        llm_duration = time.monotonic() - llm_start
         llm_attempts = advisor.attempts_made
         llm_status = "success" if llm_output else f"failed_after_{llm_attempts}_attempts"
 

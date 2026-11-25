@@ -57,7 +57,7 @@ def analyze_for_dynamodb_deterministic(
     Returns:
         Tuple of (AnalysisOutputContract, decision_trace_dict, mermaid_diagram_str).
     """
-    start_time = datetime.now()
+    start_time = time.monotonic()
     collector_output = analysis_input.collector_output
 
     # Validate minimum viable input
@@ -79,7 +79,7 @@ def analyze_for_dynamodb_deterministic(
     denorm_opportunities = detect_denormalization_subtypes(collector_output, relationships)
     si_dominance = detect_secondary_index_dominance(collector_output, pk_classifications)
 
-    duration = (datetime.now() - start_time).total_seconds()
+    duration = time.monotonic() - start_time
 
     output = AnalysisOutputContract(
         agent_metadata=AgentMetadata(
@@ -258,9 +258,9 @@ def analyze_for_dynamodb(
     llm_attempts = 0
 
     if advisor.enabled:
-        llm_start = time.time()
+        llm_start = time.monotonic()
         llm_output = advisor.advise(**llm_payload)
-        llm_duration = time.time() - llm_start
+        llm_duration = time.monotonic() - llm_start
         llm_attempts = advisor.attempts_made
         llm_status = "success" if llm_output else f"failed_after_{llm_attempts}_attempts"
 

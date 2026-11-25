@@ -17,6 +17,7 @@ import json
 import logging
 import os
 import re
+import time
 from enum import Enum
 from pathlib import Path
 
@@ -126,7 +127,7 @@ class SchemaDesignTrace:
 
     def __init__(self) -> None:
         self.iterations: list[dict] = []
-        self.start_time: float = 0.0
+        self.start_time = time.monotonic()
 
     def log_designer(
         self, iteration: int, duration_s: float, output: DocumentDBModelOutputContract
@@ -165,10 +166,8 @@ class SchemaDesignTrace:
         entry["pe_review"] = {"error": error}
 
     def to_dict(self) -> dict:
-        import time
-
         return {
-            "total_duration_seconds": round(time.time() - self.start_time, 2),
+            "total_duration_seconds": round(time.monotonic() - self.start_time, 2),
             "total_iterations": len(self.iterations),
             "iterations": self.iterations,
         }

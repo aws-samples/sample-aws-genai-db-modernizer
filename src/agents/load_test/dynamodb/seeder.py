@@ -25,7 +25,7 @@ class DynamoDBSeeder(BaseSeeder):
 
     def seed(self, schema_output: dict, max_items_per_table: int = 10_000) -> SeedManifest:
         """Seed all tables that have in-scope access patterns with traffic."""
-        start = time.time()
+        start = time.monotonic()
         ddb = boto3.resource("dynamodb", region_name=self.region)
 
         table_defs = self._filter_tables_with_traffic(schema_output)
@@ -45,7 +45,7 @@ class DynamoDBSeeder(BaseSeeder):
 
             logger.info("seeded_table", table_name=table_name, items=len(items))
 
-        duration = time.time() - start
+        duration = time.monotonic() - start
         return SeedManifest(
             resources=resources, total_items=total_items, duration_seconds=round(duration, 2)
         )

@@ -126,7 +126,7 @@ class SchemaDesignTrace:
 
     def __init__(self) -> None:
         self.iterations: list[dict] = []
-        self.start_time = time.time()
+        self.start_time = time.monotonic()
 
     def log_designer(
         self, iteration: int, duration_s: float, output: OpenSearchModelOutputContract
@@ -166,7 +166,7 @@ class SchemaDesignTrace:
 
     def to_dict(self) -> dict:
         return {
-            "total_duration_seconds": round(time.time() - self.start_time, 2),
+            "total_duration_seconds": round(time.monotonic() - self.start_time, 2),
             "total_iterations": len(self.iterations),
             "iterations": self.iterations,
         }
@@ -451,9 +451,9 @@ def run_opensearch_schema_agent(
 
     # --- Iteration 0: initial design ---
     say(f"[schema-design/opensearch] === Designer iteration 1/{MAX_PE_ITERATIONS} ===")
-    t0 = time.time()
+    t0 = time.monotonic()
     design_output = _designed(designer_prompt)
-    elapsed = time.time() - t0
+    elapsed = time.monotonic() - t0
     trace.log_designer(0, elapsed, design_output)
     say(f"[schema-design/opensearch] Designer iteration 1 complete in {elapsed:.0f}s")
 
@@ -468,9 +468,9 @@ def run_opensearch_schema_agent(
 
         routing_flags = []  # only a review of this design counts (#713 review)
         try:
-            t0 = time.time()
+            t0 = time.monotonic()
             review = _invoke_pe_reviewer(model, design_output, input_summary, pe_skill_path)
-            elapsed = time.time() - t0
+            elapsed = time.monotonic() - t0
             trace.log_pe_review(iteration, elapsed, review)
             routing_flags = [dict(f) for f in review.routing_flags]
         except (GuardrailIntervened, GuardrailConfigError):
@@ -533,9 +533,9 @@ def run_opensearch_schema_agent(
             f"[schema-design/opensearch] === Designer revision {iteration + 2}/{MAX_PE_ITERATIONS}"
             f" ({len(review.change_requests)} changes requested) ==="
         )
-        t0 = time.time()
+        t0 = time.monotonic()
         design_output = _designed(revision_prompt)
-        elapsed = time.time() - t0
+        elapsed = time.monotonic() - t0
         trace.log_designer(iteration + 1, elapsed, design_output)
 
     trace_dict = trace.to_dict()

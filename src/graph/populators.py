@@ -1593,7 +1593,7 @@ def rebuild_graph(
     Skips any artifact that doesn't exist yet (partial pipeline runs).
     Returns stats: {"nodes_created": int, "edges_created": int, "duration_ms": int}
     """
-    start = time.time()
+    start = time.monotonic()
     graph_store.clear()
     initialize_schema(graph_store)
 
@@ -1802,7 +1802,7 @@ def rebuild_graph(
     if not failed_reads and inputs_digest is not None:
         stamp_graph_meta(graph_store, assignment_version, inputs_digest)
 
-    duration_ms = int((time.time() - start) * 1000)
+    duration_ms = int((time.monotonic() - start) * 1000)
     node_count = graph_store.query("MATCH (n) RETURN COUNT(n) AS c")[0]["c"]
     edge_count = graph_store.query("MATCH ()-[r]->() RETURN COUNT(r) AS c")[0]["c"]
 
