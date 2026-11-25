@@ -110,7 +110,7 @@ def test_mysql_parameters_and_events_are_read_for_the_current_database():
 
 def test_mysql_capture_counts_and_names_what_is_not_granted():
     collector, _ = _collector(
-        MySQLRemoteCollector, [{"n": 7}], [{"privilege": "TRIGGER"}, {"privilege": "EVENT"}],
+        MySQLRemoteCollector, [{"n": 7}], [], [{"privilege": "TRIGGER"}, {"privilege": "EVENT"}],
         [{"n": 3}],
     )  # fmt: skip
     assert collector.collect_routine_capture() == {
@@ -118,6 +118,33 @@ def test_mysql_capture_counts_and_names_what_is_not_granted():
         "parameters_counted": 3,
         "privileges_not_seen": ["EVENT", "TRIGGER"],
     }
+
+
+@pytest.mark.parametrize(
+    ("columns", "role_grantee"),
+    [
+        # MySQL 8.0.19 and later: each active role with its host.
+        ([{"c": "ROLE_NAME"}, {"c": "ROLE_HOST"}], "r.role_host"),
+        # MariaDB: by name only, under an empty host.
+        ([{"c": "ROLE_NAME"}], "'@', CHAR(39 USING utf8mb4), CHAR(39 USING utf8mb4))"),
+    ],
+)
+def test_mysql_capture_counts_a_privilege_granted_to_an_active_role(columns, role_grantee):
+    """#2597: the RDS MySQL master user holds SHOW_ROUTINE, TRIGGER and EVENT through
+    rds_superuser_role; the grant views list them under the role."""
+    collector, seen = _collector(MySQLRemoteCollector, [{"n": 7}], columns, [], [{"n": 3}])
+    assert collector.collect_routine_capture()["privileges_not_seen"] == []
+    assert "UPPER(table_name) = 'ENABLED_ROLES'" in seen[1]
+    assert "FROM information_schema.enabled_roles r" in seen[2] and role_grantee in seen[2]
+    assert seen[2].count("JSON_CONTAINS((SELECT JSON_ARRAYAGG(") == 3  # each grant view
+
+
+def test_mysql_capture_names_no_role_view_a_server_does_not_have():
+    """MySQL before 8.0.19 has no ENABLED_ROLES: naming it would fail the read."""
+    collector, seen = _collector(MySQLRemoteCollector, [{"n": 7}], [], [], [{"n": 3}])
+    collector.collect_routine_capture()
+    assert "enabled_roles" not in seen[2].lower()
+    assert "JSON_CONTAINS(NULL, JSON_QUOTE(u.grantee))" in seen[2]
 
 
 def test_mysql_program_counts_are_read_only_where_the_server_keeps_them():

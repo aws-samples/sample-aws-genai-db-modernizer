@@ -1,7 +1,8 @@
 # Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
 # SPDX-License-Identifier: MIT-0
 
-"""``collect-mysql.sql`` and the live collector measure LOB value lengths on a real server (#2128).
+"""``collect-mysql.sql`` and the live collector measure LOB value lengths on a real server (#2128),
+and name the routine privileges the session does not show (#2597).
 
 Needs ``mysqld`` and the ``mysql`` client on PATH (the throwaway server of
 ``test_routine_scripts_mysql.py``). The MariaDB runs need ``mariadbd`` and ``mariadb`` on PATH, after the MySQL ones,
@@ -75,6 +76,43 @@ ROLE_SETUP = """
     GRANT SELECT ON performance_schema.* TO 'nomysql'@'localhost';
 """  # fmt: skip
 
+# #2597: the routine-capture hint. The RDS MySQL master user holds SHOW_ROUTINE, TRIGGER and
+# EVENT through rds_superuser_role (rdsmaster); a direct grant, a role granted but not active,
+# and no grant; and the role grants the grant views do not show: a role's row the user may not
+# read (no SELECT on the mysql schema), a role held by the active role, a role's global grant.
+_ROLE_SETUP = """
+    CREATE ROLE r_routine; GRANT SELECT ON *.* TO r_routine; {show_routine}
+    GRANT TRIGGER, EVENT ON shop.* TO r_routine;
+    CREATE ROLE r_hidden; GRANT TRIGGER, EVENT ON shop.* TO r_hidden;
+    CREATE ROLE r_inner; GRANT TRIGGER, EVENT ON shop.* TO r_inner;
+    CREATE ROLE r_outer; GRANT r_inner TO r_outer; GRANT SELECT ON mysql.* TO r_outer;
+    CREATE ROLE r_global; GRANT TRIGGER, EVENT ON *.* TO r_global; GRANT SELECT ON mysql.* TO r_global;
+    CREATE USER 'direct'@'localhost'; GRANT SELECT ON *.* TO 'direct'@'localhost';
+    GRANT TRIGGER, EVENT ON shop.* TO 'direct'@'localhost';
+    CREATE USER 'lacking'@'localhost';
+    CREATE USER 'inactive'@'localhost'; GRANT r_routine TO 'inactive'@'localhost';
+"""
+_ROLE_USERS = {"rdsmaster": "r_routine", "hidden": "r_hidden", "nested": "r_outer",
+               "globalrole": "r_global"}  # fmt: skip
+
+
+def _routine_setup(mariadb: bool) -> str:
+    sql = _ROLE_SETUP.format(
+        show_routine="" if mariadb else "GRANT SHOW_ROUTINE ON *.* TO r_routine;"
+    )
+    for user, role in _ROLE_USERS.items():
+        account = f"'{user}'@'localhost'"
+        default = (f"SET DEFAULT ROLE {role} FOR {account}" if mariadb
+                   else f"SET DEFAULT ROLE ALL TO {account}")  # fmt: skip
+        sql += f"CREATE USER {account}; GRANT {role} TO {account}; {default};\n"
+    for user in ("lacking", "inactive", *_ROLE_USERS):  # what the script reads besides the hint
+        sql += f"GRANT SELECT ON shop.* TO '{user}'@'localhost';\n"
+        sql += f"GRANT SELECT ON performance_schema.* TO '{user}'@'localhost';\n"
+    return sql
+
+
+_ALL_THREE = ["EVENT", "SHOW_ROUTINE", "TRIGGER"]
+
 
 class _Server:
     def __init__(self, client: str, sock: Path, mariadb: bool):
@@ -135,7 +173,11 @@ def shop(request, mysql_socket):  # noqa: F811
         server = _Server(client, sock, False)
     else:
         server = request.getfixturevalue("mariadb_socket")
-    result = server.run(SETUP + ("" if server.mariadb else ROLE_SETUP))
+    result = server.run(
+        SETUP  # nosemgrep: tainted-sql-string -- fixed setup text for a disposable test server
+        + ("" if server.mariadb else ROLE_SETUP)
+        + _routine_setup(server.mariadb)
+    )
     assert result.returncode == 0, result.stderr
     return server
 
@@ -236,6 +278,58 @@ def test_process_through_a_nested_role_or_a_hidden_role_row_is_not_read(shop):
         got = _lengths(_collect(shop, user))
         assert got[("notes", "body")] is None and got[("big", "body")] is None, user
         assert got[("old", "body")] == 4, user
+
+
+def _hint(shop: _Server, user: str) -> tuple[list[str], list[str]]:
+    """The routine hint as the script and as the live collector read it for ``user``."""
+    script = _collect(shop, user)["metadata"]["routine_capture"]["privileges_not_seen"]
+    return sorted(script), _live(shop, user).collect_routine_capture()["privileges_not_seen"]
+
+
+def test_the_routine_hint_counts_a_privilege_granted_through_an_active_role(shop):
+    """#2597: the script and the live collector see SHOW_ROUTINE, TRIGGER and EVENT granted
+    to the session's active role, as the RDS master user holds them."""
+    assert _hint(shop, "rdsmaster") == ([], [])
+
+
+def test_mariadb_counts_a_role_the_active_role_holds(shop):
+    """MariaDB lists the roles the active role holds as enabled too; MySQL lists only the
+    active one, so its nested role's grants stay named."""
+    want = [] if shop.mariadb else _ALL_THREE
+    assert _hint(shop, "nested") == (want, want)
+
+
+@pytest.mark.passes_on_main  # direct grants were already read; this guards them and the misses
+@pytest.mark.parametrize("user", ["direct", "inactive", "lacking", "hidden"])
+def test_the_routine_hint_still_reads_direct_grants_and_names_what_is_missing(shop, user):
+    """A direct grant is seen. A role granted but not active, no grant, or a role's grant the
+    user may not see (no SELECT on the mysql schema) leaves all three named."""
+    want = [] if user == "direct" else _ALL_THREE
+    assert _hint(shop, user) == (want, want)
+
+
+def test_a_global_grant_to_a_role_is_seen_on_mysql_and_not_on_mariadb(shop):
+    """MariaDB's USER_PRIVILEGES lists no role's global grant, so a global TRIGGER and EVENT
+    through a role stay named there. SELECT on the mysql schema reads routine bodies on
+    MariaDB only."""
+    want = ["EVENT", "TRIGGER"] if shop.mariadb else ["SHOW_ROUTINE"]
+    assert _hint(shop, "globalrole") == (want, want)
+
+
+def _live(shop: _Server, user: str = "root") -> MySQLRemoteCollector:
+    """The live collector, its reads run through the client as ``user``."""
+
+    class Live(MariaDBRemoteCollector if shop.mariadb else MySQLRemoteCollector):  # type: ignore[misc]
+        def __init__(self):
+            self._statistics_expression = None
+
+        def _query(self, sql: str) -> list[dict]:
+            init = "" if shop.mariadb else "SET SESSION information_schema_stats_expiry=0; "
+            done = shop.run(init + sql, "-B", "-D", "shop", user=user)
+            assert done.returncode == 0, done.stderr.decode()
+            return _parse_tabular_output(done.stdout.decode(), "mysql")
+
+    return Live()
 
 
 def test_a_timeout_costs_the_sizes_and_never_the_collection(shop):

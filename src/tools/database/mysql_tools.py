@@ -157,12 +157,40 @@ _GRANTEE = (
 )
 
 
-def privileges_not_seen_sql(grantee: str, db: str, mariadb: str) -> str:
-    """The visibility privileges the collection user lacks as a direct grant (#1652,
-    #1933), one row each: ``SHOW_ROUTINE`` (reading another definer's routine bodies),
+# The roles active in the session, named the way the grant views name them (#2597). MySQL
+# 8.0.19 and later list them in ENABLED_ROLES with their host; MariaDB lists them by name
+# only, with the roles they hold, and its grant views name a role with an empty host.
+_QUOTE = "CHAR(39 USING utf8mb4)"
+ROLE_GRANTEE_MYSQL = (
+    f"CONCAT({_QUOTE}, r.role_name, {_QUOTE}, '@', {_QUOTE}, r.role_host, {_QUOTE})"
+)
+ROLE_GRANTEE_MARIADB = f"CONCAT({_QUOTE}, r.role_name, {_QUOTE}, '@', {_QUOTE}, {_QUOTE})"
+_ENABLED_ROLE_COLUMNS_SQL = """
+    SELECT UPPER(column_name) AS c FROM information_schema.columns
+     WHERE table_schema = 'information_schema' AND UPPER(table_name) = 'ENABLED_ROLES'
+       AND UPPER(column_name) IN ('ROLE_NAME', 'ROLE_HOST')
+"""
+
+
+def role_grantees_sql(role_grantee: str, into: str = "") -> str:
+    """The session's active roles as a JSON array of grantees (``role_grantee`` names one,
+    ``ROLE_GRANTEE_MYSQL`` or ``ROLE_GRANTEE_MARIADB``), or NULL with none. ``into`` stores
+    it in a variable, as the script does. A server without ENABLED_ROLES (MySQL before
+    8.0.19) must never parse it: the script runs it as a prepared statement."""
+    return (
+        f"SELECT JSON_ARRAYAGG({role_grantee}){into} FROM information_schema.enabled_roles r"  # nosec B608 -- fixed SQL expressions, no input
+        " WHERE r.role_name IS NOT NULL"
+    )
+
+
+def privileges_not_seen_sql(grantee: str, db: str, mariadb: str, roles: str) -> str:
+    """The visibility privileges the collection session does not show (#1652, #1933,
+    #2597), one row each: ``SHOW_ROUTINE`` (reading another definer's routine bodies),
     ``TRIGGER`` and ``EVENT`` on the database. ``grantee``, ``db`` and ``mariadb`` are
     SQL expressions for the account, the database and whether the server is MariaDB;
-    the live read and the script (``scripts/collect-mysql.sql``) render the same text.
+    ``roles`` is a JSON array of the session's active roles as grantees (NULL: none, see
+    ``role_grantees_sql``). A grant to the account or to one of those roles counts. The
+    live read and the script (``scripts/collect-mysql.sql``) render the same text.
 
     What reads routine bodies, per the vendors' documentation:
 
@@ -172,6 +200,13 @@ def privileges_not_seen_sql(grantee: str, db: str, mariadb: str) -> str:
     - MariaDB: a global ``SELECT``, ``SELECT`` on ``mysql.*`` or on the ``mysql.proc``
       table, and from 11.3 its routine-reading privilege (``privilege_type`` with its
       spaces read as underscores, ``SHOW_CREATE_ROUTINE``), global or on the database.
+      ``information_schema.columns`` lists what the session may do with ``mysql.proc``'s
+      columns, a role's global ``SELECT`` included, which MariaDB's ``USER_PRIVILEGES``
+      never lists.
+
+    The grant views list another grantee's rows, a role's included, only to a user who
+    may read the ``mysql`` schema (a global ``SELECT`` allows it), and MySQL's
+    ENABLED_ROLES lists no role granted to an active role.
     """
     return f"""
     SELECT p.privilege FROM (
@@ -179,14 +214,14 @@ def privileges_not_seen_sql(grantee: str, db: str, mariadb: str) -> str:
     ) AS p
     WHERE NOT EXISTS (
             SELECT 1 FROM information_schema.user_privileges u
-             WHERE u.grantee = {grantee}
+             WHERE (u.grantee = {grantee} OR JSON_CONTAINS({roles}, JSON_QUOTE(u.grantee)))
                AND (u.privilege_type = p.privilege
                     OR (p.privilege = 'SHOW_ROUTINE' AND u.privilege_type = 'SELECT')
                     OR (p.privilege = 'SHOW_ROUTINE' AND {mariadb}
                         AND REPLACE(u.privilege_type, ' ', '_') = 'SHOW_CREATE_ROUTINE')))
       AND NOT EXISTS (
             SELECT 1 FROM information_schema.schema_privileges s
-             WHERE s.grantee = {grantee}
+             WHERE (s.grantee = {grantee} OR JSON_CONTAINS({roles}, JSON_QUOTE(s.grantee)))
                AND ((s.table_schema = {db} AND s.privilege_type = p.privilege)
                     OR (p.privilege = 'SHOW_ROUTINE' AND {mariadb}
                         AND ((s.table_schema = 'mysql' AND s.privilege_type = 'SELECT')
@@ -196,13 +231,19 @@ def privileges_not_seen_sql(grantee: str, db: str, mariadb: str) -> str:
       AND NOT EXISTS (
             SELECT 1 FROM information_schema.table_privileges t
              WHERE p.privilege = 'SHOW_ROUTINE' AND {mariadb}
-               AND t.grantee = {grantee} AND t.table_schema = 'mysql'
+               AND (t.grantee = {grantee} OR JSON_CONTAINS({roles}, JSON_QUOTE(t.grantee)))
+               AND t.table_schema = 'mysql'
                AND t.table_name = 'proc' AND t.privilege_type = 'SELECT')
+      AND NOT EXISTS (
+            SELECT 1 FROM information_schema.columns c
+             WHERE p.privilege = 'SHOW_ROUTINE' AND {mariadb}
+               AND c.table_schema = 'mysql' AND c.table_name = 'proc'
+               AND FIND_IN_SET('select', LOWER(c.privileges)) > 0)
 """  # nosec B608 -- fixed SQL expressions, no input
 
 
 _IS_MARIADB = "(VERSION() LIKE '%MariaDB%')"
-_PRIVILEGES_NOT_SEEN_SQL = privileges_not_seen_sql(_GRANTEE, "DATABASE()", _IS_MARIADB)
+
 
 _PROGRAM_STATS_SQL = """
     SELECT OBJECT_NAME AS routine_name, OBJECT_SCHEMA AS schema_name,
@@ -625,10 +666,17 @@ class MySQLRemoteCollector:
         return self._text_rows(_EVENTS_SQL.format(flag=flag))  # nosec B608 -- flag is 0 or 1
 
     def collect_routine_capture(self) -> dict:
-        """The server's routine count and the visibility privileges not granted to the
-        collection user directly (#1652): a hint, never a failure."""
+        """The server's routine count and the visibility privileges the session does not
+        show, granted to the user or an active role (#1652, #2597): a hint, never a failure."""
         counted = self._query(_ROUTINES_COUNTED_SQL)
-        missing = self._query(_PRIVILEGES_NOT_SEEN_SQL)
+        columns = {str(r.get("c") or "").upper() for r in self._query(_ENABLED_ROLE_COLUMNS_SQL)}
+        if "ROLE_HOST" in columns:
+            roles = f"({role_grantees_sql(ROLE_GRANTEE_MYSQL)})"
+        elif "ROLE_NAME" in columns:
+            roles = f"({role_grantees_sql(ROLE_GRANTEE_MARIADB)})"
+        else:  # MySQL before 8.0.19: no ENABLED_ROLES, so the query must not name it
+            roles = "NULL"
+        missing = self._query(privileges_not_seen_sql(_GRANTEE, "DATABASE()", _IS_MARIADB, roles))
         parameters = self._query(_PARAMETERS_COUNTED_SQL)
         return {
             "routines_counted": int(counted[0]["n"]) if counted else None,

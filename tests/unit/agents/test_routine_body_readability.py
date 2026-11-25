@@ -240,15 +240,36 @@ def test_the_oracle_script_has_the_switch_at_its_top():
 _ACCOUNT = "'app'@'%'"
 
 
-def _not_seen(mariadb: bool, grants: list[tuple[str, ...]]) -> list[str]:
+def _not_seen(
+    mariadb: bool,
+    grants: list[tuple[str, ...]],
+    *,
+    roles: list[str] | None = None,
+    role_grants: tuple[tuple[str, ...], ...] | list[tuple[str, ...]] = (),
+    proc_privileges: str | None = None,
+) -> list[str]:
     """The privilege query the live MySQL collector and the script run, on SQLite with
     information_schema's three privilege tables holding ``grants``: ``("global", priv)``,
-    ``("schema", schema, priv)`` or ``("table", schema, table, priv)``."""
+    ``("schema", schema, priv)`` or ``("table", schema, table, priv)``. ``role_grants`` are
+    the same, led by the grantee they are listed under; ``roles`` the active roles as the
+    grant views name them (#2597); ``proc_privileges`` the session's privileges on the
+    columns of ``mysql.proc`` as ``information_schema.columns`` lists them (none: no row)."""
     import sqlite3
 
     from src.tools.database.mysql_tools import privileges_not_seen_sql
 
     db = sqlite3.connect(":memory:")
+    db.create_function(
+        "JSON_CONTAINS",
+        2,
+        lambda doc, item: None if doc is None else int(json.loads(item) in json.loads(doc)),
+    )
+    db.create_function("JSON_QUOTE", 1, json.dumps)
+    db.create_function(
+        "FIND_IN_SET",
+        2,
+        lambda item, items: (items.split(",").index(item) + 1) if item in items.split(",") else 0,
+    )
     db.execute("ATTACH ':memory:' AS information_schema")
     db.execute("CREATE TABLE information_schema.user_privileges (grantee, privilege_type)")
     db.execute(
@@ -258,6 +279,7 @@ def _not_seen(mariadb: bool, grants: list[tuple[str, ...]]) -> list[str]:
         "CREATE TABLE information_schema.table_privileges "
         "(grantee, table_schema, table_name, privilege_type)"
     )
+    db.execute("CREATE TABLE information_schema.columns (table_schema, table_name, privileges)")
     inserts = {
         "global": "INSERT INTO information_schema.user_privileges VALUES (?, ?)",
         "schema": "INSERT INTO information_schema.schema_privileges VALUES (?, ?, ?)",
@@ -265,9 +287,15 @@ def _not_seen(mariadb: bool, grants: list[tuple[str, ...]]) -> list[str]:
     }
     for grant in grants:
         db.execute(inserts[grant[0]], (_ACCOUNT, *grant[1:]))
-    sql = privileges_not_seen_sql("?", "'shop'", "1" if mariadb else "0")
-    rows = db.execute(sql, [_ACCOUNT] * sql.count("?")).fetchall()
-    return sorted(r[0] for r in rows)
+    for grantee, kind, *rest in role_grants:
+        db.execute(inserts[kind], (grantee, *rest))
+    if proc_privileges is not None:
+        db.execute(
+            "INSERT INTO information_schema.columns VALUES ('mysql', 'proc', ?)", (proc_privileges,)
+        )
+    sql = privileges_not_seen_sql(":grantee", "'shop'", "1" if mariadb else "0", ":roles")
+    params = {"grantee": _ACCOUNT, "roles": None if roles is None else json.dumps(roles)}
+    return sorted(r[0] for r in db.execute(sql, params).fetchall())
 
 
 _ALL = ["EVENT", "SHOW_ROUTINE", "TRIGGER"]
@@ -300,20 +328,108 @@ def test_what_reads_routine_bodies_depends_on_the_server(mariadb, grants, missin
     assert _not_seen(mariadb, grants) == missing
 
 
+_RDS_ROLE = "'rds_superuser_role'@'%'"
+_RDS_ROLE_GRANTS = [
+    (_RDS_ROLE, "global", "SELECT"),
+    (_RDS_ROLE, "global", "SHOW_ROUTINE"),
+    (_RDS_ROLE, "schema", "shop", "TRIGGER"),
+    (_RDS_ROLE, "schema", "shop", "EVENT"),
+]
+
+
+@pytest.mark.parametrize(
+    ("mariadb", "roles", "role_grants", "missing"),
+    [
+        # #2597: the RDS MySQL master user holds them through rds_superuser_role.
+        (False, [_RDS_ROLE], _RDS_ROLE_GRANTS, []),
+        (False, [_RDS_ROLE], [(_RDS_ROLE, "global", "SELECT")], ["EVENT", "TRIGGER"]),
+        (False, [_RDS_ROLE], [(_RDS_ROLE, "schema", "other", "TRIGGER")], _ALL),
+        # A role the session has not enabled grants nothing.
+        (False, [], _RDS_ROLE_GRANTS, _ALL),
+        (False, None, _RDS_ROLE_GRANTS, _ALL),
+        (False, ["'other_role'@'%'"], _RDS_ROLE_GRANTS, _ALL),
+        # MariaDB names a role with an empty host.
+        (True, ["'shop_role'@''"], [("'shop_role'@''", "schema", "shop", "TRIGGER"),
+                                    ("'shop_role'@''", "schema", "shop", "EVENT")], ["SHOW_ROUTINE"]),
+        (True, ["'shop_role'@''"], [("'shop_role'@''", "schema", "mysql", "SELECT")],
+         ["EVENT", "TRIGGER"]),
+        (True, None, [("'shop_role'@''", "schema", "shop", "TRIGGER")], _ALL),
+    ],
+)  # fmt: skip
+def test_a_privilege_granted_to_an_active_role_counts(mariadb, roles, role_grants, missing):
+    assert _not_seen(mariadb, [], roles=roles, role_grants=role_grants) == missing
+
+
+@pytest.mark.parametrize(
+    ("mariadb", "proc_privileges", "missing"),
+    [
+        # MariaDB lists what the session may do with mysql.proc's columns, a role's global
+        # SELECT included (its USER_PRIVILEGES never lists a role's global grant).
+        (True, "select", ["EVENT", "TRIGGER"]),
+        (True, "insert,SELECT,update", ["EVENT", "TRIGGER"]),
+        (True, "insert", _ALL),
+        (True, None, _ALL),
+        # MySQL 8.0 reads no routine body through mysql.proc.
+        (False, "select", _ALL),
+    ],
+)
+def test_mariadb_reads_routine_bodies_through_what_the_session_may_select_on_mysql_proc(
+    mariadb, proc_privileges, missing
+):
+    assert _not_seen(mariadb, [], proc_privileges=proc_privileges) == missing
+
+
 def test_the_script_runs_the_live_privilege_query():
-    from src.tools.database.mysql_tools import _PRIVILEGES_NOT_SEEN_SQL, privileges_not_seen_sql
+    from src.tools.database.mysql_tools import privileges_not_seen_sql
 
     def flat(sql: str) -> str:
         return re.sub(r"\s+", " ", sql).strip()
 
-    script = flat(privileges_not_seen_sql("@grantee", "@db", "@is_mariadb")).replace(
+    script = flat(
+        privileges_not_seen_sql("@grantee", "@db", "@is_mariadb", "@role_grantees")
+    ).replace(
         "SELECT p.privilege FROM (",
         "SELECT JSON_ARRAYAGG(p.privilege) INTO @privileges_not_seen FROM (",
         1,
     )
     assert script in flat(MYSQL)
     assert "SET @is_mariadb = VERSION() LIKE '%MariaDB%';" in MYSQL
-    assert "(VERSION() LIKE '%MariaDB%')" in _PRIVILEGES_NOT_SEEN_SQL
+
+
+def _capture_section() -> str:
+    return MYSQL[MYSQL.index("-- ===================== 9e.") : MYSQL.index("SET @routine_capture")]
+
+
+def test_the_script_reads_the_active_roles_the_way_the_live_collector_does():
+    """#2597: MySQL 8.0.19+ lists the session's roles with their host, MariaDB by name only;
+    an older MySQL has no ENABLED_ROLES, so the script names it only in a prepared statement
+    and reads no role there."""
+    from src.tools.database.mysql_tools import (
+        ROLE_GRANTEE_MARIADB,
+        ROLE_GRANTEE_MYSQL,
+        role_grantees_sql,
+    )
+
+    section = _capture_section()
+    for expression in (ROLE_GRANTEE_MYSQL, ROLE_GRANTEE_MARIADB):
+        query = role_grantees_sql(expression, into=" INTO @role_grantees")
+        assert "'" + query.replace("'", "''") + "'" in section
+    assert "'SELECT NULL INTO @role_grantees'" in section
+    assert "UPPER(table_name) = 'ENABLED_ROLES'" in section
+    assert "UPPER(column_name) = 'ROLE_HOST'" in section
+    assert "UPPER(column_name) = 'ROLE_NAME'" in section
+    outside = re.sub(r"'(?:[^']|'')*'", "''", re.sub(r"--[^\n]*", "", section))
+    assert "enabled_roles" not in outside.lower()  # never parsed on a server without it
+    assert section.index("EXECUTE role_grantees_stmt;") < section.index("@privileges_not_seen")
+    assert "DEALLOCATE PREPARE role_grantees_stmt;" in section
+
+
+def test_the_script_reads_the_roles_without_writing():
+    code = re.sub(r"--[^\n]*", "", _capture_section()).upper()
+    for word in ("INSERT", "UPDATE", "DELETE", "CREATE TABLE", "CREATE TEMPORARY", "DROP",
+                 "ALTER ", "GRANT ", "LOCK ", "SET GLOBAL", "SET ROLE", "SET DEFAULT ROLE"):  # fmt: skip
+        assert word not in code
+    assert code.count("PREPARE ") == 2  # the one prepared statement and its DEALLOCATE
 
 
 # -- the live SQL Server and Oracle collectors ---------------------------------------
