@@ -118,7 +118,12 @@
 --                            literals when it is read in (#1625, #2082).
 -- Privileges for routine code. Without them nothing fails: a routine whose body the
 -- user may not read is listed with body_status 'not_readable', and
--- metadata.routine_capture.privileges_not_seen names what is not granted directly.
+-- metadata.routine_capture.privileges_not_seen names what the session does not show,
+-- granted to the user or to an active role (MySQL 8.0.19+ and MariaDB; the RDS master
+-- user's rds_superuser_role counts). A role's grant shows only to a user who may read the
+-- mysql schema, as a global SELECT allows; on MySQL a role granted to an active role is
+-- not read, and on MariaDB a role's global grant is not listed except a SELECT that reads
+-- mysql.proc (#2618).
 -- The script never uses them to write.
 --   GRANT SHOW_ROUTINE ON *.* TO <user>;     -- MySQL 8.0.20+: read every routine body
 --                                            -- (before 8.0.20: global SELECT ON *.*)
@@ -428,8 +433,8 @@ SELECT JSON_ARRAYAGG(e_obj) INTO @events FROM (
 -- ===================== 9e. Routine capture (#1652) =====================
 -- How many routines, triggers and events the server counts, so the ingest reports a
 -- list max_allowed_packet turned into NULL (as for the statements), and which of the
--- privileges that decide what is visible this user lacks as a direct grant (a role may
--- still grant one: a hint, never a failure).
+-- privileges that decide what is visible the session does not show, granted to the user
+-- or to an active role (a hint, never a failure).
 -- #1933: whether a routine body is readable depends on the server (the privilege
 -- query below, mysql_tools.privileges_not_seen_sql): MariaDB reads mysql.proc and
 -- has its own routine-reading privilege from 11.3; MySQL 8.0 has neither.
@@ -442,19 +447,37 @@ SELECT (SELECT COUNT(*) FROM information_schema.routines WHERE routine_schema = 
 -- an empty one, and the ingest then rebuilds no routine from it.
 SELECT COUNT(*) INTO @parameters_counted FROM information_schema.parameters
  WHERE specific_schema = @db;
+-- #2597: a grant to a role active in the session counts too, as the grant views list it under
+-- the role. MySQL 8.0.19+ lists those roles with their host in ENABLED_ROLES, MariaDB by name
+-- (with the roles they hold); MySQL before 8.0.19 has no ENABLED_ROLES and reads the user's
+-- own grants only. The view is named only in a prepared statement, so an older server never
+-- parses it.
+SELECT COALESCE(SUM(UPPER(column_name) = 'ROLE_HOST'), 0) > 0,
+       COALESCE(SUM(UPPER(column_name) = 'ROLE_NAME'), 0) > 0
+  INTO @roles_have_host, @roles_have_name
+  FROM information_schema.columns
+ WHERE table_schema = 'information_schema' AND UPPER(table_name) = 'ENABLED_ROLES';
+SET @role_grantees_sql = IF(@roles_have_host,
+  'SELECT JSON_ARRAYAGG(CONCAT(CHAR(39 USING utf8mb4), r.role_name, CHAR(39 USING utf8mb4), ''@'', CHAR(39 USING utf8mb4), r.role_host, CHAR(39 USING utf8mb4))) INTO @role_grantees FROM information_schema.enabled_roles r WHERE r.role_name IS NOT NULL',
+  IF(@roles_have_name,
+     'SELECT JSON_ARRAYAGG(CONCAT(CHAR(39 USING utf8mb4), r.role_name, CHAR(39 USING utf8mb4), ''@'', CHAR(39 USING utf8mb4), CHAR(39 USING utf8mb4))) INTO @role_grantees FROM information_schema.enabled_roles r WHERE r.role_name IS NOT NULL',
+     'SELECT NULL INTO @role_grantees'));
+PREPARE role_grantees_stmt FROM @role_grantees_sql;
+EXECUTE role_grantees_stmt;
+DEALLOCATE PREPARE role_grantees_stmt;
 SELECT JSON_ARRAYAGG(p.privilege) INTO @privileges_not_seen FROM (
   SELECT 'SHOW_ROUTINE' AS privilege UNION ALL SELECT 'TRIGGER' UNION ALL SELECT 'EVENT'
 ) AS p
 WHERE NOT EXISTS (
         SELECT 1 FROM information_schema.user_privileges u
-         WHERE u.grantee = @grantee
+         WHERE (u.grantee = @grantee OR JSON_CONTAINS(@role_grantees, JSON_QUOTE(u.grantee)))
            AND (u.privilege_type = p.privilege
                 OR (p.privilege = 'SHOW_ROUTINE' AND u.privilege_type = 'SELECT')
                 OR (p.privilege = 'SHOW_ROUTINE' AND @is_mariadb
                     AND REPLACE(u.privilege_type, ' ', '_') = 'SHOW_CREATE_ROUTINE')))
   AND NOT EXISTS (
         SELECT 1 FROM information_schema.schema_privileges s
-         WHERE s.grantee = @grantee
+         WHERE (s.grantee = @grantee OR JSON_CONTAINS(@role_grantees, JSON_QUOTE(s.grantee)))
            AND ((s.table_schema = @db AND s.privilege_type = p.privilege)
                 OR (p.privilege = 'SHOW_ROUTINE' AND @is_mariadb
                     AND ((s.table_schema = 'mysql' AND s.privilege_type = 'SELECT')
@@ -464,8 +487,14 @@ WHERE NOT EXISTS (
   AND NOT EXISTS (
         SELECT 1 FROM information_schema.table_privileges t
          WHERE p.privilege = 'SHOW_ROUTINE' AND @is_mariadb
-           AND t.grantee = @grantee AND t.table_schema = 'mysql'
-           AND t.table_name = 'proc' AND t.privilege_type = 'SELECT');
+           AND (t.grantee = @grantee OR JSON_CONTAINS(@role_grantees, JSON_QUOTE(t.grantee)))
+           AND t.table_schema = 'mysql'
+           AND t.table_name = 'proc' AND t.privilege_type = 'SELECT')
+  AND NOT EXISTS (
+        SELECT 1 FROM information_schema.columns c
+         WHERE p.privilege = 'SHOW_ROUTINE' AND @is_mariadb
+           AND c.table_schema = 'mysql' AND c.table_name = 'proc'
+           AND FIND_IN_SET('select', LOWER(c.privileges)) > 0);
 SET @routine_capture = JSON_OBJECT(
   -- JSON_EXTRACT, not CAST(... AS JSON), which MariaDB does not have.
   'include_bodies', JSON_EXTRACT(IF(@include_routine_bodies = 1, 'true', 'false'), '$'),
