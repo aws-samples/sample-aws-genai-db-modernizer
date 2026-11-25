@@ -30,6 +30,7 @@ from playwright.sync_api import Browser, Locator, Page, expect
 from src.report import escaping
 from src.report.deliverables import DELIVERABLES_DIR, FOLDER_ENTRIES
 from src.report.risks import shared_mitigation_refs
+from src.shared.gate_conditions import join_gate_conditions
 from src.shared.migration_risk_rules import backfill_report_risks
 from tests.branding import hits as product_name_hits
 from tests.e2e.pipeline import PipelineResult, real_designs
@@ -1154,7 +1155,12 @@ def _assert_readiness_shown(shown: Locator, wave: dict, db: str, n: str) -> None
     state = wave.get("readiness")
     assert shown.locator("[data-figure=wave-readiness-line]").inner_text() == line, (db, n)
     assert shown.inner_text().endswith(line), (db, n)
-    status = shown.locator("[class*=awsui_status-]").first
+    # #2287: the status is stated once, in the wave's header, never again in its body.
+    assert shown.locator("[class*=awsui_status-]").count() == 0, (db, n)
+    card = shown.locator("xpath=ancestor::*[@data-wave][1]")
+    header = card.locator("[data-figure=wave-header-readiness]")
+    assert header.count() == 1, (db, n)
+    status = header.locator("[class*=awsui_status-]").first
     open_count = wave.get("open_warning_count") or 0
     if state == "suggested":
         want = (
@@ -1169,6 +1175,64 @@ def _assert_readiness_shown(shown: Locator, wave: dict, db: str, n: str) -> None
             "not_reviewed": "Not reviewed",
         }[state]
     assert status.inner_text().strip() == want, (db, n, status.inner_text())
+
+
+def _condition_text(condition: dict) -> str:
+    """A gate condition's sentence as the checklist shows it: its text runs, its table
+    lists behind their own control (#2287)."""
+    return "".join(str(p.get("text") or "") for p in condition.get("parts") or []).strip()
+
+
+def _assert_gate_checklist(gate: Locator, conditions: list[dict], db: str, where: str) -> int:
+    """A gate as the facts' checklist (#2287): one item per condition in order, a
+    condition to check with its "To check" status, a note with none, and each table list
+    behind "Show N tables", a section that opens in place. The first short list (no filter)
+    and the first long one (more than 15 names, with a filter on the name) are opened with
+    the keyboard, and their names are the facts'. Returns how many lists it opened."""
+    if not conditions:
+        assert gate.count() == 0, (db, where)
+        return 0
+    page = gate.page
+    items = gate.locator(":scope > li")
+    assert items.count() == len(conditions), (db, where)
+    opened: set[str] = set()
+    for i, condition in enumerate(conditions):
+        item = items.nth(i)
+        assert item.get_attribute("data-kind") == condition["kind"], (db, where, i)
+        text = item.locator("[data-figure=gate-condition-text]").inner_text()
+        assert " ".join(text.split()) == " ".join(_condition_text(condition).split()), (
+            db,
+            where,
+            i,
+        )
+        icon = item.locator('[aria-label="To check"]')
+        assert icon.count() == (1 if condition["kind"] == "check" else 0), (db, where, i)
+        lists = [p["items"] for p in condition["parts"] if p.get("items")]
+        toggles = item.locator("[data-figure=gate-names-toggle]")
+        assert toggles.count() == len(lists), (db, where, i)
+        for j, names in enumerate(lists):
+            toggle = toggles.nth(j)
+            label = f"Show {len(names)} {'table' if len(names) == 1 else 'tables'}"
+            expect(toggle).to_contain_text(label)
+            kind = "short" if len(names) <= 15 else "long"
+            if kind in opened:
+                continue
+            opened.add(kind)
+            expand = toggle.locator("[aria-expanded]").first
+            if expand.get_attribute("aria-expanded") != "true":
+                expand.focus()
+                page.keyboard.press("Enter")
+            expect(expand).to_have_attribute("aria-expanded", "true")
+            shown = toggle.locator("[data-figure=gate-name]").all_inner_texts()
+            assert shown == names, (db, where, i)
+            search = toggle.get_by_role("searchbox")
+            if kind == "short":
+                assert search.count() == 0, (db, where, i)
+                continue
+            search.fill(names[0])
+            shown = toggle.locator("[data-figure=gate-name]").all_inner_texts()
+            assert names[0] in shown and set(shown) <= set(names), (db, where, i)
+    return len(opened)
 
 
 def _wave_toggle(card: Locator) -> Locator:
@@ -1217,30 +1281,39 @@ def test_results_page_shows_the_reports_wave_plan(
         for c in cards:
             expect(_wave_toggle(c)).to_have_attribute("aria-expanded", "false")
             _open_wave(c)
-        lists = {
-            str(w["wave"]): [p["items"] for p in (w.get("gate_parts") or []) if p["items"]]
-            for w in report["migration_waves"]
-        }
+        # #2287: each gate is a checklist of the facts' conditions, which join back to
+        # report.json's gate; each table list a condition names is behind "Show N tables".
+        conditions = {str(w["wave"]): w["gate_conditions"] for w in report["facts"]["waves"]}
+        opened = 0
+        run_tables = {str(t) for w in report["migration_waves"] for t in w.get("tables") or []}
         for c in cards:
             n = str(c.get_attribute("data-wave"))
-            if gates[n]:
-                gate = c.locator("[data-figure=wave-gate]")
-                # #1028: each list of the gate shows as an inline "(…)" until
-                # clicked; opened, the gate reads exactly as report.json's.
-                closed = gate.locator('button[aria-expanded="false"]')
-                assert closed.count() == len(lists[n]), (r.db, n)
-                for items in lists[n]:
-                    assert ", ".join(items) not in gate.inner_text(), (r.db, n)
-                while closed.count():
-                    closed.first.click()
-                # Read as shown, without the small "hide" control after each list.
-                shown_gate = gate.evaluate(
-                    "el => { const c = el.cloneNode(true);"
-                    " c.querySelectorAll('[data-gate-hide]').forEach(n => n.remove());"
-                    " return c.textContent; }"
-                )
-                assert shown_gate == f"Gate before the next wave: {gates[n]}", (r.db, n)
-                assert gate.locator("[data-gate-hide]").count() == len(lists[n]), (r.db, n)
+            assert join_gate_conditions(conditions[n]) == gates[n], (r.db, n)
+            # The cut is made at ". " only: each condition is one whole sentence, no gate
+            # holds an abbreviation or a question that would split one, and every list
+            # holds the run's tables (the page labels each "Show N tables").
+            for hazard in ("e.g. ", "i.e. ", "etc. ", "vs. ", "?"):
+                assert hazard not in gates[n], (r.db, n, hazard)
+            for condition in conditions[n]:
+                assert _condition_text(condition).endswith("."), (r.db, n, condition)
+                for part in condition["parts"]:
+                    assert set(part["items"]) <= run_tables, (r.db, n, part["items"])
+            gate = c.locator("[data-figure=wave-gate]")
+            opened += _assert_gate_checklist(gate, conditions[n], r.db, n)
+        assert opened, (r.db, "no gate names a table list")
+        # #2287: a wave's tables are a list, opened from its "Tables" footer.
+        tables = {str(w["wave"]): w.get("tables") or [] for w in report["migration_waves"]}
+        moves_nothing = {str(w["wave"]) for w in report["facts"]["waves"] if w.get("no_move")}
+        for c in cards:
+            n = str(c.get_attribute("data-wave"))
+            footer = c.locator("[aria-expanded]").filter(has_text=re.compile(r"^Tables$"))
+            if not tables[n] or n in moves_nothing:
+                assert footer.count() == 0, (r.db, n)
+                continue
+            footer.click()
+            expect(footer).to_have_attribute("aria-expanded", "true")
+            table_names = c.locator("[data-figure=wave-tables] [data-figure=gate-name]")
+            assert table_names.all_inner_texts() == tables[n], (r.db, n)
         # #1120: a cross-engine wave 1 states the facts layer's note and lists every
         # relational gap by feature, as both reports do; no other wave does.
         notes = {str(w["wave"]): w.get("heterogeneous_note") for w in report["facts"]["waves"]}
@@ -1405,9 +1478,11 @@ def test_roadmap_waves_steps_and_stages_open_one_level_at_a_time(
         page.keyboard.press("Enter")
         expect(stage_toggle).to_have_attribute("aria-expanded", "true")
         if stage.get("gate"):
+            # #2287: the stage's gate is the facts' checklist, which joins back to its gate.
             gate = stage_card.locator("[data-figure=stage-gate]")
             expect(gate).to_be_visible()
-            assert gate.inner_text() == stage["gate"], (r.db, stage["label"])
+            assert join_gate_conditions(stage["gate_conditions"]) == stage["gate"], r.db
+            _assert_gate_checklist(gate, stage["gate_conditions"], r.db, stage["label"])
         assert stage_card.locator("[data-figure=stage-query-count]").inner_text() == (
             f"{stage['query_count']} {'query' if stage['query_count'] == 1 else 'queries'}"
         ), (r.db, stage["label"])
@@ -3378,10 +3453,12 @@ def test_results_page_has_no_moderate_or_worse_accessibility_violations(
     page: Page, ui: str, all_runs: list[PipelineResult], scheme: ColorScheme
 ) -> None:
     """axe finds nothing blocking on any tab with every section open, in the dark and
-    the light theme (#2490: the page follows the OS colour scheme)."""
+    the light theme (#2490: the page follows the OS colour scheme). On the plan tab the
+    scan covers the gates' table lists open (#2287): they are sections too."""
     from axe_playwright_python.sync_playwright import Axe
 
     page.emulate_media(color_scheme=scheme)
+    lists = 0
     for r in all_runs:
         _open_results(page, ui, r)
         # #2313: every tab, each with all its sections open.
@@ -3402,6 +3479,12 @@ def test_results_page_has_no_moderate_or_worse_accessibility_violations(
             }
             assert _is_dark(page) == (scheme == "dark"), (r.db, tab, scheme)
             assert blocking == [], (r.job_id, r.db, tab, scheme, blocking, where)
+            if tab == "plan":
+                names = page.locator("[data-figure=gate-names-toggle] [data-figure=gate-name]")
+                lists += names.count()
+                if names.count():
+                    expect(names.first).to_be_visible()
+    assert lists, "no gate table list was open in the scan"
 
 
 def _axe_blocking(page: Page) -> tuple[list[str], dict[str, list[tuple[str, str]]], list[str]]:

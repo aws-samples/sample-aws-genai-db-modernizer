@@ -69,8 +69,10 @@ def _without_risks(report: dict[str, Any]) -> dict[str, Any]:
         for w in report["migration_waves"]
     ]
     facts = {k: v for k, v in report["facts"].items() if k not in _RISK_FACTS}
+    # #2287: and its conditions, cut from that gate.
     facts["waves"] = [
-        {k: v for k, v in w.items() if k != "critical_high_risks"} for w in facts["waves"]
+        {k: v for k, v in w.items() if k not in ("critical_high_risks", "gate_conditions")}
+        for w in facts["waves"]
     ]
     facts["no_migration"] = {
         k: v for k, v in facts["no_migration"].items() if k != "critical_high_risks"

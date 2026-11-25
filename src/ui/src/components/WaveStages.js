@@ -7,7 +7,9 @@ import ExpandableSection from "@cloudscape-design/components/expandable-section"
 import KeyValuePairs from "@cloudscape-design/components/key-value-pairs";
 import List from "@cloudscape-design/components/list";
 import SpaceBetween from "@cloudscape-design/components/space-between";
+import GateChecklist from "./GateChecklist";
 import { displayEngine } from "../utils/engineNames";
+import { stageGateConditions } from "../utils/migrationWaves";
 import {
   capitalized, metricLabel, metricValueText, pathTakesStep, stageKindText, stageUnits,
   stepMetric, stepMetricColumns, unitText, wavePhase, waveSteps, waveStepsText,
@@ -18,7 +20,8 @@ import {
  * one collapsed section per step ("Step 3: DynamoDB", its stage and query counts in
  * the header) and, inside it, one collapsed section per stage ("3a: Reads on a CDC
  * copy", its unit and query counts in the header). Open, a stage states what it moves,
- * its units, queries and gate as key-value pairs, then its units as a list. The steps
+ * its units, queries and gate as key-value pairs (the gate a checklist of its conditions,
+ * GateChecklist, #2287), then its units as a list. The steps
  * and stages are facts.slice_plan's (wave_phases and plan_steps[].step_stages, #2156),
  * in run order; nothing is counted here.
  *
@@ -53,8 +56,21 @@ function StageSection({ plan, stage, step, taken, t }) {
     { label: t('analysis-results.adoption.stage-field.units'), value: <span data-figure="stage-unit-count">{unitCount}</span> },
     { label: t('analysis-results.adoption.stage-field.queries'), value: <span data-figure="stage-query-count">{queryCount}</span> },
   ];
-  if (stage.gate) {
-    items.push({ label: t('analysis-results.adoption.stage-field.gate'), value: <span data-figure="stage-gate">{stage.gate}</span> });
+  const conditions = stageGateConditions(stage);
+  if (conditions.length > 0) {
+    // #2287: the gate as a checklist of the facts' conditions, each table list behind
+    // "Show N tables".
+    items.push({
+      label: t('analysis-results.adoption.stage-field.gate'),
+      value: (
+        <GateChecklist
+          conditions={conditions}
+          t={t}
+          label={t('analysis-results.adoption.stage-gate-label', { label: stage.label })}
+          figure="stage-gate"
+        />
+      ),
+    });
   }
   return (
     <div

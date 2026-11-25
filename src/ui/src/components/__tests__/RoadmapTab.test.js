@@ -306,11 +306,16 @@ const SUGGESTED = {
 };
 const readinessOf = (n = 1) => waveCard(n).querySelector('[data-figure="wave-readiness"]');
 const lineOf = (n = 1) => readinessOf(n).querySelector('[data-figure="wave-readiness-line"]').textContent;
+// #2287: the readiness status is stated once, in the wave's header; the body keeps the line.
+const statusOf = (n = 1) => {
+  expect(createWrapper(readinessOf(n)).findStatusIndicator()).toBeNull();
+  return createWrapper(waveCard(n).querySelector('[data-figure="wave-header-readiness"]')).findStatusIndicator();
+};
 
 test('a suggested wave with warnings is a status beside the facts\' line, shown whole', () => {
   renderRoadmap(roadmap({ waveFacts: [SUGGESTED] }));
   expect(readinessOf().getAttribute('data-readiness')).toBe('suggested');
-  const status = createWrapper(readinessOf()).findStatusIndicator();
+  const status = statusOf();
   expect(status.getElement().textContent).toBe('Suggested, 2 warnings to accept');
   expect(status.getElement().className).toMatch(/warning/);
   expect(lineOf()).toBe(SUGGESTED.readiness_line);
@@ -319,7 +324,7 @@ test('a suggested wave with warnings is a status beside the facts\' line, shown 
 test('a suggested wave with nothing open is a success status, with its line whole', () => {
   const line = 'Suggested: no check holds it after it was redesigned twice.';
   renderRoadmap(roadmap({ waveFacts: [{ ...SUGGESTED, review_warnings: [], review_warning_count: 0, open_warning_count: 0, readiness_line: line }] }));
-  const status = createWrapper(readinessOf()).findStatusIndicator();
+  const status = statusOf();
   expect(status.getElement().textContent).toBe('Suggested');
   expect(status.getElement().className).toMatch(/success/);
   expect(lineOf()).toBe(line);
@@ -331,7 +336,7 @@ test.each([
   ['not_reviewed', 'Not reviewed', 'Not reviewed: the DynamoDB design was not reviewed (the review failed). Next step: review it again, then check the wave again.'],
 ])('a %s wave shows its status and every part of the facts\' line', (readiness, status, line) => {
   renderRoadmap(roadmap({ waveFacts: [{ wave: 1, readiness, open_warning_count: 0, readiness_line: line }] }));
-  expect(createWrapper(readinessOf()).findStatusIndicator().getElement().textContent).toBe(status);
+  expect(statusOf().getElement().textContent).toBe(status);
   expect(lineOf()).toBe(line);
 });
 
@@ -480,4 +485,93 @@ test('a wave, its steps and its stages open and close with the keyboard, one lev
   expect(isOpen(step)).toBe(false);
   act(() => wave2.findExpandButton().keyup(32));
   expect(isOpen(wave2)).toBe(false);
+});
+
+// ---------------------------------------------------------------------------
+// #2287: a gate is a checklist of the facts' conditions
+// ---------------------------------------------------------------------------
+
+const LONG = Array.from({ length: 16 }, (_, i) => `wp.t${String(i).padStart(2, '0')}`);
+
+function gateRoadmap() {
+  const synthesis = nestedRoadmap();
+  synthesis.migration_waves[1].gate = '3 tables (wp.a, wp.b, wp.c) stay. The cutover is your responsibility.';
+  synthesis.facts.waves = [{
+    ...SUGGESTED,
+    wave: 2,
+    served_tables: 224,
+    gate_conditions: [
+      { kind: 'check', parts: [{ text: '3 tables', items: ['wp.a', 'wp.b', 'wp.c'] }, { text: ' stay.', items: [] }] },
+      { kind: 'note', parts: [{ text: 'The cutover is your responsibility.', items: [] }] },
+    ],
+  }];
+  const stage3a = synthesis.facts.slice_plan.plan_steps[2].step_stages[0];
+  stage3a.gate = `Backfill complete for 16 tables (${LONG.join(', ')}); no other engine reads them.`;
+  stage3a.gate_conditions = [{
+    kind: 'check',
+    parts: [{ text: 'Backfill complete for 16 tables', items: LONG }, { text: '; no other engine reads them.', items: [] }],
+  }];
+  return synthesis;
+}
+
+test('a wave\'s gate is a checklist: a "To check" status per condition, a note without one', () => {
+  renderRoadmap(gateRoadmap());
+  const section = sectionOf(waveCard(2));
+  act(() => section.findExpandButton().keyup(13));
+  const gate = section.findContent().getElement().querySelector('ul[data-figure="wave-gate"]');
+  expect(gate.getAttribute('aria-label')).toBe('Gate before the next wave');
+  const [check, note] = [...gate.children].filter(el => el.tagName === 'LI');
+  expect(createWrapper(check).findStatusIndicator().getElement().textContent).toBe('3 tables stay.');
+  expect(check.querySelector('[aria-label="To check"]')).not.toBeNull();
+  expect(createWrapper(note).findStatusIndicator()).toBeNull();
+  expect(note.textContent).toBe('The cutover is your responsibility.');
+  // The readiness status is stated once: in the header, not again in the body or the gate.
+  expect(createWrapper(section.findContent().getElement().querySelector('[data-figure="wave-readiness"]')).findStatusIndicator()).toBeNull();
+});
+
+test('a short table list opens in place with the keyboard, its names a real list and no heading', () => {
+  renderRoadmap(gateRoadmap());
+  const section = sectionOf(waveCard(2));
+  act(() => section.findExpandButton().keyup(13));
+  const toggle = section.findContent().getElement().querySelector('[data-figure="gate-names-toggle"]');
+  const list = sectionOf(toggle);
+  expect(list.findHeaderText().getElement().textContent).toBe('Show 3 tables');
+  expect(isOpen(list)).toBe(false);
+  act(() => list.findExpandButton().keyup(13));
+  expect(isOpen(list)).toBe(true);
+  const content = list.findContent().getElement();
+  expect([...content.querySelectorAll('li')].map(li => li.textContent)).toEqual(['wp.a', 'wp.b', 'wp.c']);
+  expect(content.querySelector('ul').getAttribute('aria-label')).toBe('3 tables');
+  // No popover and no heading of its own: the wave's heading order stays whole.
+  expect(createWrapper(toggle).findPopover()).toBeNull();
+  expect(content.querySelector('h1, h2, h3, h4, h5, h6')).toBeNull();
+  expect(createWrapper(content).findTextFilter()).toBeNull();
+  act(() => list.findExpandButton().keyup(32));
+  expect(isOpen(list)).toBe(false);
+});
+
+test('a stage gate\'s long list opens in place with the keyboard, with a filter on the name', () => {
+  renderRoadmap(gateRoadmap());
+  const wave2 = sectionOf(waveCard(2));
+  const step = sectionOf(waveCard(2).querySelector('[data-plan-step="3"]'));
+  const stage = sectionOf(waveCard(2).querySelector('[data-stage="3a"]'));
+  [wave2, step, stage].forEach(s => act(() => s.findExpandButton().keyup(13)));
+  const gate = stage.findContent().getElement().querySelector('ul[data-figure="stage-gate"]');
+  expect(gate.getAttribute('aria-label')).toBe('Gate of stage 3a');
+  expect(createWrapper(gate).findStatusIndicator().getElement().textContent).toBe('Backfill complete for 16 tables; no other engine reads them.');
+  expect(createWrapper(gate).findPopover()).toBeNull();
+  const list = sectionOf(gate.querySelector('[data-figure="gate-names-toggle"]'));
+  expect(list.findHeaderText().getElement().textContent).toBe('Show 16 tables');
+  expect(isOpen(list)).toBe(false);
+  act(() => list.findExpandButton().keyup(32));
+  expect(isOpen(list)).toBe(true);
+  const names = () => [...list.findContent().getElement().querySelectorAll('[data-figure="gate-name"]')].map(li => li.textContent);
+  expect(names()).toEqual(LONG);
+  const filter = createWrapper(list.findContent().getElement()).findTextFilter();
+  expect(filter.findInput().findNativeInput().getElement().getAttribute('aria-label')).toBe('Find a table in this list');
+  act(() => filter.findInput().setInputValue('t1'));
+  expect(names()).toEqual(LONG.filter(n => n.includes('t1')));
+  expect(filter.findResultsCount().getElement().textContent).toBe('6 matches');
+  act(() => list.findExpandButton().keyup(13));
+  expect(isOpen(list)).toBe(false);
 });

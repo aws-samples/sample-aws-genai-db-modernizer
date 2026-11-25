@@ -40,6 +40,7 @@ from src.report import escaping
 from src.report.facts import report_facts
 from src.report.merge_reviews import MERGE_REVIEWS_PDF_NOTE, MERGE_REVIEWS_TITLE
 from src.report.renderers import render_engineering_report_md
+from src.report.waves import resolve_migration_waves
 from src.shared.cutover_message import CUTOVER_MESSAGE
 from src.shared.decision_headline import decision_headline
 from src.shared.exposure_wording import group_exposures
@@ -49,6 +50,7 @@ from src.shared.report_facts import (
     dynamodb_merge_review_facts,
     engine_query_count_facts,
     trade_off_topic_facts,
+    with_gate_conditions,
 )
 from tests.executive_pdf import executive_text
 from tests.unit.agents.referee.test_synthesis_design_conflict_risk import _data
@@ -416,7 +418,13 @@ def test_an_old_job_loads_and_renders_unchanged() -> None:
         "executive_brief",
         # #2484: the objects each Aurora design leaves out (none here), from its notes.
         "design_left_out",
+        # #2287: each wave gate's conditions, from the same function.
+        "waves",
     )
+    assert facts["waves"] == with_gate_conditions(
+        as_read_back(stored)["waves"], resolve_migration_waves(old)
+    )
+    assert all(w["gate_conditions"] for w in facts["waves"])
     assert facts["design_left_out"] == []
     brief = stored["executive_brief"]
     assert facts["executive_brief"] == {

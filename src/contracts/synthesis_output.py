@@ -1296,7 +1296,30 @@ class GatePart(BaseModel):
 
     text: str = Field(..., description="Text up to the list (or the rest of the gate)")
     items: list[str] = Field(
-        default_factory=list, description="The list that follows the text, e.g. table names"
+        default_factory=list,
+        description=(
+            "The table names that follow the text: every producer lists tables, and the "
+            'results page labels each list "Show N tables" (#2287). A list of anything '
+            "else needs its own label first"
+        ),
+    )
+
+
+class GateCondition(BaseModel):
+    """One sentence of a gate, with the table lists it names (#2287,
+    ``src.shared.gate_conditions``). A gate's conditions joined with one space, each
+    one's parts joined as ``join_gate_parts`` joins them, are exactly the gate."""
+
+    kind: Literal["check", "note"] = Field(
+        "check",
+        description=(
+            "check, a condition to validate before the next wave or stage; note, a "
+            "sentence stating whose a step is (the cutover message, the decommissioning "
+            "message), which is no condition to check"
+        ),
+    )
+    parts: list[GatePart] = Field(
+        ..., min_length=1, description="The sentence as text runs and item lists"
     )
 
 
@@ -1969,6 +1992,15 @@ class WaveFacts(BaseModel):
             "The customer's to-dos the wave's lines end with (#1938: the routines the "
             "pipeline could not translate automatically, facts.routines' "
             "migrate_yourself_line); they hold nothing. Counts only, no name"
+        ),
+    )
+    gate_conditions: list[GateCondition] | None = Field(
+        None,
+        description=(
+            "The wave's gate (migration_waves[].gate_parts) cut into its sentences, each "
+            "with its table lists (#2287); joined back with one space, the wave's gate. "
+            "Empty for a wave with no gate; None for a block stored before them (the facts "
+            "reader fills them in)"
         ),
     )
 
@@ -4262,6 +4294,14 @@ class SliceStage(BaseModel):
             "back, ``gate``"
         ),
     )
+    gate_conditions: list[GateCondition] | None = Field(
+        None,
+        description=(
+            "``gate`` cut into its sentences, each with its table lists (#2287); joined "
+            "back with one space, ``gate``. None for a plan stored before them (the facts "
+            "reader fills them in)"
+        ),
+    )
 
     @model_validator(mode="after")
     def _consistent(self) -> "SliceStage":
@@ -4272,6 +4312,11 @@ class SliceStage(BaseModel):
             and join_gate_parts(self.stage_gate_parts) != self.gate
         ):
             raise ValueError("stage_gate_parts must join back to gate exactly")
+        if (
+            self.gate_conditions is not None
+            and " ".join(join_gate_parts(c.parts) for c in self.gate_conditions) != self.gate
+        ):
+            raise ValueError("gate_conditions must join back to gate exactly")
         if self.holding_risk_ids and self.kind != "risk_held":
             raise ValueError("only a risk_held stage lists holding risks")
         return self
@@ -6201,3 +6246,23 @@ class SynthesisOutputContract(BaseModel):
     )
 
     model_config = ConfigDict(extra="allow")
+
+    @model_validator(mode="after")
+    def _gate_conditions_join_back(self) -> "SynthesisOutputContract":
+        """#2287: each wave's ``facts.waves[].gate_conditions`` join back to its
+        ``migration_waves[].gate``, so the results page's checklist, the engineering
+        report's gate line (both read the conditions) and the executive report (it reads
+        the gate) state the same words."""
+        if self.facts is None:
+            return self
+        gates = {w.wave: w.gate for w in self.migration_waves or []}
+        for row in self.facts.waves:
+            if row.gate_conditions is None or row.wave not in gates:
+                continue
+            joined = " ".join(join_gate_parts(c.parts) for c in row.gate_conditions)
+            if joined != (gates[row.wave] or ""):
+                raise ValueError(
+                    f"facts.waves[wave={row.wave}].gate_conditions must join back to "
+                    "migration_waves[].gate exactly"
+                )
+        return self

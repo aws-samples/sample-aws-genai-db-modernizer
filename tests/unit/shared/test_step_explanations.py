@@ -573,6 +573,27 @@ def test_metric_labels_name_only_order_metrics() -> None:
         SlicePlanFacts.model_validate({**plan, "metric_labels": {**why.METRIC_LABELS, "x": "y"}})
 
 
+def _read_plan(report: dict[str, Any]) -> dict[str, Any]:
+    """The slice plan the facts reader returns, less each stage's gate conditions, which it
+    also fills in for a plan stored before them (#2287, tests/unit/shared/
+    test_gate_conditions.py): these tests are about the steps' sentences."""
+    plan = report_facts(report)["slice_plan"]
+    return {
+        **plan,
+        "plan_steps": [
+            {
+                **step,
+                "step_stages": [
+                    {k: v for k, v in st.items() if k != "gate_conditions"}
+                    for st in step.get("step_stages") or []
+                ],
+            }
+            for step in plan.get("plan_steps") or []
+        ],
+    }
+
+
+@pytest.mark.passes_on_main  # #2287: reads the plan less the stage gate conditions
 def test_a_plan_saved_before_a_metric_was_added_loads_and_gains_its_name() -> None:
     """A plan saved now names today's metrics; once a metric is added, its labels are a
     subset of the fields: it still loads, and the reader fills the new name."""
@@ -583,7 +604,7 @@ def test_a_plan_saved_before_a_metric_was_added_loads_and_gains_its_name() -> No
     SlicePlanFacts.model_validate(saved)
     assert why.needs_step_explanations(saved)
     report["facts"]["slice_plan"] = saved
-    read = report_facts(report)["slice_plan"]
+    read = _read_plan(report)
     assert read["metric_labels"] == why.METRIC_LABELS
     assert read["plan_steps"] == filled["plan_steps"]
 
@@ -602,12 +623,13 @@ def test_the_plan_carries_the_metric_labels_even_when_empty() -> None:
     assert empty["plan_steps"] == [] and empty["metric_labels"] == why.METRIC_LABELS
 
 
+@pytest.mark.passes_on_main  # #2287: reads the plan less the stage gate conditions
 def test_a_report_saved_before_the_sentences_gets_them_at_read_time() -> None:
     report = json.loads(PRE_1699.read_text(encoding="utf-8"))
     stored = report["facts"]["slice_plan"]
     assert stored["plan_steps"] and "metric_labels" not in stored
     assert all("why" not in s and "ties" not in s for s in stored["plan_steps"])
-    plan = report_facts(report)["slice_plan"]
+    plan = _read_plan(report)
     SlicePlanFacts.model_validate(plan)
     assert plan == why.with_step_explanations(stored)
     assert plan["metric_labels"] == why.METRIC_LABELS
@@ -618,17 +640,19 @@ def test_a_report_saved_before_the_sentences_gets_them_at_read_time() -> None:
         assert {k: v for k, v in new.items() if k not in ("why", "ties")} == old
 
 
+@pytest.mark.passes_on_main  # #2287: reads the plan less the stage gate conditions
 def test_a_plan_re_dumped_through_the_contract_is_filled_too() -> None:
     report = json.loads(PRE_1699.read_text(encoding="utf-8"))
     dumped = SlicePlanFacts.model_validate(report["facts"]["slice_plan"]).model_dump(mode="json")
     assert all(s["why"] is None for s in dumped["plan_steps"]) and dumped["metric_labels"] == {}
     assert why.needs_step_explanations(dumped)
     report["facts"]["slice_plan"] = dumped
-    plan = report_facts(report)["slice_plan"]
+    plan = _read_plan(report)
     assert all(s["why"] for s in plan["plan_steps"])
     assert not why.needs_step_explanations(plan)
 
 
+@pytest.mark.passes_on_main  # #2287: reads the plan less the stage gate conditions
 def test_a_plan_with_its_labels_but_a_step_with_no_why_is_filled() -> None:
     report = json.loads(PRE_1699.read_text(encoding="utf-8"))
     filled = why.with_step_explanations(report["facts"]["slice_plan"])
@@ -637,7 +661,7 @@ def test_a_plan_with_its_labels_but_a_step_with_no_why_is_filled() -> None:
     gap["plan_steps"][1]["why"] = None
     assert why.needs_step_explanations(gap)
     report["facts"]["slice_plan"] = gap
-    assert report_facts(report)["slice_plan"] == filled
+    assert _read_plan(report) == filled
 
 
 def test_a_stored_plan_with_no_steps_gains_only_the_labels() -> None:
@@ -646,13 +670,14 @@ def test_a_stored_plan_with_no_steps_gains_only_the_labels() -> None:
     assert why.with_step_explanations(stored) == {**stored, "metric_labels": why.METRIC_LABELS}
 
 
+@pytest.mark.passes_on_main  # #2287: reads the plan less the stage gate conditions
 def test_a_current_plan_is_read_back_unchanged() -> None:
     report = json.loads(PRE_1699.read_text(encoding="utf-8"))
     filled = why.with_step_explanations(report["facts"]["slice_plan"])
     # A sentence edited by hand stays as stored: the reader fills, never rewrites.
     filled["plan_steps"][0]["why"] = "Stored sentence."
     report["facts"]["slice_plan"] = copy.deepcopy(filled)
-    assert report_facts(report)["slice_plan"] == filled
+    assert _read_plan(report) == filled
 
 
 def _slice(number: int, hub: float) -> dict[str, Any]:
@@ -712,6 +737,7 @@ def test_each_ties_rule_refuses_its_bad_value(number: int, bad: dict[str, Any], 
         SlicePlanFacts.model_validate(plan)
 
 
+@pytest.mark.passes_on_main  # #2287: reads the plan less the stage gate conditions
 def test_a_step_with_a_why_but_no_ties_is_filled() -> None:
     report = json.loads(PRE_1699.read_text(encoding="utf-8"))
     filled = why.with_step_explanations(report["facts"]["slice_plan"])
@@ -719,7 +745,7 @@ def test_a_step_with_a_why_but_no_ties_is_filled() -> None:
     gap["plan_steps"][2]["ties"] = None
     assert why.needs_step_explanations(gap)
     report["facts"]["slice_plan"] = gap
-    assert report_facts(report)["slice_plan"] == filled
+    assert _read_plan(report) == filled
 
 
 @pytest.mark.parametrize(
