@@ -166,9 +166,7 @@ def _aurora_wave(
         rationale = (
             f"The whole source database ({source_desc}) moves 1:1 to {target_name}: {family}. "
             "The collector reports engine and version only; feature compatibility is not "
-            f"assessed here. {n} {_query_noun(n)} ({share:.1f}%) remain on {target_name} once "
-            f"later waves have moved their share; later waves move subsets of these "
-            f"{len(tables)} tables and views out of {target_name}."
+            "assessed here."
         )
         # The discourse judge read the old gate's source wording as happening before wave
         # 2's dual-write: say where later waves start. #2107, #2265: the gate sets no time
@@ -225,10 +223,7 @@ def _aurora_wave(
             # #1120: one story with the wave's not-yet-optimized note: the dialect and
             # the types are converted, the data model stays as it is.
             "This is a cross-engine move: the SQL dialect and the data types are "
-            "converted and the data model stays as it is, so it is not a 1:1 carry-over. "
-            f"{n} {_query_noun(n)} ({share:.1f}%) remain on {target_name} once later waves "
-            f"have moved their share; later waves move subsets of these {len(tables)} "
-            f"tables and views out of {target_name}."
+            "converted and the data model stays as it is, so it is not a 1:1 carry-over."
         )
         gate = (
             f"Cross-engine move: validate the schema and query translation to {target_name} "
@@ -646,6 +641,37 @@ def _merge_kv_and_document_waves(dynamo: dict[str, Any], doc: dict[str, Any]) ->
         "_doc_owned": doc_owned,
         "_doc_synced": doc_owners,
     }
+
+
+def wave_one_later_waves_sentence(
+    wave: dict[str, Any],
+    moved_by_later_waves: int,
+    has_later_waves: bool,
+    map_sentence_follows: bool,
+) -> str:
+    """The sentence wave 1's rationale carries about the waves after it (#2218), for a
+    wave 1 that names its Aurora engine, worded from what those waves do.
+
+    ``moved_by_later_waves`` is the facts layer's figure
+    (``facts.waves[].moved_by_later_waves``), the same one :func:`wave_one_map_sentence`
+    reads. Later waves that move tables are said to move subsets of wave 1's tables; later
+    waves that move queries only are not; and with no later wave there is nothing to say
+    about one. ``map_sentence_follows`` is whether the map sentence follows: it already
+    says no later wave moves a table, so this one does not say it twice.
+    """
+    target_name = display_engine(str((wave.get("engines") or [""])[0]))
+    n = int(wave.get("query_count") or 0)
+    share = float(wave.get("workload_share_percent") or 0.0)
+    total = len(wave.get("tables") or [])
+    queries = f" {n} {_query_noun(n)} ({share:.1f}%) remain on {target_name}"
+    if not has_later_waves:
+        return f"{queries}."
+    once = f"{queries} once later waves have moved their share"
+    if moved_by_later_waves:
+        return f"{once}; later waves move subsets of these {total} tables and views out of {target_name}."
+    if map_sentence_follows:
+        return f"{once}."
+    return f"{once}. Later waves move no tables or views off {target_name}."
 
 
 def wave_one_map_sentence(
