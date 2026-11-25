@@ -171,6 +171,37 @@ _ROWS = [
     ("ora-raw-extended", "oracle", _col("raw", "binary", max_length=32767),
      ("BYTEA", False), ("LONGBLOB", False)),
     ("ora-raw-no-length", "oracle", _col("raw", "binary"), ("BYTEA", False), ("LONGBLOB", True)),
+    # SQL Server binary(n) -> BYTEA | BINARY(n) (#2231). BYTEA never pads, and past MySQL's
+    # 255 VARBINARY(n) does not either: both flagged. Past SQL Server's 8000 (an untrusted
+    # upload) LONGBLOB, flagged, never a VARBINARY no CREATE TABLE accepts.
+    ("ms-binary", "sqlserver", _col("binary", "binary", max_length=16),
+     ("BYTEA", True), ("BINARY(16)", False)),
+    ("ms-binary-ddl", "sqlserver", _col("binary(16)", "binary", max_length=16),
+     ("BYTEA", True), ("BINARY(16)", False)),
+    ("ms-binary-255", "sqlserver", _col("binary(255)", "binary", max_length=255),
+     ("BYTEA", True), ("BINARY(255)", False)),
+    ("ms-binary-256", "sqlserver", _col("binary(256)", "binary", max_length=256),
+     ("BYTEA", True), ("VARBINARY(256)", True)),
+    ("ms-binary-8000", "sqlserver", _col("binary", "binary", max_length=8000),
+     ("BYTEA", True), ("VARBINARY(8000)", True)),
+    ("ms-binary-8001", "sqlserver", _col("binary(8001)", "binary", max_length=8001),
+     ("BYTEA", True), ("LONGBLOB", True)),
+    ("ms-binary-huge", "sqlserver", _col("binary(99999999999999999999)", "binary"),
+     ("BYTEA", True), ("LONGBLOB", True)),
+    ("ms-binary-no-length", "sqlserver", _col("binary", "binary"),
+     ("BYTEA", True), ("LONGBLOB", True)),
+    # A parameter list it cannot read is flagged, with the type's own default (#2231).
+    ("ms-binary-malformed", "sqlserver", _col("binary(-5)", "binary"),
+     ("BYTEA", True), ("LONGBLOB", True)),
+    ("ora-tstz-malformed", "oracle",
+     _col("TIMESTAMP(6; DROP) WITH TIME ZONE", "timestamp", max_length=6),
+     ("TIMESTAMPTZ", True), ("DATETIME(6)", True)),
+    ("ms-dt2-malformed", "sqlserver", _col("datetime2(x)", "timestamp"),
+     ("TIMESTAMP(6)", True), ("DATETIME(6)", True)),
+    # Oracle BFILE points to a file outside the database: no equivalent, flagged (#2231).
+    ("ora-bfile", "oracle", _col("bfile", "binary", max_length=530),
+     ("BYTEA", True), ("LONGBLOB", True)),
+    ("ora-bfile-ddl", "oracle", _col("BFILE", None), ("BYTEA", True), ("LONGBLOB", True)),
 ]  # fmt: skip
 
 
@@ -393,7 +424,6 @@ _UNCHANGED = [
     ("oracle", "number", "decimal", {"numeric_precision": 10, "numeric_scale": 0},
      "NUMERIC(10,0)", "DECIMAL(10,0)"),
     ("oracle", "varchar2", "string", {"max_length": 40}, "VARCHAR(40)", "VARCHAR(40)"),
-    ("oracle", "bfile", "binary", {}, "BYTEA", "BLOB"),
 ]  # fmt: skip
 
 
@@ -499,6 +529,8 @@ def _oracle_live_tables() -> list[AgentTable]:
         row("at", "timestamp(9)", 11, scale=9),
         row("at_tz", "timestamp(6) with time zone", 13, scale=6),
         row("body", "clob", 4000),
+        row("old_pic", "long raw", 0),
+        row("doc", "bfile", 530),
         row("pic", "blob", 4000),
         row("tag", "raw", 16),
         row("name", "varchar2", 400, char_length=100),
@@ -517,7 +549,10 @@ def _oracle_ddl_tables() -> list[AgentTable]:
       id NUMBER(10) PRIMARY KEY,
       placed DATE NOT NULL,
       at TIMESTAMP(9),
+      at_tz TIMESTAMP(6) WITH TIME ZONE,
       body CLOB,
+      old_pic LONG RAW,
+      doc BFILE,
       pic BLOB,
       tag RAW(16),
       name VARCHAR2(100)
@@ -530,6 +565,7 @@ _ORACLE = {
     "at": ("TIMESTAMP(6)", "DATETIME(6)"),
     "body": ("TEXT", "LONGTEXT"),
     "pic": ("BYTEA", "LONGBLOB"),
+    "old_pic": ("BYTEA", "LONGBLOB"),
     "tag": ("BYTEA", "VARBINARY(16)"),
     "name": ("VARCHAR(100)", "VARCHAR(100)"),
 }
@@ -544,10 +580,12 @@ def test_oracle_collection_end_to_end(tables, target):
     assert {c: types[c] for c in _ORACLE} == {c: v[index] for c, v in _ORACLE.items()}
     flagged = [r["column"] for r in result.residuals if r["column"] in _ORACLE]
     assert flagged == ["at"]  # TIMESTAMP(9): 3 digits lost
-    if "at_tz" in types:  # the DDL parser drops WITH TIME ZONE; the live row keeps it
-        assert types["at_tz"] == ("TIMESTAMPTZ" if target == PG else "DATETIME(6)")
-        offset_flagged = any(r["column"] == "at_tz" for r in result.residuals)
-        assert offset_flagged is (target == MY)
+    # Both forms keep WITH TIME ZONE (#2231): the offset is flagged on Aurora MySQL.
+    assert types["at_tz"] == ("TIMESTAMPTZ" if target == PG else "DATETIME(6)")
+    offset_flagged = any(r["column"] == "at_tz" for r in result.residuals)
+    assert offset_flagged is (target == MY)
+    # BFILE has no equivalent on either target.
+    assert [r["column"] for r in result.residuals if r["column"] == "doc"] == ["doc"]
 
 
 @pytest.mark.parametrize("target", [PG, MY])
@@ -681,3 +719,105 @@ def test_adventureworks_trimmed_lengthless_strings_stay_flagged(target):
     assert lengthless <= flagged
     types = _types(result)
     assert {types[k] for k in lengthless} == {"TEXT" if target == PG else "LONGTEXT"}
+
+
+def test_bfile_reason_says_the_file_is_outside_the_database():
+    for target in (PG, MY):
+        col, _ = _one(target, "oracle", _col("bfile", "binary", max_length=530))
+        assert "file outside the database" in col.judgment_reason
+
+
+def test_wide_binary_reason_says_values_are_not_padded():
+    col, _ = _one(MY, "sqlserver", _col("binary(300)", "binary", max_length=300))
+    assert "BINARY stops at 255 bytes" in col.judgment_reason
+    assert "not padded" in col.judgment_reason
+
+
+def test_bytea_binary_reason_says_values_are_not_padded():
+    col, _ = _one(PG, "sqlserver", _col("binary(16)", "binary", max_length=16))
+    assert "BYTEA does not pad" in col.judgment_reason
+
+
+def test_bare_binary_reason_names_the_ddl_default():
+    col, _ = _one(MY, "sqlserver", _col("binary", "binary"))
+    assert "binary(1)" in col.judgment_reason
+
+
+def test_malformed_parameters_reason_says_so_without_the_text():
+    col, _ = _one(MY, "oracle", _col("TIMESTAMP(6; DROP) WITH TIME ZONE", "timestamp"))
+    assert "parameters could not be read" in col.judgment_reason
+    assert "DROP" not in col.judgment_reason
+
+
+# The issue's repro (#2231), as the scripting tools write each table. Synthetic DDL.
+_SSMS_DDL = """SET ANSI_NULLS ON
+GO
+CREATE TABLE [dbo].[Orders](
+\t[OrderID] [int] IDENTITY(1,1) NOT NULL,
+\t[c3] [datetime2](7) NULL,
+\t[Notes] [nvarchar](max) NULL,
+\t[Code] [varchar](20) NOT NULL,
+\t[Hash] [binary](16) NULL,
+\t[Created] [datetime] NOT NULL,
+ CONSTRAINT [PK_Orders] PRIMARY KEY CLUSTERED\x20
+(
+\t[OrderID] ASC
+)WITH (PAD_INDEX = OFF, ALLOW_ROW_LOCKS = ON) ON [PRIMARY]
+) ON [PRIMARY] TEXTIMAGE_ON [PRIMARY]
+GO
+"""
+
+_ORACLE_GET_DDL = """
+  CREATE TABLE "APP"."EVENTS"
+   (\t"ID" NUMBER(10,0) NOT NULL ENABLE,
+\t"C1" TIMESTAMP (6) WITH TIME ZONE,
+\t"C2" LONG RAW,
+\t CONSTRAINT "EVENTS_PK" PRIMARY KEY ("ID")
+  USING INDEX  ENABLE
+   ) TABLESPACE "USERS"
+"""
+
+
+def _ddl_upload(ddl: str, engine: str) -> list[AgentTable]:
+    from src.agents.collector.mysql_collector import _build_tables_from_ddl
+    from src.tools.database.ddl_parser import parse_ddl
+
+    return _agent(_build_tables_from_ddl(parse_ddl(ddl, "app", dialect=engine), "app"))
+
+
+def test_ssms_ddl_upload_end_to_end_on_aurora_mysql():
+    result = _generate(MY, _ddl_upload(_SSMS_DDL, "sqlserver"), "sqlserver")
+    types = {c: t for (_, c), t in _types(result).items()}
+    assert {c: types.get(c) for c in ("c3", "Notes", "Code", "Hash", "Created")} == {
+        "c3": "DATETIME(6)",
+        "Notes": "LONGTEXT",
+        "Code": "VARCHAR(20)",
+        "Hash": "BINARY(16)",
+        "Created": "DATETIME(3)",
+    }
+    assert "PRIMARY KEY (`OrderID`)" in result.tables[0].create_sql
+    assert [r["column"] for r in result.residuals] == ["c3"]  # datetime2(7) loses a digit
+
+
+def test_oracle_get_ddl_upload_end_to_end_on_aurora_mysql():
+    result = _generate(MY, _ddl_upload(_ORACLE_GET_DDL, "oracle"), "oracle")
+    types = {c: t for (_, c), t in _types(result).items()}
+    assert (types["C1"], types["C2"]) == ("DATETIME(6)", "LONGBLOB")
+    (flag,) = [r for r in result.residuals if r["column"] == "C1"]
+    assert "time-zone offset" in flag["reason"]
+
+
+@pytest.mark.parametrize("target", [PG, MY])
+def test_a_bracketed_name_with_a_space_generates_a_valid_key(target):
+    """#2231 review: ``[Order ID]`` is one column, and the key names it."""
+    ddl = """CREATE TABLE [dbo].[Order Lines](
+    \t[Order ID] [int] NOT NULL,
+    \t[Line No] [int] NOT NULL,
+     CONSTRAINT [PK Order Lines] PRIMARY KEY CLUSTERED ([Order ID] ASC, [Line No] ASC)
+    ) ON [PRIMARY]"""
+    result = _generate(target, _ddl_upload(ddl, "sqlserver"), "sqlserver")
+    (table,) = result.tables
+    assert table.table_name == "Order Lines"
+    assert [c.name for c in table.columns] == ["Order ID", "Line No"]
+    q = '"' if target == PG else "`"
+    assert f"PRIMARY KEY ({q}Order ID{q}, {q}Line No{q})" in table.create_sql

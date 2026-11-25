@@ -10,9 +10,9 @@ matching the CollectorOutput contract.
 Dialect support is additive — the parser accepts both backtick-quoted
 (MySQL/MariaDB) and bracket-quoted (T-SQL/SQL Server) identifiers, and
 recognizes both ``AUTO_INCREMENT`` and ``IDENTITY(seed, increment)`` for
-auto-increment columns. The ``dialect`` parameter signals intent at the
-call site and allows future dialect-specific behavior; today it does not
-gate any behavior — the parser is dialect-tolerant by default.
+auto-increment columns. The ``dialect`` parameter decides one thing: an
+``oracle`` source reads Oracle's multi-word type names (``LONG RAW``,
+``TIMESTAMP (6) WITH TIME ZONE``, #2231). Everything else is dialect-tolerant.
 """
 
 import logging
@@ -28,14 +28,34 @@ logger = logging.getLogger(__name__)
 _IDENTIFIER_QUOTES = '`[]"'
 
 
+# One identifier: bracketed (``]]`` escapes ``]``), backticked, double-quoted (the quote
+# doubled escapes it) or bare. A quoted name may hold spaces: ``[Order ID]`` (#2231).
+_IDENT = r'(?:\[(?:[^\]]|\]\])+\]|`(?:[^`]|``)+`|"(?:[^"]|"")+"|[\w$][\w$#]*)'
+_IDENT_FULL = re.compile(_IDENT)
+_QUOTE_CLOSE = {"[": "]", "`": "`", '"': '"'}
+
+
+def _ident(raw: str) -> str:
+    """The name an identifier token stands for, its quotes and escapes removed."""
+    text = raw.strip()
+    close = _QUOTE_CLOSE.get(text[:1])
+    if close and len(text) >= 2 and text.endswith(close):
+        return text[1:-1].replace(close * 2, close)
+    return text
+
+
 def _unquote(name: str) -> str:
     """Strip surrounding identifier quotes and whitespace."""
-    return name.strip().strip(_IDENTIFIER_QUOTES).strip()
+    text = name.strip()
+    if _IDENT_FULL.fullmatch(text):
+        return _ident(text)
+    return text.strip(_IDENTIFIER_QUOTES).strip()
 
 
 # A parenthesised key-part list that may hold one level of nested parentheses, the
 # MySQL prefix length: ``(slug(10), body(50))``.
 _KEY_LIST = r"\(((?:[^()]|\([^()]*\))+)\)"
+_SORT_ORDER = re.compile(r"\s+(?:ASC|DESC)\s*$", re.IGNORECASE)
 _PREFIXED_PART = re.compile(r"^(.*?)\s*\(\s*(\d+)\s*\)\s*(?:ASC|DESC)?\s*$", re.IGNORECASE)
 
 
@@ -53,7 +73,8 @@ def _key_parts(text: str) -> tuple[list[str], list[int | None] | None]:
             columns.append(_unquote(m.group(1)))
             prefixes.append(int(m.group(2)))
         else:
-            columns.append(_unquote(part))
+            # SQL Server Management Studio writes the sort order: ``[OrderID] ASC``.
+            columns.append(_unquote(_SORT_ORDER.sub("", part)))
             prefixes.append(None)
     return columns, (prefixes if any(n is not None for n in prefixes) else None)
 
@@ -85,12 +106,13 @@ def parse_ddl(ddl_text: str, database_name: str = "unknown", dialect: str = "mys
         ddl_text: Raw DDL text
         database_name: Database name for table_id formatting
         dialect: Source dialect — "mysql", "postgresql", "sqlserver", "oracle".
-                 Currently informational; the parser is dialect-tolerant by
-                 default. May be used for dialect-specific behavior in future.
+                 "oracle" reads Oracle's multi-word type names (#2231); the rest
+                 of the parser is dialect-tolerant.
     """
     tables = []
+    # Comments go first (#2231): a comma or a column in one is not part of the table.
     # Split on CREATE TABLE, case-insensitive
-    create_stmts = re.split(r"(?i)(?=CREATE\s+TABLE)", ddl_text)
+    create_stmts = re.split(r"(?i)(?=CREATE\s+TABLE)", _strip_comments(ddl_text, dialect))
 
     for stmt in create_stmts:
         stmt = stmt.strip()
@@ -105,26 +127,27 @@ def parse_ddl(ddl_text: str, database_name: str = "unknown", dialect: str = "mys
 
 
 def _parse_create_table(stmt: str, database_name: str, dialect: str = "mysql") -> dict | None:
-    """Parse a single CREATE TABLE statement. ``dialect`` is currently informational."""
+    """Parse a single CREATE TABLE statement. ``dialect`` picks the column type syntax."""
     # Extract table name. Accept backtick, bracket, or double-quote quoting,
     # for either bare or schema-qualified names.
     m = re.match(
-        r"(?i)CREATE\s+TABLE\s+(?:IF\s+NOT\s+EXISTS\s+)?"
-        r"[`\"\[]?(\w+)[`\"\]]?(?:\.[`\"\[]?(\w+)[`\"\]]?)?\s*\(",
+        rf"(?i)CREATE\s+TABLE\s+(?:IF\s+NOT\s+EXISTS\s+)?({_IDENT}(?:\s*\.\s*{_IDENT}){{0,2}})\s*\(",
         stmt,
     )
     if not m:
+        # A T-SQL temporary table (#t, @t) or CREATE TABLE ... AS SELECT is no table here.
+        if re.match(r"(?i)CREATE\s+TABLE\s+(?![#@])(?!\S+\s+AS\b)", stmt):
+            logger.warning("DDL upload: a CREATE TABLE whose name it cannot read was left out")
         return None
 
-    # Handle schema.table or just table
-    if m.group(2):
-        table_name = m.group(2)
-    else:
-        table_name = m.group(1)
+    # The last part of db.schema.table, schema.table or table
+    table_name = _ident(re.findall(_IDENT, m.group(1))[-1])
+    table_id = f"{database_name}.{table_name}"
 
     # Extract body between outer parens
     body = _extract_body(stmt)
     if not body:
+        logger.warning("DDL upload: table %s has no column list it can read; left out", table_id)
         return None
 
     columns: list[dict] = []
@@ -144,7 +167,7 @@ def _parse_create_table(stmt: str, database_name: str, dialect: str = "mysql") -
         # PRIMARY KEY (table-level) — supports both
         # ``PRIMARY KEY (cols)`` and ``CONSTRAINT name PRIMARY KEY (cols)``.
         pk_match = re.match(
-            r"(?i)(?:CONSTRAINT\s+[`\"\[]?\w+[`\"\]]?\s+)?PRIMARY\s+KEY\s*(?:CLUSTERED|NONCLUSTERED)?\s*"
+            rf"(?i)(?:CONSTRAINT\s+{_IDENT}\s+)?PRIMARY\s+KEY\s*(?:CLUSTERED|NONCLUSTERED)?\s*"
             + _KEY_LIST,
             part,
         )
@@ -164,22 +187,23 @@ def _parse_create_table(stmt: str, database_name: str, dialect: str = "mysql") -
 
         # FOREIGN KEY — supports both backtick and bracket quoted identifiers
         fk_match = re.match(
-            r"(?i)(?:CONSTRAINT\s+[`\"\[]?(\w+)[`\"\]]?\s+)?"
+            rf"(?i)(?:CONSTRAINT\s+({_IDENT})\s+)?"
             r"FOREIGN\s+KEY\s*\(([^)]+)\)\s*"
-            r"REFERENCES\s+[`\"\[]?(\w+)[`\"\]]?(?:\.[`\"\[]?(\w+)[`\"\]]?)?\s*\(([^)]+)\)"
+            rf"REFERENCES\s+({_IDENT})(?:\s*\.\s*({_IDENT}))?\s*\(([^)]+)\)"
             r"(?:\s+ON\s+DELETE\s+(CASCADE|SET\s+NULL|NO\s+ACTION|RESTRICT))?"
             r"(?:\s+ON\s+UPDATE\s+(CASCADE|SET\s+NULL|NO\s+ACTION|RESTRICT))?",
             part,
         )
         if fk_match:
-            fk_cols = [_unquote(c) for c in fk_match.group(2).split(",")]
-            ref_cols = [_unquote(c) for c in fk_match.group(5).split(",")]
+            fk_cols = [_unquote(c) for c in _split_top_level(fk_match.group(2))]
+            ref_cols = [_unquote(c) for c in _split_top_level(fk_match.group(5))]
             # When the REFERENCES clause is schema-qualified, group(4) holds the table
             # and group(3) holds the schema; otherwise group(3) is the table.
-            ref_table = fk_match.group(4) or fk_match.group(3)
+            ref_table = _ident(fk_match.group(4) or fk_match.group(3))
+            fk_name = _ident(fk_match.group(1)) if fk_match.group(1) else None
             foreign_keys.append(
                 {
-                    "constraint_name": fk_match.group(1) or f"fk_{table_name}_{'_'.join(fk_cols)}",
+                    "constraint_name": fk_name or f"fk_{table_name}_{'_'.join(fk_cols)}",
                     "columns": fk_cols,
                     "referenced_table": ref_table,
                     "referenced_columns": ref_cols,
@@ -191,11 +215,11 @@ def _parse_create_table(stmt: str, database_name: str, dialect: str = "mysql") -
 
         # INDEX / UNIQUE INDEX / KEY (MySQL inline syntax — T-SQL uses
         # CREATE INDEX as separate statements outside CREATE TABLE).
-        idx_match = re.match(r"(?i)(UNIQUE\s+)?(?:INDEX|KEY)\s+[`\"\[]?(\w+)[`\"\]]?\s*\(", part)
+        idx_match = re.match(rf"(?i)(UNIQUE\s+)?(?:INDEX|KEY)\s+({_IDENT})\s*\(", part)
         if idx_match:
             indexes.append(
                 {
-                    "index_name": idx_match.group(2),
+                    "index_name": _ident(idx_match.group(2)),
                     **_index_keys(part[idx_match.end() - 1 :]),
                     "is_unique": bool(idx_match.group(1)),
                     "is_primary": False,
@@ -206,13 +230,13 @@ def _parse_create_table(stmt: str, database_name: str, dialect: str = "mysql") -
 
         # CONSTRAINT name UNIQUE (cols) — T-SQL inline unique constraint
         unique_match = re.match(
-            r"(?i)CONSTRAINT\s+[`\"\[]?(\w+)[`\"\]]?\s+UNIQUE\s*(?:CLUSTERED|NONCLUSTERED)?\s*\(",
+            rf"(?i)CONSTRAINT\s+({_IDENT})\s+UNIQUE\s*(?:CLUSTERED|NONCLUSTERED)?\s*\(",
             part,
         )
         if unique_match:
             indexes.append(
                 {
-                    "index_name": unique_match.group(1),
+                    "index_name": _ident(unique_match.group(1)),
                     **_index_keys(part[unique_match.end() - 1 :]),
                     "is_unique": True,
                     "is_primary": False,
@@ -222,19 +246,29 @@ def _parse_create_table(stmt: str, database_name: str, dialect: str = "mysql") -
             continue
 
         # Column definition
-        col = _parse_column(part, ordinal + 1)
+        col = _parse_column(part, ordinal + 1, dialect)
         if col:
             ordinal += 1
             if col.get("is_primary"):
                 primary_key.append(col["column_name"])
             columns.append(col)
+        elif not _NOT_A_COLUMN.match(part):
+            # #2231: never a silent drop. The position, not the text, is logged.
+            logger.warning(
+                "DDL upload: table %s: column %d of its column list cannot be read; left out",
+                table_id,
+                ordinal + 1,
+            )
 
     if not columns:
+        logger.warning("DDL upload: table %s has no column it can read; left out", table_id)
         return None
+
+    primary_key = _resolved_key(primary_key, columns, table_id, indexes)
 
     return {
         "table_name": table_name,
-        "table_id": f"{database_name}.{table_name}",
+        "table_id": table_id,
         # #1636: DDL holds no row counts, so none is known (not an empty table).
         # #1636: DDL holds no row counts: unknown, not an empty table.
         "row_count": None,
@@ -247,23 +281,83 @@ def _parse_create_table(stmt: str, database_name: str, dialect: str = "mysql") -
     }
 
 
-def _parse_column(part: str, ordinal: int) -> dict | None:
-    """Parse a column definition line."""
-    # Match identifier (any quote style) followed by type (with optional length).
-    # Length token can be a digit run, a digit pair like "(p,s)", or the
-    # T-SQL keyword MAX (varchar(MAX), varbinary(MAX), nvarchar(MAX)).
-    m = re.match(
-        r"(?i)[`\"\[]?(\w+)[`\"\]]?\s+(\w+(?:\([^)]*\))?(?:\s+unsigned)?)",
-        part,
+# A table-level part that is not a column: a constraint or an index this parser does not
+# read (CHECK, a T-SQL DEFAULT constraint, FULLTEXT, ...). Such a part is not reported.
+_NOT_A_COLUMN = re.compile(
+    r"(?i)(?:CONSTRAINT|PRIMARY|FOREIGN|UNIQUE|INDEX|KEY|CHECK|FULLTEXT|SPATIAL|PERIOD|"
+    r"EXCLUDE|LIKE|SUPPLEMENTAL)\b"
+)
+
+
+def _resolved_key(
+    primary_key: list[str], columns: list[dict], table_id: str, indexes: list[dict]
+) -> list[str]:
+    """The primary key in its columns' own spelling (SQL Server and MySQL compare names
+    without case), or no key when a part names no column of the table (#2231): a key on
+    a missing column would make every generated CREATE TABLE fail."""
+    by_name = {c["column_name"].lower(): c["column_name"] for c in columns}
+    resolved = [by_name.get(name.lower()) for name in primary_key]
+    pk = next((i for i in indexes if i.get("is_primary")), None)
+    if all(resolved):
+        if pk is not None:
+            pk["columns"] = resolved
+        return [name for name in resolved if name]
+    logger.warning(
+        "DDL upload: table %s: its primary key names a column the table does not have; "
+        "the key is left out",
+        table_id,
     )
+    if pk is not None:
+        indexes.remove(pk)
+    return []
+
+
+# A column's type, after its name. The parenthesised part holds a length, a digit
+# pair like "(p,s)" or the T-SQL keyword MAX (varchar(MAX), varbinary(MAX)).
+_TYPE_PARAMS = r"\([^)]*\)"
+# MySQL, PostgreSQL and T-SQL. SQL Server Management Studio scripts brackets around the
+# type name too: [datetime2](7), [nvarchar](max) (#2231). A schema-qualified alias type
+# ([dbo].[Phone]) is not read as its schema's name.
+_COLUMN_TYPE = rf"(?:\[\w+\](?!\s*\.)|\w+)(?:\s*{_TYPE_PARAMS})?(?:\s+unsigned)?"
+# Oracle's multi-word types (#2231): LONG RAW, and TIMESTAMP [(p)] WITH [LOCAL] TIME
+# ZONE. DBMS_METADATA.GET_DDL writes a space before the precision: TIMESTAMP (6); Oracle
+# also takes TIMESTAMP(6)WITH TIME ZONE, with no space after it.
+_TIME_ZONE = r"WITH(?:\s+LOCAL)?\s+TIME\s+ZONE\b"
+_ORACLE_COLUMN_TYPE = (
+    rf"LONG\s+RAW\b|\w+(?:\s*{_TYPE_PARAMS}(?:\s*{_TIME_ZONE})?|(?:\s+{_TIME_ZONE})?)"
+)
+_COLUMN_NAME = rf"({_IDENT})\s+"
+_COLUMN_HEAD = {
+    "oracle": re.compile(rf"{_COLUMN_NAME}({_ORACLE_COLUMN_TYPE})", re.IGNORECASE),
+}
+_DEFAULT_COLUMN_HEAD = re.compile(rf"{_COLUMN_NAME}({_COLUMN_TYPE})", re.IGNORECASE)
+
+
+def _written_type(raw: str) -> str:
+    """The type as written, in one spelling: single spaces, no brackets around a T-SQL
+    type name, no space before the parentheses (``[datetime2] (7)`` -> ``datetime2(7)``)."""
+    text = " ".join(raw.split())
+    text = re.sub(r"^\[(\w+)\]", r"\1", text)
+    text = re.sub(r"\s+\(", "(", text)
+    return re.sub(r"\)(?=WITH\b)", ") ", text, flags=re.IGNORECASE)
+
+
+def _parse_column(part: str, ordinal: int, dialect: str = "mysql") -> dict | None:
+    """Parse a column definition line. ``dialect`` decides which multi-word type names
+    are read (Oracle's ``LONG RAW`` and ``... WITH TIME ZONE``)."""
+    m = _COLUMN_HEAD.get(dialect, _DEFAULT_COLUMN_HEAD).match(part)
     if not m:
         return None
 
-    col_name = m.group(1)
-    col_type_full = m.group(2).strip()
+    quoted = m.group(1)[:1] in _QUOTE_CLOSE
+    col_name = _ident(m.group(1))
+    col_type_full = _written_type(m.group(2))
+    # The column's clauses, after its name: a quoted name such as [Not Null Flag] is
+    # not a NOT NULL clause.
+    part = part[m.start(2) :]
 
     # Skip if it looks like a constraint keyword
-    if col_name.upper() in (
+    if not quoted and col_name.upper() in (
         "PRIMARY",
         "FOREIGN",
         "UNIQUE",
@@ -326,9 +420,7 @@ def _parse_column(part: str, ordinal: int) -> dict | None:
 
 # A key part that names a column: the identifier, an optional MySQL prefix length
 # and an optional sort order. Anything else (MySQL's ``(lower(name))``) is an expression.
-_COLUMN_KEY = re.compile(
-    r"[`\"\[]?(\w+)[`\"\]]?\s*(?:\(\s*(\d+)\s*\))?(?:\s+(?:ASC|DESC))?", re.IGNORECASE
-)
+_COLUMN_KEY = re.compile(rf"({_IDENT})\s*(?:\(\s*(\d+)\s*\))?(?:\s+(?:ASC|DESC))?", re.IGNORECASE)
 
 
 def _index_keys(key_list: str) -> dict:
@@ -348,7 +440,7 @@ def _index_keys(key_list: str) -> dict:
             continue
         plain = _COLUMN_KEY.fullmatch(key)
         if plain:
-            columns.append(plain.group(1))
+            columns.append(_ident(plain.group(1)))
             # A MySQL key prefix length (#1623), aligned with ``columns``.
             prefixes.append(int(plain.group(2)) if plain.group(2) and int(plain.group(2)) else None)
         else:
@@ -361,11 +453,75 @@ def _index_keys(key_list: str) -> dict:
     }
 
 
+def _outside_quotes(text: str) -> list[bool]:
+    """For each character, whether it is outside every string and quoted identifier
+    (``'...'``, ``"..."``, `` `...` ``, ``[...]``, each with its doubled-quote escape), so
+    a comma or a parenthesis in a name or a DEFAULT string splits nothing (#2231)."""
+    outside = [True] * len(text)
+    i, n = 0, len(text)
+    while i < n:
+        close = "'" if text[i] == "'" else _QUOTE_CLOSE.get(text[i])
+        if close is None:
+            i += 1
+            continue
+        j = i + 1
+        while j < n:
+            if text[j] == close:
+                if j + 1 < n and text[j + 1] == close:
+                    j += 2
+                    continue
+                break
+            j += 1
+        for k in range(i, min(j + 1, n)):
+            outside[k] = False
+        i = j + 1
+    return outside
+
+
+def _strip_comments(text: str, dialect: str) -> str:
+    """``text`` with its ``--`` and ``/* */`` comments (and MySQL's ``#``) blanked, outside
+    strings and quoted names. A block comment keeps its line breaks."""
+    hash_comments = dialect in ("mysql", "mariadb")
+    out: list[str] = []
+    i, n = 0, len(text)
+    while i < n:
+        ch = text[i]
+        if text.startswith("--", i) or (hash_comments and ch == "#"):
+            end = text.find("\n", i)
+            i = n if end < 0 else end
+            continue
+        if text.startswith("/*", i):
+            end = text.find("*/", i + 2)
+            stop = n if end < 0 else end + 2
+            out.append(" " + "\n" * text.count("\n", i, stop))
+            i = stop
+            continue
+        close = "'" if ch == "'" else _QUOTE_CLOSE.get(ch)
+        if close is None:
+            out.append(ch)
+            i += 1
+            continue
+        j = i + 1
+        while j < n:
+            if text[j] == close:
+                if j + 1 < n and text[j + 1] == close:
+                    j += 2
+                    continue
+                break
+            j += 1
+        out.append(text[i : j + 1])
+        i = j + 1
+    return "".join(out)
+
+
 def _extract_body(stmt: str) -> str | None:
     """Extract content between the outermost parentheses of CREATE TABLE."""
     depth = 0
     start = None
+    outside = _outside_quotes(stmt)
     for i, ch in enumerate(stmt):
+        if not outside[i]:
+            continue
         if ch == "(":
             if depth == 0:
                 start = i + 1
@@ -378,11 +534,15 @@ def _extract_body(stmt: str) -> str | None:
 
 
 def _split_top_level(body: str) -> list[str]:
-    """Split by commas that are not inside parentheses."""
+    """Split by commas that are not inside parentheses, strings or quoted names."""
     parts: list[str] = []
     depth = 0
     buf: list[str] = []
-    for ch in body:
+    outside = _outside_quotes(body)
+    for i, ch in enumerate(body):
+        if not outside[i]:
+            buf.append(ch)
+            continue
         if ch == "(":
             depth += 1
         elif ch == ")":
