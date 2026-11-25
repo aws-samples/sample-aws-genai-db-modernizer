@@ -5,8 +5,8 @@
 
 Covers both MySQL (regression — the parser is used by mysql/mariadb/postgresql
 collectors today) and T-SQL (new behavior added for the SQL Server collector).
-The parser is dialect-tolerant by default; the ``dialect`` parameter is
-informational and reserved for future dialect-specific behavior.
+The parser is dialect-tolerant by default; the ``dialect`` parameter only makes an
+Oracle source read Oracle's multi-word type names (#2231).
 """
 
 import pytest
@@ -472,3 +472,241 @@ class TestEdgeCases:
         assert tables[0]["table_name"] == "users"
         col_names = {c["column_name"] for c in tables[0]["columns"]}
         assert col_names == {"id", "email"}
+
+
+# ---------------------------------------------------------------------------
+# Scripted DDL forms (#2231): each column keeps its whole type
+# ---------------------------------------------------------------------------
+
+# A table as SQL Server Management Studio's "Script Table as > CREATE To" writes it:
+# bracketed type names, the PK on its own lines with WITH (...) ON [PRIMARY]. Synthetic.
+_SSMS_TABLE = """SET ANSI_NULLS ON
+GO
+SET QUOTED_IDENTIFIER ON
+GO
+CREATE TABLE [dbo].[Orders](
+\t[OrderID] [int] IDENTITY(1,1) NOT NULL,
+\t[PlacedAt] [datetime2](7) NULL,
+\t[Notes] [nvarchar](max) NULL,
+\t[Code] [varchar](20) NOT NULL,
+\t[Total] [decimal](18, 2) NOT NULL,
+\t[Hash] [binary](16) NULL,
+\t[Created] [datetime] NOT NULL,
+ CONSTRAINT [PK_Orders] PRIMARY KEY CLUSTERED\x20
+(
+\t[OrderID] ASC
+)WITH (PAD_INDEX = OFF, STATISTICS_NORECOMPUTE = OFF, IGNORE_DUP_KEY = OFF, ALLOW_ROW_LOCKS = ON, ALLOW_PAGE_LOCKS = ON, OPTIMIZE_FOR_SEQUENTIAL_KEY = OFF) ON [PRIMARY]
+) ON [PRIMARY] TEXTIMAGE_ON [PRIMARY]
+GO
+"""
+
+# An Oracle table as DBMS_METADATA.GET_DDL writes it: quoted names, a space before a
+# TIMESTAMP's precision, the time-zone words after it. Synthetic.
+_GET_DDL_TABLE = """
+  CREATE TABLE "APP"."EVENTS"
+   (\t"ID" NUMBER(10,0) NOT NULL ENABLE,
+\t"AT_TZ" TIMESTAMP (6) WITH TIME ZONE,
+\t"AT_LTZ" TIMESTAMP (3) WITH LOCAL TIME ZONE,
+\t"AT" TIMESTAMP (9),
+\t"PAYLOAD" LONG RAW,
+\t"DOC" BFILE,
+\t CONSTRAINT "EVENTS_PK" PRIMARY KEY ("ID")
+  USING INDEX  ENABLE
+   ) SEGMENT CREATION IMMEDIATE
+  TABLESPACE "USERS"
+"""
+
+
+class TestScriptedTypes:
+    def test_ssms_bracketed_types_keep_every_column(self) -> None:
+        (table,) = parse_ddl(_SSMS_TABLE, "app", dialect="sqlserver")
+        cols = {c["column_name"]: c for c in table["columns"]}
+        assert list(cols) == [
+            "OrderID", "PlacedAt", "Notes", "Code", "Total", "Hash", "Created"
+        ]  # fmt: skip
+        assert {n: c["column_type"] for n, c in cols.items()} == {
+            "OrderID": "int",
+            "PlacedAt": "datetime2(7)",
+            "Notes": "nvarchar(max)",
+            "Code": "varchar(20)",
+            "Total": "decimal(18, 2)",
+            "Hash": "binary(16)",
+            "Created": "datetime",
+        }
+        assert cols["PlacedAt"]["data_type"] == "datetime2"
+        assert cols["Notes"]["max_length"] is None
+        assert cols["Code"]["max_length"] == 20
+        assert cols["Hash"]["max_length"] == 16
+        assert cols["OrderID"]["extra"] == "auto_increment"
+        assert cols["Code"]["is_nullable"] == "NO"
+
+    def test_a_bracketed_alias_type_is_not_read_as_its_schema(self) -> None:
+        ddl = "CREATE TABLE [t] ([a] [dbo].[Phone] NULL, [b] [int] NULL);"
+        (table,) = parse_ddl(ddl, "app", dialect="sqlserver")
+        assert [(c["column_name"], c["column_type"]) for c in table["columns"]] == [("b", "int")]
+
+    def test_ssms_primary_key_drops_the_sort_order(self) -> None:
+        (table,) = parse_ddl(_SSMS_TABLE, "app", dialect="sqlserver")
+        assert table["primary_key"] == ["OrderID"]
+        pk = next(i for i in table["indexes"] if i["is_primary"])
+        assert pk["columns"] == ["OrderID"]
+
+    def test_oracle_get_ddl_types_keep_their_tails(self) -> None:
+        (table,) = parse_ddl(_GET_DDL_TABLE, "app", dialect="oracle")
+        types = {c["column_name"]: c["column_type"] for c in table["columns"]}
+        assert types == {
+            "ID": "NUMBER(10,0)",
+            "AT_TZ": "TIMESTAMP(6) WITH TIME ZONE",
+            "AT_LTZ": "TIMESTAMP(3) WITH LOCAL TIME ZONE",
+            "AT": "TIMESTAMP(9)",
+            "PAYLOAD": "LONG RAW",
+            "DOC": "BFILE",
+        }
+        assert table["primary_key"] == ["ID"]
+
+    @pytest.mark.parametrize(
+        "written,column_type",
+        [
+            ("TIMESTAMP(6) WITH TIME ZONE", "TIMESTAMP(6) WITH TIME ZONE"),
+            ("timestamp with time zone", "timestamp with time zone"),
+            ("TIMESTAMP WITH LOCAL TIME ZONE", "TIMESTAMP WITH LOCAL TIME ZONE"),
+            ("LONG RAW", "LONG RAW"),
+            ("long  raw", "long raw"),
+            ("LONG", "LONG"),
+        ],
+    )
+    def test_oracle_multi_word_types(self, written: str, column_type: str) -> None:
+        ddl = f"CREATE TABLE t (c1 {written} NOT NULL, c2 NUMBER(5));"
+        (table,) = parse_ddl(ddl, "app", dialect="oracle")
+        c1, c2 = table["columns"]
+        assert (c1["column_name"], c1["column_type"], c1["is_nullable"]) == (
+            "c1",
+            column_type,
+            "NO",
+        )
+        assert c2["column_type"] == "NUMBER(5)"
+
+    @pytest.mark.passes_on_main  # the other dialects keep their parse
+    def test_time_zone_words_are_oracle_only(self) -> None:
+        """Another dialect keeps the type as before: the tail is Oracle's spelling here."""
+        ddl = "CREATE TABLE t (c TIMESTAMP(6) WITH TIME ZONE);"
+        (table,) = parse_ddl(ddl, "app", dialect="mysql")
+        assert table["columns"][0]["column_type"] == "TIMESTAMP(6)"
+
+
+# ---------------------------------------------------------------------------
+# Review round on #2231: quoted names, spacing, comments, unreadable parts
+# ---------------------------------------------------------------------------
+
+
+class TestQuotedNamesAndSpacing:
+    def test_a_bracketed_name_with_a_space_is_one_column_and_the_key_resolves(self) -> None:
+        ddl = """CREATE TABLE [dbo].[Orders](
+        \t[Order ID] [int] NOT NULL,
+        \t[Placed At] [datetime2](7) NULL,
+         CONSTRAINT [PK Orders] PRIMARY KEY CLUSTERED ([Order ID] ASC)
+        ) ON [PRIMARY]"""
+        (table,) = parse_ddl(ddl, "app", dialect="sqlserver")
+        cols = [(c["column_name"], c["column_type"]) for c in table["columns"]]
+        assert cols == [("Order ID", "int"), ("Placed At", "datetime2(7)")]
+        assert table["primary_key"] == ["Order ID"]
+
+    def test_an_escaped_bracket_in_a_name_is_kept(self) -> None:
+        ddl = "CREATE TABLE [t] ([a]]b] [int] NOT NULL, [c] [int]);"
+        (table,) = parse_ddl(ddl, "app", dialect="sqlserver")
+        assert [c["column_name"] for c in table["columns"]] == ["a]b", "c"]
+
+    @pytest.mark.parametrize(
+        "ddl,dialect",
+        [
+            ("CREATE TABLE [dbo].[Order Lines] ([id] [int]);", "sqlserver"),
+            ('CREATE TABLE "APP"."Order Lines" ("id" NUMBER(10));', "oracle"),
+            ("CREATE TABLE `Order Lines` (`id` INT);", "mysql"),
+        ],
+    )
+    def test_a_quoted_table_name_with_a_space_is_read(self, ddl: str, dialect: str) -> None:
+        (table,) = parse_ddl(ddl, "app", dialect=dialect)
+        assert table["table_name"] == "Order Lines"
+        assert table["table_id"] == "app.Order Lines"
+
+    def test_a_foreign_key_to_a_quoted_name_with_a_space(self) -> None:
+        ddl = """CREATE TABLE [Lines] ([Order ID] [int],
+          CONSTRAINT [FK Lines] FOREIGN KEY ([Order ID]) REFERENCES [dbo].[Order Heads] ([Order ID]));"""
+        (table,) = parse_ddl(ddl, "app", dialect="sqlserver")
+        (fk,) = table["foreign_keys"]
+        assert (fk["constraint_name"], fk["columns"], fk["referenced_table"]) == (
+            "FK Lines",
+            ["Order ID"],
+            "Order Heads",
+        )
+        assert fk["referenced_columns"] == ["Order ID"]
+
+    @pytest.mark.parametrize(
+        "written,column_type,max_length",
+        [
+            ("[datetime2] (7)", "datetime2(7)", 7),
+            ("[nvarchar] (50)", "nvarchar(50)", 50),
+            ("binary (16)", "binary(16)", 16),
+            ("[varchar] (max)", "varchar(max)", None),
+        ],
+    )
+    def test_a_space_before_the_parameters_keeps_them(
+        self, written: str, column_type: str, max_length: int | None
+    ) -> None:
+        (table,) = parse_ddl(f"CREATE TABLE [t] ([c] {written} NULL);", "app", "sqlserver")
+        (col,) = table["columns"]
+        assert (col["column_type"], col["max_length"]) == (column_type, max_length)
+
+    def test_oracle_time_zone_right_after_the_precision(self) -> None:
+        ddl = "CREATE TABLE t (c TIMESTAMP(6)WITH TIME ZONE);"
+        (table,) = parse_ddl(ddl, "app", dialect="oracle")
+        assert table["columns"][0]["column_type"] == "TIMESTAMP(6) WITH TIME ZONE"
+
+    def test_comments_in_the_column_list_are_not_columns(self) -> None:
+        ddl = """CREATE TABLE [t] (
+          [id] [int], -- a comment, with commas
+          [x] [int], /* [y] [int], */ [z] [bigint]
+        );"""
+        (table,) = parse_ddl(ddl, "app", dialect="sqlserver")
+        assert [c["column_name"] for c in table["columns"]] == ["id", "x", "z"]
+
+    def test_a_comma_in_a_default_string_does_not_split_the_column(self) -> None:
+        ddl = "CREATE TABLE t (s VARCHAR(10) DEFAULT 'a,b', n INT);"
+        (table,) = parse_ddl(ddl, "app", dialect="mysql")
+        assert [c["column_name"] for c in table["columns"]] == ["s", "n"]
+        assert table["columns"][0]["column_default"] == "a,b"
+
+
+class TestUnreadablePartsAreReported:
+    def test_a_column_it_cannot_read_is_logged(self, caplog: pytest.LogCaptureFixture) -> None:
+        ddl = "CREATE TABLE [t] ([a] [dbo].[Phone] NULL, [b] [int] NULL);"
+        with caplog.at_level("WARNING", logger="src.tools.database.ddl_parser"):
+            (table,) = parse_ddl(ddl, "app", dialect="sqlserver")
+        assert [c["column_name"] for c in table["columns"]] == ["b"]
+        assert any(
+            "app.t" in r.getMessage() and "column 1" in r.getMessage() for r in caplog.records
+        )
+
+    def test_a_primary_key_on_no_column_of_the_table_is_left_out_and_logged(
+        self, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        ddl = "CREATE TABLE t (id INT, CONSTRAINT pk PRIMARY KEY (missing));"
+        with caplog.at_level("WARNING", logger="src.tools.database.ddl_parser"):
+            (table,) = parse_ddl(ddl, "app", dialect="mysql")
+        assert table["primary_key"] == []
+        assert not [i for i in table["indexes"] if i["is_primary"]]
+        assert any("primary key" in r.getMessage() for r in caplog.records)
+
+    def test_a_primary_key_matches_its_column_whatever_the_case(self) -> None:
+        ddl = "CREATE TABLE [t] ([OrderID] [int], PRIMARY KEY ([orderid]));"
+        (table,) = parse_ddl(ddl, "app", dialect="sqlserver")
+        assert table["primary_key"] == ["OrderID"]
+
+    @pytest.mark.passes_on_main  # temp tables were never read; the new warnings skip them
+    def test_a_temporary_table_in_a_routine_body_is_not_a_table(
+        self, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        ddl = "CREATE PROCEDURE p AS BEGIN CREATE TABLE #tmp ([a] [int]); END\nGO\n"
+        with caplog.at_level("WARNING", logger="src.tools.database.ddl_parser"):
+            assert parse_ddl(ddl, "app", dialect="sqlserver") == []
+        assert not caplog.records

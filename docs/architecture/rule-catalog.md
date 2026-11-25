@@ -1407,7 +1407,7 @@ Documentation: Oracle to Aurora PostgreSQL Migration Playbook \(AWS DMS document
 
 ### oracle-types-no-equivalent
 
-Data types with no direct equivalent: needs a rewrite. LONG, LONG RAW, BFILE, ROWID, XMLType, ANYDATA and SDO\_GEOMETRY have no direct equivalent on the target, so their columns and the code that reads them are redesigned.
+Data types with no direct equivalent: needs a rewrite. BFILE, ROWID, XMLType, ANYDATA and SDO\_GEOMETRY have no direct equivalent on the target, so their columns and the code that reads them are redesigned. LONG and LONG RAW are deprecated LONG types carried as LOBs \(text and bytea on Aurora PostgreSQL, LONGTEXT and LONGBLOB on Aurora MySQL\), and code that reads them piece by piece is rewritten.
 
 Documentation: Oracle to Aurora PostgreSQL Migration Playbook \(AWS DMS documentation\), Data types; AWS Schema Conversion Tool User Guide.
 

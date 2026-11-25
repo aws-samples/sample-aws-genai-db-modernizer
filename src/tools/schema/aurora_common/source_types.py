@@ -66,8 +66,11 @@ Oracle and SQL Server -> Aurora PostgreSQL | Aurora MySQL (#2219)
     TIMESTAMPTZ | DATETIME(min(p,6)) with a "store UTC" note; SQL Server time(p) ->
     TIME(min(p,6)); CLOB/NCLOB/LONG, text/ntext, (n)varchar(max) -> TEXT | LONGTEXT;
     BLOB/LONG RAW, image, varbinary(max) -> BYTEA | LONGBLOB; RAW(n), varbinary(n)
-    -> BYTEA | VARBINARY(n). More than 6 fractional-second digits is a residual on
-    both targets (the extra digits are lost).
+    -> BYTEA | VARBINARY(n); SQL Server binary(n) -> BYTEA, flagged (it does not pad) |
+    BINARY(n) (VARBINARY(n), flagged, above 255; LONGBLOB, flagged, above 8000; #2231);
+    a mapped type whose parameters cannot be read is flagged; Oracle BFILE -> BYTEA | LONGBLOB, always flagged: it
+    points to a file outside the database. More than 6 fractional-second digits is a
+    residual on both targets (the extra digits are lost).
 """
 
 from __future__ import annotations
@@ -501,7 +504,7 @@ def _mysql_to_pg(p: _Parsed, indexed: bool) -> str | None:
 
 # --- Oracle and SQL Server (#2219) -------------------------------------------
 #
-# Only the date/time and large-object types; every other Oracle or SQL Server
+# Only the date/time, large-object and binary types; every other Oracle or SQL Server
 # type returns None and keeps the normalized mapping. The collectors report the
 # type three ways: live and offline Oracle rows read ``LOWER(DATA_TYPE)``
 # (``timestamp(6) with time zone``) with the fractional digits also in
@@ -533,6 +536,7 @@ _ORACLE_NATIVE = {
     "blob": ("blob", None),
     "long raw": ("blob", None),
     "raw": ("varbinary", None),
+    "bfile": ("bfile", None),
 }
 _SQLSERVER_NATIVE = {
     "datetime": ("datetime3", 3),
@@ -546,12 +550,21 @@ _SQLSERVER_NATIVE = {
     "varchar": ("max_text", None),
     "nvarchar": ("max_text", None),
     "varbinary": ("varbinary", None),
+    "binary": ("binary", None),
 }
 _NATIVE_LABEL = {"oracle": "Oracle", "sqlserver": "SQL Server"}
 # SQL Server's own varbinary(n) ceiling. Aurora MySQL shares 65,535 bytes across a
 # whole row, so a wider column (Oracle extended RAW, up to 32767) goes off-row as
 # LONGBLOB: two VARBINARY(32767) columns would fail CREATE TABLE (ERROR 1118).
 _MYSQL_INLINE_VARBINARY_MAX = 8000
+# Aurora MySQL BINARY(n) stops at 255 bytes; SQL Server binary(n) goes to 8000.
+_MYSQL_BINARY_MAX = 255
+_BFILE_REASON = (
+    "Oracle BFILE points to a file outside the database, so {target} has no equivalent: "
+    "load the file contents into this {aurora_type} column, or keep the files in storage "
+    "outside the database and store each file's location, and change the code that "
+    "opens them."
+)
 _SQLSERVER_NO_LENGTH = (
     "SQL Server reports a (max) column with no length, so it may be (max); confirm (max) "
     "or the column's length."
@@ -606,11 +619,20 @@ def _hetero_base_type(
     text = " ".join(data_type.strip().lower().split())
     unbounded = bool(_MAX_LENGTH.search(text))
     split = _split(_MAX_LENGTH.sub("", text) if unbounded else text)
-    if split is None or split[2]:
+    table = _ORACLE_NATIVE if source_family == "oracle" else _SQLSERVER_NATIVE
+    if split is None:
+        return _unreadable_params(
+            text,
+            table,
+            source_family=source_family,
+            target=target,
+            numeric_scale=numeric_scale,
+            datetime_precision=datetime_precision,
+        )
+    if split[2]:
         return None
     words, params, _ = split
     name = " ".join(words)
-    table = _ORACLE_NATIVE if source_family == "oracle" else _SQLSERVER_NATIVE
     if name not in table:
         return None
     kind, default = table[name]
@@ -619,6 +641,12 @@ def _hetero_base_type(
         return "TEXT" if pg else "LONGTEXT"
     if kind == "blob":
         return "BYTEA" if pg else "LONGBLOB"
+    if kind == "bfile":
+        aurora_type = "BYTEA" if pg else "LONGBLOB"
+        return _residual(
+            aurora_type,
+            _BFILE_REASON.format(target=display_engine(target), aurora_type=aurora_type),
+        )
     unbounded = unbounded or max_length == -1
     length = params[0] if params else (max_length if max_length and max_length > 0 else None)
     if kind == "max_text":
@@ -643,6 +671,8 @@ def _hetero_base_type(
                 "LONGBLOB", f"{label} column has no known length; confirm VARBINARY(n).{more}"
             )
         return f"VARBINARY({length})" if length <= _MYSQL_INLINE_VARBINARY_MAX else "LONGBLOB"
+    if kind == "binary":
+        return _binary_type(length, pg)
     if kind == "date0":
         return "TIMESTAMP(0)" if pg else "DATETIME"
     if kind == "datetime3":
@@ -691,6 +721,85 @@ def _hetero_base_type(
             ),
         )
     return aurora_type
+
+
+# A type whose parameter list _SHAPE cannot read (``binary(-5)``, ``datetime2(x)``,
+# ``TIMESTAMP(6; DROP) WITH TIME ZONE``): the name around one parenthesised part.
+_AROUND_PARAMS = re.compile(
+    r"([a-z][a-z0-9_]*(?: [a-z][a-z0-9_]*)*?) ?\([^()]*\)((?: [a-z][a-z0-9_]*)*)"
+)
+
+
+def _unreadable_params(
+    text: str,
+    table: dict[str, tuple[str, int | None]],
+    *,
+    source_family: str,
+    target: str,
+    numeric_scale: int | None,
+    datetime_precision: int | None,
+) -> TypeResolution | None:
+    """A mapped type written with parameters it cannot read (#2231): the type as if it
+    had none, flagged. The reason never repeats the written text. Other types: None."""
+    m = _AROUND_PARAMS.fullmatch(text)
+    if m is None:
+        return None
+    name = " ".join((m.group(1) + m.group(2)).split())
+    if name not in table:
+        return None
+    bare = _hetero_base_type(
+        name,
+        source_family=source_family,
+        target=target,
+        max_length=None,
+        numeric_scale=numeric_scale,
+        datetime_precision=datetime_precision,
+    )
+    if bare is None:
+        return None
+    aurora_type = bare.aurora_type if isinstance(bare, TypeResolution) else bare
+    first = (
+        f"{_NATIVE_LABEL[source_family]} {name} column's type parameters could not be read, "
+        f"so it is drafted as {aurora_type}, the type with none; confirm them."
+    )
+    before = bare.reason if isinstance(bare, TypeResolution) and bare.reason else ""
+    return _residual(aurora_type, f"{first} {before}".strip())
+
+
+def _binary_type(length: int | None, pg: bool) -> TypeResolution | str:
+    """SQL Server binary(n) (#2231). It pads every value to n bytes; BYTEA never pads, nor
+    does VARBINARY, so both are flagged. Past SQL Server's own 8000 the length is not one a
+    real column has (the upload is untrusted): LONGBLOB, flagged, as varbinary does."""
+    declared = f"binary({length})" if length else "binary"
+    if pg:
+        return _residual(
+            "BYTEA",
+            f"SQL Server {declared} pads every value to its declared length, and Aurora "
+            "PostgreSQL BYTEA does not pad: a value the application writes shorter than that "
+            "is stored as written. Confirm the code does not rely on the padding.",
+        )
+    if not length:
+        return _residual(
+            "LONGBLOB",
+            "SQL Server binary column has no known length (a bare binary in T-SQL DDL is "
+            "binary(1)); confirm BINARY(n).",
+        )
+    if length <= _MYSQL_BINARY_MAX:
+        return f"BINARY({length})"
+    if length > _MYSQL_INLINE_VARBINARY_MAX:
+        return _residual(
+            "LONGBLOB",
+            f"SQL Server {declared} is longer than SQL Server's own "
+            f"{_MYSQL_INLINE_VARBINARY_MAX}-byte limit for binary, so the length is not one a "
+            "column can have; confirm it. Drafted as LONGBLOB, which does not pad.",
+        )
+    return _residual(
+        f"VARBINARY({length})",
+        f"SQL Server {declared} pads every value to {length} bytes, and Aurora MySQL "
+        f"BINARY stops at {_MYSQL_BINARY_MAX} bytes, so this is VARBINARY({length}): a "
+        "value the application writes shorter than that is stored as written, not padded. "
+        "Confirm the code does not rely on the padding.",
+    )
 
 
 # --- Entry point ------------------------------------------------------------

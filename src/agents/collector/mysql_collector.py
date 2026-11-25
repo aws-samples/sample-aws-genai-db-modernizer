@@ -800,9 +800,9 @@ def _parse_ddl_raw(inp, region) -> list[dict]:
         key=inp.ddl_config.s3_key,
         region=region,
     )
-    # Pass the source engine as the dialect hint. The parser is dialect-tolerant
-    # by default (handles MySQL backticks and T-SQL brackets), but the param
-    # documents intent and is reserved for future dialect-specific behavior.
+    # Pass the source engine as the dialect. The parser is dialect-tolerant (MySQL
+    # backticks, T-SQL brackets); an Oracle source also reads Oracle's multi-word
+    # type names (LONG RAW, TIMESTAMP WITH TIME ZONE, #2231).
     return parse_ddl(ddl_text, database_name=inp.database_name, dialect=inp.engine.value)
 
 

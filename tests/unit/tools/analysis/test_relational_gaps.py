@@ -2276,3 +2276,21 @@ def test_the_new_rules_say_what_the_draft_and_the_collection_do(
     text = f"{_rule(rule_id).feature} {_rule(rule_id).reason}"
     for phrase in phrases:
         assert phrase in text, phrase
+
+
+def test_oracle_long_types_are_described_as_carried_as_lobs() -> None:
+    """#2231: the draft maps LONG and LONG RAW to LOBs, so the rule says so, and keeps
+    the note about code that reads them piece by piece."""
+    (rule,) = [r for r in gap_rules() if r.id == "oracle-types-no-equivalent"]
+    no_equivalent = rule.reason.split("have no direct equivalent")[0]
+    assert "LONG" not in no_equivalent
+    assert "BFILE" in no_equivalent
+    assert "deprecated LONG types carried as LOBs" in rule.reason
+    assert "piece by piece" in rule.reason
+
+
+@pytest.mark.passes_on_main  # BFILE already matched; #2231 keeps it in the rule
+def test_a_bfile_column_raises_the_no_equivalent_rule() -> None:
+    collector = _collector("oracle", tables=[_table("db.t", types=("NUMBER(10)", "BFILE"))])
+    gap = _gap(detect_relational_gaps(collector, "aurora_mysql"), "oracle-types-no-equivalent")
+    assert gap["objects"] == [{"kind": "column", "id": "db.t.c1", "note": None}]
