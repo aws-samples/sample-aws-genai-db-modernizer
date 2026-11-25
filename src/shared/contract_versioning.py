@@ -405,6 +405,12 @@ INTERNAL_ARTIFACTS: tuple[tuple[str, str], ...] = (
         "synthesis into report.json's wave_redesign, which the contract types",
     ),
     (
+        r"wave-redesign/v\d+/opening\.json",
+        "a redesign round being opened (#2157): the moves, requests and log entry, written "
+        "before any design moves and applied to the end on the next read of the log; read "
+        "by nothing else",
+    ),
+    (
         r"schema-[^/]+/(?:v\d+/)?redesign_request\.json",
         "the failed checks one redesign round sends back to an engine's design, and, in a "
         "round on DynamoDB parts, the parts it redesigns and the parts it keeps with their "

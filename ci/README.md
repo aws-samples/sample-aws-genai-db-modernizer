@@ -676,7 +676,8 @@ obvious entries lives here instead:
   moves the job's design files (for DynamoDB in parts, only the parts the round
   redesigns, #2119) to `wave-redesign/` and back (`--rollback`, and `--stop`,
   which closes a round the run did not run, #2122), writes the round's checks
-  and log, and prints one JSON line.
+  and log (the round's opening first, so an interrupt never leaves a design
+  aside with no open round, #2157), and prints one JSON line. <!-- claim: tests/unit/agents/schema_design/test_wave_redesign_opening.py::test_an_interrupt_at_any_step_of_the_opening_leaves_a_consistent_job -->
 - `Bash(uv run python scripts/run_wave_edit.py *)` (#2067): `/wave-edit`. It
   shows one wave, records the customer's decision on its review warnings under
   `decisions/wave-edit/`, moves that wave's design files to `wave-redesign/` the
