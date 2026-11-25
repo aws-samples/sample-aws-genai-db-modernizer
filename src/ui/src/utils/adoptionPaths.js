@@ -310,12 +310,39 @@ export function stepMetricColumns(plan, steps) {
   return STEP_METRIC_FIELDS.filter(f => metricLabel(plan, f) && steps.some(s => stepMetric(s, f) !== null));
 }
 
-// A unit's metrics as "<label>: <value>" parts, each named by the facts.
+// #2288: the facts' scale for a 0-to-1 order metric (where it turns high, the band words
+// and the sentence on how it reads), or null.
+export function scoreScale(plan, field) {
+  const scales = plan && plan.score_scales;
+  const scale = scales && typeof scales === 'object' ? scales[field] : null;
+  return scale && typeof scale === 'object' ? scale : null;
+}
+
+// #2288: a step's or unit's band on a score, in the facts' words, or '' when the facts
+// state none. The band is the facts' score_bands; nothing here compares a value.
+export function scoreBandWord(plan, record, field) {
+  const bands = record && record.score_bands;
+  const band = bands && typeof bands === 'object' ? bands[field] : null;
+  const labels = (scoreScale(plan, field) || {}).band_labels;
+  return band && labels && typeof labels === 'object' && labels[band] ? String(labels[band]) : '';
+}
+
+// #2288: the facts' sentence on how each of `fields` that has a scale reads.
+export function scoreNotes(plan, fields) {
+  return fields.map(f => (scoreScale(plan, f) || {}).note).filter(Boolean).map(String);
+}
+
+// A unit's metrics as "<label>: <value>" parts, each named by the facts; a score with a
+// band reads "<label>: <band> (<value>)", as the engineering report's unit table (#2288).
 function unitMetricParts(plan, unit) {
   const metrics = (unit && unit.metrics) || {};
   return UNIT_METRIC_FIELDS
     .filter(f => metricLabel(plan, f) && metrics[f] !== null && metrics[f] !== undefined)
-    .map(f => `${metricLabel(plan, f)}: ${metricValueText(f, metrics[f])}`);
+    .map(f => {
+      const value = metricValueText(f, metrics[f]);
+      const band = scoreBandWord(plan, unit, f);
+      return `${metricLabel(plan, f)}: ${band ? `${band} (${value})` : value}`;
+    });
 }
 
 // One unit as a line: the pilot named, its queries, the tables it owns, the copies it

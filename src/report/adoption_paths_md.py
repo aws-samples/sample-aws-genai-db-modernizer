@@ -40,8 +40,8 @@ from .adoption import (
     cost_text,
     difference_phrase,
     intro_text,
+    metric_cell,
     metric_label,
-    metric_value,
     not_offered_texts,
     one_step_block,
     one_step_check_rows,
@@ -52,6 +52,7 @@ from .adoption import (
     plan_step,
     queries_moved_header,
     relational_cost_stated,
+    score_notes,
     slice_plan_block,
     step_metric,
     step_metric_columns,
@@ -241,7 +242,9 @@ def _stages_by_label(plan: dict[str, Any]) -> dict[str, dict[str, Any]]:
     }
 
 
-def _unit_row(label: str, unit: dict[str, Any], metrics: list[str]) -> list[str] | None:
+def _unit_row(
+    plan: dict[str, Any], label: str, unit: dict[str, Any], metrics: list[str]
+) -> list[str] | None:
     """One move unit as a row of its stage's unit table: the tables it owns (the step
     takes over their writes), the copies it reads, where a CDC copy of its tables goes
     back to, and its query count. The pilot is named; a unit is never shown by its key,
@@ -270,7 +273,7 @@ def _unit_row(label: str, unit: dict[str, Any], metrics: list[str]) -> list[str]
         _code_list(owned, _UNIT_TABLES_SHOWN) or "-",
         _code_list(reads, _UNIT_TABLES_SHOWN) or "-",
         back_cell or "-",
-        *(metric_value(f, figures.get(f)) for f in metrics),
+        *(metric_cell(plan, unit, f, figures.get(f)) for f in metrics),
     ]
 
 
@@ -358,12 +361,15 @@ def _why_lines(plan: dict[str, Any], steps: list[dict[str, Any]]) -> list[str]:
                 [STEP_COLUMN, *(capitalized(metric_label(plan, f)) for f in columns)],
                 [
                     [f"{STEP_COLUMN} {s.get('step_number')}"]
-                    + [metric_value(f, step_metric(s, f)) for f in columns]
+                    + [metric_cell(plan, s, f, step_metric(s, f)) for f in columns]
                     for s in measured
                 ],
             ),
             "",
         ]
+        # #2288: how each score column reads, in the facts' words.
+        for note in score_notes(plan, columns):
+            out += [f"*{escaping.md_text(note)}*", ""]
     return out
 
 
@@ -422,7 +428,7 @@ def wave_stages_md(facts: dict[str, Any], wave: int, gates: _SaidOnce) -> list[s
         label = str(stage.get("label"))
         keys = [str(k) for k in stage.get("unit_keys") or []]
         for key in keys[:_UNITS_SHOWN]:
-            row = _unit_row(label, units.get(key) or {}, unit_metrics)
+            row = _unit_row(plan, label, units.get(key) or {}, unit_metrics)
             if row is not None:
                 unit_rows.append(row)
         if keys[_UNITS_SHOWN:]:

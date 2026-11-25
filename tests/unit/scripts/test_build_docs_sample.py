@@ -330,6 +330,11 @@ _NEWER_ENGINE_FIELDS_THAN_THE_RECORDING: tuple[str, ...] = ()
 # (#2287: each gate's conditions, cut from the recorded gate).
 _NEWER_WAVE_FIELDS_THAN_THE_RECORDING = ("gate_conditions",)
 _NEWER_STAGE_FIELDS_THAN_THE_RECORDING = ("gate_conditions",)
+# Fields added to the slice plan, its steps and its move units (#2288: each score's scale
+# and each step's and unit's band, from the recorded metrics).
+_NEWER_PLAN_FIELDS_THAN_THE_RECORDING = ("score_scales",)
+_NEWER_STEP_FIELDS_THAN_THE_RECORDING = ("score_bands",)
+_NEWER_UNIT_FIELDS_THAN_THE_RECORDING = ("score_bands",)
 
 
 def _recorded(facts: dict[str, Any]) -> dict[str, Any]:
@@ -392,11 +397,23 @@ def _recorded(facts: dict[str, Any]) -> dict[str, Any]:
     plan = out.get("slice_plan")
     if isinstance(plan, dict) and isinstance(plan.get("plan_steps"), list):
         out["slice_plan"] = {
-            **plan,
+            **{k: v for k, v in plan.items() if k not in _NEWER_PLAN_FIELDS_THAN_THE_RECORDING},
+            "move_units": [
+                (
+                    {k: v for k, v in u.items() if k not in _NEWER_UNIT_FIELDS_THAN_THE_RECORDING}
+                    if isinstance(u, dict)
+                    else u
+                )
+                for u in plan.get("move_units") or []
+            ],
             "plan_steps": [
                 (
                     {
-                        **step,
+                        **{
+                            k: v
+                            for k, v in step.items()
+                            if k not in _NEWER_STEP_FIELDS_THAN_THE_RECORDING
+                        },
                         "step_stages": [
                             (
                                 {

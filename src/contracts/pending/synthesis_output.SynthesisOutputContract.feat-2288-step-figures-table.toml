@@ -1,0 +1,6 @@
+# A pending contract version bump (ADR-008 Decision 8). The number is assigned by
+# uv run python scripts/resolve_contract_versions.py --release at release (a MAJOR: in its pull request).
+contract = "synthesis_output.SynthesisOutputContract"
+kind = "minor"
+reason = "SlicePlanFacts.score_scales (ScoreScale: each 0-to-1 order metric's sentence and, for shared by many parts, its threshold and band words) and SliceStep.score_bands and MoveUnit.score_bands: the low or high band, for the results page's step figures table and the engineering report"
+issue = 2288

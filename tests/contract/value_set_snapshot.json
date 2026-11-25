@@ -1220,6 +1220,14 @@
     ],
     "version": "1.100"
   },
+  "synthesis_output.ScoreBand": {
+    "module": "synthesis_output",
+    "values": [
+      "high",
+      "low"
+    ],
+    "version": "1.100"
+  },
   "synthesis_output.SliceStageKind": {
     "module": "synthesis_output",
     "values": [

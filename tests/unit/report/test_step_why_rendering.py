@@ -96,12 +96,16 @@ def test_the_step_figures_state_each_slice_step_s_stored_metrics() -> None:
     section = _stages(facts, 3)
     rows = [line for line in section.splitlines() if line.startswith("| Step 3 |")]
     assert len(rows) == 1
-    metrics = facts["slice_plan"]["plan_steps"][2]["metrics"]
+    step = facts["slice_plan"]["plan_steps"][2]
+    metrics = step["metrics"]
     cells = [c.strip() for c in rows[0].strip().strip("|").split("|")]
+    # #2288: shared by many parts reads as its band in the facts' words, then its stored
+    # value; how tightly tied has no band (the decision on #2288) and reads as its value.
+    assert step["score_bands"] == {"hub_score": "low"}
     assert cells == [
         "Step 3",
         adoption.metric_value("gravity", metrics["gravity"]),
-        adoption.metric_value("hub_score", metrics["hub_score"]),
+        f"Low ({adoption.metric_value('hub_score', metrics['hub_score'])})",
         adoption.metric_value("replica_table_count", metrics["cut_cost"]["replica_table_count"]),
         adoption.metric_value("write_site_count", metrics["cut_cost"]["write_site_count"]),
         adoption.metric_value("value_call_share_percent", metrics["value_call_share_percent"]),

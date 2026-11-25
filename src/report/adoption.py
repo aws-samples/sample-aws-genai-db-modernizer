@@ -171,6 +171,31 @@ def metric_value(field: str, value: Any) -> str:
     return fmt_num(value)
 
 
+def score_scale(plan: dict[str, Any], field: str) -> dict[str, Any] | None:
+    """The facts' scale for a 0-to-1 order metric (#2288), or None."""
+    scales = plan.get("score_scales")
+    scale = scales.get(field) if isinstance(scales, dict) else None
+    return scale if isinstance(scale, dict) else None
+
+
+def metric_cell(plan: dict[str, Any], record: dict[str, Any], field: str, value: Any) -> str:
+    """An order metric of a step or unit as the reports print it: a 0-to-1 score as its
+    band in the facts' words with the value after it, "Low (0.37)" (#2288); any other
+    metric, or a score the facts state no band for, as ``metric_value``."""
+    text = metric_value(field, value)
+    bands = record.get("score_bands")
+    band = bands.get(field) if isinstance(bands, dict) else None
+    labels = (score_scale(plan, field) or {}).get("band_labels")
+    word = labels.get(band) if isinstance(labels, dict) and band else None
+    return f"{capitalized(str(word))} ({text})" if word and value is not None else text
+
+
+def score_notes(plan: dict[str, Any], fields: list[str]) -> list[str]:
+    """The facts' sentence on how each of ``fields`` that has a scale reads (#2288)."""
+    notes = [(score_scale(plan, f) or {}).get("note") for f in fields]
+    return [str(n) for n in notes if n]
+
+
 def step_metric_columns(plan: dict[str, Any], steps: list[dict[str, Any]]) -> list[str]:
     """The step figures a table of ``steps`` shows: each metric the facts name that at
     least one of them states (a column of nothing but "-" is left out)."""

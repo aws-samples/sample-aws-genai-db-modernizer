@@ -637,7 +637,7 @@ def test_a_report_saved_before_the_sentences_gets_them_at_read_time() -> None:
         assert step["why"] and numbers_not_in_the_facts(step, plan) == [], step["why"]
     # Every stored figure is kept as it was.
     for old, new in zip(stored["plan_steps"], plan["plan_steps"], strict=True):
-        assert {k: v for k, v in new.items() if k not in ("why", "ties")} == old
+        assert {k: v for k, v in new.items() if k not in ("why", "ties", "score_bands")} == old
 
 
 @pytest.mark.passes_on_main  # #2287: reads the plan less the stage gate conditions
@@ -667,7 +667,11 @@ def test_a_plan_with_its_labels_but_a_step_with_no_why_is_filled() -> None:
 def test_a_stored_plan_with_no_steps_gains_only_the_labels() -> None:
     stored = {"step_basis": "engine_waves", "plan_steps": [], "marker": True}
     assert why.needs_step_explanations(stored)
-    assert why.with_step_explanations(stored) == {**stored, "metric_labels": why.METRIC_LABELS}
+    assert why.with_step_explanations(stored) == {
+        **stored,
+        "metric_labels": why.METRIC_LABELS,
+        "score_scales": why.score_scales(),
+    }
 
 
 @pytest.mark.passes_on_main  # #2287: reads the plan less the stage gate conditions

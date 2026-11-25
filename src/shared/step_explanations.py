@@ -32,9 +32,15 @@ from src.shared.engine_names import display_engine
 from src.shared.figure_format import fmt_num
 
 __all__ = [
+    "BAND_LABELS",
     "METRIC_LABELS",
+    "SCALE_NOTES",
+    "SCORE_HIGH_FROM",
     "TEMPLATES",
     "needs_step_explanations",
+    "score_band",
+    "score_bands",
+    "score_scales",
     "step_ties",
     "step_why",
     "with_step_explanations",
@@ -52,6 +58,33 @@ METRIC_LABELS: dict[str, str] = {
     "transactions_split": "transactions it splits",
     "value_call_share_percent": "share of calls it moves",
     "value_monthly_cost_usd": "monthly cost it moves",
+}
+
+#: The order metrics that read as a band, and the value from which each reads high
+#: (#2288): below it, low. "Shared by many parts" turns high where a slice turns hub-heavy
+#: and runs after the others of its wave (``HUB_HEAVY``), so its band and the sentences
+#: say the same thing. "How tightly tied" has no band: nothing in the plan acts on a cut
+#: of it, so it reads as its value with its sentence (the maintainer's decision on #2288).
+SCORE_HIGH_FROM: dict[str, float] = {
+    "hub_score": HUB_HEAVY,
+}
+#: The plain word for each band, the one set of words every deliverable prints.
+BAND_LABELS: dict[str, str] = {"low": "low", "high": "high"}
+#: What each 0-to-1 score means and how it reads, filled with its label and, for a banded
+#: one, its threshold: the sentence the results page's Info link and the engineering
+#: report state. Every score has one; only those in ``SCORE_HIGH_FROM`` have a band.
+SCALE_NOTES: dict[str, str] = {
+    "gravity": (
+        "{label} runs from 0 to 1. It is the share of the statements a step touches that "
+        "cross the step's boundary, counting its reads of CDC copies and other engines' "
+        "reads of its tables."
+    ),
+    "hub_score": (
+        "{label} runs from 0 to 1 and says how much of what ties the other parts of the "
+        "plan together runs through this step. It reads {low} below {high_from} and {high} "
+        "from {high_from}, and a step that reads {high} runs after the steps of its wave "
+        "that read {low}."
+    ),
 }
 
 # --- The templates ---------------------------------------------------------------------
@@ -105,7 +138,83 @@ TEMPLATES: tuple[str, ...] = (
     SHARES_NONE_BUT_FIRST,
     SHARES_NONE,
     HELD,
+    *SCALE_NOTES.values(),
 )
+
+
+# --- The score bands -------------------------------------------------------------------
+
+
+def score_scales() -> dict[str, dict[str, Any]]:
+    """Each 0-to-1 order metric's scale (``ScoreScale``): the sentence that explains it
+    and, for a banded one, where it turns high and the band words (#2288)."""
+    out: dict[str, dict[str, Any]] = {}
+    for field, template in SCALE_NOTES.items():
+        high_from = SCORE_HIGH_FROM.get(field)
+        out[field] = {
+            "high_from": high_from,
+            "band_labels": dict(BAND_LABELS) if high_from is not None else None,
+            "note": template.format(
+                label=METRIC_LABELS[field][:1].upper() + METRIC_LABELS[field][1:],
+                high_from=fmt_num(high_from) if high_from is not None else "",
+                **BAND_LABELS,
+            ),
+        }
+    return out
+
+
+def _current_scales(plan: Mapping[str, Any]) -> dict[str, Any]:
+    """The scales a read plan states: today's, with a banded metric's stored scale kept.
+    A metric that no longer has a band takes today's scale, so a plan saved while it had
+    one reads it as a plain value (#2288's decision)."""
+    stored = plan.get("score_scales") or {}
+    return {
+        **score_scales(),
+        **{f: s for f, s in stored.items() if f in SCORE_HIGH_FROM},
+    }
+
+
+def score_band(field: str, value: Any, high_from: float | None = None) -> str | None:
+    """``value``'s band on ``field``'s scale ("low" or "high"), or None for a metric with
+    no scale or no value. ``high_from`` defaults to the scale's own."""
+    threshold = SCORE_HIGH_FROM.get(field) if high_from is None else high_from
+    if threshold is None or value is None:
+        return None
+    return "high" if float(value) >= threshold else "low"
+
+
+def _thresholds(scales: Any) -> dict[str, float]:
+    """Each scored metric's threshold: ``scales``' (``ScoreScale`` dicts by field, as a
+    plan stores them) when given, else ``SCORE_HIGH_FROM``."""
+    if not isinstance(scales, Mapping):
+        return dict(SCORE_HIGH_FROM)
+    return {
+        f: float(s["high_from"])
+        for f, s in scales.items()
+        if isinstance(s, Mapping) and s.get("high_from") is not None
+    }
+
+
+def score_bands(metrics: Any, scales: Any = None) -> dict[str, str]:
+    """The band of each scored metric ``metrics`` states: a step's or a unit's
+    ``score_bands``, computed once here (#2288). ``scales`` is the plan's stored
+    ``score_scales``, so a band always sits on the scale the plan states."""
+    if not isinstance(metrics, Mapping):
+        return {}
+    bands = {f: score_band(f, metrics.get(f), t) for f, t in _thresholds(scales).items()}
+    return {f: b for f, b in bands.items() if b is not None}
+
+
+def _with_bands(record: Any, scales: Any) -> Any:
+    """``record`` (a step or a move unit) with the bands it lacks on ``scales``; a stored
+    band is kept when its metric still has a band there, and dropped otherwise."""
+    if not isinstance(record, Mapping):
+        return record
+    computed = score_bands(record.get("metrics"), scales)
+    stored = {
+        f: b for f, b in (record.get("score_bands") or {}).items() if f in _thresholds(scales)
+    }
+    return {**record, "score_bands": {**computed, **stored}}
 
 
 # --- Formatting ------------------------------------------------------------------------
@@ -144,7 +253,8 @@ def _step_of(plan: Mapping[str, Any]) -> dict[str, int]:
 
 
 def _hub_heavy(step: Mapping[str, Any]) -> bool:
-    return float((step.get("metrics") or {}).get("hub_score") or 0.0) >= HUB_HEAVY
+    """A step shared by many parts: its "shared by many parts" band is high (#2288)."""
+    return score_band("hub_score", (step.get("metrics") or {}).get("hub_score") or 0.0) == "high"
 
 
 def _cut(
@@ -356,27 +466,44 @@ def with_step_explanations(
     plan: Mapping[str, Any], cut_costs: Mapping[int, tuple[int, int]] | None = None
 ) -> dict[str, Any]:
     """``plan`` with what it lacks of each step's ``ties`` and ``why`` and of the plan's
-    ``metric_labels``; what it states is kept. The one function synthesis and the reader of
-    an older report call (ADR-032 Decision 4)."""
+    ``metric_labels``, of the plan's ``score_scales`` and of each step's and unit's
+    ``score_bands`` (#2288); what it states is kept. The one function synthesis and the
+    reader of an older report call (ADR-032 Decision 4)."""
     ties = step_ties(plan, cut_costs)
+    # The plan's stored scales win, so a band filled here sits on the scale it states.
+    scales = _current_scales(plan)
     steps = []
     for step in plan.get("plan_steps") or []:
         filled = {**step, "ties": step.get("ties") or ties[int(step["step_number"])]}
         filled["why"] = step.get("why") or step_why(plan, filled)
-        steps.append(filled)
+        steps.append(_with_bands(filled, scales))
     stored = plan.get("metric_labels") or {}
-    return {**plan, "plan_steps": steps, "metric_labels": {**METRIC_LABELS, **stored}}
+    out = {
+        **plan,
+        "plan_steps": steps,
+        "metric_labels": {**METRIC_LABELS, **stored},
+        "score_scales": scales,
+    }
+    if "move_units" in plan:
+        out["move_units"] = [_with_bands(u, scales) for u in plan.get("move_units") or []]
+    return out
 
 
 def needs_step_explanations(plan: Any) -> bool:
     """A stored plan written before #1699 or before a metric was added: a metric with no
     label, or a step with no ``ties`` or ``why`` (a plan re-dumped through the contract
-    reads them back as None)."""
+    reads them back as None); or before #2288: a score with no scale, a step or unit
+    whose metrics state a score its ``score_bands`` do not, or a band or scale saved for
+    a metric that no longer has a band."""
     if not isinstance(plan, Mapping):
         return False
     if not set(METRIC_LABELS) <= set(plan.get("metric_labels") or {}):
         return True
-    return any(
-        isinstance(s, Mapping) and (not s.get("why") or not s.get("ties"))
-        for s in plan.get("plan_steps") or []
-    )
+    scales = _current_scales(plan)
+    if (plan.get("score_scales") or {}) != scales:
+        return True
+    steps = plan.get("plan_steps") or []
+    records = [r for r in [*steps, *(plan.get("move_units") or [])] if isinstance(r, Mapping)]
+    if any(_with_bands(r, scales)["score_bands"] != (r.get("score_bands") or {}) for r in records):
+        return True
+    return any(isinstance(s, Mapping) and (not s.get("why") or not s.get("ties")) for s in steps)
