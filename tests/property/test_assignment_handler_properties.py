@@ -8,6 +8,8 @@ Tests correctness properties from the design document:
 - Property 1: Assignment Completeness — every query from collector appears in assignment
 - Property 6: Assignment Version Monotonicity — version numbers increase monotonically
 - Property 19: Versioned Artifact Immutability — versioned artifacts written to /v{N}/ paths
+- The #2152 refusal: a statement placed on Aurora with no Aurora analysis is
+  refused and nothing is written (#2368)
 
 **Validates: Requirements 2.1, 4.2, 4.3**
 """
@@ -16,10 +18,13 @@ from __future__ import annotations
 
 import tempfile
 
-from hypothesis import given, settings
+import pytest
+from hypothesis import example, given, settings
 from hypothesis import strategies as st
 
 from src.agents.referee.assignment_handler import run_assignment_resolver
+from src.agents.referee.assignment_validator import InvalidAssignment
+from src.agents.referee.table_resolution import SYSTEM_SCHEMAS, is_engine_system_object
 from src.storage.local_store import LocalArtifactStore
 
 # ---------------------------------------------------------------------------
@@ -27,7 +32,18 @@ from src.storage.local_store import LocalArtifactStore
 # ---------------------------------------------------------------------------
 
 _engine = st.sampled_from(["dynamodb", "aurora", "opensearch", "documentdb"])
-_table_id = st.from_regex(r"[a-z]{2,6}\.[a-z_]{2,8}", fullmatch=True)
+# Application tables only (#2368). A statement that reads only an engine's own
+# catalog (``sys.users``, ``mysql.db``) scores on no engine and falls back to
+# Aurora, which the validator refuses when Aurora was not analysed (#2152). The
+# refusal has its own property below; these jobs must be ones it accepts.
+_table_id = st.from_regex(r"[a-z]{2,6}\.[a-z_]{2,8}", fullmatch=True).filter(
+    lambda table_id: not is_engine_system_object(table_id)
+)
+_system_table_id = st.builds(
+    "{}.{}".format,
+    st.sampled_from(sorted(SYSTEM_SCHEMAS)),
+    st.from_regex(r"[a-z_]{2,8}", fullmatch=True),
+)
 _query_id = st.from_regex(r"q-[0-9]{6}", fullmatch=True)
 
 
@@ -303,3 +319,87 @@ class TestVersionedArtifactImmutability:
 
             # v2 must exist at a separate path
             assert store.exists(f"{db}/{job_id}/assignment/v2/assignment.json")
+
+
+# ---------------------------------------------------------------------------
+# The #2152 refusal: a statement on an Aurora engine that was not analysed
+# ---------------------------------------------------------------------------
+
+# The job Hypothesis drew in #2368: one statement on a ``sys`` table, and only
+# DynamoDB analysed. The statement falls back to Aurora.
+_SYSTEM_TABLE_JOB: tuple[str, tuple[list[dict], dict, dict[str, dict], dict]] = (
+    "sys.users",
+    (
+        [],
+        {
+            "job_id": "test-job",
+            "database_schema": {"tables": [{"table_id": "ab.cd", "table_name": "cd"}]},
+            "queries": {"query_patterns": []},
+        },
+        {
+            "dynamodb": {
+                "table_recommendations": [],
+                "workload_analysis": {"patterns_detected": [], "anti_patterns_detected": []},
+            }
+        },
+        {"selected_agents": [{"agent_type": "dynamodb", "reasons": ["signal"]}]},
+    ),
+)
+
+
+def _without_aurora(
+    data: tuple[list[dict], dict, dict[str, dict], dict],
+) -> tuple[list[dict], dict, dict[str, dict], dict]:
+    """The job with Aurora neither selected nor analysed (DynamoDB stands in
+    when Aurora was the only engine)."""
+    queries, collector_output, analysis_outputs, triage = data
+    analysis = {e: a for e, a in analysis_outputs.items() if e != "aurora"}
+    if not analysis:
+        analysis = {"dynamodb": {"table_recommendations": [], "workload_analysis": {}}}
+    triage = {"selected_agents": [{"agent_type": e, "reasons": ["signal"]} for e in analysis]}
+    return queries, collector_output, analysis, triage
+
+
+@pytest.mark.passes_on_main  # guards the #2152 refusal main already has
+class TestUnanalysedAuroraIsRefused:
+    """A job the strategy drew before #2368: a statement that reads only a
+    system table falls back to Aurora, and Aurora has no analysis. The handler
+    must refuse it and write nothing."""
+
+    @given(system_table=_system_table_id, data=handler_fixture_strategy())
+    @example(system_table=_SYSTEM_TABLE_JOB[0], data=_SYSTEM_TABLE_JOB[1])
+    @settings(deadline=None)
+    def test_a_statement_on_unanalysed_aurora_is_refused_and_nothing_is_written(
+        self,
+        system_table: str,
+        data: tuple[list[dict], dict, dict[str, dict], dict],
+    ) -> None:
+        queries, collector_output, analysis_outputs, triage = _without_aurora(data)
+        catalog_read = {
+            "query_id": "q-system",
+            "query_text": "SELECT ... FROM ...",
+            "query_type": "SELECT",
+            "tables_accessed": [system_table],
+            "join_count": 0,
+            "has_joins": False,
+            "has_aggregations": False,
+            "filter_tables": [],
+            "calls_per_second": 1.0,
+            "rows_returned_avg": 10,
+        }
+        collector_output = {
+            **collector_output,
+            "queries": {"query_patterns": [*queries, catalog_read]},
+        }
+        db = "testdb"
+        job_id = "test-job"
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            store = LocalArtifactStore(tmpdir)
+            _seed_artifacts(store, db, job_id, collector_output, analysis_outputs, triage)
+            seeded = sorted(store.list_prefix(f"{db}/{job_id}/"))
+
+            with pytest.raises(InvalidAssignment, match="Aurora has no analysis"):
+                run_assignment_resolver(job_id, db, store)
+
+            assert sorted(store.list_prefix(f"{db}/{job_id}/")) == seeded
