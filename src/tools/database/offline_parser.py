@@ -46,7 +46,7 @@ from src.tools.database.offline_collection_check import (
     without_sentinels,
 )
 from src.tools.database.routine_links import routine_id
-from src.tools.database.sqlserver_max import sqlserver_max_column
+from src.tools.database.sqlserver_max import sqlserver_max_column, written_by_script
 from src.tools.sql.query_type import statement_query_type
 from src.tools.sql.redact import (
     raw_collection_settings,
@@ -253,9 +253,10 @@ def _parse_offline_collection(
 
     # Group columns, indexes, FKs, PKs by table_name
     columns_by_table: dict[str, list] = {}
+    by_script = source_engine == "sqlserver" and written_by_script(metadata)
     for c in data.get("columns") or []:
         if source_engine == "sqlserver":
-            c = sqlserver_max_column(c)
+            c = sqlserver_max_column(c, by_script=by_script)
         columns_by_table.setdefault(c["table_name"], []).append(c)
 
     indexes_by_table: dict[str, dict[str, dict]] = {}

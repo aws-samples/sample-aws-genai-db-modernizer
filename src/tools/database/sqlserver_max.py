@@ -14,6 +14,11 @@ collector still knows the -1 it writes the type as ``nvarchar(max)``:
 * offline (``scripts/collect-sqlserver.sql``): the script writes NULL for -1, and
   ``FOR JSON PATH`` leaves a NULL out, so the row has no ``max_length``.
   ``sys.columns.max_length`` is never NULL, so an absent or null value means -1 there.
+  Only in a file the script wrote, though (#2239): a hand-built or reshaped file in the
+  same format can drop the length of an ``nvarchar(50)``. So the script writes
+  ``metadata.script_version`` (:data:`SQLSERVER_SCRIPT_VERSION`), and only a file that
+  carries it reads an absent length as (max). A file without it, a collection saved
+  before the marker included, keeps the length unknown, and the draft flags the column.
 
 The bare name stays in ``data_type`` for the normalizers; the suffixed type goes to
 ``column_type``, which the offline builder (``mysql_collector._native_type``) promotes to
@@ -30,6 +35,25 @@ from typing import Any
 
 #: The SQL Server types that take ``(max)``.
 MAX_TYPES = frozenset({"varchar", "nvarchar", "varbinary"})
+
+#: The ``metadata.script_version`` ``scripts/collect-sqlserver.sql`` writes (#2239). The
+#: script wrote none before; a later script that still writes NULL for -1 keeps it or
+#: raises it.
+SQLSERVER_SCRIPT_VERSION = 2
+
+
+def written_by_script(metadata: Any) -> bool:
+    """Whether an offline SQL Server collection's ``metadata`` says
+    ``collect-sqlserver.sql`` wrote it, so an absent length there is (max)."""
+    if not isinstance(metadata, dict):
+        return False
+    version = metadata.get("script_version")
+    if isinstance(version, bool) or not isinstance(version, (int, str)):
+        return False
+    try:
+        return int(version) >= SQLSERVER_SCRIPT_VERSION
+    except ValueError:
+        return False
 
 
 def max_type(data_type: Any, max_length: Any, *, absent_is_max: bool) -> str | None:
@@ -48,10 +72,11 @@ def max_type(data_type: Any, max_length: Any, *, absent_is_max: bool) -> str | N
         return None
 
 
-def sqlserver_max_column(row: dict) -> dict:
-    """An offline collect-sqlserver.sql column row, with ``column_type`` set to the
-    ``(max)`` type when its length is (max); any other row is returned unchanged."""
+def sqlserver_max_column(row: dict, *, by_script: bool) -> dict:
+    """An offline SQL Server column row, with ``column_type`` set to the ``(max)`` type
+    when its length is (max); any other row is returned unchanged. ``by_script``
+    (:func:`written_by_script`) makes an absent length (max); a -1 always is."""
     if row.get("column_type"):
         return row
-    typed = max_type(row.get("data_type"), row.get("max_length"), absent_is_max=True)
+    typed = max_type(row.get("data_type"), row.get("max_length"), absent_is_max=by_script)
     return {**row, "column_type": typed} if typed else row

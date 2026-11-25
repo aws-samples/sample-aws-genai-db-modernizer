@@ -803,6 +803,17 @@ def _index_notes(ddl: DdlResult) -> list[dict]:
     ]
 
 
+def _row_size_notes(ddl: DdlResult) -> list[dict]:
+    """One deterministic app-layer note per Aurora MySQL table whose row the draft fitted
+    to the row limits, or could not fit (#2239), so the deliverables say what moved to
+    TEXT or BLOB and what to do."""
+    return [
+        {"feature": "row_size", "source_object": n["table"], "recommendation": n["reason"]}
+        for n in ddl.column_notes
+        if n["kind"] == "row_size"
+    ]
+
+
 def _time_zone_notes(ddl: DdlResult) -> list[dict]:
     """One deterministic app-layer note for time-zone-aware columns mapped to DATETIME/TIME."""
     cols = [f"{n['table']}.{n['column']}" for n in ddl.column_notes if n["kind"] == "time_zone"]
@@ -1078,6 +1089,7 @@ def merge_design_delta(
         + _time_zone_notes(ddl)
         + _default_notes(ddl)
         + _index_notes(ddl)
+        + _row_size_notes(ddl)
         + _renamed_notes(base)
         + left_out,
         "optimizations": [o.model_dump(mode="json") for o in contract.optimizations],

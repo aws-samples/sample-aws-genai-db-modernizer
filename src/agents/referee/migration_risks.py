@@ -883,11 +883,11 @@ _CARRIED_FEATURES = frozenset({"trigger", "function", "procedure", "stored proce
 # Notes about no source logic, so no application code (#2402, #2478, #2415): every object the
 # design leaves out (a colliding or unsafe name, a duplicate index name, a system-schema
 # table, an ambiguous reference), an index Aurora PostgreSQL creates under another name
-# (#2410), and the schema notes on an index key prefix, a column default and a time zone.
-# The design's note and step 1's DDL file already say what to do about each, so no risk
-# repeats them.
+# (#2410), and the schema notes on an index key prefix, a column default, a time zone and
+# an Aurora MySQL row fitted to the row limits (#2239). The design's note and step 1's DDL
+# file already say what to do about each, so no risk repeats them.
 _NO_LOGIC_FEATURES = LEFT_OUT_FEATURES | frozenset(
-    {"index_renamed", "index_key_prefix", "column_default", "time_zone"}
+    {"index_renamed", "index_key_prefix", "column_default", "time_zone", "row_size"}
 )
 
 

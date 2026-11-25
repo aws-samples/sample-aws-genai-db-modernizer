@@ -461,9 +461,13 @@ def dnn_tables() -> list[AgentTable]:
     from src.agents.collector.mysql_collector import _build_tables
     from src.tools.database.offline_parser import parse_offline_collection
 
+    return _agent(_build_tables(parse_offline_collection(_dnn_raw())["tables"], "DNN"))
+
+
+def _dnn_raw() -> dict:
     with zipfile.ZipFile(_ROOT / "docs" / "examples" / "dnn" / "dnn.zip") as zf:
-        raw = json.loads(zf.read("dnn-collection.json"))
-    return _agent(_build_tables(parse_offline_collection(raw)["tables"], "DNN"))
+        raw: dict = json.loads(zf.read("dnn-collection.json"))
+    return raw
 
 
 _DNN = {
@@ -472,9 +476,9 @@ _DNN = {
     ("SiteLog", "DateTime"): ("smalldatetime", "TIMESTAMP(0)", "DATETIME"),
     ("aspnet_Membership", "Comment"): ("ntext", "TEXT", "LONGTEXT"),
     ("Files", "Content"): ("image", "BYTEA", "LONGBLOB"),
-    # collect-sqlserver.sql leaves the -1 length out; the offline parser keeps it as the
-    # type (src/tools/database/sqlserver_max.py), so this is an unflagged (max) LOB.
-    ("ContentItems", "Content"): ("nvarchar(max)", "TEXT", "LONGTEXT"),
+    # collect-sqlserver.sql leaves the -1 length out, and the sample was collected before
+    # the script marked its files (#2239), so the length stays unknown: a flagged LOB.
+    ("ContentItems", "Content"): ("nvarchar", "TEXT", "LONGTEXT"),
 }
 
 
@@ -487,10 +491,10 @@ def test_dnn_sample_end_to_end(dnn_tables, target):
     # Every date/time and large-object column, not only the ones named above: none is
     # left on the old types or for review (the sample has no datetime2, datetimeoffset or
     # time column, so no precision above 6 digits).
-    lob_or_time = {"datetime", "smalldatetime", "ntext", "image", "nvarchar(max)"}
+    lob_or_time = {"datetime", "smalldatetime", "ntext", "image"}
     assert dnn_tables[0].columns  # the sample loaded
     by_key = {(t.table_name, c.column_name): c.data_type for t in dnn_tables for c in t.columns}
-    assert by_key[("ContentItems", "Content")] == "nvarchar(max)"
+    assert by_key[("ContentItems", "Content")] == "nvarchar"
     in_scope = {
         (t.table_name, c.column_name)
         for t in dnn_tables
@@ -508,8 +512,46 @@ def test_dnn_sample_end_to_end(dnn_tables, target):
     assert all((r["table"], r["column"]) in defaults for r in left)
     assert all("has a DEFAULT" in r["reason"] for r in left)
     assert bool(left) is (target == MY)
-    # Every nvarchar(max) is one (88 in the sample), and no string is left without a length.
-    assert sum(1 for v in by_key.values() if v == "nvarchar(max)") == 88
+
+
+@pytest.mark.parametrize("target", [PG, MY])
+def test_dnn_a_collection_saved_before_the_script_marker_loads_flagged(dnn_tables, target):
+    """The DNN sample is a real collect-sqlserver.sql file from before the script wrote
+    ``metadata.script_version`` (#2239): it loads, no column reads as (max), and each of
+    its 88 lengthless nvarchar columns (the script's (max) columns) is flagged, with the
+    LOB as the fallback."""
+    raw = _dnn_raw()
+    assert "script_version" not in raw["metadata"]
+    by_key = {(t.table_name, c.column_name): c for t in dnn_tables for c in t.columns}
+    assert not [c for c in by_key.values() if "(max)" in (c.data_type or "")]
+    lengthless = {
+        key
+        for key, c in by_key.items()
+        if c.data_type in ("nvarchar", "varchar", "varbinary") and c.max_length is None
+    }
+    assert len(lengthless) == 88
+    result = _generate(target, dnn_tables, "sqlserver")
+    flagged = {(r["table"], r["column"]): r for r in result.residuals}
+    assert lengthless <= set(flagged)
+    assert all("may be (max)" in flagged[key]["reason"] for key in lengthless)
+    # The flag says how to clear it: the current script reads each (max) column as (max).
+    assert all("Run the current script again" in flagged[key]["reason"] for key in lengthless)
+
+
+@pytest.mark.passes_on_main
+@pytest.mark.parametrize("target", [PG, MY])
+def test_dnn_with_the_script_marker_reads_each_missing_length_as_max(target):
+    """The same file as the script writes it now: every lengthless nvarchar is (max) and
+    none is flagged for its length."""
+    from src.agents.collector.mysql_collector import _build_tables
+    from src.tools.database.offline_parser import parse_offline_collection
+
+    raw = _dnn_raw()
+    raw["metadata"] = {**raw["metadata"], "script_version": 2}
+    tables = _agent(_build_tables(parse_offline_collection(raw)["tables"], "DNN"))
+    types = [c.data_type for t in tables for c in t.columns]
+    assert types.count("nvarchar(max)") == 88
+    result = _generate(target, tables, "sqlserver")
     assert not [r for r in result.residuals if "no known length" in r["reason"]]
 
 
@@ -630,16 +672,20 @@ def test_sqlserver_live_collection_end_to_end(target):
     )
 
 
-def _offline_sqlserver(columns: list[dict], engine: str = "sqlserver") -> list[AgentTable]:
+def _offline_sqlserver(
+    columns: list[dict], engine: str = "sqlserver", *, by_script: bool = True
+) -> list[AgentTable]:
     """A collect-sqlserver.sql export (FOR JSON PATH leaves a NULL out) through the offline
-    parser and the shared builder, as the pipeline reads it."""
+    parser and the shared builder, as the pipeline reads it; with ``by_script=False``, a
+    file in the same format that the script did not write (no ``script_version``)."""
     from src.agents.collector.mysql_collector import _build_tables
     from src.tools.database.offline_parser import parse_offline_collection
 
+    metadata = {"engine": engine, "version": "Microsoft SQL Server 2022", "database": "app"}
     raw = {
         "collection_version": "1",
         "collected_at": "2026-11-13T00:00:00Z",
-        "metadata": {"engine": engine, "version": "Microsoft SQL Server 2022", "database": "app"},
+        "metadata": {**metadata, "script_version": 2} if by_script else metadata,
         "tables": [{"table_name": "notes", "schema_name": "dbo", "row_count": 1}],
         "columns": [
             {"table_name": "notes", "schema_name": "dbo", "ordinal_position": i + 1,
@@ -674,6 +720,21 @@ def test_offline_sqlserver_collection_keeps_max_in_the_type():
         types = {c: t for (_, c), t in _types(result).items()}
         assert (types["body"], types["raw"], types["name"]) == (body, raw, "VARCHAR(50)")
         assert result.residuals == []
+
+
+@pytest.mark.parametrize("target", [PG, MY])
+def test_a_hand_built_export_that_drops_a_length_is_flagged_not_a_lob(target):
+    """The review's example (#2239): an export reshaped by hand, with ``max_length``
+    dropped from an nvarchar(50) row. With no script marker the length stays unknown, so
+    the column is a residual, never a silent LONGTEXT."""
+    tables = _offline_sqlserver(
+        [{"column_name": "name", "data_type": "nvarchar", "udt_name": "nvarchar"}],
+        by_script=False,
+    )
+    assert tables[0].columns[0].data_type == "nvarchar"
+    result = _generate(target, tables, "sqlserver")
+    (residual,) = result.residuals
+    assert residual["column"] == "name" and "may be (max)" in residual["reason"]
 
 
 @pytest.mark.passes_on_main

@@ -567,7 +567,9 @@ _BFILE_REASON = (
 )
 _SQLSERVER_NO_LENGTH = (
     "SQL Server reports a (max) column with no length, so it may be (max); confirm (max) "
-    "or the column's length."
+    "or the column's length. A collection made with scripts/collect-sqlserver.sql before "
+    "it wrote metadata.script_version (#2239) has no length on any (max) column. Run the "
+    "current script again to have each one read as (max), which clears this flag."
 )
 
 

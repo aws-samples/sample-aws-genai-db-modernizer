@@ -19,7 +19,7 @@ from __future__ import annotations
 
 import re
 from collections.abc import Callable, Mapping
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 
 from src.contracts.aurora_design_delta import INDEX_METHODS, validate_aurora_type
 from src.contracts.schema_design_input import (
@@ -45,6 +45,15 @@ from src.tools.schema.aurora_common.constraint_translator import (
     mysql_auto_increment_clause,
     not_null_clause,
     translate_default,
+)
+from src.tools.schema.aurora_common.mysql_foreign_keys import is_lob, refused_pair
+from src.tools.schema.aurora_common.mysql_row_size import (
+    MYSQL_MAX_RECORD_BYTES,
+    MYSQL_MAX_ROW_BYTES,
+    RowSize,
+    fit_row,
+    lob_type,
+    row_size,
 )
 from src.tools.schema.aurora_common.source_family import (
     classify_source_family,
@@ -221,32 +230,51 @@ def _resolve(
     )
 
 
+@dataclass
+class _ColumnPlan:
+    """A column's type before its definition is written (``_generate``): the resolution,
+    and whether a model decided it (#273), which makes it judged rather than a residual."""
+
+    resolution: TypeResolution
+    judged: bool = False
+
+
+def _plan_column(
+    col: AgentColumn,
+    dialect: Dialect,
+    override: TypeOverride | None,
+    source_family: str,
+    indexed: bool,
+) -> _ColumnPlan:
+    if override is not None:
+        # A model-decided type (#273): judged, so not script-derived and not a residual.
+        return _ColumnPlan(
+            TypeResolution(
+                aurora_type=override.aurora_type, needs_judgment=True, reason=override.reason
+            ),
+            judged=True,
+        )
+    return _ColumnPlan(_resolve(col, dialect, source_family, indexed))
+
+
 def _column_ddl(
     table_name: str,
     col: AgentColumn,
     residuals: list[dict],
     dialect: Dialect,
-    override: TypeOverride | None = None,
+    plan: _ColumnPlan,
     *,
-    source_family: str = "other",
-    indexed: bool = False,
     notes: list[dict] | None = None,
     source_engine: str = "",
     identity_ok: bool = False,
 ) -> ColumnDDL:
     source_type = col.normalized_data_type.value if col.normalized_data_type else None
     notes = notes if notes is not None else []
-    if override is not None:
-        # A model-decided type (#273): judged, so not script-derived and not a residual.
-        resolution = TypeResolution(
-            aurora_type=override.aurora_type, needs_judgment=True, reason=override.reason
-        )
-    else:
-        resolution = _resolve(col, dialect, source_family, indexed)
+    resolution = plan.resolution
     default = _default(
         table_name, col, resolution.aurora_type, dialect, notes, source_engine, identity_ok
     )
-    if override is not None:
+    if plan.judged:
         return _column_from(
             col, resolution, source_type, dialect, default, script_derived=False, table=table_name
         )
@@ -1532,6 +1560,202 @@ def _identity_ok(table: AgentTable, col: AgentColumn, dialect: Dialect, has_auto
     return True
 
 
+@dataclass
+class _PendingTable:
+    """A table ``_generate`` writes once every table's column types are settled."""
+
+    table: AgentTable
+    ref: tuple[str, str | None]
+    schema: str | None
+    plans: list[_ColumnPlan] = field(default_factory=list)
+
+    def position(self, column: str) -> int | None:
+        lower = column.lower()
+        for pos, col in enumerate(self.table.columns):
+            if col.column_name.lower() == lower:
+                return pos
+        return None
+
+
+def _ref_key(name: str, schema: str | None) -> tuple[str, str]:
+    return name.lower(), (schema or "").lower()
+
+
+def _referenced_parent(
+    pending: _PendingTable,
+    fk: AgentForeignKey,
+    by_ref: dict[tuple[str, str], _PendingTable],
+    schemas_of: dict[str, list[str]],
+) -> _PendingTable | None:
+    """The table of the design ``fk`` references, resolved as ``_fk_sql`` resolves it, or
+    None when it is not in the design or the reference is ambiguous."""
+    resolved = referenced_table(
+        fk.referenced_table, pending.schema, schemas_of, fk.referenced_schema
+    )
+    return by_ref.get(_ref_key(*resolved)) if resolved is not None else None
+
+
+def _referenced_columns(
+    pending: list[_PendingTable], schemas_of: dict[str, list[str]]
+) -> dict[tuple[str, str], set[str]]:
+    """Each table's columns that another table's foreign key references (lower case), by
+    ``_ref_key``. They are key columns too (#2239): a lengthless UNIQUE parent column
+    gets a key-sized type, as the child column that references it does."""
+    by_ref = {_ref_key(*p.ref): p for p in pending}
+    referenced: dict[tuple[str, str], set[str]] = {}
+    for p in pending:
+        for fk in p.table.foreign_keys or []:
+            parent = _referenced_parent(p, fk, by_ref, schemas_of)
+            if parent is not None:
+                referenced.setdefault(_ref_key(*parent.ref), set()).update(
+                    c.lower() for c in fk.referenced_columns
+                )
+    return referenced
+
+
+def _align_foreign_keys(
+    pending: list[_PendingTable], schemas_of: dict[str, list[str]], notes: list[dict]
+) -> None:
+    """Give an Aurora MySQL foreign key column its parent's type where the server refuses
+    the pair as resolved (#2239, ``mysql_foreign_keys.refused_pair``): another integer size
+    or sign, another DECIMAL precision or scale, a TEXT or BLOB child, or a character
+    string next to a binary one. The two sides can resolve apart: a lengthless child next
+    to a parent with a length, or a source that allowed the mismatch (a PostgreSQL
+    ``bigint`` referencing an ``integer``). A pair the server accepts is left as it is, so
+    a string column keeps its own length and a homogeneous source carries over. A parent
+    that is TEXT or BLOB itself is left too: it is already flagged, and no child type
+    helps. Aurora PostgreSQL accepts every such pair, so its draft keeps the source's
+    types. A chain of keys settles whatever the order of the tables; a cycle of
+    conflicting keys stops after one pass per table. A column that changes gets one
+    ``foreign_key_type`` note saying what MySQL requires."""
+    by_ref = {_ref_key(*p.ref): p for p in pending}
+    changed: dict[tuple[int, int], tuple[str, str, str, str]] = {}
+    for _ in range(len(pending) + 1):
+        moved = False
+        for i, p in enumerate(pending):
+            for fk in p.table.foreign_keys or []:
+                parent = _referenced_parent(p, fk, by_ref, schemas_of)
+                if parent is None:
+                    continue
+                for child_col, parent_col in zip(fk.columns, fk.referenced_columns, strict=False):
+                    pos, parent_pos = p.position(child_col), parent.position(parent_col)
+                    if pos is None or parent_pos is None:
+                        continue
+                    plan = p.plans[pos]
+                    want = parent.plans[parent_pos].resolution.aurora_type
+                    why = refused_pair(plan.resolution.aurora_type, want)
+                    if why is None or is_lob(want):
+                        continue
+                    parent_column = parent.table.columns[parent_pos].column_name
+                    label = f"{parent.table.table_name}.{parent_column}"
+                    changed.setdefault(
+                        (i, pos), (plan.resolution.aurora_type, label, fk.constraint_name, why)
+                    )
+                    plan.resolution = replace(plan.resolution, aurora_type=want)
+                    moved = True
+        if not moved:
+            break
+    for (i, pos), (was, parent_label, constraint, why) in sorted(changed.items()):
+        p = pending[i]
+        now = p.plans[pos].resolution.aurora_type
+        if _same_type(was, now):
+            continue
+        notes.append(
+            {
+                "table": p.table.table_name,
+                "column": p.table.columns[pos].column_name,
+                "kind": "foreign_key_type",
+                "reason": (
+                    f"Typed {now}, the type of {parent_label}, which foreign key "
+                    f"{constraint} references. As {was} the key fails with ERROR 3780, "
+                    f"because {why}."
+                ),
+            }
+        )
+
+
+def _same_type(a: str, b: str) -> bool:
+    return " ".join(a.upper().split()) == " ".join(b.upper().split())
+
+
+def _fit_mysql_row(pending: _PendingTable, protected: set[str], notes: list[dict]) -> None:
+    """Move the widest VARCHAR and VARBINARY columns that are in no key or index to TEXT
+    or BLOB until the row fits Aurora MySQL's limits (``mysql_row_size``, #2239), flagging
+    each one; note the table when the row still does not fit."""
+    table = pending.table
+    columns = [
+        (p.resolution.aurora_type, c.nullable)
+        for p, c in zip(pending.plans, table.columns, strict=True)
+    ]
+    has_pk = bool(table.primary_key)
+    before = row_size(columns, has_primary_key=has_pk)
+    if before.fits:
+        return
+    movable = [c.column_name.lower() not in protected for c in table.columns]
+    moved, after = fit_row(columns, movable=movable, has_primary_key=has_pk)
+    limits = _row_limits_passed(before)
+    for pos in moved:
+        plan = pending.plans[pos]
+        was = plan.resolution.aurora_type
+        lob = lob_type(was) or was
+        earlier = (
+            plan.resolution.reason + " "
+            if plan.resolution.needs_judgment and plan.resolution.reason and not plan.judged
+            else ""
+        )
+        plan.resolution = TypeResolution(
+            aurora_type=lob,
+            needs_judgment=True,
+            reason=(
+                f"{earlier}Moved from {was} to {lob} so the row fits Aurora MySQL. With every "
+                f"column as written {limits}, and CREATE TABLE fails with ERROR 1118. "
+                f"{lob} holds the same values and keeps them out of the row. Keep it, or "
+                f"split the table and keep {was}."
+            ),
+            note=plan.resolution.note,
+        )
+        plan.judged = False
+    names = ", ".join(table.columns[pos].column_name for pos in sorted(moved))
+    if after.fits:
+        reason = (
+            f"{len(moved)} column(s) of {table.table_name} moved to TEXT or BLOB so the row "
+            f"fits Aurora MySQL ({names}). With every column as written {limits}, and "
+            "CREATE TABLE fails with ERROR 1118. Each is flagged. Keep them, or split the "
+            "table."
+        )
+    else:
+        moved_part = (
+            f" after {len(moved)} column(s) moved to TEXT or BLOB ({names})" if moved else ""
+        )
+        reason = (
+            f"The row of {table.table_name} needs {after.row_bytes:,} of the "
+            f"{MYSQL_MAX_ROW_BYTES:,} bytes a row may use and {after.record_bytes:,} of the "
+            f"8,126 bytes InnoDB keeps in a record{moved_part}, so CREATE TABLE fails with "
+            "ERROR 1118. The columns left are in a key, an index or a foreign key, are "
+            "fixed-width (numbers, dates, CHAR, BINARY, ENUM, SET), are already TEXT or BLOB, "
+            "or would save no bytes as TEXT or BLOB. To create it, split the table or "
+            "narrow its columns."
+        )
+    notes.append({"table": table.table_name, "column": None, "kind": "row_size", "reason": reason})
+
+
+def _row_limits_passed(size: RowSize) -> str:
+    """What the row passes, as a clause: ``the row needs 72,020 of the 65,535 bytes a row
+    may use``, and or instead the InnoDB record."""
+    parts = []
+    if size.row_bytes > MYSQL_MAX_ROW_BYTES:
+        parts.append(
+            f"the row needs {size.row_bytes:,} of the {MYSQL_MAX_ROW_BYTES:,} bytes a row may "
+            "use (4 bytes per character in utf8mb4)"
+        )
+    if size.record_bytes > MYSQL_MAX_RECORD_BYTES:
+        parts.append(
+            f"the part of each record InnoDB keeps in the row needs {size.record_bytes:,} of "
+            "the 8,126 bytes it allows on a 16 KB page"
+        )
+    return " and ".join(parts)
+
+
 def _generate(
     tables: list[AgentTable],
     dialect: Dialect,
@@ -1540,16 +1764,20 @@ def _generate(
     qualified: bool = False,
 ) -> DdlResult:
     """``qualified``: create each table in its source schema (#2455, see the module
-    docstring); the type overrides are then keyed on ``design_table_name``."""
+    docstring); the type overrides are then keyed on ``design_table_name``.
+
+    Every column's type is settled before any table is written: each column resolved on
+    its own, then on Aurora MySQL each foreign key column given its parent's type and each
+    row fitted to the row limits (#2239)."""
     residuals: list[dict] = []
     notes: list[dict] = []
     column_notes: list[dict] = []
-    table_ddls: list[TableDDL] = []
     overrides = type_overrides or {}
     family = classify_type_family(source_engine)
     schemas_of = schemas_by_name(tables) if qualified else {}
 
     left_out: list[dict] = []
+    entries: list[TableDDL | _PendingTable] = []
     for unnamed in tables:
         schema = unnamed.schema_name if qualified else None
         ref = (unnamed.table_name, schema)
@@ -1559,14 +1787,40 @@ def _generate(
         )
         if has_unprintable(source_table.table_name):
             left_out.append(_unsafe(source_table.table_name, "table", source_table.table_name))
-            table_ddls.append(_unsafe_table(source_table, dialect))
+            entries.append(_unsafe_table(source_table, dialect))
             continue
-        table = _without_unsafe_columns(source_table, left_out)
+        entries.append(_PendingTable(_without_unsafe_columns(source_table, left_out), ref, schema))
+    pending = [e for e in entries if isinstance(e, _PendingTable)]
+    referenced = _referenced_columns(pending, schemas_of)
+    for p in pending:
+        table = p.table
         keyed = (
             _constraint_columns(table)
             if family in _NATIVE_KEY_FAMILIES
             else _key_columns(table, dialect)
-        )
+        ) | referenced.get(_ref_key(*p.ref), set())
+        p.plans = [
+            _plan_column(
+                c,
+                dialect,
+                overrides.get((table.table_name, c.column_name)),
+                family,
+                c.column_name.lower() in keyed,
+            )
+            for c in table.columns
+        ]
+    if dialect is MYSQL:
+        _align_foreign_keys(pending, schemas_of, column_notes)
+        for p in pending:
+            protected = _key_columns(p.table, dialect) | referenced.get(_ref_key(*p.ref), set())
+            _fit_mysql_row(p, protected, column_notes)
+
+    table_ddls: list[TableDDL] = []
+    for entry in entries:
+        if isinstance(entry, TableDDL):
+            table_ddls.append(entry)
+            continue
+        table, ref, schema = entry.table, entry.ref, entry.schema
         has_auto = any(c.is_auto_increment for c in table.columns)
         columns = [
             _column_ddl(
@@ -1574,14 +1828,12 @@ def _generate(
                 c,
                 residuals,
                 dialect,
-                overrides.get((table.table_name, c.column_name)),
-                source_family=family,
-                indexed=c.column_name.lower() in keyed,
+                plan,
                 notes=column_notes,
                 source_engine=source_engine,
                 identity_ok=_identity_ok(table, c, dialect, has_auto),
             )
-            for c in table.columns
+            for c, plan in zip(table.columns, entry.plans, strict=True)
         ]
         table_ddls.append(
             TableDDL(

@@ -1586,6 +1586,8 @@ def build_collection(seed: int = SEED) -> dict[str, Any]:
         "metadata": {
             "database_name": SAMPLE,
             "engine": "sqlserver",
+            # What collect-sqlserver.sql writes (#2239, SQLSERVER_SCRIPT_VERSION).
+            "script_version": 2,
             "version_full": (
                 "Microsoft SQL Server 2019 (RTM-CU22) - 15.0.4322.2 (X64) \n\t"
                 "Standard Edition (64-bit) on Windows Server 2019 Standard 10.0 <X64>"
