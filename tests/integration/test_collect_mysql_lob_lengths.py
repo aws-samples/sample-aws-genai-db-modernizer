@@ -52,6 +52,28 @@ SETUP = """
     GRANT PROCESS ON *.* TO 'prc'@'localhost'; GRANT SELECT ON performance_schema.* TO 'prc'@'localhost';
     GRANT SELECT ON mysql.* TO 'prc'@'localhost';
 """  # fmt: skip
+# #2367: the RDS MySQL master user holds its privileges through a role (rds_superuser_role),
+# which information_schema.user_privileges does not list under the user. MySQL's syntax.
+ROLE_SETUP = """
+    CREATE ROLE 'admin_role'; GRANT SELECT, PROCESS ON *.* TO 'admin_role';
+    CREATE USER 'admin'@'localhost'; GRANT 'admin_role' TO 'admin'@'localhost';
+    SET DEFAULT ROLE ALL TO 'admin'@'localhost';
+    CREATE ROLE 'shop_role'; GRANT SELECT ON shop.* TO 'shop_role';
+    CREATE USER 'shopper'@'localhost'; GRANT 'shop_role' TO 'shopper'@'localhost';
+    SET DEFAULT ROLE ALL TO 'shopper'@'localhost'; GRANT SELECT ON performance_schema.* TO 'shopper'@'localhost';
+    CREATE USER 'cols'@'localhost'; GRANT SELECT (id, tail), INSERT ON shop.notes TO 'cols'@'localhost';
+    GRANT SELECT ON shop.old TO 'cols'@'localhost'; GRANT SELECT ON performance_schema.* TO 'cols'@'localhost';
+    GRANT PROCESS ON *.* TO 'cols'@'localhost';
+    CREATE ROLE 'inner_role'; GRANT PROCESS ON *.* TO 'inner_role';
+    CREATE ROLE 'outer_role'; GRANT 'inner_role' TO 'outer_role'; GRANT SELECT ON mysql.* TO 'outer_role';
+    CREATE USER 'nest'@'localhost'; GRANT 'outer_role' TO 'nest'@'localhost';
+    SET DEFAULT ROLE ALL TO 'nest'@'localhost'; GRANT SELECT ON shop.* TO 'nest'@'localhost';
+    GRANT SELECT ON performance_schema.* TO 'nest'@'localhost';
+    CREATE ROLE 'process_role'; GRANT PROCESS ON *.* TO 'process_role';
+    CREATE USER 'nomysql'@'localhost'; GRANT 'process_role' TO 'nomysql'@'localhost';
+    SET DEFAULT ROLE ALL TO 'nomysql'@'localhost'; GRANT SELECT ON shop.* TO 'nomysql'@'localhost';
+    GRANT SELECT ON performance_schema.* TO 'nomysql'@'localhost';
+"""  # fmt: skip
 
 
 class _Server:
@@ -113,7 +135,7 @@ def shop(request, mysql_socket):  # noqa: F811
         server = _Server(client, sock, False)
     else:
         server = request.getfixturevalue("mariadb_socket")
-    result = server.run(SETUP)
+    result = server.run(SETUP + ("" if server.mariadb else ROLE_SETUP))
     assert result.returncode == 0, result.stderr
     return server
 
@@ -176,6 +198,44 @@ def test_a_user_without_process_or_select_gets_nulls_and_the_collection_complete
     assert got[("notes", "body")] is None  # InnoDB file size unknown without PROCESS
     assert _lengths(_collect(shop, "prc"))[("notes", "body")] == 2000
     assert _lengths(_collect(shop, "prc"))[("old", "body")] == 4
+
+
+def test_a_user_whose_select_and_process_come_through_a_role_is_measured(shop):
+    """#2367: the RDS master user's global SELECT and PROCESS come through a role. The script
+    checks the privileges the user holds, so every LOB column is measured."""
+    if shop.mariadb:
+        pytest.skip("the role setup uses MySQL's syntax")
+    got = _lengths(_collect(shop, "admin"))
+    assert got[("notes", "body")] == 2000 and got[("notes", "tail")] == 3
+    assert got[("big", "body")] == 3_000_000 and got[("old", "body")] == 4
+    assert got == _lengths(_collect(shop))  # the same sizes as a direct grant gives
+
+
+def test_a_select_through_a_role_or_on_some_columns_is_seen(shop):
+    if shop.mariadb:
+        pytest.skip("the role setup uses MySQL's syntax")
+    # SELECT on the schema through a role: the MyISAM table is sized without PROCESS.
+    assert _lengths(_collect(shop, "shopper"))[("old", "body")] == 4
+    # SELECT on some columns only, with PROCESS so notes is sized: the selectable column is
+    # read, and the column the user sees through INSERT alone is left out. Reading it would
+    # stop the script with a SELECT denied error and lose every size.
+    got = _lengths(_collect(shop, "cols"))
+    assert got[("old", "body")] == 4
+    assert got[("notes", "tail")] == 3
+    assert ("notes", "body") in got and got[("notes", "body")] is None  # INSERT only
+
+
+def test_process_through_a_nested_role_or_a_hidden_role_row_is_not_read(shop):
+    """PROCESS through a role granted to the active role (ENABLED_ROLES lists only the active
+    one), or through a role whose USER_PRIVILEGES row the user may not see (no SELECT on the
+    mysql schema), is not read: the InnoDB tables stay unmeasured and the MyISAM one is sized.
+    The remaining cases are #2598."""
+    if shop.mariadb:
+        pytest.skip("the role setup uses MySQL's syntax")
+    for user in ("nest", "nomysql"):
+        got = _lengths(_collect(shop, user))
+        assert got[("notes", "body")] is None and got[("big", "body")] is None, user
+        assert got[("old", "body")] == 4, user
 
 
 def test_a_timeout_costs_the_sizes_and_never_the_collection(shop):

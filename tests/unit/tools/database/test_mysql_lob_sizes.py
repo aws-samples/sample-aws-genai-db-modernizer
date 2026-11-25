@@ -91,11 +91,12 @@ def test_the_script_bounds_the_scan_like_the_postgresql_script():
 
 def test_the_script_measures_only_tables_the_user_may_select_and_whose_size_is_known():
     section = _columns_section()
-    assert section.count("privilege_type = ''SELECT''") == 3  # global, schema, table grants
+    # The SELECT the session holds on each column (#2367), whatever grants it.
+    assert "AND FIND_IN_SET(''select'', LOWER(c.privileges)) > 0" in section
     # InnoDB keeps a large value off the pages data_length counts: its tablespace file bounds it,
     # read only with PROCESS (the view raises an error otherwise) and never assumed to exist.
-    assert "u.privilege_type = 'PROCESS'" in section
-    assert "'INNODB_TABLESPACES', 'INNODB_SYS_TABLESPACES'" in section  # MySQL, MariaDB 10.5
+    assert "u.privilege_type = ''PROCESS''" in section
+    assert "''INNODB_TABLESPACES'', ''INNODB_SYS_TABLESPACES''" in section  # MySQL, MariaDB 10.5
     # A size of 0 is as unknown as none; the table is never bounded by data_length alone.
     assert "(t.engine <> ''InnoDB'' OR ts.f > 0)" in section
     assert "ts.f IS NOT NULL" not in section
@@ -105,6 +106,30 @@ def test_the_script_measures_only_tables_the_user_may_select_and_whose_size_is_k
     assert ">= @@SESSION.group_concat_max_len" in section
 
 
+def test_the_script_reads_select_from_the_privileges_the_session_holds():
+    """#2367: the RDS MySQL master user holds a global SELECT through a role, which the
+    grant views list under the role, never under the user. COLUMNS.PRIVILEGES names what the
+    session may do with each column: a global, database, table, column or role grant."""
+    section = _columns_section()
+    select_check = section[section.index("SET @lob_size_sql") : section.index("PREPARE lob_union")]
+    assert "FIND_IN_SET(''select'', LOWER(c.privileges)) > 0" in select_check
+    for view in ("user_privileges", "schema_privileges", "table_privileges"):
+        assert view not in select_check  # direct grants only: a role's SELECT is not there
+
+
+def test_the_script_reads_process_granted_to_an_active_role():
+    """#2367: PROCESS through an active role counts (MySQL 8.0.19+ lists the session's roles
+    with their host); an older server or MariaDB reads the user's own grant only."""
+    section = _columns_section()
+    view = section[section.index("SET @tablespace_view_sql") : section.index("SET @lob_size_sql")]
+    assert "UPPER(table_name) = 'ENABLED_ROLES'" in section
+    assert "UPPER(column_name) = 'ROLE_HOST'" in section
+    assert "IF(@enabled_role_hosts," in view
+    assert "FROM information_schema.enabled_roles r" in view
+    assert "u.grantee = @grantee" in view  # the user's own grant still counts
+    assert "EXECUTE tablespace_view_stmt;" in view
+
+
 def test_the_script_measures_without_writing_or_locking():
     section = "\n".join(
         line for line in _columns_section().splitlines() if not line.startswith("--")
@@ -112,7 +137,7 @@ def test_the_script_measures_without_writing_or_locking():
     for word in ("INSERT", "UPDATE", "DELETE", "CREATE TEMPORARY", "CREATE TABLE", "LOCK ",
                  "FOR UPDATE", "FOR SHARE", "SET GLOBAL"):  # fmt: skip
         assert word not in section.upper()
-    assert section.count("\nPREPARE ") == 3 and "ANALYZE" not in section.upper()
+    assert section.count("\nPREPARE ") == 4 and "ANALYZE" not in section.upper()
 
 
 def test_the_measurement_has_a_timeout_in_a_statement_of_its_own():
