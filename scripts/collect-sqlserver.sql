@@ -334,6 +334,9 @@ SET @metadata = (
     SELECT
         DB_NAME() AS database_name,
         'sqlserver' AS engine,
+        -- #2239: only this script writes it. The columns section writes NULL for a (max)
+        -- length, so the parser reads a missing length as (max) only in a file that has it.
+        2 AS script_version,
         CONVERT(NVARCHAR(MAX), @@VERSION) AS version_full,
         CONVERT(NVARCHAR(50), SERVERPROPERTY('ProductVersion')) AS product_version,
         CONVERT(NVARCHAR(50), SERVERPROPERTY('Edition')) AS edition,

@@ -1730,7 +1730,7 @@ def test_a_system_schema_note_raises_no_application_code_risk() -> None:
 
 @pytest.mark.parametrize(
     "feature",
-    sorted(LEFT_OUT_FEATURES | {"index_key_prefix", "column_default", "time_zone"}),
+    sorted(LEFT_OUT_FEATURES | {"index_key_prefix", "column_default", "time_zone", "row_size"}),
 )
 def test_every_schema_note_without_logic_raises_no_application_code_risk(feature: str) -> None:
     """#2415: a left-out object (colliding or unsafe name, duplicate index name, system-schema
