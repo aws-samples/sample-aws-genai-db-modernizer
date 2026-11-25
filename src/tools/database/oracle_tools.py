@@ -480,7 +480,10 @@ class OracleRemoteCollector:
 
         No AWR/Diagnostic Pack dependency. Only totals available — no min/max
         per-execution, so percentile estimation is not possible (left as None).
-        CLOB sql_fulltext is truncated to 4000 chars via DBMS_LOB.SUBSTR, and the
+        CLOB sql_fulltext is truncated to at most 4000 chars and 4000 bytes via
+        DBMS_LOB.SUBSTR (#1909: 4000 less the extra bytes of its first 4000 characters, measured
+        on four VARCHAR2 pieces of 1000 characters, never under 1000, so a character of any
+        width fits SQL's VARCHAR2), and the
         text sent back, with its line breaks escaped, to at most 4000 bytes (#1880).
 
         Note: V$SQLSTATS lacks PARSING_SCHEMA_NAME, so we query V$SQL which
@@ -556,7 +559,18 @@ class OracleRemoteCollector:
                             SELECT
                                 SQL_ID,
                                 {_ORACLE_QUERY_KEY} AS query_key,
-                                DBMS_LOB.SUBSTR(SQL_FULLTEXT, 4000, 1) AS query_text,
+                                -- LENGTHB only sees VARCHAR2 pieces of 1000 characters (#1909)
+                                DBMS_LOB.SUBSTR(SQL_FULLTEXT,
+                                    GREATEST(4000 - (
+                                      NVL(LENGTHB(DBMS_LOB.SUBSTR(SQL_FULLTEXT, 1000, 1))
+                                        - LENGTH(DBMS_LOB.SUBSTR(SQL_FULLTEXT, 1000, 1)), 0)
+                                    + NVL(LENGTHB(DBMS_LOB.SUBSTR(SQL_FULLTEXT, 1000, 1001))
+                                        - LENGTH(DBMS_LOB.SUBSTR(SQL_FULLTEXT, 1000, 1001)), 0)
+                                    + NVL(LENGTHB(DBMS_LOB.SUBSTR(SQL_FULLTEXT, 1000, 2001))
+                                        - LENGTH(DBMS_LOB.SUBSTR(SQL_FULLTEXT, 1000, 2001)), 0)
+                                    + NVL(LENGTHB(DBMS_LOB.SUBSTR(SQL_FULLTEXT, 1000, 3001))
+                                        - LENGTH(DBMS_LOB.SUBSTR(SQL_FULLTEXT, 1000, 3001)), 0)), 1000), 1)
+                                    AS query_text,
                                 EXECUTIONS AS executions,
                                 ELAPSED_TIME AS elapsed_time,
                                 CPU_TIME AS cpu_time,

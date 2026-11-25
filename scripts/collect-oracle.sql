@@ -286,7 +286,19 @@ BEGIN
                 FROM (
                     SELECT SQL_ID,
                            CASE WHEN NVL(FORCE_MATCHING_SIGNATURE, 0) <> 0 THEN 'fms_' || TO_CHAR(FORCE_MATCHING_SIGNATURE) ELSE SQL_ID END AS query_key,
-                           DBMS_LOB.SUBSTR(SQL_FULLTEXT, 2000, 1) AS query_text,
+                           -- At most 2000 characters and at most 4000 bytes (#1909): SQL
+                           -- caps the VARCHAR2 DBMS_LOB.SUBSTR returns at 4000 bytes and raises
+                           -- ORA-06502 past it, and a character takes up to 4 bytes. LENGTHB is
+                           -- not supported on a CLOB in a multibyte database character set, so
+                           -- it only sees VARCHAR2 pieces of 1000 characters (4000 bytes at
+                           -- most). The cut is 4000 less the pieces' extra bytes (never under
+                           -- 1000 characters), so an ASCII statement keeps its 2000.
+                           DBMS_LOB.SUBSTR(SQL_FULLTEXT,
+                               LEAST(2000, GREATEST(4000 - (
+                                 NVL(LENGTHB(DBMS_LOB.SUBSTR(SQL_FULLTEXT, 1000, 1))
+                                   - LENGTH(DBMS_LOB.SUBSTR(SQL_FULLTEXT, 1000, 1)), 0)
+                               + NVL(LENGTHB(DBMS_LOB.SUBSTR(SQL_FULLTEXT, 1000, 1001))
+                                   - LENGTH(DBMS_LOB.SUBSTR(SQL_FULLTEXT, 1000, 1001)), 0)), 1000)), 1) AS query_text,
                            EXECUTIONS AS executions,
                            ELAPSED_TIME AS elapsed_time,
                            ROWS_PROCESSED AS rows_processed,
