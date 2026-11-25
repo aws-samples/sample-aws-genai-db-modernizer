@@ -33,7 +33,11 @@ source, a wave 1 not suggested, a wave not designed yet.
    risk text framed; in a parts round only the parts redesigned get it), and, in a
    parts round, the parts kept with the digests of their draft, review and input
    (:func:`kept_parts_at`): ``--split`` marks those ``carried_from`` (their own index),
-   so no designer and no reviewer is asked for them again;
+   so no designer and no reviewer is asked for them again. Opening a round is crash
+   safe (#2157): ``wave-redesign/v<N>/opening.json`` records every move, request and
+   the log entry before anything moves, and the next read of the log
+   (:func:`finish_opening`) applies it to the end, so an interrupt leaves either every
+   design in place or an open round that ``--stop`` or ``--rollback`` closes;
 2. the engine (or its parts) is designed and reviewed again, then synthesis runs again;
 3. :func:`plan_round` closes the round. The new design is kept only when it exists, its
    review ran (every engine's design is reviewed in both modes, #2081; in a parts round,
@@ -150,8 +154,20 @@ def _archive_prefix(db: str, job_id: str, version: int, round_n: int, engine: st
     return f"{db}/{job_id}/wave-redesign/v{version}/round_{round_n}/schema-{engine}/"
 
 
+def opening_key(db: str, job_id: str, version: int) -> str:
+    """The record of a round being opened (#2157): written before any design moves."""
+    return f"{db}/{job_id}/wave-redesign/v{version}/opening.json"
+
+
 def read_log(store: ArtifactStore, db: str, job_id: str, version: int) -> dict[str, Any]:
-    """The rounds run so far on ``version``; an empty log when none ran."""
+    """The rounds run so far on ``version``; an empty log when none ran. A round an
+    interrupt left half opened is opened to the end first (:func:`finish_opening`), so
+    every reader sees either no round or an open one with its designs set aside."""
+    finish_opening(store, db, job_id, version)
+    return _read_log(store, db, job_id, version)
+
+
+def _read_log(store: ArtifactStore, db: str, job_id: str, version: int) -> dict[str, Any]:
     key = log_key(db, job_id, version)
     try:
         log = store.read_json(key) if store.exists(key) else None
@@ -529,24 +545,27 @@ def _with_every_query(request: Mapping[str, Any], uncapped: Mapping[str, Any]) -
     return {**request, "checks": checks}
 
 
-def _set_aside(
+def _plan_aside(
     store: ArtifactStore,
     db: str,
     job_id: str,
     version: int,
-    round_n: int,
     engine: str,
     request: Mapping[str, Any],
     parts: bool,
-) -> list[int] | None:
+) -> tuple[list[int] | None, dict[str, Any]]:
+    """What a round sets aside of ``engine``'s design, read without moving anything: the
+    parts it redesigns (None for the whole engine) and the move (the file names under
+    ``schema-<engine>/v<N>/``, and whether a parts round copies the post-schema
+    reroute's record of its carried parts)."""
     src = _design_prefix(db, job_id, engine, version)
-    dst = _archive_prefix(db, job_id, version, round_n, engine)
     keys = store.list_prefix(src)
     affected: list[int] | None = None
     part_ids = _part_ids(store, src) if parts and _in_parts(engine) else None
     named = _affected_parts(request, part_ids) if part_ids else None
     if part_ids and named:
         affected = _with_placement_groups(store, db, job_id, version, part_ids, named)
+    carried = False
     if affected is not None:
         names = {*_MERGED, *(f for i in affected for f in _part_files(i))}
         keys = [k for k in keys if k[len(src) :] in names]
@@ -555,11 +574,89 @@ def _set_aside(
         # redesigns another input and so records its copy dropped, and putting the
         # round back restores the record with the draft, so that part reads carried
         # again rather than missing (#2119 review).
-        record = src + _CARRIED_FORWARD
-        if store.exists(record):
-            store.write_bytes(dst + _CARRIED_FORWARD, store.read_bytes(record))
-    _move(store, keys, src, dst)
-    return affected
+        carried = store.exists(src + _CARRIED_FORWARD)
+    move = {
+        "engine": engine,
+        "names": sorted(k[len(src) :] for k in keys),
+        "carried_forward": carried,
+    }
+    return affected, move
+
+
+def _apply_move(
+    store: ArtifactStore, db: str, job_id: str, version: int, round_n: int, move: Mapping
+) -> None:
+    """Move one engine's planned files aside. Safe to run again after an interrupt: a
+    file already moved is skipped, one copied but not yet deleted is copied again."""
+    engine = str(move["engine"])
+    src = _design_prefix(db, job_id, engine, version)
+    dst = _archive_prefix(db, job_id, version, round_n, engine)
+    record = src + _CARRIED_FORWARD
+    if move.get("carried_forward") and store.exists(record):
+        store.write_bytes(dst + _CARRIED_FORWARD, store.read_bytes(record))
+    _move(
+        store,
+        [src + str(n) for n in move.get("names") or [] if store.exists(src + str(n))],
+        src,
+        dst,
+    )
+
+
+def _open(
+    store: ArtifactStore,
+    db: str,
+    job_id: str,
+    version: int,
+    entry: Mapping[str, Any],
+    moves: list[dict[str, Any]],
+    requests: Mapping[str, Mapping[str, Any]],
+) -> None:
+    """Open round ``entry`` (#2157): record the whole opening (the moves, the requests
+    and the log entry) before anything moves, then apply it. An interrupt before the
+    record is written leaves every design in place; one after it leaves a record that
+    :func:`finish_opening` applies to the end on the next read of the log."""
+    store.write_json(
+        opening_key(db, job_id, version),
+        {
+            "round": int(entry["round"]),
+            "moves": moves,
+            "requests": dict(requests),
+            "entry": dict(entry),
+        },
+    )
+    finish_opening(store, db, job_id, version)
+
+
+def finish_opening(store: ArtifactStore, db: str, job_id: str, version: int) -> bool:
+    """Apply a recorded round opening to the end (#2157): move each engine's planned
+    files aside, write its request, then record the round open in the log. Each step is
+    safe to repeat, so it runs again after an interrupt at any point. Nothing happens
+    when no opening is recorded, when the log already holds its round (the opening
+    finished; a store that cannot delete keeps the record), or when the record cannot be
+    read (it is written before anything moves, so nothing moved). Returns whether it
+    opened a round."""
+    key = opening_key(db, job_id, version)
+    try:
+        opening = store.read_json(key) if store.exists(key) else None
+    except (OSError, ValueError):
+        opening = None
+    if not isinstance(opening, Mapping) or not isinstance(opening.get("entry"), Mapping):
+        if opening is not None or store.exists(key):
+            store.delete(key)
+        return False
+    n = int(opening["round"])
+    log = _read_log(store, db, job_id, version)
+    if any(isinstance(r, Mapping) and r.get("round") == n for r in log["rounds"]):
+        store.delete(key)
+        return False
+    for move in opening.get("moves") or []:
+        _apply_move(store, db, job_id, version, n, move)
+    for engine, body in (opening.get("requests") or {}).items():
+        store.write_json(request_key(db, job_id, engine, version), dict(body))
+    log["rounds"].append(dict(opening["entry"]))
+    store.write_json(log_key(db, job_id, version), log)
+    store.delete(key)
+    return True
 
 
 def _put_back(
@@ -908,35 +1005,37 @@ def plan_round(
     # designer is shown (#2119 review): a part past the cap is redesigned too.
     every_id = fixable_requests(report, max_query_ids=None)
     affected: dict[str, list[int] | None] = {}
+    moves: list[dict[str, Any]] = []
+    bodies: dict[str, dict[str, Any]] = {}
     for engine, request in sorted(requests.items()):
         chosen = _with_every_query(request, every_id.get(engine) or {})
-        affected[engine] = _set_aside(store, db, job_id, version, n, engine, chosen, parts)
-        store.write_json(
-            request_key(db, job_id, engine, version),
-            {
-                "round": done + 1,
-                "max_rounds": MAX_REDESIGN_ROUNDS,
-                **request,
-                # A parts round: the parts designed again, and the parts kept as they
-                # are, which --split marks carried_from (#2119).
-                "parts": affected[engine],
-                "kept_parts": _kept_record(
-                    store, _design_prefix(db, job_id, engine, version), affected[engine]
-                ),
-            },
-        )
-    log["rounds"].append(
-        {
-            "round": n,
-            "assignment_version": version,
-            "engines": sorted(requests),
-            "requests": [requests[e] for e in sorted(requests)],
-            "before": {e: engine_score(report, e) for e in sorted(requests)},
-            "parts": affected,
-            "outcome": None,
+        affected[engine], move = _plan_aside(store, db, job_id, version, engine, chosen, parts)
+        moves.append(move)
+        bodies[engine] = {
+            "round": done + 1,
+            "max_rounds": MAX_REDESIGN_ROUNDS,
+            **request,
+            # A parts round: the parts designed again, and the parts kept as they
+            # are, which --split marks carried_from (#2119). The parts kept never
+            # move, so their digests read the same before the move as after it.
+            "parts": affected[engine],
+            "kept_parts": _kept_record(
+                store, _design_prefix(db, job_id, engine, version), affected[engine]
+            ),
         }
-    )
+    entry = {
+        "round": n,
+        "assignment_version": version,
+        "engines": sorted(requests),
+        "requests": [requests[e] for e in sorted(requests)],
+        "before": {e: engine_score(report, e) for e in sorted(requests)},
+        "parts": affected,
+        "outcome": None,
+    }
+    # The last round's close (its outcome) is saved before the next one opens, which
+    # reads the log back.
     store.write_json(log_key(db, job_id, version), log)
+    _open(store, db, job_id, version, entry, moves, bodies)
     return {
         "status": "awaiting_redesign",
         # This loop's own round; the log's ``round`` numbers every round of the version.

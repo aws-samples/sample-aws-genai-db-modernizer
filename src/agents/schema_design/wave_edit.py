@@ -56,14 +56,14 @@ from src.agents.schema_design.wave_redesign import (
     _clear_requests,
     _close,
     _designed,
+    _open,
     _open_round,
-    _set_aside,
+    _plan_aside,
     engine_score,
     fixable_requests,
     log_key,
     pending_reviews,
     read_log,
-    request_key,
     review_warnings_of,
 )
 from src.contracts.synthesis_output import DecidedWarning
@@ -234,29 +234,34 @@ def _start(
     request, on ``requests``' engines only."""
     n = len(log["rounds"]) + 1
     affected: dict[str, list[int] | None] = {}
+    moves: list[dict[str, Any]] = []
+    bodies: dict[str, dict[str, Any]] = {}
     for engine, request in requests.items():
-        affected[engine] = _set_aside(store, db, job_id, version, n, engine, request, False)
-        store.write_json(
-            request_key(db, job_id, engine, version),
-            {"round": edit_round, "max_rounds": MAX_REDESIGN_ROUNDS, "wave_edit": wave, **request},
-        )
-    log["rounds"].append(
-        {
-            "round": n,
-            "assignment_version": version,
-            "engines": sorted(requests),
-            "requests": [requests[e] for e in sorted(requests)],
-            "before": {
-                e: [*engine_score(report, e), len(review_warnings_of(report, e))]
-                for e in sorted(requests)
-            },
-            "parts": affected,
-            "outcome": None,
+        affected[engine], move = _plan_aside(store, db, job_id, version, engine, request, False)
+        moves.append(move)
+        bodies[engine] = {
+            "round": edit_round,
+            "max_rounds": MAX_REDESIGN_ROUNDS,
             "wave_edit": wave,
-            "decision_version": decision,
+            **request,
         }
-    )
+    entry = {
+        "round": n,
+        "assignment_version": version,
+        "engines": sorted(requests),
+        "requests": [requests[e] for e in sorted(requests)],
+        "before": {
+            e: [*engine_score(report, e), len(review_warnings_of(report, e))]
+            for e in sorted(requests)
+        },
+        "parts": affected,
+        "outcome": None,
+        "wave_edit": wave,
+        "decision_version": decision,
+    }
+    # The last round's close is saved first; the opening is crash safe (#2157).
     store.write_json(log_key(db, job_id, version), log)
+    _open(store, db, job_id, version, entry, moves, bodies)
     return {
         "status": "awaiting_redesign",
         "wave": wave,
