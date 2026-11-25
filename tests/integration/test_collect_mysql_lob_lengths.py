@@ -5,11 +5,12 @@
 and name the routine privileges the session does not show (#2597).
 
 Needs ``mysqld`` and the ``mysql`` client on PATH (the throwaway server of
-``test_routine_scripts_mysql.py``). The MariaDB runs need ``mariadbd`` and ``mariadb`` on PATH, after the MySQL ones,
-(a MariaDB 10.5+ install's ``bin`` folder, for example Homebrew's ``mariadb@10.5``); they skip
-without it. Run it with ``uv run pytest -m integration
-tests/integration/test_collect_mysql_lob_lengths.py``. The gated suite checks the script's text
-and the live collector's queries in ``tests/unit/tools/database/test_mysql_lob_sizes.py``.
+``test_routine_scripts_mysql.py``), and ``mariadbd`` and ``mariadb`` for the MariaDB runs
+(a MariaDB 10.5+ install's ``bin`` folder after the MySQL one, for example Homebrew's
+``mariadb@10.5``). ``ci/test-mysqld.sh`` runs this file under ``--fail-on-skip`` with the
+pinned MySQL and MariaDB servers (#2620), so a missing server fails the run. The gated
+suite checks the script's text and the live collector's queries in
+``tests/unit/tools/database/test_mysql_lob_sizes.py``.
 """
 
 from __future__ import annotations
@@ -32,8 +33,10 @@ pytestmark = pytest.mark.integration
 
 SCRIPT = Path(__file__).resolve().parents[2] / "scripts" / "collect-mysql.sql"
 
+# The character set is stated, never the server's default: MariaDB's generic Linux build
+# defaults to latin1, Homebrew's to utf8mb4, and a 2-byte 'é' must stay 2 bytes (#2620).
 SETUP = """
-    CREATE DATABASE shop;
+    CREATE DATABASE shop CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci;
     CREATE TABLE shop.notes (id int PRIMARY KEY, body longtext, small text, med mediumblob,
                              j json, g geometry, `we``ird` mediumtext, tail longtext, z int);
     INSERT INTO shop.notes VALUES (1, REPEAT('é', 1000), REPEAT('x', 50), REPEAT('b', 300),
@@ -121,7 +124,8 @@ class _Server:
     def run(
         self, sql: str | None = None, *args: str, user: str = "root", stdin: bytes | None = None
     ):
-        argv = [self.client, "--no-defaults", f"-u{user}", f"--socket={self.sock}", *args]
+        argv = [self.client, "--no-defaults", f"-u{user}", f"--socket={self.sock}",
+                "--default-character-set=utf8mb4", *args]  # fmt: skip
         if sql is not None:
             argv += ["-e", sql]
         return subprocess.run(argv, input=stdin, capture_output=True, check=False)
@@ -147,7 +151,8 @@ def mariadb_socket():
         sock = work / "m.sock"
         proc = subprocess.Popen(
             [daemon, "--no-defaults", f"--basedir={base}", f"--datadir={work / 'data'}",
-             "--skip-networking", f"--socket={sock}", f"--pid-file={work / 'm.pid'}"],
+             "--skip-networking", f"--socket={sock}", f"--pid-file={work / 'm.pid'}",
+             "--character-set-server=utf8mb4", "--collation-server=utf8mb4_general_ci"],
             stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
         )  # fmt: skip
         try:
@@ -180,6 +185,11 @@ def shop(request, mysql_socket):  # noqa: F811
     )
     assert result.returncode == 0, result.stderr
     return server
+
+
+# The role setup uses MySQL's syntax, so these tests run on the MySQL server only: no
+# MariaDB case is generated, and nothing skips under --fail-on-skip.
+MYSQL_ONLY = pytest.mark.parametrize("shop", ["mysql"], indirect=True)
 
 
 def _run(shop: _Server, user: str = "root", setting: str = ""):
@@ -242,20 +252,18 @@ def test_a_user_without_process_or_select_gets_nulls_and_the_collection_complete
     assert _lengths(_collect(shop, "prc"))[("old", "body")] == 4
 
 
+@MYSQL_ONLY
 def test_a_user_whose_select_and_process_come_through_a_role_is_measured(shop):
     """#2367: the RDS master user's global SELECT and PROCESS come through a role. The script
     checks the privileges the user holds, so every LOB column is measured."""
-    if shop.mariadb:
-        pytest.skip("the role setup uses MySQL's syntax")
     got = _lengths(_collect(shop, "admin"))
     assert got[("notes", "body")] == 2000 and got[("notes", "tail")] == 3
     assert got[("big", "body")] == 3_000_000 and got[("old", "body")] == 4
     assert got == _lengths(_collect(shop))  # the same sizes as a direct grant gives
 
 
+@MYSQL_ONLY
 def test_a_select_through_a_role_or_on_some_columns_is_seen(shop):
-    if shop.mariadb:
-        pytest.skip("the role setup uses MySQL's syntax")
     # SELECT on the schema through a role: the MyISAM table is sized without PROCESS.
     assert _lengths(_collect(shop, "shopper"))[("old", "body")] == 4
     # SELECT on some columns only, with PROCESS so notes is sized: the selectable column is
@@ -267,13 +275,12 @@ def test_a_select_through_a_role_or_on_some_columns_is_seen(shop):
     assert ("notes", "body") in got and got[("notes", "body")] is None  # INSERT only
 
 
+@MYSQL_ONLY
 def test_process_through_a_nested_role_or_a_hidden_role_row_is_not_read(shop):
     """PROCESS through a role granted to the active role (ENABLED_ROLES lists only the active
     one), or through a role whose USER_PRIVILEGES row the user may not see (no SELECT on the
     mysql schema), is not read: the InnoDB tables stay unmeasured and the MyISAM one is sized.
     The remaining cases are #2598."""
-    if shop.mariadb:
-        pytest.skip("the role setup uses MySQL's syntax")
     for user in ("nest", "nomysql"):
         got = _lengths(_collect(shop, user))
         assert got[("notes", "body")] is None and got[("big", "body")] is None, user
