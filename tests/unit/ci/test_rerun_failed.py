@@ -241,8 +241,32 @@ def test_status_prints_one_line(gh, capsys, answers, first):
 # ---- the shell entry point and the pre_merge step ----
 
 
-def _sh(args: list[str], env_extra: dict[str, str] | None = None):
-    env = {**os.environ, "UV_NO_SYNC": "1", **(env_extra or {})}
+# A uv that runs pytest once, in one process: the script's `-n 4` is dropped, so a test of
+# the script never starts a second tree of xdist workers inside an xdist worker (#2603).
+SINGLE_PROCESS_UV = """#!{python}
+import os, sys
+args = sys.argv[1:]
+if args[:2] == ["run", "python"]:
+    os.execv(sys.executable, [sys.executable, *args[2:]])
+rest, out, skip = args[2:], [], False
+for a in rest:
+    if skip:
+        skip = False
+    elif a == "-n":
+        skip = True
+    else:
+        out.append(a)
+os.execv(sys.executable, [sys.executable, "-m", "pytest", "-p", "no:xdist", "-p", "no:cacheprovider", *out])
+"""
+
+
+def _sh(args: list[str], env_extra: dict[str, str] | None = None, bin_dir: Path | None = None):
+    """Run ci/rerun_failed.sh in its own session, away from the xdist worker's process group
+    and signal handlers, with no xdist or pytest variable of the worker in its environment."""
+    env = {k: v for k, v in os.environ.items() if not k.startswith(("PYTEST_", "XDIST_"))}
+    env.update({"UV_NO_SYNC": "1", **(env_extra or {})})
+    if bin_dir is not None:
+        env["PATH"] = f"{bin_dir}{os.pathsep}{env['PATH']}"
     return subprocess.run(
         ["bash", "ci/rerun_failed.sh", *args],
         cwd=ROOT,
@@ -250,7 +274,15 @@ def _sh(args: list[str], env_extra: dict[str, str] | None = None):
         text=True,
         env=env,
         check=False,
+        start_new_session=True,
     )
+
+
+def _single_process_uv(tmp_path: Path) -> Path:
+    uv = tmp_path / "bin" / "uv"
+    uv.write_text(SINGLE_PROCESS_UV.format(python=sys.executable))
+    uv.chmod(0o755)
+    return uv.parent
 
 
 def test_rerun_failed_sh_list_prints_the_ids(gh):
@@ -260,20 +292,22 @@ def test_rerun_failed_sh_list_prints_the_ids(gh):
     assert result.stdout.splitlines() == rf.parse_failed_ids(LOG)
 
 
-def test_rerun_failed_sh_runs_the_unit_ids_and_prints_the_e2e_command(gh):
+@pytest.mark.passes_on_main
+def test_rerun_failed_sh_runs_the_unit_ids_and_prints_the_e2e_command(gh, tmp_path):
     passing = "tests/unit/ci/test_rerun_failed.py::test_pick_run_takes_the_newest_completed_run"
     log = f"x\ty\tz FAILED {passing} - boom\nx\ty\tz FAILED tests/e2e/test_pipeline.py::test_a\n"
     _answer(gh, runs=[_run("completed", "failure", "2026-11-04T11:00:00Z")], log=log)
-    result = _sh([])
+    result = _sh([], bin_dir=_single_process_uv(tmp_path))
     assert result.returncode == 0, result.stdout + result.stderr
     assert "1 passed" in result.stdout
     assert "uv run pytest -p no:xdist -q tests/e2e/test_pipeline.py::test_a" in result.stdout
 
 
-def test_rerun_failed_sh_fails_when_a_rerun_test_fails(gh):
+@pytest.mark.passes_on_main
+def test_rerun_failed_sh_fails_when_a_rerun_test_fails(gh, tmp_path):
     log = "x\ty\tz FAILED tests/unit/ci/test_rerun_failed.py::test_does_not_exist - boom\n"
     _answer(gh, runs=[_run("completed", "failure", "2026-11-04T11:00:00Z")], log=log)
-    assert _sh([]).returncode != 0
+    assert _sh([], bin_dir=_single_process_uv(tmp_path)).returncode != 0
 
 
 def test_rerun_failed_sh_passes_on_nothing_to_rerun_and_exits_2_without_auth(gh):
