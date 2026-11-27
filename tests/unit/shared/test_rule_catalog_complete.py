@@ -441,6 +441,11 @@ NUMERIC_CONSTANTS: dict[str, tuple[frozenset[str], str]] = {
         "a credential scan threshold, not a routing rule: the longest piece of an unquoted "
         "value after a token or API key name that can still be a word of prose (#2179)",
     ),
+    "src/shared/secret_scan_baseline.py": (
+        frozenset({"_MAX_WORD_LENGTH"}),
+        "main's copy of the credential scan's rules, the first pass of its union (#2595): "
+        "the same prose-word threshold as src/shared/secret_scan.py",
+    ),
     "src/shared/design_text.py": (
         frozenset({"ONCE_MIN_WORDS"}),
         "a prose length, not a routing rule: the words a design sentence needs to be "

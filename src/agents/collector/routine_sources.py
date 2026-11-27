@@ -999,9 +999,10 @@ def _delete_chunks_from(store: Any, prefix: str, number: int) -> None:
         number += 1
 
 
-def _secret_kinds(text: str) -> tuple[list[str], list[str]]:
+def _secret_kinds(text: str, engine: str | None = None) -> tuple[list[str], list[str]]:
     """What the repository's credential scan (``src/shared/secret_scan.py``, the one
-    the CI private scan uses, #2055) finds in ``text``: its credential kinds and its
+    the CI private scan uses, #2055) finds in ``text``, read in ``engine``'s SQL
+    dialect (#2262): its credential kinds and its
     public-address kinds, each sorted, never a value or a line. A kind the contract
     cannot name is recorded as ``other``; a scan that fails flags nothing and never
     stops the write."""
@@ -1009,7 +1010,7 @@ def _secret_kinds(text: str) -> tuple[list[str], list[str]]:
     from src.shared.secret_scan import IP_KINDS, secret_kinds
 
     try:
-        kinds = secret_kinds(text)
+        kinds = secret_kinds(text, source_engine=engine)
     except Exception:  # noqa: BLE001 - a failed scan never stops the write
         logger.warning("The credential scan failed on a routine body; it is not flagged")
         return [], []
@@ -1066,7 +1067,7 @@ def _write_chunks(
                 )
             seen.add(mark)
             # Only the kinds found are kept, never a finding's value or line.
-            credentials, addresses = _secret_kinds(source.create_statement)
+            credentials, addresses = _secret_kinds(source.create_statement, engine)
             if credentials or addresses:
                 flagged.append(
                     RoutineSecretFlag(

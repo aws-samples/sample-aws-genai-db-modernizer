@@ -121,7 +121,8 @@ _KEY_EDGE_RE = re.compile(r"-{4,5} ?(?:BEGIN|END) [A-Z0-9 ]*PRIVATE KEY(?: BLOCK
 # prefix is removed. Raw lines and segments of a line split at escaped breaks (any
 # escape level) count.
 _BASE64_RUN_RE = re.compile(r"[A-Za-z0-9+/]{40,}={0,2}")
-_ESCAPED_BREAK_RE = re.compile(r"\\+r\\+n|\\+n|\\+r|\\+u000[aAdD]|<br\s*/?>")
+# A backslash run is read from its start only, so a long one costs linear time (#2263).
+_ESCAPED_BREAK_RE = re.compile(r"(?<!\\)(?:\\+r\\+n|\\+n|\\+r|\\+u000[aAdD])|<br\s*/?>")
 # Known line prefixes: the Read tool's "  12→" (raw or escaped), grep -n's "file:12:",
 # a list marker, a table pipe, a timestamp and a log level, and JSON punctuation.
 _LINE_PREFIX_RE = re.compile(
@@ -129,7 +130,7 @@ _LINE_PREFIX_RE = re.compile(
     r"|\[?\d{4}-\d{2}-\d{2}[T ]\d{2}:\d{2}(?::\d{2}(?:[.,]\d+)?)?(?:Z|[+-]\d{2}:?\d{2})?\]?"
     r"|(?:DEBUG|INFO|WARN(?:ING)?|ERROR)\b:?|[\"'{}\[\],:\\])"
 )
-_LINE_SUFFIX_RE = re.compile(r"[\s\"'|,\\}\]]+$")
+_LINE_SUFFIX_RE = re.compile(r"(?<![\s\"'|,\\}\]])[\s\"'|,\\}\]]+$")
 #: Two body lines in a row are key material, with or without a header (fail closed:
 #: a two-line chunk of a key read back in pieces).
 KEY_BODY_RUN = 2
@@ -555,9 +556,10 @@ class Redaction:
     pending: list[PendingContext] = field(default_factory=list, repr=False)
     raw_keys: dict[tuple[str, int], set[str]] = field(default_factory=dict, repr=False)
     #: Each value under ``VALUE_PIECE`` characters the scan ended at a backslash or
-    #: at a quote that does not close it, with what it was cut at (``password =
-    #: Zq9",Xv7...`` gives ``Zq9"``, ``DB_PASSWORD=ab\\`` gives ``ab\\``; an embedded
-    #: run, ``Zq9"Xv7...``, is part of the value since #2247): the rest of the value
+    #: at a quote that does not close it, with what it was cut at
+    #: (``conn("password=Zq9")`` gives ``Zq9"``, ``\\"password=a\\"`` gives ``a\\"``; an
+    #: embedded run, ``Zq9"Xv7...`` or ``Zq9",Xv7...``, is part of the value since
+    #: #2247 and #2260): the rest of the value
     #: is unknown, so ``redact_flagged_values`` refuses a key, a string or a text that
     #: holds it (#2213, #2266). In memory only.
     cut: set[str] = field(default_factory=set, repr=False)
@@ -1110,7 +1112,7 @@ class _KeyMatcher:
 
     def holds_a_cut_token(self, raw: str, document: str = "") -> bool:
         """Whether a string or a text holds a value the scan cut short with what it was
-        cut at (``Zq9"``, ``ab\\``), with no letter, digit or ``_`` before it, in its
+        cut at (``Zq9"``, ``a\\"``), with no letter, digit or ``_`` before it, in its
         raw text or with escapes undone at any level, in any case: a bare ``a`` or
         ``ab`` withholds nothing (#2266)."""
         for text, _levels_back in _levels(raw, document):

@@ -122,8 +122,9 @@ def test_the_dev_extra_adds_detect_secrets_on_top():
     assert secret_scan.rule_set() == "regex+detect-secrets"
 
 
+@pytest.mark.passes_on_main  # guards behaviour main already has; changed here for the new source_engine keyword
 def test_an_unknown_finding_kind_is_recorded_as_other(tmp_path, monkeypatch):
-    monkeypatch.setattr(secret_scan, "secret_kinds", lambda text: {"new/kind!"})
+    monkeypatch.setattr(secret_scan, "secret_kinds", lambda text, **_: {"new/kind!"})
     _write(tmp_path, _source("sync", _LEAKY))
     assert _index(tmp_path)["secret_scan"]["flagged"][0]["credential_kinds"] == ["other"]
 

@@ -85,6 +85,10 @@ OTHER_SQL_MODULES: dict[str, str] = {
         "the credential scan's own allow rule: a column note naming a SQL type is no "
         "credential (moved from ci/llm/private_scan.py, #1933); it reads no query fact"
     ),
+    "src/shared/secret_scan_baseline.py": (
+        "main's copy of the credential scan's rules, the first pass of its union (#2595), "
+        "with the same column-note allow rule as src/shared/secret_scan.py"
+    ),
     "src/agents/collector/mysql_collector.py": (
         "the collector's time-range field, before any fact is read; its has_text_search is the "
         "text_search fact the live reader sets (#929)"

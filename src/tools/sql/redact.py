@@ -361,8 +361,23 @@ _VERSION_RE = re.compile(r"\d{0,6}")
 _BIND_VALUE_RE = re.compile(r"\?|\$\d+|%s|[:@][A-Za-z_][\w$#]*")
 
 
+def _merged(spans: list[tuple[int, int]]) -> list[tuple[int, int]]:
+    """``spans`` sorted, overlapping ones joined."""
+    merged: list[tuple[int, int]] = []
+    for start, end in sorted(spans):
+        if merged and start <= merged[-1][1]:
+            merged[-1] = (merged[-1][0], max(merged[-1][1], end))
+        else:
+            merged.append((start, end))
+    return merged
+
+
 def _credentials_masked(
-    text: str, spans: list[tuple[int, int]] | None = None, *, code: bool = False
+    text: str,
+    spans: list[tuple[int, int]] | None = None,
+    *,
+    code: bool = False,
+    source_engine: str | None = None,
 ) -> str:
     """``text`` with each credential value the repository's own rules flag
     (:func:`src.shared.secret_scan.credential_spans`, or the ``spans`` given) replaced
@@ -370,7 +385,11 @@ def _credentials_masked(
     markers never change, so the SQL around the comment reads the same (#2234). With
     ``code`` (text read as SQL), a flagged value that is a bind parameter is kept."""
     if spans is None:
-        spans = credential_spans(text)
+        # Comment text is not read by the engine, so the dialect's reading never masks
+        # less than the longer one (#2595).
+        spans = credential_spans(text, source_engine)
+        if source_engine:
+            spans = _merged(spans + credential_spans(text))
     if code:
         spans = [(a, b) for a, b in spans if not _BIND_VALUE_RE.fullmatch(text[a:b].rstrip("),;"))]
     if not spans:
@@ -402,22 +421,22 @@ def _credentials_masked(
 _SCRUB_PASSES = 4
 
 
-def scrub_comment(text: str, *, code: bool = False) -> str:
+def scrub_comment(text: str, *, code: bool = False, source_engine: str | None = None) -> str:
     """``text`` (a comment, or a tag read from one) with each credential value the
     repository's own rules flag (#2234), each e-mail address and each run of nine or
     more digits replaced by ``?``. With ``code`` (the rest of a one-line statement, read
     as SQL), a flagged value that is a bind parameter (``= @ApiKey``) is kept.
-    Idempotent."""
+    ``source_engine``: the SQL dialect its quotes are read in (#2262). Idempotent."""
     for _ in range(_SCRUB_PASSES):
-        again = _scrubbed_once(text, code)
+        again = _scrubbed_once(text, code, source_engine)
         if again == text:
             break
         text = again
     return text
 
 
-def _scrubbed_once(text: str, code: bool = False) -> str:
-    text = _credentials_masked(text, code=code)
+def _scrubbed_once(text: str, code: bool = False, source_engine: str | None = None) -> str:
+    text = _credentials_masked(text, code=code, source_engine=source_engine)
     if "@" not in text and "%40" not in text and not any(c.isdigit() for c in text):
         return text
     if "@" in text or "%40" in text:
@@ -457,8 +476,8 @@ def redact_comment(text: str, source_engine: str | None) -> str:
     if not text:
         return text
     if _SQLCOMMENTER_RE.fullmatch(text.strip()):
-        return scrub_comment(text)
-    return scrub_comment(_quoted_runs_redacted(text))
+        return scrub_comment(text, source_engine=source_engine)
+    return scrub_comment(_quoted_runs_redacted(text), source_engine=source_engine)
 
 
 _QUOTE_RE = re.compile(r"['\"]")
@@ -751,8 +770,10 @@ class _Redactor:
         code = True
         if code and opener in ("--", "#") and at_end and "\n" not in span:
             # The rest of a one-line statement: SQL, redacted as such.
-            rest = scrub_comment(span[len(opener) :], code=True)
-            return opener + scrub_comment(self._redact(rest, numbering, body=False), code=True)
+            engine = self.engine
+            rest = scrub_comment(span[len(opener) :], code=True, source_engine=engine)
+            redacted = self._redact(rest, numbering, body=False)
+            return opener + scrub_comment(redacted, code=True, source_engine=engine)
         if code and span.startswith("/*!") and span.endswith("*/") and len(span) >= 5:
             # MySQL's executable comment is code, less any known token format, which
             # valid SQL never holds outside a string (#2234).
@@ -765,8 +786,9 @@ class _Redactor:
             return "/*!" + self._redact(inner, numbering, body=False) + "*/"
         if code and opener == "/*" and (len(span) < 4 or not span.endswith("*/")):
             # Cut inside a comment: what follows may be the statement itself.
+            inner = scrub_comment(span[2:], source_engine=self.engine)
             return "/*" + scrub_comment(
-                self._redact(scrub_comment(span[2:]), numbering, body=False)
+                self._redact(inner, numbering, body=False), source_engine=self.engine
             )
         if opener == "/*" and len(span) >= 4:
             return "/*" + redact_comment(span[2:-2], self.engine) + "*/"
@@ -831,7 +853,7 @@ class _Redactor:
         ):
             return prefix + span, False
         if "%" in inner or function in _PATTERN_FUNCTIONS or _PATTERN_CONTEXT_RE.search(before):
-            return head + scrub_comment(_shape(inner)) + tail, False
+            return head + scrub_comment(_shape(inner), source_engine=self.engine) + tail, False
         kind = prefix.upper()
         if kind in ("X", "BX", "B"):
             # A binary or bit string: zeroed, in its own form, which not every parser

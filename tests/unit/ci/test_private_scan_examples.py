@@ -204,6 +204,7 @@ def test_a_raw_private_key_block_goes_whole_and_later_lines_keep_their_numbers()
     assert not result.redactable
 
 
+@pytest.mark.passes_on_main  # guards behaviour main already has; changed here for the new dialect keyword
 def test_a_value_that_cannot_be_placed_makes_the_redaction_incomplete(monkeypatch) -> None:
     from src.shared import secret_scan
 
@@ -211,7 +212,7 @@ def test_a_value_that_cannot_be_placed_makes_the_redaction_incomplete(monkeypatc
     monkeypatch.setattr(
         secret_scan,
         "_line_hits",
-        lambda body, emails, *_: [("token value", None)] if _LOOKS_REAL in body else [],
+        lambda body, emails, *_, **__: [("token value", None)] if _LOOKS_REAL in body else [],
     )
     result = private_scan.redact(f"a\nkey: {_LOOKS_REAL}\nb\n")
     assert result.findings == [("token value", 2)]
