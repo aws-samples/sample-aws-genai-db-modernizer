@@ -12,7 +12,7 @@ form, with pseudo-tables (``unknown``, ``DUAL``) dropped.
 from __future__ import annotations
 
 from src.agents.referee.synthesis_data import EngineArtifacts, SynthesisData
-from src.agents.referee.synthesis_report import build_risk_assessment
+from src.agents.referee.synthesis_report import _build_mitigation_strategies, build_risk_assessment
 
 _TABLES = ["wordpress.wp_postmeta", "wordpress.wp_posts", "wordpress.wp_users"]
 
@@ -264,6 +264,38 @@ def test_a_strategy_names_a_risks_collected_tables_first() -> None:
     """A severe risk with no mitigation gets a strategy that names its first three tables."""
     strategies = build_risk_assessment(_aggregation_data("dynamodb"))["mitigation_strategies"]
     assert "public.orders, public.users, active_orders and 1 more" in strategies[0]
+
+
+def test_the_blue_green_strategy_names_collected_tables_first() -> None:
+    """#2097: the blue-green line lists the severe risks' tables in the same order."""
+    strategies = build_risk_assessment(_aggregation_data("dynamodb"))["mitigation_strategies"]
+    assert (
+        "Use blue-green deployment with rollback for the tables behind the critical or high "
+        "risks: public.orders, public.users, active_orders, pg_class."
+    ) in strategies
+
+
+def test_the_blue_green_strategy_orders_all_severe_tables_as_one_list() -> None:
+    """#2097: the tables of several severe risks are ordered together, not risk by risk, and
+    a table two of them share is named once; the ids sort without regard to case (#1914)."""
+    data = _pg_data({}, [], ["dbo.Users", "dbo.aspnet_Membership"])
+    risks = [
+        {
+            "risk_id": "RISK-001",
+            "severity": "HIGH",
+            "affected_tables": ["dbo.Users", "active_orders"],
+        },
+        {
+            "risk_id": "RISK-002",
+            "severity": "CRITICAL",
+            "affected_tables": ["sys.objects", "dbo.aspnet_Membership", "dbo.Users"],
+        },
+    ]
+    strategies = _build_mitigation_strategies(risks, {"dynamodb"}, data)
+    assert (
+        "Use blue-green deployment with rollback for the tables behind the critical or high "
+        "risks: dbo.aspnet_Membership, dbo.Users, active_orders, sys.objects."
+    ) in strategies
 
 
 def test_collected_tables_sort_by_their_id_in_any_case() -> None:
