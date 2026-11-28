@@ -259,6 +259,8 @@ class SQLServerRemoteCollector:
             if name not in indexes:
                 indexes[name] = {
                     "index_name": name,
+                    # #2289: the query orders the rows by key position, so the order is known.
+                    "key_order_known": True,
                     "columns": [],
                     "is_unique": r.get("is_unique") in (True, 1, "1", "True", "true"),
                     "is_primary": r.get("is_primary_key") in (True, 1, "1", "True", "true"),

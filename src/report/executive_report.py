@@ -1479,6 +1479,10 @@ def _risks(report: dict[str, Any], st: dict[str, ParagraphStyle], names: Any) ->
     for left_out in facts.get("design_left_out") or []:
         if isinstance(left_out, dict) and left_out.get("brief_line"):
             flow += [_para(left_out["brief_line"], st["small"]), _gap(4)]
+    # #2289: what each Aurora design changes from the source, counted; no table is named.
+    for changes in facts.get("design_changes") or []:
+        if isinstance(changes, dict) and changes.get("brief_line"):
+            flow += [_para(changes["brief_line"], st["small"]), _gap(4)]
     if risks:
         flow.append(_para(RISK_RULE_NOTE, st["small"]))
     else:

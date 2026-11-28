@@ -310,6 +310,8 @@ def test_backfill_gives_an_older_report_the_figures_this_run_stored(figure: str)
 _NEWER_THAN_THE_RECORDING: tuple[str, ...] = (
     # #2484: the objects each Aurora design leaves out, from its notes.
     "design_left_out",
+    # #2289: each Aurora design's changes from the source, from its design summary.
+    "design_changes",
 )
 # Fields added inside a recorded fact, filled in the same way (#399).
 _NEWER_FIELDS_THAN_THE_RECORDING = {

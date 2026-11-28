@@ -516,6 +516,8 @@ class MySQLRemoteCollector:
             if name not in indexes:
                 indexes[name] = {
                     "index_name": name,
+                    # #2289: the query orders the rows by key position, so the order is known.
+                    "key_order_known": True,
                     "columns": [],
                     "is_unique": not r["non_unique"],
                     "is_primary": name == "PRIMARY",

@@ -2112,7 +2112,7 @@ def _engine_schema_summaries(data, hot_partitions: list[dict] | None = None):
         elif engine == "documentdb" and schema.get("collections"):
             summaries[engine] = _build_documentdb_schema_summary(schema)
         elif engine in AURORA_ENGINES and schema.get("table_definitions"):
-            summaries[engine] = _build_aurora_schema_summary(engine, schema)
+            summaries[engine] = _build_aurora_schema_summary(engine, schema, data.collector)
         elif schema.get("table_definitions"):
             summaries[engine] = _build_standard_schema_summary(
                 schema, engine=engine, hot_partitions=hot_partitions
@@ -2211,15 +2211,22 @@ def _build_documentdb_schema_summary(schema):
     }
 
 
-def _build_aurora_schema_summary(engine, schema):
+def _build_aurora_schema_summary(engine, schema, collector=None):
     """Build schema summary for Aurora MySQL/PostgreSQL (relational table format).
 
     Aurora carries tables over 1:1, so the summary reports relational structure
     (columns, indexes, foreign keys) plus the Aurora-specific optimizations and
-    app-layer notes. The full DDL stays in the schema artifact.
+    app-layer notes. The full DDL stays in the schema artifact. Each table also carries
+    what it changes from its collected table (#2289, ``design_source_changes``), which
+    ``facts.design_changes`` counts; a summary built with no collected tables has none.
     """
+    from src.tools.schema.aurora_common.source_changes import design_source_changes
+
     tables = schema_table_defs(engine, schema)
+    changes = design_source_changes(engine, schema, collector)
     return {
+        # #2289: whether each table was compared with the collected source.
+        "source_compared": changes is not None,
         "status": "completed",
         "validation_passed": schema.get("validation_passed", False),
         "migration_strategy": schema.get("migration_strategy"),
@@ -2237,8 +2244,13 @@ def _build_aurora_schema_summary(engine, schema):
                 "primary_key": t.get("primary_key") or [],
                 "index_count": len(t.get("indexes") or []),
                 "foreign_key_count": len(t.get("foreign_keys") or []),
+                **(
+                    {"source_changes": changes[i]}
+                    if changes is not None and i < len(changes) and changes[i] is not None
+                    else {}
+                ),
             }
-            for t in tables
+            for i, t in enumerate(tables)
         ],
         "index_count": sum(len(t.get("indexes") or []) for t in tables),
         "foreign_key_count": sum(len(t.get("foreign_keys") or []) for t in tables),

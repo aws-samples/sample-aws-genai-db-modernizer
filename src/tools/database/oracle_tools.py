@@ -233,6 +233,8 @@ class OracleRemoteCollector:
             if name not in indexes:
                 indexes[name] = {
                     "index_name": name,
+                    # #2289: the query orders the rows by key position, so the order is known.
+                    "key_order_known": True,
                     "columns": [],
                     "is_unique": str(r.get("uniqueness") or "").upper() == "UNIQUE",
                     "is_primary": str(r.get("is_primary") or "").upper() == "YES",

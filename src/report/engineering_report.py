@@ -734,6 +734,107 @@ def _left_out_md(facts: dict[str, Any], engine: str) -> list[str]:
     return out
 
 
+_CHANGE_LABELS = {
+    "added": "Added",
+    "skipped": "Not created",
+    "type_changed": "Type changed",
+    "renamed": "Renamed",
+    "changed": "Changed",
+    "step1": "Recreated by step 1 when it moves the table",
+}
+#: How a row names each index part that differs from the source (#2289).
+_INDEX_PART_LABELS = {
+    "columns": "key columns",
+    "unique": "uniqueness",
+    "method": "access method",
+    "where": "partial-index predicate",
+    "include": "INCLUDE columns",
+    "prefixes": "key prefixes",
+}
+
+
+def _key_cells(values: Any, unique: Any = None) -> str:
+    """An index's key columns, each a code span in one table cell, and UNIQUE when it is."""
+    cells = ", ".join(escaping.md_code_cell(v) for v in values or []) or "-"
+    return f"{cells} (unique)" if unique else cells
+
+
+def _index_change_label(index: dict[str, Any]) -> str:
+    label = _CHANGE_LABELS[index["change"]]
+    parts = [_INDEX_PART_LABELS.get(p, p) for p in index.get("differences") or []]
+    return f"{label} ({', '.join(parts)})" if parts else label
+
+
+def _design_changes_md(facts: dict[str, Any], engine: str, design: dict[str, Any]) -> list[str]:
+    """What the engine's design changes from the collected tables (#2289): the count line
+    of ``facts.design_changes``, then one row per change from the rows synthesis stored on
+    the design summary, with the reason the draft or the design's notes give. A translated
+    type (a heterogeneous design) is counted, not listed. Nothing for a design not compared."""
+    entry = next(
+        (
+            e
+            for e in facts.get("design_changes") or []
+            if isinstance(e, dict) and e.get("engine") == engine
+        ),
+        None,
+    )
+    if not entry:
+        return []
+    out = [f"**Changes from the source:** {escaping.md_text(entry.get('brief_line') or '')}", ""]
+    rows: list[str] = []
+    for t in design.get("tables") or []:
+        changes = t.get("source_changes") if isinstance(t, dict) else None
+        if not isinstance(changes, dict):
+            continue
+        name = t.get("table_name") or "?"
+        cell = escaping.md_code_cell(f"{t['schema_name']}.{name}" if t.get("schema_name") else name)
+        if changes.get("uncompared"):
+            continue
+        if changes.get("source_table") is None:
+            rows.append(f"| {cell} | table | Added | - | - | - |")
+            continue
+        for c in changes.get("columns") or []:
+            label = _CHANGE_LABELS.get(c.get("change"))
+            if label and c.get("change") != "step1":
+                rows.append(
+                    f"| {cell} | column {escaping.md_code_cell(c.get('name') or '?')} | {label} | "
+                    f"{escaping.md_code_cell(c['source_type']) if c.get('source_type') else '-'} | "
+                    f"{escaping.md_code_cell(c['aurora_type']) if c.get('aurora_type') else '-'} "
+                    "| - |"
+                )
+        for i in changes.get("indexes") or []:
+            change = i.get("change")
+            if change not in _CHANGE_LABELS or change == "type_changed":
+                continue
+            cols = _key_cells(i.get("columns"), i.get("unique"))
+            source, target = {
+                "added": ("-", cols),
+                "skipped": (cols, "-"),
+                "step1": (cols, "-"),
+                "renamed": (escaping.md_code_cell(i.get("source_name") or "?"), cols),
+                "changed": (_key_cells(i.get("source_columns"), i.get("source_unique")), cols),
+            }[change]
+            why = escaping.md_cell(i["reason"]) if i.get("reason") else "-"
+            rows.append(
+                f"| {cell} | index {escaping.md_code_cell(i.get('name') or '?')} | "
+                f"{_index_change_label(i)} | {source} | {target} | {why} |"
+            )
+    for u in entry.get("uncompared_tables") or []:
+        name = u.get("table_name") or "?"
+        cell = escaping.md_code_cell(f"{u['schema_name']}.{name}" if u.get("schema_name") else name)
+        rows.append(
+            f"| {cell} | table | Not compared | - | - | {escaping.md_cell(u.get('reason') or '-')} |"
+        )
+    if rows:
+        out += [
+            "| Table | Object | Change | Source | Design | Why |",
+            "|---|---|---|---|---|---|",
+            *rows,
+            "",
+        ]
+    return out
+
+
 def _note_blocks(
     design: dict[str, Any], defaults: bool
 ) -> list[tuple[list[str], list[dict[str, Any]]]]:
@@ -1686,6 +1787,7 @@ def render_engineering_report_md(
                 )
                 out.append("")
             out += _left_out_md(facts, eng)
+            out += _design_changes_md(facts, eng, dz)
             out += _app_layer_notes_md(dz, query_ids)
             er = _mermaid_er(eng, dz)
             if er:

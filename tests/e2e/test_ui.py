@@ -4307,14 +4307,12 @@ def test_the_aurora_design_is_a_table_with_a_filter_and_a_detail_panel(
         shown = tables.locator("tbody tr")
         expect(shown).to_have_count(min(len(names), 25), timeout=READY_MS)
         headers = [h.strip() for h in tables.locator("thead th").all_inner_texts()]
-        assert headers[-6:] == [
-            "Table",
-            "Columns",
-            "Primary key",
-            "Indexes",
-            "Foreign keys",
-            "Queries",
-        ], headers
+        # #2289: a design synthesis compared with the source adds its Change column.
+        compared = (
+            ["Change from source"] if _design_changes(r, _designed_aurora_engines(r)[0]) else []
+        )
+        expected = ["Table", "Columns", "Primary key", "Indexes", "Foreign keys", "Queries"]
+        assert headers[-len(expected) - len(compared) :] == expected + compared, headers
         # One list, not a toggle per table: no nested section carries a table's name.
         assert design.get_by_role("button", name=names[0], exact=True).count() == 0
 
@@ -4324,6 +4322,8 @@ def test_the_aurora_design_is_a_table_with_a_filter_and_a_detail_panel(
         panel = page.get_by_role("region", name=f"Table {names[0]}").first
         expect(panel).to_be_visible(timeout=READY_MS)
         assert page.get_by_role("dialog").count() == 0
+        # #2289: the table's DDL is in a collapsed section of the panel.
+        panel.get_by_role("button", name="Generated DDL").click()
         expect(panel).to_contain_text("CREATE TABLE", timeout=READY_MS)
         expect(panel).to_contain_text("Primary key")
         blocking, where, _ = _axe_blocking(page)
@@ -4351,6 +4351,102 @@ def test_the_aurora_design_is_a_table_with_a_filter_and_a_detail_panel(
         assert ev == {"console": [], "pageerror": [], "failed": []}, (r.job_id, ev)
         checked += 1
     assert checked or any(r.external for r in all_runs), "no job with an Aurora design"
+
+
+def _design_changes(r: PipelineResult, engine: str) -> dict | None:
+    """``engine``'s row of the job's facts.design_changes (#2289), as the results API reads
+    it (``report_facts`` fills it in for an older report); None when it was not compared."""
+    from src.report.facts import report_facts
+
+    report = json.loads((r.artifact_root / r.report["report"]).read_text())
+    rows: list[dict] = report_facts(report).get("design_changes") or []
+    return next((row for row in rows if row.get("engine") == engine), None)
+
+
+def test_the_aurora_design_shows_each_tables_change_from_the_source(
+    page: Page, ui: str, all_runs: list[PipelineResult]
+) -> None:
+    """#2289: a design synthesis compared with its collected tables shows a Change column
+    of badges and a change filter on the list, and its panel lists the columns with their
+    source type, nullable, default and change, and the indexes as a table of name,
+    columns, unique and change: the kinds and the changed flag from facts.design_changes,
+    the rows from the design summary. The Any change filter lists the tables the facts mark
+    changed. Axe finds nothing blocking with the filter set and the panel open."""
+    checked = 0
+    for r in _designed_runs(all_runs):
+        engines = _designed_aurora_engines(r)
+        changes = _design_changes(r, engines[0]) if engines else None
+        if not changes or not changes["table_changes"]:
+            continue
+        ev = _watch(page)
+        _goto_results(page, ui, r, "data-model")
+        design = page.locator("#table-design-section")
+        tables = design.locator("#aurora-design-tables")
+        expect(tables).to_be_visible(timeout=READY_MS)
+        expect(design.locator('[data-figure="design-changes"]')).to_be_visible()
+
+        # The change filter keeps the tables with any change, or with none.
+        # The facts' one changed flag: the summary counts it and the filter reads it.
+        changed = [t for t in changes["table_changes"] if t["changed"]]
+        same = [t for t in changes["table_changes"] if not t["changed"]]
+        design.get_by_role("button", name=re.compile("Filter tables by their change")).click()
+        page.get_by_role("option", name="Any change").click()
+        expect(tables.locator("tbody tr")).to_have_count(
+            min(len(changed), 25) or 1, timeout=READY_MS
+        )
+        design.get_by_role("button", name=re.compile("Filter tables by their change")).click()
+        page.get_by_role("option", name="No change").click()
+        expect(tables.locator("tbody tr")).to_have_count(min(len(same), 25) or 1, timeout=READY_MS)
+        blocking, where, _ = _axe_blocking(page)
+        assert blocking == [], (r.db, blocking, where)
+
+        design.get_by_role("button", name=re.compile("Filter tables by their change")).click()
+        page.get_by_role("option", name="All tables").click()
+        expect(tables.locator("tbody tr")).to_have_count(
+            min(len(changes["table_changes"]), 25), timeout=READY_MS
+        )
+        picked = (changed or same)[0]
+        name = picked["table_name"]
+        design.get_by_role("searchbox", name="Find a table by name").fill(name)
+        row = tables.locator("tbody tr").filter(has_text=name).first
+        if picked["change_kinds"]:  # badges for each kind, the first one among them
+            expect(row).to_contain_text(
+                {"index_added": "Index added", "type_changed": "Type changed",
+                 "index_changed": "Index changed", "index_renamed": "Index renamed",
+                 "index_step1": "Recreated by step 1",
+                 "index_skipped": "Index not created", "column_added": "Column added",
+                 "column_skipped": "Column not created", "table_added": "Table added",
+                 "translated": "Translated"}[picked["change_kinds"][0]]
+            )  # fmt: skip
+        else:
+            expect(row).to_contain_text("Same")
+        design.get_by_role("button", name=f"Open {name} in the detail panel").click()
+        panel = page.get_by_role("region", name=f"Table {name}").first
+        expect(panel).to_be_visible(timeout=READY_MS)
+        columns = panel.get_by_role("table").first
+        headers = [h.strip() for h in columns.locator("thead th").all_inner_texts()]
+        assert headers == [
+            "Column", "Aurora type", "Source type", "Nullable", "Default", "Change from source",
+        ], headers  # fmt: skip
+        report = json.loads((r.artifact_root / r.report["report"]).read_text())
+        stored = next(
+            t["source_changes"]
+            for t in report["schema_designs"][engines[0]]["tables"]
+            if t["table_name"] == name and (t.get("schema_name") or None) == picked["schema_name"]
+        )
+        expect(columns.locator("tbody tr")).to_have_count(len(stored["columns"]))
+        indexes = panel.get_by_role("table").nth(1)
+        index_headers = [h.strip() for h in indexes.locator("thead th").all_inner_texts()]
+        assert index_headers == ["Index", "Columns", "Unique", "Change from source"]
+        if stored["indexes"]:
+            expect(indexes.locator("tbody tr")).to_have_count(len(stored["indexes"]))
+            expect(indexes.locator("tbody tr").first).to_contain_text(stored["indexes"][0]["name"])
+        blocking, where, _ = _axe_blocking(page)
+        assert blocking == [], (r.db, blocking, where)
+        page.get_by_role("button", name="Close the table details").click()
+        assert ev == {"console": [], "pageerror": [], "failed": []}, (r.job_id, ev)
+        checked += 1
+    assert checked or any(r.external for r in all_runs), "no job with a compared Aurora design"
 
 
 def test_the_aurora_table_panel_closes_when_the_design_tab_changes(

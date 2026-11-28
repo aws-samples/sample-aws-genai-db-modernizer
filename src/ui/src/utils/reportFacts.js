@@ -689,6 +689,15 @@ export function designLeftOutOf(synthesis) {
   return Array.isArray(rows) ? rows.filter((r) => r && typeof r.engine === 'string') : [];
 }
 
+// #2289: per Aurora engine, what its design changes from the collected tables
+// (facts.design_changes): each table's change kinds, its columns (with nullable and
+// default as the stored CREATE TABLE writes them) and its indexes, each with a change.
+// An empty list for a report whose designs were not compared. Nothing is counted here.
+export function designChangesOf(synthesis) {
+  const rows = factsOf(synthesis) && factsOf(synthesis).design_changes;
+  return Array.isArray(rows) ? rows.filter((r) => r && typeof r.engine === 'string') : [];
+}
+
 // #2315: what the executive summary leads with, read as the facts state it: the decision
 // line (facts.executive_brief.decision_headline) and the wave its status is for (the
 // decision wave, else the first wave), the overall risk level with the open and the

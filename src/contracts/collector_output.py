@@ -861,6 +861,14 @@ class Index(BaseModel):
         ...,
         description="Plain column keys of the index; empty when every key is an expression",
     )
+    key_order_known: bool | None = Field(
+        None,
+        description=(
+            "Whether columns is in key order: true when every collected row gave its key "
+            "position (#1927); false for a collection without positions; None when the "
+            "collector did not say (#2289)"
+        ),
+    )
     is_unique: bool = Field(..., description="Whether index enforces uniqueness")
     is_primary: bool | None = Field(False, description="Whether this is the primary key index")
     index_type: IndexType | None = Field(None, description="Index type")

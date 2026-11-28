@@ -21,6 +21,8 @@ import {
   reasonTextFor,
   LEFT_OUT_FEATURES,
   LEFT_OUT_OBJECTS,
+  filterAuroraTables,
+  withTableDetails,
 } from '../auroraDesign';
 
 const AURORA_CONTENT = {
@@ -427,5 +429,63 @@ describe('the left-out note kinds match the Python reader (#2545 review)', () =>
     const block = source.match(/_OBJECTS = \(([^)]*)\)/);
     expect(block).not.toBeNull();
     expect(LEFT_OUT_OBJECTS).toEqual(strings(block[1]));
+  });
+});
+
+describe('the change rows of each design table (#2289)', () => {
+  const tbl = (name, schemaName = null) => ({ tableName: schemaName ? `${schemaName}.${name}` : name, bareName: name, schemaName, columns: [], primaryKey: [], indexes: [], foreignKeys: [] });
+  const row = (name, kinds, schemaName = null, changed = kinds.length > 0) => ({ table_name: name, schema_name: schemaName, change_kinds: kinds, changed });
+  const source = (facts, summaryTables = []) => ({ facts: { table_changes: facts, uncompared_tables: [] }, summaryTables });
+
+  test('a table reads its facts row by name and its rows from the summary table of its name', () => {
+    const summary = [{ table_name: 'a', source_changes: { columns: [{ name: 'x' }], indexes: [] } }, { table_name: 'b', source_changes: { columns: [], indexes: [{ name: 'i' }] } }];
+    const tables = withTableDetails([tbl('a'), tbl('b')], [], [], '', source([row('b', ['index_added']), row('a', [])], summary));
+    expect(tables.map(t => t.changes.change_kinds)).toEqual([[], ['index_added']]);
+    expect(tables[0].changes.columns).toEqual([{ name: 'x' }]);
+    expect(tables[1].changes.indexes).toEqual([{ name: 'i' }]);
+  });
+
+  test('two schemas tables of one name read their own rows, and no row is shared', () => {
+    const tables = withTableDetails(
+      [tbl('orders', 'sales'), tbl('orders', 'archive'), tbl('orders')],
+      [], [], '',
+      source([row('orders', ['column_added'], 'archive'), row('orders', [], 'sales')]),
+    );
+    expect(tables[0].changes.change_kinds).toEqual([]);
+    expect(tables[1].changes.change_kinds).toEqual(['column_added']);
+    expect(tables[2].changes).toBeNull();
+  });
+
+  test('a table not compared carries its reason', () => {
+    const tables = withTableDetails([tbl('a')], [], [], '', { facts: { table_changes: [], uncompared_tables: [{ table_name: 'a', schema_name: null, reason: 'why' }] }, summaryTables: [] });
+    expect(tables[0].changes).toEqual({ uncompared: true, reason: 'why', change_kinds: [], changed: false });
+  });
+
+  test('a design that was not compared carries no change rows', () => {
+    const tables = withTableDetails([tbl('a')], [], [], '');
+    expect(tables[0].changes).toBeNull();
+  });
+
+  test('the change filter reads the facts changed flag: a translated table is no change', () => {
+    const tables = withTableDetails([tbl('a'), tbl('b'), tbl('c'), tbl('d')], [], [], '',
+      source([row('a', []), row('b', ['type_changed', 'index_added']), row('c', ['translated'], null, false)]));
+    const names = (change) => filterAuroraTables(tables, '', change).map(t => t.tableName);
+    expect(names('all')).toEqual(['a', 'b', 'c', 'd']);
+    expect(names('any')).toEqual(['b']);
+    expect(names('same')).toEqual(['a', 'c']);
+    expect(names('translated')).toEqual(['c']);
+    expect(filterAuroraTables(tables, 'A', 'same').map(t => t.tableName)).toEqual(['a']);
+  });
+
+  test('the design reads its engine row of facts.design_changes and its summary rows', () => {
+    const changes = [{ engine: 'aurora_mysql', table_count: 1, changed_table_count: 1, change_counts: {}, table_changes: [row('wp_posts', ['index_added'])], uncompared_tables: [] }];
+    const summaries = { aurora_mysql: { tables: [{ table_name: 'wp_posts', source_changes: { columns: [], indexes: [{ name: 'k' }] } }] } };
+    const content = { table_definitions: [{ table_name: 'wp_posts', columns: [] }] };
+    const design = buildAuroraDesign('aurora_mysql', { content }, [], [], [], changes, summaries);
+    expect(design.changes).toBe(changes[0]);
+    expect(design.tables[0].changes.change_kinds).toEqual(['index_added']);
+    expect(design.tables[0].changes.indexes).toEqual([{ name: 'k' }]);
+    expect(buildAuroraDesign('aurora_postgresql', { content }, [], [], [], changes, summaries).changes).toBeNull();
+    expect(buildAuroraDesigns([{ target_type: 'aurora_mysql', content }], [], [], [], changes, summaries)[0].changes).toBe(changes[0]);
   });
 });

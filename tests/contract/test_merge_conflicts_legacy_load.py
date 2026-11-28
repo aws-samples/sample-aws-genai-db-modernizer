@@ -134,6 +134,8 @@ def test_a_report_written_before_1_72_validates_and_reads_back_unchanged() -> No
         "executive_brief",
         # #2484: the objects each Aurora design leaves out (none here), from its notes.
         "design_left_out",
+        # #2289: each Aurora design's changes from the source (none compared here).
+        "design_changes",
         # #2287: each wave gate's conditions, from the same function.
         "waves",
     )
@@ -142,6 +144,7 @@ def test_a_report_written_before_1_72_validates_and_reads_back_unchanged() -> No
     )
     assert all(w["gate_conditions"] for w in facts["waves"])
     assert facts["design_left_out"] == []
+    assert facts["design_changes"] == []
     assert {k: v for k, v in facts.items() if k not in filled} == {
         k: v for k, v in as_read_back(stored).items() if k not in filled
     }

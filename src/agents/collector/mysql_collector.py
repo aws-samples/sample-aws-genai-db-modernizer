@@ -942,6 +942,8 @@ def _build_tables(
         indexes = [
             Index(
                 index_name=i["index_name"],
+                # #2289: whether ``columns`` is in key order, as the reader knows it.
+                key_order_known=i.get("key_order_known"),
                 columns=i["columns"],
                 is_unique=i["is_unique"],
                 is_primary=i["is_primary"],
@@ -1017,6 +1019,8 @@ def _build_tables_from_ddl(raw_tables: list[dict], db_name: str) -> list[Table]:
         indexes = [
             Index(
                 index_name=i["index_name"],
+                # #2289: whether ``columns`` is in key order, as the reader knows it.
+                key_order_known=i.get("key_order_known"),
                 columns=i["columns"],
                 is_unique=i["is_unique"],
                 is_primary=i["is_primary"],
