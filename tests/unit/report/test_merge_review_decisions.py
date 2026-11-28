@@ -418,6 +418,8 @@ def test_an_old_job_loads_and_renders_unchanged() -> None:
         "executive_brief",
         # #2484: the objects each Aurora design leaves out (none here), from its notes.
         "design_left_out",
+        # #2289: each Aurora design's changes from the source (none compared here).
+        "design_changes",
         # #2287: each wave gate's conditions, from the same function.
         "waves",
     )
@@ -426,6 +428,7 @@ def test_an_old_job_loads_and_renders_unchanged() -> None:
     )
     assert all(w["gate_conditions"] for w in facts["waves"])
     assert facts["design_left_out"] == []
+    assert facts["design_changes"] == []
     brief = stored["executive_brief"]
     assert facts["executive_brief"] == {
         **brief,

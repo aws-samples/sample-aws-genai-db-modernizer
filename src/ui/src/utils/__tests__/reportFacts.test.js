@@ -8,6 +8,7 @@
  */
 import {
   cacheLayerFactsOf,
+  designChangesOf,
   designLeftOutOf,
   derivedCopySyncOf,
   accessPatternTotals,
@@ -575,5 +576,15 @@ describe('designLeftOutOf', () => {
     expect(designLeftOutOf({ facts: {} })).toEqual([]);
     expect(designLeftOutOf(null)).toEqual([]);
     expect(designLeftOutOf({ facts: { design_left_out: [null, { objects: [] }] } })).toEqual([]);
+  });
+});
+
+describe('designChangesOf (#2289)', () => {
+  test('reads facts.design_changes, and an empty list without it', () => {
+    const rows = [{ engine: 'aurora_mysql', table_count: 1, changed_table_count: 0, change_counts: {}, table_changes: [] }];
+    expect(designChangesOf({ facts: { design_changes: rows } })).toEqual(rows);
+    expect(designChangesOf({ facts: { design_changes: null } })).toEqual([]);
+    expect(designChangesOf({ facts: {} })).toEqual([]);
+    expect(designChangesOf({ facts: { design_changes: [null, { table_changes: [] }] } })).toEqual([]);
   });
 });

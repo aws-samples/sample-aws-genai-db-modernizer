@@ -3042,6 +3042,53 @@ class DesignLeftOutFacts(BaseModel):
     )
 
 
+class DesignTableChanges(BaseModel):
+    """One Aurora design table and the kinds of change it has from its collected table
+    (#2289). The column and index rows stay on the design summary
+    (``schema_designs[engine].tables[].source_changes``), stored once."""
+
+    table_name: str = Field(..., description="The design table's name")
+    schema_name: str | None = Field(None, description="Its schema, in a design of several")
+    source_table: str | None = Field(None, description="The collected table's id; None if added")
+    changed: bool = Field(
+        False,
+        description=(
+            "Whether it changes from the source: any kind but a translated type or an "
+            "expression index step 1 recreates. Every deliverable counts and filters on it"
+        ),
+    )
+    change_kinds: list[str] = Field(
+        default_factory=list, description="The kinds of change it has; empty when the same"
+    )
+    change_counts: dict[str, int] = Field(default_factory=dict, description="Rows per kind")
+
+
+class UncomparedDesignTable(BaseModel):
+    """A design table that is not compared with the source (#2289), and why."""
+
+    table_name: str = Field(..., description="The design table's name")
+    schema_name: str | None = Field(None, description="Its schema, in a design of several")
+    reason_code: str = Field(..., description="ambiguous_source or no_name")
+    reason: str = Field(..., description="Why, as the deliverables print it")
+
+
+class DesignChangeFacts(BaseModel):
+    """What one Aurora engine's design changes from the source, table by table (#2289)."""
+
+    engine: str = Field(..., description="The Aurora engine (id)")
+    table_count: int = Field(0, ge=0, description="The design tables compared")
+    changed_table_count: int = Field(
+        0, ge=0, description="Of those, the ones whose changed flag is true"
+    )
+    change_counts: dict[str, int] = Field(default_factory=dict, description="Rows per kind")
+    table_changes: list[DesignTableChanges] = Field(
+        default_factory=list, description="Each compared design table, in the design's order"
+    )
+    uncompared_table_count: int = Field(0, ge=0, description="The design tables not compared")
+    uncompared_tables: list[UncomparedDesignTable] = Field(default_factory=list)
+    brief_line: str = Field("", description="The executive report's count line; names no table")
+
+
 class UngroupedQueryRow(BaseModel):
     """An owner engine's in-scope queries that no query group of its own serves (#226)."""
 
@@ -5905,6 +5952,13 @@ class ReportFacts(BaseModel):
             "Per Aurora engine, the source objects its design leaves out, each with its "
             "kind and reason (#2484); empty when no design leaves any out. None in a "
             "report written before it"
+        ),
+    )
+    design_changes: list[DesignChangeFacts] | None = Field(
+        None,
+        description=(
+            "Per Aurora engine, what its design changes from the collected tables (#2289); "
+            "empty when no design was compared. None in a report written before it"
         ),
     )
     table_sources: TableSourceFacts | None = Field(

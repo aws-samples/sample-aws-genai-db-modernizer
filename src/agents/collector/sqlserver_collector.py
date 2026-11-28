@@ -496,6 +496,8 @@ def _build_tables(schema_raw: dict) -> list[Table]:
         indexes = [
             Index(
                 index_name=i["index_name"],
+                # #2289: whether ``columns`` is in key order, as the reader knows it.
+                key_order_known=i.get("key_order_known"),
                 columns=i["columns"],
                 is_unique=i["is_unique"],
                 is_primary=i.get("is_primary", False),

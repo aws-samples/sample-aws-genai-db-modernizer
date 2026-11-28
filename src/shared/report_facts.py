@@ -51,6 +51,7 @@ from src.shared.capability_labels import capability_label, flag_redesign_hints, 
 from src.shared.catalog.gaps import GAP_IMPACTS
 from src.shared.cutover_message import CUTOVER_MESSAGE
 from src.shared.decision_headline import decision_headline
+from src.shared.design_changes import design_change_facts
 from src.shared.engine_names import (
     ENGINE_DISPLAY_NAMES,
     SOURCE_DATABASE,
@@ -4341,6 +4342,8 @@ def compute_report_facts(
         **risks,
         # #2484: the objects each Aurora design leaves out, named with their reason.
         "design_left_out": design_left_out_facts(report),
+        # #2289: what each Aurora design changes from its collected tables, table by table.
+        "design_changes": design_change_facts(report),
         # #2363: the counts the results page's tabs show.
         "results_tab_counts": results_tab_count_facts(
             query_total_count=query_total_facts(report, moves["in_scope_query_count"])[

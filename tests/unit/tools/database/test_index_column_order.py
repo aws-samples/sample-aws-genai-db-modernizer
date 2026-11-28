@@ -178,3 +178,20 @@ def test_the_collection_scripts_keep_writing_each_index_keys_position(script, ma
 
 def test_the_oracle_script_writes_each_index_keys_position():
     assert "'seq_in_index' VALUE ic.COLUMN_POSITION" in _index_section("collect-oracle.sql")
+
+
+@pytest.mark.parametrize("engine", ["mysql", "postgresql"])
+def test_an_index_says_whether_its_key_order_is_known(engine):
+    """#2289: a collection whose rows give each key's position yields its columns in key
+    order and says so; one written before #1927 gives none, so its order is not known."""
+    [table] = parse_offline_collection(_collection(engine))["tables"]
+    assert table["indexes"][0]["key_order_known"] is True
+    [table] = parse_offline_collection(_collection(engine, position_key=None))["tables"]
+    assert table["indexes"][0]["key_order_known"] is False
+
+
+def test_sql_servers_key_ordinal_counts_as_a_position():
+    [table] = parse_offline_collection(_collection("sqlserver", position_key="key_ordinal"))[
+        "tables"
+    ]
+    assert table["indexes"][0]["key_order_known"] is True

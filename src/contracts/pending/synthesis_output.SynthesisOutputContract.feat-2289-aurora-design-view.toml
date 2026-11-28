@@ -1,0 +1,6 @@
+# A pending contract version bump (ADR-008 Decision 8). The number is assigned by
+# uv run python scripts/resolve_contract_versions.py --release at release (a MAJOR: in its pull request).
+contract = "synthesis_output.SynthesisOutputContract"
+kind = "minor"
+reason = "facts.design_changes: per Aurora engine, each design table compared with its collected table (a changed flag, its kinds of change and their counts; the column and index rows stay on the design summary), the tables not compared with their reason, the counts by kind and the executive report's count line; filled in at read time for older reports"
+issue = 2289

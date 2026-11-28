@@ -285,6 +285,10 @@ def _parse_offline_collection(
         # An expression key names no column (#295): the index still counts, and is
         # flagged rather than narrowed to its plain keys, whatever the engine.
         add_index_key(indexes_by_table[tbl][idx_name], i, source_engine)
+        # #2289: whether every row gave its key position, so ``columns`` is the key order.
+        # A collection written before #1927 gives none, and its order is unknown.
+        index = indexes_by_table[tbl][idx_name]
+        index["key_order_known"] = index.get("key_order_known", True) and _has_key_position(i)
     for by_name in indexes_by_table.values():
         for index in by_name.values():
             settle_included_columns(index)
@@ -463,6 +467,19 @@ def _table_fks(
         key=lambda k: (k is not None, k or ""),
     )
     return [fk for k in keys for fk in by_schema[k].values()]
+
+
+def _has_key_position(row: dict) -> bool:
+    """Whether an index row gives its position in the index (``seq_in_index``, or SQL
+    Server's ``key_ordinal``), as a collection written since #1927 does."""
+    position = row.get("seq_in_index")
+    if position is None:
+        position = row.get("key_ordinal")
+    try:
+        int(position)  # type: ignore[arg-type]
+    except (TypeError, ValueError):
+        return False
+    return True
 
 
 def _index_key_position(row: dict) -> tuple[bool, int]:

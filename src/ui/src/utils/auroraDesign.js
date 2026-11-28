@@ -185,7 +185,7 @@ export const designTableKey = (name, schema) => (schema ? `${cleaned(schema)}.${
  * before #2455) it reads its bare name's row, but only when no other table of the design
  * has that name, so two schemas' tables never show each other's queries.
  */
-export function withTableDetails(tables, tableQueryRows, queryGroups, fallbackDdl) {
+export function withTableDetails(tables, tableQueryRows, queryGroups, fallbackDdl, changeSource = null) {
   const byQueryId = {};
   (queryGroups || []).forEach((g) => g.queries.forEach((q) => { byQueryId[q.queryId] = q; }));
   const byTable = {};
@@ -214,15 +214,75 @@ export function withTableDetails(tables, tableQueryRows, queryGroups, fallbackDd
       queryCount: row ? row.query_count : 0,
       queries,
       fallbackDdl,
+      changes: changesOf(changeSource, table, i),
     };
   });
 }
 
-/** The rows whose name contains the text, ignoring case; every row for blank text. */
-export function filterAuroraTables(tables, text) {
+const sameTable = (row, table) => Boolean(row) && row.table_name === (table.bareName ?? table.tableName)
+  && (row.schema_name || null) === (table.schemaName || null);
+
+// The row at the table's own position when it names the table, else the one row of its
+// name and schema; null when none is the table's alone.
+function rowFor(rows, table, i) {
+  if (!Array.isArray(rows)) return null;
+  if (sameTable(rows[i], table)) return rows[i];
+  const found = rows.filter((r) => sameTable(r, table));
+  return found.length === 1 ? found[0] : null;
+}
+
+/**
+ * #2289: what one design table changes from the source. `changeSource` is the engine's row
+ * of facts.design_changes (`facts`: its changed flag and kinds per table, and the tables not
+ * compared) with the design summary's tables (`summaryTables`: report.json's
+ * schema_designs[engine].tables, where synthesis stores each table's column and index rows
+ * once). The result is the facts row with those rows, `{ uncompared: true, reason }` for a
+ * table not compared, or null when the design was not compared (a report written before the
+ * comparison) or no row is the table's alone.
+ */
+function changesOf(changeSource, table, i) {
+  if (!changeSource || !changeSource.facts) return null;
+  const { facts, summaryTables } = changeSource;
+  const factsRow = rowFor(facts.table_changes, table, i);
+  if (!factsRow) {
+    const skipped = rowFor(facts.uncompared_tables, table, i);
+    return skipped ? { uncompared: true, reason: skipped.reason, change_kinds: [], changed: false } : null;
+  }
+  const summary = rowFor(summaryTables, table, i);
+  const rows = (summary && summary.source_changes) || {};
+  return { ...factsRow, columns: rows.columns || [], indexes: rows.indexes || [] };
+}
+
+// The values of the Table design's change filter (#2289) besides each change kind.
+export const CHANGE_FILTER_ALL = 'all';
+export const CHANGE_FILTER_ANY = 'any';
+export const CHANGE_FILTER_SAME = 'same';
+
+/**
+ * Whether a table passes the change filter: every table for "all", a table the facts mark
+ * changed for "any", one they do not for "same" (a translated type or an expression index
+ * step 1 recreates is no change), else one with that kind of change. A table not compared
+ * passes only "all".
+ */
+export function matchesChange(table, change) {
+  if (!change || change === CHANGE_FILTER_ALL) return true;
+  const changes = table.changes;
+  if (!changes || changes.uncompared) return false;
+  // The facts' one definition of a changed table (#2289), the one the summary counts.
+  if (change === CHANGE_FILTER_ANY) return changes.changed === true;
+  if (change === CHANGE_FILTER_SAME) return changes.changed !== true;
+  return (changes.change_kinds || []).includes(change);
+}
+
+/**
+ * The rows whose name contains the text, ignoring case (every row for blank text), and that
+ * pass the change filter (#2289, matchesChange).
+ */
+export function filterAuroraTables(tables, text, change = CHANGE_FILTER_ALL) {
   const needle = String(text || '').trim().toLowerCase();
-  if (!needle) return tables;
-  return tables.filter((t) => String(t.tableName).toLowerCase().includes(needle));
+  if (!needle && (!change || change === CHANGE_FILTER_ALL)) return tables;
+  return tables.filter((t) => (!needle || String(t.tableName).toLowerCase().includes(needle))
+    && matchesChange(t, change));
 }
 
 // Mirrors LEFT_OUT_FEATURES and the `<Object> not created: <reason>` head in
@@ -272,10 +332,14 @@ export function appLayerNotesOf(notes) {
  * the design-dependent fields below -- tables, DDL, optimizations,
  * migration strategy -- are empty in that case, not the whole section).
  */
-export function buildAuroraDesign(engine, design, queryGroups, tableQueryRows = [], leftOut = []) {
+export function buildAuroraDesign(engine, design, queryGroups, tableQueryRows = [], leftOut = [], designChanges = [], designSummaries = {}) {
   const content = design?.content || {};
   const groupsOnEngine = buildAuroraQueryGroups(engine, queryGroups);
+  // #2289: what the design changes from the source, as facts.design_changes states it;
+  // null when it was not compared, so the section shows no change column.
+  const changes = (designChanges || []).find((r) => r.engine === engine) || null;
   return {
+    changes,
     // #2484: the objects the design leaves out, as facts.design_left_out states them; null
     // when it leaves none out, so the section shows no alert.
     leftOut: (leftOut || []).find((r) => r.engine === engine && (r.objects || []).length > 0) || null,
@@ -292,6 +356,7 @@ export function buildAuroraDesign(engine, design, queryGroups, tableQueryRows = 
       (tableQueryRows || []).filter((r) => r.engine === engine),
       groupsOnEngine,
       content.generated_ddl || '',
+      changes ? { facts: changes, summaryTables: ((designSummaries || {})[engine] || {}).tables || [] } : null,
     ),
     queryGroups: groupsOnEngine,
   };
@@ -306,7 +371,7 @@ export function buildAuroraDesign(engine, design, queryGroups, tableQueryRows = 
  * schema design must not gate visibility -- the UI and export disagreed
  * with the engineering report here before this fix).
  */
-export function buildAuroraDesigns(schemaDesigns, queryGroups, tableQueryRows = [], leftOut = []) {
+export function buildAuroraDesigns(schemaDesigns, queryGroups, tableQueryRows = [], leftOut = [], designChanges = [], designSummaries = {}) {
   const designsByEngine = {};
   (schemaDesigns || []).forEach((d) => {
     if (isAuroraEngine(d?.target_type) && d?.content) {
@@ -324,5 +389,5 @@ export function buildAuroraDesigns(schemaDesigns, queryGroups, tableQueryRows = 
   const engines = new Set([...Object.keys(designsByEngine), ...enginesWithQueries]);
   return [...engines]
     .sort()
-    .map((engine) => buildAuroraDesign(engine, designsByEngine[engine] || null, queryGroups, tableQueryRows, leftOut));
+    .map((engine) => buildAuroraDesign(engine, designsByEngine[engine] || null, queryGroups, tableQueryRows, leftOut, designChanges, designSummaries));
 }

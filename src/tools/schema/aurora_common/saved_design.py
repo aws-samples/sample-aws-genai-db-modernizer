@@ -329,19 +329,32 @@ def _default_end(dialect: Dialect, aurora_type: str, text: str, pos: int) -> int
     return other.end()
 
 
-def _column_end(dialect: Dialect, aurora_type: str, text: str, pos: int) -> int:
-    """Where a column's clauses (identity, NOT NULL, DEFAULT) starting at ``pos`` end."""
+def _clauses(
+    dialect: Dialect, aurora_type: str, text: str, pos: int
+) -> tuple[int, bool, bool, str | None]:
+    """A column's clauses (identity, NOT NULL, DEFAULT) starting at ``pos``: where they end,
+    whether it is an identity column, whether it is NOT NULL, and its DEFAULT expression as
+    written (None with none)."""
     identity = dialect.auto_increment(True)
     has_identity = text.startswith(identity, pos)
     if has_identity:
         pos += len(identity)
-    if text.startswith(_NOT_NULL, pos):
+    not_null = text.startswith(_NOT_NULL, pos)
+    if not_null:
         pos += len(_NOT_NULL)
+    default = None
     if text.startswith(_DEFAULT, pos):
         if has_identity:
             raise _Refused("has an identity column with a DEFAULT")
-        pos = _default_end(dialect, aurora_type, text, pos + len(_DEFAULT))
-    return pos
+        start = pos + len(_DEFAULT)
+        pos = _default_end(dialect, aurora_type, text, start)
+        default = text[start:pos]
+    return pos, has_identity, not_null, default
+
+
+def _column_end(dialect: Dialect, aurora_type: str, text: str, pos: int) -> int:
+    """Where a column's clauses (identity, NOT NULL, DEFAULT) starting at ``pos`` end."""
+    return _clauses(dialect, aurora_type, text, pos)[0]
 
 
 # ---------------------------------------------------------------------------
@@ -461,6 +474,86 @@ def stored_index(statement: object) -> tuple[str, tuple[str, ...]] | None:
     except _Refused:
         return None
     return _unquote(POSTGRES, match["name"]), tuple(n for n, _ in keys)
+
+
+def index_shape(engine: str, statement: object) -> dict[str, Any] | None:
+    """A saved ``engine`` design's index statement (or the draft's) in parts (#2289): its
+    ``name``, key ``columns``, ``prefixes`` (Aurora MySQL key prefixes, None per plain key),
+    ``unique``, access ``method`` (``btree`` when the statement names none), ``include``
+    columns and the partial-index ``where`` text; None for a string that is not a CREATE
+    INDEX statement the generator writes."""
+    dialect = DIALECTS.get(engine)
+    if dialect is None or not isinstance(statement, str):
+        return None
+    match = _INDEX_SHAPES[dialect.name].fullmatch(statement)
+    if match is None:
+        return None
+    try:
+        keys = _names(dialect, match["cols"], prefixes=dialect is MYSQL)
+        include = [n for n, _ in _names(dialect, match["include"])] if match["include"] else []
+    except _Refused:
+        return None
+    kind = match["kind"] or ""
+    return {
+        "name": _unquote(dialect, match["name"]),
+        "columns": [n for n, _ in keys],
+        "prefixes": [n for _, n in keys],
+        "unique": kind == "UNIQUE ",
+        "method": _MYSQL_KINDS.get(kind) or match["method"] or "btree",
+        "include": include,
+        "where": match["where"],
+    }
+
+
+def column_clauses(payload: Mapping[str, Any], engine: str) -> list[list[dict[str, Any]]] | None:
+    """Per table definition of a saved ``engine`` design, each column's ``nullable``,
+    ``default`` and ``identity`` as its stored CREATE TABLE writes them (#2289), read with
+    the loader's own checks: only a design :func:`check_design_ddl` accepts is read, under
+    the closed grammar ``constraint_translator`` writes. A column of the primary key or an
+    identity column is never nullable; ``default`` is the expression as stored. None for a
+    design with no script, or one the checks refuse."""
+    dialect = DIALECTS.get(engine)
+    tables = payload.get("table_definitions")
+    text = payload.get("generated_ddl")
+    if dialect is None or not isinstance(tables, list) or not isinstance(text, str) or not text:
+        return None
+    try:
+        check_design_ddl(payload, engine)
+        out: list[list[dict[str, Any]]] = []
+        pos = 0
+        for table in tables:
+            shaped = _table_shape(table)
+            header = (
+                f"CREATE TABLE {_quoted_table(dialect, shaped['table_name'], _schema(shaped))} (\n"
+            )
+            while True:
+                pos = text.find(header, pos)
+                if pos < 0:
+                    raise _Refused("has no CREATE TABLE for a table definition")
+                if pos == 0 or text.startswith(_SEPARATOR, pos - len(_SEPARATOR)):
+                    break
+                pos += 1
+            pos += len(header)
+            keys = {c.lower() for c in shaped["primary_key"]}
+            columns: list[dict[str, Any]] = []
+            for i, column in enumerate(shaped["columns"]):
+                if i:
+                    pos = _expect(text, pos, ",\n")
+                start = _expect(text, pos, f"  {dialect.q(column['name'])} {column['aurora_type']}")
+                pos, identity, not_null, default = _clauses(
+                    dialect, column["aurora_type"], text, start
+                )
+                columns.append(
+                    {
+                        "nullable": not (not_null or identity or column["name"].lower() in keys),
+                        "default": default,
+                        "identity": identity,
+                    }
+                )
+            out.append(columns)
+    except (SavedDesignError, _Refused, ValueError):
+        return None
+    return out
 
 
 def _main_comment(table_name: str, index_name: str) -> str:

@@ -11,7 +11,7 @@ import { act } from 'react';
 import { createRoot } from 'react-dom/client';
 import createWrapper from '@cloudscape-design/components/test-utils/dom';
 import i18n from '../../i18n';
-import AuroraDesignTables, { AuroraAppLayerNotes, AuroraLeftOutAlert } from '../AuroraDesignTables';
+import AuroraDesignTables, { AuroraAppLayerNotes, AuroraChangeSummary, AuroraLeftOutAlert } from '../AuroraDesignTables';
 import { AuroraTableDetailBody } from '../AuroraTableDetailPanel';
 import { withTableDetails } from '../../utils/auroraDesign';
 
@@ -211,5 +211,181 @@ describe('AuroraAppLayerNotes (#2545)', () => {
   test('no section when the design has no notes', () => {
     act(() => root.render(<AuroraAppLayerNotes notes={[]} t={t} />));
     expect(wrapper().findExpandableSection()).toBeNull();
+  });
+});
+
+// #2289: the change from the source, as facts.design_changes states it, with the rows
+// synthesis stores once on the design summary.
+describe('the change from the source (#2289)', () => {
+  const COLUMNS = [
+    { name: 'id', aurora_type: 'BIGINT', source_type: 'bigint(20)', nullable: false, default: null, identity: true, change: 'same' },
+    { name: 'title', aurora_type: 'TEXT', source_type: 'varchar(255)', nullable: true, default: "'<b>x</b>'", identity: false, change: 'type_changed' },
+    { name: 'legacy', aurora_type: null, source_type: 'int', nullable: null, default: null, identity: null, change: 'skipped' },
+  ];
+  const index = (name, columns, change, extra = {}) => ({
+    name, columns, unique: false, change, source_name: null, differences: [], source_columns: null, source_unique: null, reason: null, ...extra,
+  });
+  const INDEXES = [
+    index('i', ['title'], 'same'),
+    index('u_new', ['id', 'title'], 'renamed', { unique: true, source_name: 'u_old' }),
+    index('email_uq', ['title'], 'changed', { differences: ['unique'], source_columns: ['title'], source_unique: true }),
+    index('lower_title', [], 'step1'),
+    index('gone', ['legacy'], 'skipped', { reason: 'Source index has expression keys: the draft leaves it out.' }),
+    index('bare', ['legacy'], 'skipped'),
+  ];
+  const factsRow = (name, kinds, changed) => ({
+    table_name: name, schema_name: null, source_table: `wordpress.${name}`, changed,
+    change_kinds: kinds, change_counts: Object.fromEntries(kinds.map(k => [k, 1])),
+  });
+  const NAMES = ['wp_posts', 'wp_users', 'wp_terms', 'wp_links'];
+  const CHANGES = {
+    engine: 'aurora_mysql',
+    table_count: 3,
+    changed_table_count: 1,
+    change_counts: { type_changed: 1, index_renamed: 1, index_changed: 1, index_skipped: 2, translated: 4, index_step1: 1 },
+    table_changes: [
+      factsRow('wp_posts', ['type_changed', 'index_renamed', 'index_changed', 'index_skipped', 'index_step1'], true),
+      factsRow('wp_users', [], false),
+      // A heterogeneous table whose types are all translated: no change.
+      factsRow('wp_terms', ['translated'], false),
+    ],
+    uncompared_table_count: 1,
+    uncompared_tables: [{ table_name: 'wp_links', schema_name: null, reason_code: 'ambiguous_source', reason: 'two source schemas hold a table of its name and the design names none' }],
+  };
+  const SUMMARY_TABLES = NAMES.map(n => ({
+    table_name: n,
+    source_changes: n === 'wp_links' ? { uncompared: 'ambiguous_source' } : { source_table: `wordpress.${n}`, columns: COLUMNS, indexes: INDEXES },
+  }));
+  const changedDesign = (changes = CHANGES) => {
+    const design = mkDesign(NAMES);
+    design.changes = changes;
+    design.tables = withTableDetails(
+      NAMES.map(n => raw(n)), [], [], '',
+      changes ? { facts: changes, summaryTables: SUMMARY_TABLES } : null,
+    );
+    return design;
+  };
+  const renderChanged = (props) => act(() => {
+    root.render(<AuroraDesignTables design={changedDesign()} count={4} selectedKey={null} onSelect={() => {}} t={t} {...props} />);
+  });
+  const names = () => wrapper().findTable().findRows().map((_, i) => wrapper().findTable().findBodyCell(i + 1, 2).getElement().textContent);
+  const pick = (value) => {
+    const select = wrapper().findSelect();
+    act(() => select.openDropdown());
+    act(() => select.selectOptionByValue(value));
+  };
+
+  test('the list has a Change column with each table kinds of change as badges', () => {
+    renderChanged();
+    const headers = wrapper().findTable().findColumnHeaders().map(h => h.getElement().textContent.trim()).slice(1);
+    expect(headers[headers.length - 1]).toBe('Change from source');
+    const cell = (r) => wrapper().findTable().findBodyCell(r, 8).getElement();
+    expect(cell(1).textContent).toContain('Type changed');
+    expect(cell(1).textContent).toContain('Recreated by step 1');
+    expect(cell(2).textContent).toBe('Same');
+    expect(cell(3).textContent).toBe('Translated');
+    expect(cell(4).textContent).toBe('Not compared');
+  });
+
+  test('the change filter narrows the rows to a kind, to any change or to none', () => {
+    renderChanged();
+    const select = wrapper().findSelect();
+    const ids = select.findTrigger().getElement().getAttribute('aria-labelledby').split(' ');
+    const labels = ids.map(id => document.getElementById(id)).filter(Boolean).map(e => e.textContent);
+    expect(labels).toContain('Filter tables by their change from the source');
+    act(() => select.openDropdown());
+    const options = select.findDropdown().findOptions().map(o => o.getElement().textContent);
+    expect(options).toEqual(['All tables', 'Any change', 'No change', 'Type changed', 'Index renamed', 'Index changed', 'Index not created', 'Translated', 'Recreated by step 1']);
+    act(() => select.selectOptionByValue('any'));
+    expect(names()).toEqual(['wp_posts']);
+    expect(wrapper().findHeader().findCounter().getElement().textContent.trim()).toBe('(1 of 4)');
+    pick('same');
+    expect(names()).toEqual(['wp_users', 'wp_terms']);
+    pick('translated');
+    expect(names()).toEqual(['wp_terms']);
+  });
+
+  test('on a heterogeneous design the summary count and the Any change filter agree', () => {
+    act(() => root.render(<><AuroraChangeSummary changes={CHANGES} t={t} /><AuroraDesignTables design={changedDesign()} count={4} selectedKey={null} onSelect={() => {}} t={t} /></>));
+    expect(container.querySelector('[data-figure="design-changes"]').textContent).toContain('Tables that change from the source: 1 of 3.');
+    pick('any');
+    expect(wrapper().findTable().findRows()).toHaveLength(CHANGES.changed_table_count);
+  });
+
+  test('every header sorts, and sorting by change puts the changed table last', () => {
+    renderChanged();
+    const table = wrapper().findTable();
+    act(() => table.findColumnSortingArea(8).click());
+    expect(names()).toEqual(['wp_links', 'wp_users', 'wp_terms', 'wp_posts']);
+    // The header holds its text, the sorting control and the resize handle only: nothing else interactive.
+    const header = table.findColumnHeaders()[7].getElement();
+    expect(header.querySelectorAll('a, input, button:not([aria-roledescription="Column resize handle"])')).toHaveLength(0);
+  });
+
+  test('a report written before the comparison shows no Change column and no change filter', () => {
+    render();
+    expect(wrapper().findSelect()).toBeNull();
+    const headers = wrapper().findTable().findColumnHeaders().map(h => h.getElement().textContent.trim());
+    expect(headers).not.toContain('Change from source');
+  });
+
+  test('the panel lists each column with its source type, nullable, default and change, as text', () => {
+    const design = changedDesign();
+    act(() => root.render(<AuroraTableDetailBody table={design.tables[0]} engineName="Aurora MySQL" t={t} />));
+    const columns = wrapper().findAllTables()[0];
+    const headers = columns.findColumnHeaders().map(h => h.getElement().textContent.trim());
+    expect(headers).toEqual(['Column', 'Aurora type', 'Source type', 'Nullable', 'Default', 'Change from source']);
+    const row = (r) => [1, 2, 3, 4, 5, 6].map(c => columns.findBodyCell(r, c).getElement().textContent);
+    expect(row(1)).toEqual(['id', 'BIGINT', 'bigint(20)', 'No', 'Identity', 'Same']);
+    expect(row(2)).toEqual(['title', 'TEXT', 'varchar(255)', 'Yes', "'<b>x</b>'", 'Type changed']);
+    expect(row(3)).toEqual(['legacy', '—', 'int', '—', '—', 'Not created']);
+    expect(container.querySelector('b')).toBeNull();
+  });
+
+  test('the panel lists the indexes as a table, each change with its detail or reason', () => {
+    const design = changedDesign();
+    act(() => root.render(<AuroraTableDetailBody table={design.tables[0]} engineName="Aurora MySQL" t={t} />));
+    const indexes = wrapper().findAllTables()[1];
+    const headers = indexes.findColumnHeaders().map(h => h.getElement().textContent.trim());
+    expect(headers).toEqual(['Index', 'Columns', 'Unique', 'Change from source']);
+    const row = (r) => [1, 2, 3, 4].map(c => indexes.findBodyCell(r, c).getElement().textContent);
+    expect(row(1)).toEqual(['i', 'title', 'No', 'Same']);
+    expect(row(2)).toEqual(['u_new', 'id, title', 'Yes', 'RenamedSource name u_old']);
+    expect(row(3)).toEqual(['email_uq', 'title', 'No', 'ChangedDiffers from the source in: uniquenessSource key title, unique']);
+    expect(row(4)).toEqual(['lower_title', '—', 'No', 'Recreated by step 1The design script does not create this expression index; step 1 recreates it when it moves this table.']);
+    expect(row(5)).toEqual(['gone', 'legacy', 'No', 'Not createdSource index has expression keys: the draft leaves it out.']);
+    expect(row(6)).toEqual(['bare', 'legacy', 'No', 'Not createdThe design does not create this index and records no note about it.']);
+    expect(container.textContent).not.toContain('CREATE INDEX i ON wp_posts (title)');
+  });
+
+  test('a table not compared says why in the panel', () => {
+    const design = changedDesign();
+    act(() => root.render(<AuroraTableDetailBody table={design.tables[3]} engineName="Aurora MySQL" t={t} />));
+    expect(container.querySelector('[data-figure="table-uncompared"]').textContent).toBe(
+      'This table is not compared with the source: two source schemas hold a table of its name and the design names none.',
+    );
+    expect(container.textContent).toContain('CREATE INDEX i ON wp_posts (title)');
+  });
+
+  test('the panel keeps the DDL in a collapsed section', () => {
+    const design = changedDesign();
+    design.tables[0].ddlStatements = ['CREATE TABLE wp_posts (id BIGINT);'];
+    act(() => root.render(<AuroraTableDetailBody table={design.tables[0]} engineName="Aurora MySQL" t={t} />));
+    const section = wrapper().findExpandableSection();
+    expect(section.findHeader().getElement().textContent).toBe('Generated DDL');
+    expect(section.findExpandButton().getElement().getAttribute('aria-expanded')).toBe('false');
+  });
+
+  test('the summary line reads the facts counts, and says nothing with no compared table', () => {
+    act(() => root.render(<AuroraChangeSummary changes={{ ...CHANGES, change_counts: { ...CHANGES.change_counts, translated: 1200 } }} t={t} />));
+    expect(container.textContent).toBe('Tables that change from the source: 1 of 3. 1,200 column types are translated as the deterministic translation writes them. Step 1 recreates 1 expression index the design script does not create, when it moves its table. 1 table is not compared with the source.');
+    act(() => root.render(<AuroraChangeSummary changes={{ ...CHANGES, changed_table_count: 0, change_counts: {}, uncompared_table_count: 0 }} t={t} />));
+    expect(container.textContent).toBe('All 3 tables match the source tables they were compared with.');
+    act(() => root.render(<AuroraChangeSummary changes={{ ...CHANGES, table_count: 0, changed_table_count: 0, change_counts: {} }} t={t} />));
+    expect(container.textContent).toBe('1 table is not compared with the source.');
+    act(() => root.render(<AuroraChangeSummary changes={{ ...CHANGES, table_count: 0, changed_table_count: 0, change_counts: {}, uncompared_table_count: 0 }} t={t} />));
+    expect(container.textContent).toBe('');
+    act(() => root.render(<AuroraChangeSummary changes={null} t={t} />));
+    expect(container.textContent).toBe('');
   });
 });

@@ -176,6 +176,7 @@ def _parse_create_table(stmt: str, database_name: str, dialect: str = "mysql") -
             indexes.append(
                 {
                     "index_name": "PRIMARY",
+                    "key_order_known": True,  # #2289: the statement lists the key in order
                     "columns": primary_key,
                     "is_unique": True,
                     "is_primary": True,
@@ -220,6 +221,7 @@ def _parse_create_table(stmt: str, database_name: str, dialect: str = "mysql") -
             indexes.append(
                 {
                     "index_name": _ident(idx_match.group(2)),
+                    "key_order_known": True,  # #2289: the statement lists the key in order
                     **_index_keys(part[idx_match.end() - 1 :]),
                     "is_unique": bool(idx_match.group(1)),
                     "is_primary": False,
@@ -237,6 +239,7 @@ def _parse_create_table(stmt: str, database_name: str, dialect: str = "mysql") -
             indexes.append(
                 {
                     "index_name": _ident(unique_match.group(1)),
+                    "key_order_known": True,  # #2289: the statement lists the key in order
                     **_index_keys(part[unique_match.end() - 1 :]),
                     "is_unique": True,
                     "is_primary": False,
