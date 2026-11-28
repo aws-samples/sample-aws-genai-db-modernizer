@@ -1964,7 +1964,9 @@ def build_risk_assessment(
     return {
         "overall_risk_level": overall_risk_level(risks),
         "risks": risks,
-        "mitigation_strategies": _build_mitigation_strategies(risks, assigned or set(data.engines)),
+        "mitigation_strategies": _build_mitigation_strategies(
+            risks, assigned or set(data.engines), data
+        ),
         # Anti-pattern risks the effective assignment resolved (#221): kept for the
         # audit trail so no risk, HIGH or otherwise, disappears without a record.
         "resolved_risks": resolved,
@@ -2828,7 +2830,9 @@ def _risk_scope(risk: dict) -> str:
     return f"{n} {'query' if n == 1 else 'queries'}" if n else "no table recorded"
 
 
-def _build_mitigation_strategies(risks: list[dict], effective_engines: set[str]) -> list[str]:
+def _build_mitigation_strategies(
+    risks: list[dict], effective_engines: set[str], data: SynthesisData | None = None
+) -> list[str]:
     """Mitigation strategies derived from the risks actually present (#222).
 
     The Risk register owns each risk's mitigation (#1510): a strategy names a risk by
@@ -2838,7 +2842,8 @@ def _build_mitigation_strategies(risks: list[dict], effective_engines: set[str])
     other lines add an action (a load test, a home for unsupported patterns, a
     blue-green rollout) and name the risks, engines or tables it is about. Only
     engines in ``effective_engines`` (the post-reality-check architecture) are
-    suggested as homes for unsupported patterns.
+    suggested as homes for unsupported patterns. The blue-green line lists the tables in
+    :func:`collected_first` order when ``data`` is given (#2097), else by name.
 
     Only risk-specific strategies: the list is empty when no risk is open (#645). The
     post-migration checks, one per migration wave, come from :func:`build_wave_checks`.
@@ -2916,7 +2921,8 @@ def _build_mitigation_strategies(risks: list[dict], effective_engines: set[str])
         )
 
     if severe:
-        tables = sorted({t for r in severe for t in (r.get("affected_tables") or []) if t})
+        found = {t for r in severe for t in (r.get("affected_tables") or []) if t}
+        tables = collected_first(data)(found) if data is not None else sorted(found)
         strategies.append(
             "Use blue-green deployment with rollback for the tables behind the critical or "
             "high risks: " + ", ".join(tables) + "."
